@@ -987,8 +987,9 @@ The breakpoints follow from the minimum-size tokens; the switch and switcher wor
 
 ### Library masters
 
-The View area pieces are drawn in `design/hide-ui.lib.pen` by `Component / View tab` (preview, pinned, active, dirty, unavailable and the floating drag copy), `Component / View placement` (the insertion line, the split overlay with its label, and an ineligible target), `Component / View tab menu` (the item set, with a disabled Split and its reason) and `Component / View area states` (the empty Views and each view's opening, waiting and unavailable states).
-The canvas draws the unavailable strike as a hairline over the sample title and the minimum height as its literal 144; the product strikes the title through and reads `--size-view-area-min-height`.
+The View area masters in `design/hide-ui.lib.pen` are `Component / View tab`, `Component / View insertion line`, `Component / View split overlay`, `Component / View tab menu` and `Component / View area message`.
+Their sheets carry the states as refs: the View tab sheet draws preview, pinned, hover, active in the active area, active in another area, dirty, unavailable, diff, a long Korean title and the floating drag copy; the View placement sheet draws a reorder, a move into another area, a right and a down split, and an ineligible target; the View tab menu sheet draws a preview's menu and a pinned view's menu with a disabled Split and its reason; the View area states sheet draws the empty Views and each view's opening, waiting and unavailable states.
+The canvas draws the unavailable strike as a hairline over the sample title and the minimum area height as its literal 144; the product strikes the title through and reads `--size-view-area-min-height`.
 
 ### Agent panes and the Agents explorer
 

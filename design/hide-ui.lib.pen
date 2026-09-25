@@ -13883,6 +13883,2297 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "view-tab-sheet",
+      "x": 4440,
+      "y": 7264,
+      "name": "Component / View tab",
+      "width": 440,
+      "fill": "$--color-panel",
+      "cornerRadius": "$--radius-md",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-md",
+      "children": [
+        {
+          "type": "frame",
+          "id": "view-tab-sheet-title",
+          "name": "Title block",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-tab-sheet-title-name",
+              "name": "Title",
+              "fill": "$--color-primary",
+              "content": "View tab (web Workspace)",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-title",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "view-tab-sheet-title-spec",
+              "name": "Spec",
+              "fill": "$--color-secondary",
+              "content": "One tab in a View area's tab bar, --size-tab-strip high and at most --size-tab-preferred wide: the file-type mark (a diff's comparison mark), the title on one line cut at the tail, a dirty ● in --color-warning, and the toolbar close (System / Icon Button) on the active or hovered tab. A preview's title is italic. The active area's active view sits on --color-background with the --size-tab-indicator accent underline; another area's active view sits on --color-background without it. An unavailable view's title is struck through in --color-muted; the canvas draws the strike as a hairline over the sample title. While dragged, a floating copy on --color-elevated with a hairline border follows the pointer and the tab keeps its place. The tooltip and accessible name carry the kind, the full path, and Preview or Unavailable.",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-tab-sheet-master",
+          "name": "Master",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-tab-sheet-master-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Master - an inactive pinned view; every state below is a ref",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "view-tab",
+              "name": "Component / View tab",
+              "reusable": true,
+              "width": 180,
+              "height": 32,
+              "fill": "$--color-panel",
+              "gap": "$--spacing-xs",
+              "padding": [
+                "$--spacing-none",
+                "$--spacing-sm"
+              ],
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "view-tab-mark",
+                  "name": "Type mark",
+                  "width": 14,
+                  "height": 14,
+                  "icon": "file-text",
+                  "library": "lucide",
+                  "fill": "$--color-file-document"
+                },
+                {
+                  "type": "frame",
+                  "id": "view-tab-title-lane",
+                  "name": "Title lane",
+                  "width": "fill_container",
+                  "height": 32,
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "view-tab-title",
+                      "name": "Title",
+                      "fill": "$--color-secondary",
+                      "content": "DESIGN.md",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    },
+                    {
+                      "type": "rectangle",
+                      "id": "view-tab-strike",
+                      "name": "Unavailable strike",
+                      "enabled": false,
+                      "layoutPosition": "absolute",
+                      "x": 0,
+                      "y": 16,
+                      "width": 44,
+                      "height": 1,
+                      "fill": "$--color-muted"
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "view-tab-dirty",
+                  "name": "Dirty mark",
+                  "fill": "$--color-warning",
+                  "content": "●",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal",
+                  "enabled": false
+                },
+                {
+                  "id": "view-tab-close",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Close view",
+                  "enabled": false,
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "x"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-tab-sheet-state-preview",
+          "name": "State / Preview, italic title",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-tab-sheet-state-preview-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Preview, italic title",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "view-tab-preview",
+              "type": "ref",
+              "ref": "view-tab",
+              "name": "Preview",
+              "descendants": {
+                "view-tab-title": {
+                  "content": "workspace.md",
+                  "fontStyle": "italic"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-tab-sheet-state-pinned",
+          "name": "State / Pinned, inactive",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-tab-sheet-state-pinned-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Pinned, inactive",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "view-tab-pinned",
+              "type": "ref",
+              "ref": "view-tab",
+              "name": "Pinned"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-tab-sheet-state-hover",
+          "name": "State / Hover, close shown",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-tab-sheet-state-hover-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Hover, close shown",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "view-tab-hover",
+              "type": "ref",
+              "ref": "view-tab",
+              "name": "Hover",
+              "fill": "$--color-elevated",
+              "descendants": {
+                "view-tab-close": {
+                  "enabled": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-tab-sheet-state-active",
+          "name": "State / Active view of the active area",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-tab-sheet-state-active-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Active view of the active area",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "view-tab-active",
+              "type": "ref",
+              "ref": "view-tab",
+              "name": "Active in the active area",
+              "fill": "$--color-background",
+              "stroke": "$--color-accent",
+              "strokeWidth": {
+                "bottom": "$--size-tab-indicator"
+              },
+              "strokeAlignment": "inner",
+              "descendants": {
+                "view-tab-title": {
+                  "fill": "$--color-primary"
+                },
+                "view-tab-close": {
+                  "enabled": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-tab-sheet-state-active-other",
+          "name": "State / Active view of another area, no indicator",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-tab-sheet-state-active-other-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Active view of another area, no indicator",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "view-tab-active-other",
+              "type": "ref",
+              "ref": "view-tab",
+              "name": "Active in another area",
+              "fill": "$--color-background",
+              "descendants": {
+                "view-tab-title": {
+                  "fill": "$--color-primary"
+                },
+                "view-tab-close": {
+                  "enabled": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-tab-sheet-state-dirty",
+          "name": "State / Dirty, never a preview",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-tab-sheet-state-dirty-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Dirty, never a preview",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "view-tab-dirty-state",
+              "type": "ref",
+              "ref": "view-tab",
+              "name": "Dirty",
+              "descendants": {
+                "view-tab-title": {
+                  "content": "notes.md"
+                },
+                "view-tab-dirty": {
+                  "enabled": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-tab-sheet-state-unavailable",
+          "name": "State / Unavailable, title struck through",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-tab-sheet-state-unavailable-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Unavailable, title struck through",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "view-tab-unavailable",
+              "type": "ref",
+              "ref": "view-tab",
+              "name": "Unavailable",
+              "descendants": {
+                "view-tab-mark": {
+                  "fill": "$--color-muted"
+                },
+                "view-tab-title": {
+                  "content": "notes.md",
+                  "fill": "$--color-muted"
+                },
+                "view-tab-strike": {
+                  "enabled": true
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-tab-sheet-state-diff",
+          "name": "State / Diff view, comparison mark",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-tab-sheet-state-diff-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Diff view, comparison mark",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "view-tab-diff",
+              "type": "ref",
+              "ref": "view-tab",
+              "name": "Diff",
+              "descendants": {
+                "view-tab-mark": {
+                  "icon": "git-compare",
+                  "fill": "$--color-warning"
+                },
+                "view-tab-title": {
+                  "content": "view_layout.rs"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-tab-sheet-state-long",
+          "name": "State / Long Korean title cut at the tail",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-tab-sheet-state-long-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Long Korean title cut at the tail",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "view-tab-long",
+              "type": "ref",
+              "ref": "view-tab",
+              "name": "Long title",
+              "descendants": {
+                "view-tab-title": {
+                  "content": "작업 공간 경계와 분할 규칙 정리.md"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-tab-sheet-state-dragging",
+          "name": "State / Floating copy while dragged",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-tab-sheet-state-dragging-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Floating copy while dragged",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "view-tab-dragging",
+              "type": "ref",
+              "ref": "view-tab",
+              "name": "Floating copy",
+              "fill": "$--color-elevated",
+              "stroke": "$--color-divider",
+              "strokeWidth": "$--size-hairline",
+              "strokeAlignment": "inner",
+              "descendants": {
+                "view-tab-title": {
+                  "fill": "$--color-primary"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "view-placement-sheet",
+      "x": 4960,
+      "y": 7264,
+      "name": "Component / View placement",
+      "width": 560,
+      "fill": "$--color-panel",
+      "cornerRadius": "$--radius-md",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-md",
+      "children": [
+        {
+          "type": "frame",
+          "id": "view-placement-sheet-title",
+          "name": "Title block",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-placement-sheet-title-name",
+              "name": "Title",
+              "fill": "$--color-primary",
+              "content": "View placement (web Workspace)",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-title",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "view-placement-sheet-title-spec",
+              "name": "Spec",
+              "fill": "$--color-secondary",
+              "content": "Where a dragged view will land. Over a tab bar, the insertion line (--size-tab-indicator wide in --color-accent, the tab bar's height) marks the slot: its own bar reorders, another area's bar moves the view there with no split and no copy. Over an edge of an area's content, the split overlay washes the half of that area the drop would create (--color-selected-wash inside a hairline --color-accent boundary) with one short label, and the drop creates that area and moves the view into it. One destination at a time. An ineligible target (the area cannot be halved at its minimum, the Workspace is at its area or depth limit, or it is not a View area) draws no overlay and the pointer shows the forbidden cursor. Escape, an outside release and a vanished target keep the original layout; nothing resizes during the drag and the preview is never stored. The edge zone size is the implementation's.",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-placement-sheet-master",
+          "name": "Master",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-placement-sheet-master-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Masters - the insertion line and the split overlay; the examples below place refs",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "view-placement-sheet-masters",
+              "name": "Masters",
+              "gap": "$--spacing-lg",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "view-insertion-line",
+                  "name": "Component / View insertion line",
+                  "reusable": true,
+                  "width": 2,
+                  "height": 32,
+                  "fill": "$--color-accent"
+                },
+                {
+                  "type": "frame",
+                  "id": "view-split-overlay",
+                  "name": "Component / View split overlay",
+                  "reusable": true,
+                  "width": 240,
+                  "height": 160,
+                  "fill": "$--color-selected-wash",
+                  "stroke": "$--color-accent",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inner",
+                  "layout": "vertical",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "view-split-overlay-label",
+                      "name": "Direction label",
+                      "fill": "$--color-elevated",
+                      "cornerRadius": "$--radius-sm",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-sm"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "view-split-overlay-icon",
+                          "name": "Direction",
+                          "width": 14,
+                          "height": 14,
+                          "icon": "columns-2",
+                          "library": "lucide",
+                          "fill": "$--color-primary"
+                        },
+                        {
+                          "type": "text",
+                          "id": "view-split-overlay-text",
+                          "name": "Label",
+                          "fill": "$--color-primary",
+                          "content": "Split right",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-placement-sheet-state-reorder",
+          "name": "State / Reorder in its own tab bar",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-placement-sheet-state-reorder-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Reorder in its own tab bar",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "view-placement-reorder",
+              "name": "Example",
+              "width": 480,
+              "height": 72,
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "view-placement-reorder-bar",
+                  "name": "Tab bar",
+                  "width": 480,
+                  "height": 32,
+                  "fill": "$--color-panel",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "view-placement-reorder-tab-1",
+                      "type": "ref",
+                      "ref": "view-tab",
+                      "name": "Tab / workspace.md",
+                      "width": 140,
+                      "descendants": {
+                        "view-tab-title": {
+                          "content": "workspace.md"
+                        }
+                      }
+                    },
+                    {
+                      "id": "view-placement-reorder-tab-2",
+                      "type": "ref",
+                      "ref": "view-tab",
+                      "name": "Tab / DESIGN.md",
+                      "width": 140,
+                      "descendants": {
+                        "view-tab-title": {
+                          "content": "DESIGN.md"
+                        }
+                      }
+                    },
+                    {
+                      "id": "view-placement-reorder-tab-3",
+                      "type": "ref",
+                      "ref": "view-tab",
+                      "name": "Tab / notes.md",
+                      "width": 140,
+                      "descendants": {
+                        "view-tab-title": {
+                          "content": "notes.md"
+                        }
+                      }
+                    },
+                    {
+                      "id": "view-placement-reorder-line",
+                      "type": "ref",
+                      "ref": "view-insertion-line",
+                      "name": "Insertion line",
+                      "layoutPosition": "absolute",
+                      "x": 139,
+                      "y": 0
+                    }
+                  ]
+                },
+                {
+                  "id": "view-placement-reorder-floating",
+                  "type": "ref",
+                  "ref": "view-tab",
+                  "name": "Floating copy / notes.md",
+                  "layoutPosition": "absolute",
+                  "x": 120,
+                  "y": 36,
+                  "width": 140,
+                  "fill": "$--color-elevated",
+                  "stroke": "$--color-divider",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inner",
+                  "descendants": {
+                    "view-tab-title": {
+                      "content": "notes.md",
+                      "fill": "$--color-primary"
+                    }
+                  }
+                },
+                {
+                  "type": "icon",
+                  "id": "view-placement-reorder-pointer",
+                  "name": "Pointer",
+                  "layoutPosition": "absolute",
+                  "x": 136,
+                  "y": 50,
+                  "width": 20,
+                  "height": 20,
+                  "icon": "mouse-pointer-2",
+                  "library": "lucide",
+                  "fill": "$--color-primary"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-placement-sheet-state-move",
+          "name": "State / Move into another area's tab bar, no split",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-placement-sheet-state-move-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Move into another area's tab bar, no split",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "view-placement-move",
+              "name": "Example",
+              "width": 480,
+              "height": 72,
+              "fill": "$--color-background",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "view-placement-move-left",
+                  "name": "Tab bar",
+                  "width": 239,
+                  "height": 32,
+                  "fill": "$--color-panel",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "view-placement-move-left-tab-1",
+                      "type": "ref",
+                      "ref": "view-tab",
+                      "name": "Tab / workspace.md",
+                      "width": 116,
+                      "descendants": {
+                        "view-tab-title": {
+                          "content": "workspace.md"
+                        }
+                      }
+                    },
+                    {
+                      "id": "view-placement-move-left-tab-2",
+                      "type": "ref",
+                      "ref": "view-tab",
+                      "name": "Tab / DESIGN.md",
+                      "width": 116,
+                      "descendants": {
+                        "view-tab-title": {
+                          "content": "DESIGN.md"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "rectangle",
+                  "id": "view-placement-move-divider",
+                  "name": "Divider",
+                  "width": 2,
+                  "height": 72,
+                  "fill": "$--color-divider"
+                },
+                {
+                  "type": "frame",
+                  "id": "view-placement-move-right",
+                  "name": "Tab bar",
+                  "width": 239,
+                  "height": 32,
+                  "fill": "$--color-panel",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "view-placement-move-right-tab-1",
+                      "type": "ref",
+                      "ref": "view-tab",
+                      "name": "Tab / notes.md",
+                      "width": 116,
+                      "descendants": {
+                        "view-tab-title": {
+                          "content": "notes.md"
+                        }
+                      }
+                    },
+                    {
+                      "id": "view-placement-move-line",
+                      "type": "ref",
+                      "ref": "view-insertion-line",
+                      "name": "Insertion line",
+                      "layoutPosition": "absolute",
+                      "x": 116,
+                      "y": 0
+                    }
+                  ]
+                },
+                {
+                  "type": "icon",
+                  "id": "view-placement-move-pointer",
+                  "name": "Pointer",
+                  "layoutPosition": "absolute",
+                  "x": 364,
+                  "y": 22,
+                  "width": 20,
+                  "height": 20,
+                  "icon": "mouse-pointer-2",
+                  "library": "lucide",
+                  "fill": "$--color-primary"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-placement-sheet-state-split-right",
+          "name": "State / Split right: the right half of the area",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-placement-sheet-state-split-right-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Split right: the right half of the area",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "view-placement-split-right",
+              "name": "Example View area",
+              "width": 480,
+              "height": 192,
+              "clip": true,
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "view-placement-split-right-bar",
+                  "name": "Tab bar",
+                  "width": 480,
+                  "height": 32,
+                  "fill": "$--color-panel",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "view-placement-split-right-tab-1",
+                      "type": "ref",
+                      "ref": "view-tab",
+                      "name": "Tab / workspace.md",
+                      "width": 140,
+                      "descendants": {
+                        "view-tab-title": {
+                          "content": "workspace.md"
+                        }
+                      }
+                    },
+                    {
+                      "id": "view-placement-split-right-tab-2",
+                      "type": "ref",
+                      "ref": "view-tab",
+                      "name": "Tab / DESIGN.md",
+                      "width": 140,
+                      "descendants": {
+                        "view-tab-title": {
+                          "content": "DESIGN.md"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "view-placement-split-right-content",
+                  "name": "Unchanged content",
+                  "width": "fill_container",
+                  "height": 160,
+                  "padding": "$--spacing-md",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "view-placement-split-right-content-note",
+                      "name": "Note",
+                      "fill": "$--color-muted",
+                      "content": "The document keeps its size until the drop",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "id": "view-placement-split-right-overlay",
+                  "type": "ref",
+                  "ref": "view-split-overlay",
+                  "name": "Split overlay / right",
+                  "layoutPosition": "absolute",
+                  "x": 240,
+                  "y": 0,
+                  "width": 240,
+                  "height": 192
+                },
+                {
+                  "type": "icon",
+                  "id": "view-placement-split-right-pointer",
+                  "name": "Pointer",
+                  "layoutPosition": "absolute",
+                  "x": 440,
+                  "y": 150,
+                  "width": 20,
+                  "height": 20,
+                  "icon": "mouse-pointer-2",
+                  "library": "lucide",
+                  "fill": "$--color-primary"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-placement-sheet-state-split-down",
+          "name": "State / Split down: the lower half of the area",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-placement-sheet-state-split-down-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Split down: the lower half of the area",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "view-placement-split-down",
+              "name": "Example View area",
+              "width": 480,
+              "height": 192,
+              "clip": true,
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "view-placement-split-down-bar",
+                  "name": "Tab bar",
+                  "width": 480,
+                  "height": 32,
+                  "fill": "$--color-panel",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "view-placement-split-down-tab-1",
+                      "type": "ref",
+                      "ref": "view-tab",
+                      "name": "Tab / workspace.md",
+                      "width": 140,
+                      "descendants": {
+                        "view-tab-title": {
+                          "content": "workspace.md"
+                        }
+                      }
+                    },
+                    {
+                      "id": "view-placement-split-down-tab-2",
+                      "type": "ref",
+                      "ref": "view-tab",
+                      "name": "Tab / DESIGN.md",
+                      "width": 140,
+                      "descendants": {
+                        "view-tab-title": {
+                          "content": "DESIGN.md"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "view-placement-split-down-content",
+                  "name": "Unchanged content",
+                  "width": "fill_container",
+                  "height": 160,
+                  "padding": "$--spacing-md",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "view-placement-split-down-content-note",
+                      "name": "Note",
+                      "fill": "$--color-muted",
+                      "content": "The document keeps its size until the drop",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "id": "view-placement-split-down-overlay",
+                  "type": "ref",
+                  "ref": "view-split-overlay",
+                  "name": "Split overlay / down",
+                  "layoutPosition": "absolute",
+                  "x": 0,
+                  "y": 96,
+                  "width": 480,
+                  "height": 96,
+                  "descendants": {
+                    "view-split-overlay-icon": {
+                      "icon": "rows-2"
+                    },
+                    "view-split-overlay-text": {
+                      "content": "Split down"
+                    }
+                  }
+                },
+                {
+                  "type": "icon",
+                  "id": "view-placement-split-down-pointer",
+                  "name": "Pointer",
+                  "layoutPosition": "absolute",
+                  "x": 300,
+                  "y": 168,
+                  "width": 20,
+                  "height": 20,
+                  "icon": "mouse-pointer-2",
+                  "library": "lucide",
+                  "fill": "$--color-primary"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-placement-sheet-state-ineligible",
+          "name": "State / Ineligible target: no overlay, forbidden cursor",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-placement-sheet-state-ineligible-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Ineligible target: no overlay, forbidden cursor",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "view-placement-ineligible",
+              "name": "Example View area",
+              "width": 480,
+              "height": 192,
+              "clip": true,
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "view-placement-ineligible-bar",
+                  "name": "Tab bar",
+                  "width": 480,
+                  "height": 32,
+                  "fill": "$--color-panel",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "view-placement-ineligible-tab-1",
+                      "type": "ref",
+                      "ref": "view-tab",
+                      "name": "Tab / workspace.md",
+                      "width": 140,
+                      "descendants": {
+                        "view-tab-title": {
+                          "content": "workspace.md"
+                        }
+                      }
+                    },
+                    {
+                      "id": "view-placement-ineligible-tab-2",
+                      "type": "ref",
+                      "ref": "view-tab",
+                      "name": "Tab / DESIGN.md",
+                      "width": 140,
+                      "descendants": {
+                        "view-tab-title": {
+                          "content": "DESIGN.md"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "view-placement-ineligible-content",
+                  "name": "Unchanged content",
+                  "width": "fill_container",
+                  "height": 160,
+                  "padding": "$--spacing-md",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "view-placement-ineligible-content-note",
+                      "name": "Note",
+                      "fill": "$--color-muted",
+                      "content": "Too small to halve, or at the area or depth limit: nothing changes",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "icon",
+                  "id": "view-placement-ineligible-pointer",
+                  "name": "Pointer",
+                  "layoutPosition": "absolute",
+                  "x": 440,
+                  "y": 150,
+                  "width": 20,
+                  "height": 20,
+                  "icon": "ban",
+                  "library": "lucide",
+                  "fill": "$--color-primary"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "view-tab-menu-sheet",
+      "x": 5600,
+      "y": 7264,
+      "name": "Component / View tab menu",
+      "width": 320,
+      "fill": "$--color-panel",
+      "cornerRadius": "$--radius-md",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-md",
+      "children": [
+        {
+          "type": "frame",
+          "id": "view-tab-menu-sheet-title",
+          "name": "Title block",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-tab-menu-sheet-title-name",
+              "name": "Title",
+              "fill": "$--color-primary",
+              "content": "View tab menu (web Workspace)",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-title",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "view-tab-menu-sheet-title-spec",
+              "name": "Spec",
+              "fill": "$--color-secondary",
+              "content": "Right-click or the menu key on a View tab: Keep open (preview only) | Split right, Split left, Split up, Split down | Move right, Move left, Move up, Move down, each only toward an area that exists there | Copy path, Reveal in Explorer | Close view. A Split the Workspace cannot make stays listed, disabled in --color-muted, with its reason under it in caption. No file deletion and no pane or tab close. Opening it moves nothing; Escape closes it. Every item is also a palette command for the active view. The labels are fixed; the reason wording is the implementation's.",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-tab-menu-sheet-master",
+          "name": "Master",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-tab-menu-sheet-master-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Master - every item; Move items start hidden",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "view-tab-menu",
+              "name": "Component / View tab menu",
+              "reusable": true,
+              "width": 200,
+              "fill": "$--color-balloon",
+              "cornerRadius": "$--radius-md",
+              "stroke": "$--color-divider",
+              "strokeWidth": "$--size-hairline",
+              "strokeAlignment": "inner",
+              "layout": "vertical",
+              "padding": [
+                "$--spacing-xxs",
+                "$--spacing-none"
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "view-tab-menu-keep-open",
+                  "name": "Keep open",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-sm"
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "view-tab-menu-keep-open-label",
+                      "name": "Label",
+                      "fill": "$--color-primary",
+                      "content": "Keep open",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "view-tab-menu-sep-split",
+                  "name": "Separator",
+                  "width": "fill_container",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-none"
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "view-tab-menu-sep-split-rule",
+                      "name": "Hairline",
+                      "width": "fill_container",
+                      "height": 1,
+                      "fill": "$--color-divider"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "view-tab-menu-split-right",
+                  "name": "Split right",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-sm"
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "view-tab-menu-split-right-label",
+                      "name": "Label",
+                      "fill": "$--color-primary",
+                      "content": "Split right",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    },
+                    {
+                      "type": "text",
+                      "id": "view-tab-menu-split-right-reason",
+                      "name": "Reason",
+                      "fill": "$--color-muted",
+                      "content": "Reason this item cannot act",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "enabled": false
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "view-tab-menu-split-left",
+                  "name": "Split left",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-sm"
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "view-tab-menu-split-left-label",
+                      "name": "Label",
+                      "fill": "$--color-primary",
+                      "content": "Split left",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    },
+                    {
+                      "type": "text",
+                      "id": "view-tab-menu-split-left-reason",
+                      "name": "Reason",
+                      "fill": "$--color-muted",
+                      "content": "Reason this item cannot act",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "enabled": false
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "view-tab-menu-split-up",
+                  "name": "Split up",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-sm"
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "view-tab-menu-split-up-label",
+                      "name": "Label",
+                      "fill": "$--color-primary",
+                      "content": "Split up",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    },
+                    {
+                      "type": "text",
+                      "id": "view-tab-menu-split-up-reason",
+                      "name": "Reason",
+                      "fill": "$--color-muted",
+                      "content": "Reason this item cannot act",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "enabled": false
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "view-tab-menu-split-down",
+                  "name": "Split down",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-sm"
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "view-tab-menu-split-down-label",
+                      "name": "Label",
+                      "fill": "$--color-primary",
+                      "content": "Split down",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    },
+                    {
+                      "type": "text",
+                      "id": "view-tab-menu-split-down-reason",
+                      "name": "Reason",
+                      "fill": "$--color-muted",
+                      "content": "Reason this item cannot act",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "enabled": false
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "view-tab-menu-move-right",
+                  "name": "Move right",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-sm"
+                  ],
+                  "enabled": false,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "view-tab-menu-move-right-label",
+                      "name": "Label",
+                      "fill": "$--color-primary",
+                      "content": "Move right",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "view-tab-menu-move-left",
+                  "name": "Move left",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-sm"
+                  ],
+                  "enabled": false,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "view-tab-menu-move-left-label",
+                      "name": "Label",
+                      "fill": "$--color-primary",
+                      "content": "Move left",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "view-tab-menu-move-up",
+                  "name": "Move up",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-sm"
+                  ],
+                  "enabled": false,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "view-tab-menu-move-up-label",
+                      "name": "Label",
+                      "fill": "$--color-primary",
+                      "content": "Move up",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "view-tab-menu-move-down",
+                  "name": "Move down",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-sm"
+                  ],
+                  "enabled": false,
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "view-tab-menu-move-down-label",
+                      "name": "Label",
+                      "fill": "$--color-primary",
+                      "content": "Move down",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "view-tab-menu-sep-path",
+                  "name": "Separator",
+                  "width": "fill_container",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-none"
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "view-tab-menu-sep-path-rule",
+                      "name": "Hairline",
+                      "width": "fill_container",
+                      "height": 1,
+                      "fill": "$--color-divider"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "view-tab-menu-copy-path",
+                  "name": "Copy path",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-sm"
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "view-tab-menu-copy-path-label",
+                      "name": "Label",
+                      "fill": "$--color-primary",
+                      "content": "Copy path",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "view-tab-menu-reveal",
+                  "name": "Reveal in Explorer",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-sm"
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "view-tab-menu-reveal-label",
+                      "name": "Label",
+                      "fill": "$--color-primary",
+                      "content": "Reveal in Explorer",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    },
+                    {
+                      "type": "text",
+                      "id": "view-tab-menu-reveal-reason",
+                      "name": "Reason",
+                      "fill": "$--color-muted",
+                      "content": "Reason this item cannot act",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container",
+                      "enabled": false
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "view-tab-menu-sep-close",
+                  "name": "Separator",
+                  "width": "fill_container",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-none"
+                  ],
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "id": "view-tab-menu-sep-close-rule",
+                      "name": "Hairline",
+                      "width": "fill_container",
+                      "height": 1,
+                      "fill": "$--color-divider"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "view-tab-menu-close",
+                  "name": "Close view",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "padding": [
+                    "$--spacing-xxs",
+                    "$--spacing-sm"
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "view-tab-menu-close-label",
+                      "name": "Label",
+                      "fill": "$--color-primary",
+                      "content": "Close view",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-tab-menu-sheet-state-preview",
+          "name": "State / Preview view, two views in its only area",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-tab-menu-sheet-state-preview-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Preview view, two views in its only area",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "view-tab-menu-preview",
+              "type": "ref",
+              "ref": "view-tab-menu",
+              "name": "Preview view"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-tab-menu-sheet-state-pinned",
+          "name": "State / Pinned view, an area to its left, Split down too short",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-tab-menu-sheet-state-pinned-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Pinned view, an area to its left, Split down too short",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "view-tab-menu-pinned",
+              "type": "ref",
+              "ref": "view-tab-menu",
+              "name": "Pinned view",
+              "descendants": {
+                "view-tab-menu-keep-open": {
+                  "enabled": false
+                },
+                "view-tab-menu-sep-split": {
+                  "enabled": false
+                },
+                "view-tab-menu-move-left": {
+                  "enabled": true
+                },
+                "view-tab-menu-split-down-label": {
+                  "fill": "$--color-muted"
+                },
+                "view-tab-menu-split-down-reason": {
+                  "enabled": true,
+                  "content": "Not enough height for two areas"
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "view-area-states-sheet",
+      "x": 6000,
+      "y": 7264,
+      "name": "Component / View area states",
+      "width": 560,
+      "fill": "$--color-panel",
+      "cornerRadius": "$--radius-md",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-md",
+      "children": [
+        {
+          "type": "frame",
+          "id": "view-area-states-sheet-title",
+          "name": "Title block",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-area-states-sheet-title-name",
+              "name": "Title",
+              "fill": "$--color-primary",
+              "content": "View area states (web Workspace)",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-title",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "view-area-states-sheet-title-spec",
+              "name": "Spec",
+              "fill": "$--color-secondary",
+              "content": "One message component for a View area's body. The empty Views (the one area left when the last view closes) says no file or diff is open, with Show Explorer while the Explorer is hidden and Open file ⌘P; the layout does not change on its own. A view's own states: Opening… while its file is read; waiting, naming the device state, until its root can be read, after which it reads by itself; unavailable, with the read failure, Close view and Retry. A state belongs to its view; other views and areas are untouched. Buttons follow the shared text button: compact 24 high, body semibold, standard on --color-elevated with a hairline, quiet without a container. The per-view states sit in an area at --size-view-area-min-height, written as its literal 144 (a --size-tab-strip tab bar over a 112 body).",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-area-states-sheet-master",
+          "name": "Master",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-area-states-sheet-master-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Master - the empty Views with Show Explorer; every state below is a ref",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "view-area-message",
+              "name": "Component / View area message",
+              "reusable": true,
+              "width": 480,
+              "height": 160,
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "gap": "$--spacing-sm",
+              "padding": "$--spacing-lg",
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "icon",
+                  "id": "view-area-message-icon",
+                  "name": "State icon",
+                  "enabled": false,
+                  "width": 14,
+                  "height": 14,
+                  "icon": "triangle-alert",
+                  "library": "lucide",
+                  "fill": "$--color-warning"
+                },
+                {
+                  "type": "text",
+                  "id": "view-area-message-text",
+                  "name": "Message",
+                  "fill": "$--color-muted",
+                  "content": "No file or diff is open in this Workspace.",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "textAlign": "center"
+                },
+                {
+                  "type": "frame",
+                  "id": "view-area-message-actions",
+                  "name": "Actions",
+                  "gap": "$--spacing-sm",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "view-area-message-show-explorer",
+                      "name": "Show Explorer",
+                      "height": 24,
+                      "fill": "$--color-elevated",
+                      "stroke": "$--color-divider",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "cornerRadius": "$--radius-sm",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-sm"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "view-area-message-show-explorer-label",
+                          "name": "Label",
+                          "fill": "$--color-primary",
+                          "content": "Show Explorer",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "view-area-message-open-file",
+                      "name": "Open file",
+                      "height": 24,
+                      "cornerRadius": "$--radius-sm",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-sm"
+                      ],
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "view-area-message-open-file-label",
+                          "name": "Label",
+                          "fill": "$--color-secondary",
+                          "content": "Open file",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "view-area-message-open-file-chord",
+                          "name": "Chord",
+                          "fill": "$--color-muted",
+                          "content": "⌘P",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "view-area-message-close",
+                      "name": "Close view",
+                      "height": 24,
+                      "fill": "$--color-elevated",
+                      "stroke": "$--color-divider",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "cornerRadius": "$--radius-sm",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-sm"
+                      ],
+                      "alignItems": "center",
+                      "enabled": false,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "view-area-message-close-label",
+                          "name": "Label",
+                          "fill": "$--color-primary",
+                          "content": "Close view",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "view-area-message-retry",
+                      "name": "Retry",
+                      "height": 24,
+                      "fill": "$--color-elevated",
+                      "stroke": "$--color-divider",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "cornerRadius": "$--radius-sm",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        "$--spacing-none",
+                        "$--spacing-sm"
+                      ],
+                      "alignItems": "center",
+                      "enabled": false,
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "view-area-message-retry-label",
+                          "name": "Label",
+                          "fill": "$--color-primary",
+                          "content": "Retry",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-area-states-sheet-state-empty-explorer-shown",
+          "name": "State / Views empty, Explorer already shown",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-area-states-sheet-state-empty-explorer-shown-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Views empty, Explorer already shown",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "view-area-message-empty-shown",
+              "type": "ref",
+              "ref": "view-area-message",
+              "name": "Empty, Explorer shown",
+              "descendants": {
+                "view-area-message-show-explorer": {
+                  "enabled": false
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-area-states-sheet-state-opening",
+          "name": "State / Opening, in an area at the minimum height",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-area-states-sheet-state-opening-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Opening, in an area at the minimum height",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "view-area-states-opening",
+              "name": "Area at the minimum height (144)",
+              "width": 480,
+              "height": 144,
+              "clip": true,
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "view-area-states-opening-bar",
+                  "name": "Tab bar",
+                  "width": 480,
+                  "height": 32,
+                  "fill": "$--color-panel",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "view-area-states-opening-tab",
+                      "type": "ref",
+                      "ref": "view-tab",
+                      "name": "Tab / notes.md",
+                      "width": 140,
+                      "descendants": {
+                        "view-tab-title": {
+                          "content": "notes.md"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "id": "view-area-message-opening",
+                  "type": "ref",
+                  "ref": "view-area-message",
+                  "name": "Opening",
+                  "width": 480,
+                  "height": 112,
+                  "descendants": {
+                    "view-area-message-text": {
+                      "content": "Opening…"
+                    },
+                    "view-area-message-actions": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-area-states-sheet-state-waiting",
+          "name": "State / Waiting for a device, with its reason",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-area-states-sheet-state-waiting-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Waiting for a device, with its reason",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "view-area-states-waiting",
+              "name": "Area at the minimum height (144)",
+              "width": 480,
+              "height": 144,
+              "clip": true,
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "view-area-states-waiting-bar",
+                  "name": "Tab bar",
+                  "width": 480,
+                  "height": 32,
+                  "fill": "$--color-panel",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "view-area-states-waiting-tab",
+                      "type": "ref",
+                      "ref": "view-tab",
+                      "name": "Tab / notes.md",
+                      "width": 140,
+                      "descendants": {
+                        "view-tab-title": {
+                          "content": "notes.md"
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "id": "view-area-message-waiting",
+                  "type": "ref",
+                  "ref": "view-area-message",
+                  "name": "Waiting",
+                  "width": 480,
+                  "height": 112,
+                  "descendants": {
+                    "view-area-message-text": {
+                      "content": "Waiting for MacBook Pro to connect"
+                    },
+                    "view-area-message-actions": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "view-area-states-sheet-state-unavailable",
+          "name": "State / Unavailable, with Close view and Retry",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "view-area-states-sheet-state-unavailable-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Unavailable, with Close view and Retry",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "view-area-states-unavailable",
+              "name": "Area at the minimum height (144)",
+              "width": 480,
+              "height": 144,
+              "clip": true,
+              "fill": "$--color-background",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "view-area-states-unavailable-bar",
+                  "name": "Tab bar",
+                  "width": 480,
+                  "height": 32,
+                  "fill": "$--color-panel",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "id": "view-area-states-unavailable-tab",
+                      "type": "ref",
+                      "ref": "view-tab",
+                      "name": "Tab / notes.md",
+                      "width": 140,
+                      "fill": "$--color-background",
+                      "stroke": "$--color-accent",
+                      "strokeWidth": {
+                        "bottom": "$--size-tab-indicator"
+                      },
+                      "strokeAlignment": "inner",
+                      "descendants": {
+                        "view-tab-title": {
+                          "fill": "$--color-muted"
+                        },
+                        "view-tab-mark": {
+                          "fill": "$--color-muted"
+                        },
+                        "view-tab-strike": {
+                          "enabled": true
+                        },
+                        "view-tab-close": {
+                          "enabled": true
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "id": "view-area-message-unavailable",
+                  "type": "ref",
+                  "ref": "view-area-message",
+                  "name": "Unavailable",
+                  "width": 480,
+                  "height": 112,
+                  "descendants": {
+                    "view-area-message-icon": {
+                      "enabled": true
+                    },
+                    "view-area-message-text": {
+                      "content": "/repo/docs/notes.md is unavailable: No such file or directory",
+                      "fill": "$--color-secondary"
+                    },
+                    "view-area-message-show-explorer": {
+                      "enabled": false
+                    },
+                    "view-area-message-open-file": {
+                      "enabled": false
+                    },
+                    "view-area-message-close": {
+                      "enabled": true
+                    },
+                    "view-area-message-retry": {
+                      "enabled": true
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ],
   "variables": {
