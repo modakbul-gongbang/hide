@@ -13,6 +13,7 @@ import {
   placementForWidth,
   ratioForFirst,
   resizeTarget,
+  revealedScroll,
   shownTools,
   splitEligibility,
   steppedRatio,
@@ -113,6 +114,15 @@ describe("neighbours", () => {
     expect(neighbourArea(tree, "a1", "left")).toBeNull();
     expect(neighbourArea(tree, "a2", "right")).toBeNull();
     expect(neighbourArea(tree, "a3", "down")).toBeNull();
+  });
+});
+
+describe("a tab strip's scroll", () => {
+  it("moves only as far as it takes to show the shown tab whole, its left edge first when it cannot fit", () => {
+    expect(revealedScroll(0, 300, 100, 120)).toBe(0);
+    expect(revealedScroll(0, 300, 400, 120)).toBe(220);
+    expect(revealedScroll(250, 300, 100, 120)).toBe(100);
+    expect(revealedScroll(0, 100, 400, 120)).toBe(400);
   });
 });
 

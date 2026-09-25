@@ -913,6 +913,7 @@ The Views region holds one or more View areas, each with its own tab bar above i
 A split divides one area in two along one axis, and either half can split again along either axis, so every arrangement of side-by-side and stacked areas is a tree of halves.
 One area is active: the next file opens there, the palette and the keyboard act on it, and its active view's tab alone carries the accent indicator (`--size-tab-indicator` in `{colors.accent}`).
 Every other area still shows its own active view's tab on `{colors.background}` with a primary title and no indicator, so the operator sees what each area holds and which one is in charge.
+An area whose tabs outrun its width scrolls its own strip so the shown view's tab stays in sight whenever the shown view changes or the area is resized.
 Clicking a tab or a view, or moving focus to another area from the palette, makes that area active.
 Between two areas is a divider `--size-resize-handle` wide in `{colors.divider}`, turning `{colors.accent}` on hover and keyboard focus; it drags with a guide line and lands once on release, as the boundary between Agents and Views does, so a drag never resizes a document or a terminal on every pointer move.
 A focused divider moves with the arrow keys along its axis, one step and one change per press; the size of the step is the implementation's.
@@ -965,6 +966,7 @@ The labels say where the view goes, never Move to Group.
 Close view closes the view and never the file on disk; the menu has no file deletion and never closes a pane or a tab.
 Opening the menu moves no focus and changes nothing, and Escape closes it.
 Every item is also a palette command for the active view, and the palette adds Open to the side, focus to the next or previous area, and resizing the active area, so every split, move, close and resize can be done from the keyboard.
+A palette command that cannot run now is drawn muted with its whole reason under its title, and picking it does nothing.
 No new shortcut is assigned: the existing tab close and move chords act on the active view.
 The item labels above are fixed; the reason wording is the implementation's.
 

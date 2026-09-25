@@ -84,7 +84,7 @@ function PaletteRow({
   icon?: React.ReactNode;
   title: string;
   subtitle?: string;
-  /** A command that cannot run now: drawn muted with its reason as the subtitle, and picking it does nothing. */
+  /** A command that cannot run now: drawn muted with its whole reason under the title, and picking it does nothing. */
   unavailable?: boolean;
   onPick: () => void;
   onHover: () => void;
@@ -101,8 +101,18 @@ function PaletteRow({
       onClick={onPick}
     >
       {icon}
-      <span className="min-w-0 flex-1 truncate">{title}</span>
-      {subtitle ? <span className="max-w-[var(--size-recent-location-max)] shrink-0 truncate text-caption text-muted">{subtitle}</span> : null}
+      {unavailable ? (
+        // The whole reason, under the title, as every web menu draws an item it cannot run (B9).
+        <span className="flex min-w-0 flex-1 flex-col">
+          <span className="truncate">{title}</span>
+          {subtitle ? <span className="text-caption text-muted">{subtitle}</span> : null}
+        </span>
+      ) : (
+        <>
+          <span className="min-w-0 flex-1 truncate">{title}</span>
+          {subtitle ? <span className="max-w-[var(--size-recent-location-max)] shrink-0 truncate text-caption text-muted">{subtitle}</span> : null}
+        </>
+      )}
     </button>
   );
 }

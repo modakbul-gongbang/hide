@@ -303,6 +303,18 @@ function touches(from: Rect, to: Rect, direction: Edge): boolean {
   }
 }
 
+/**
+ * The scroll position of a tab strip that shows the tab at `offset` (its
+ * left edge within the strip's content) with `width`: unchanged when the
+ * tab is already whole in the `viewport`, else the least move that shows
+ * it, its left edge first when it cannot fit whole.
+ */
+export function revealedScroll(scroll: number, viewport: number, offset: number, width: number): number {
+  if (offset < scroll || width >= viewport) return offset;
+  if (offset + width > scroll + viewport) return offset + width - viewport;
+  return scroll;
+}
+
 // --- eligibility -------------------------------------------------------------
 
 export type Eligibility = { ok: true } | { ok: false; reason: string };

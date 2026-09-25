@@ -23,6 +23,7 @@ import {
   locateDisplay,
   placeKey,
   ratioAtOffset,
+  revealedScroll,
   sameTarget,
   shownDisplays,
   shownTools,
@@ -519,9 +520,27 @@ function DisplayBody({ display }: { display: ViewDisplaySnapshot }) {
 function AreaTabBar({ area, active, index, count, switcher }: { area: ViewAreaSnapshot; active: boolean; index: number; count: number; switcher: boolean }) {
   const tree = useTree();
   const shown = area.displays.find((row) => row.id === area.active) ?? null;
+  // The shown view's tab stays in sight however many tabs the area holds
+  // (B20, B21): the strip scrolls itself, and nothing around it, whenever
+  // the shown view changes or the strip is resized.
+  const strip = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const list = strip.current;
+    if (!list) return;
+    const reveal = () => {
+      const tab = list.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
+      if (!tab) return;
+      const offset = tab.getBoundingClientRect().left - list.getBoundingClientRect().left + list.scrollLeft;
+      list.scrollLeft = revealedScroll(list.scrollLeft, list.clientWidth, offset, tab.offsetWidth);
+    };
+    reveal();
+    const observer = new ResizeObserver(reveal);
+    observer.observe(list);
+    return () => observer.disconnect();
+  }, [area.active, area.displays.length]);
   return (
     <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch bg-panel" data-view-tab-bar={area.id}>
-      <div role="tablist" aria-label={`View tabs, area ${index + 1} of ${count}`} className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
+      <div ref={strip} role="tablist" aria-label={`View tabs, area ${index + 1} of ${count}`} className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
         {area.displays.map((display) => (
           <ContextMenu
             key={display.id}
