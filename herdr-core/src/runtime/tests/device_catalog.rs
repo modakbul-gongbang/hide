@@ -1009,6 +1009,42 @@ fn a_device_agent_opened_from_views_only_brings_its_own_workspace_to_together() 
     };
     assert_eq!(mode(&runtime, &t.linked), ViewMode::Together);
     assert_eq!(mode(&runtime, &t.main), ViewMode::Views);
+
+    // D-11: the choice is remembered only once the device's Herdr has moved
+    // there, so a refusal on the device would remember nothing.
+    let resumed = |runtime: &mut Runtime| {
+        runtime.sync_workspace_view();
+        let view = runtime.snapshot.workspace_view.clone().expect("front");
+        (view.path, view.resumed)
+    };
+    assert_eq!(resumed(&mut runtime), (t.main.clone(), false));
+    let moved = |runtime: &mut Runtime, workspace: &str| {
+        let mut raw = session(vec![
+            herdr_workspace(TARGET, "w1", &t.main, &[("t1", &t.main)]),
+            herdr_workspace(TARGET, "w2", &t.linked, &[("t3", &t.linked)]),
+        ]);
+        raw.focused_workspace_id = Some(format!("remote:{TARGET}:workspace:{workspace}"));
+        raw.focused_checkout_id = Some(format!("remote:{TARGET}:checkout:{workspace}"));
+        runtime.ingest_remote_session(TARGET, Ok(raw));
+    };
+    moved(&mut runtime, "w2");
+    assert_eq!(resumed(&mut runtime), (t.linked.clone(), true));
+
+    // A Workspace opened from Main or an Overview is chosen the same way.
+    runtime.request_remote_control(RemoteControlPayload {
+        target_id: TARGET.to_owned(),
+        request_id: "open-workspace".to_owned(),
+        report_pane_focus_outcome: false,
+        focus_device: true,
+        request: RemoteControlRequest::FocusWorkspace {
+            workspace_id: format!("remote:{TARGET}:workspace:w1"),
+            checkout_id: Some(format!("remote:{TARGET}:checkout:w1")),
+        },
+    });
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(resumed(&mut runtime), (t.linked.clone(), true));
+    moved(&mut runtime, "w1");
+    assert_eq!(resumed(&mut runtime), (t.main.clone(), true));
 }
 
 /// S6 B21: a device request refused before it is sent leaves the device

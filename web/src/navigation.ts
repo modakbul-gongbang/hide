@@ -280,8 +280,8 @@ const SETTLED_HERDR = new Set(["connected", "unconfigured", "socket_missing", "u
 
 /**
  * The first screen (S6 B19, D-11): the Workspace in front when the core
- * says it is the one used last in an earlier run, Main when it is not (a
- * first run, or a last Workspace that is gone) or when the device in front
+ * marks it as the one the operator last chose, now or before a restart,
+ * Main when it is not (a first run, or a last Workspace that is gone) or when the device in front
  * has settled without one, and null while that device is still being
  * reached. The device in front decides: a device Workspace is known only
  * once that device's session arrives, and this machine's Herdr settling

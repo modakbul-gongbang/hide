@@ -32,6 +32,8 @@ pub(super) struct WorkspaceViewStore {
     /// The Workspace the operator last chose, in this process or before it
     /// started: the one the app opens on (D-11); none on a first run.
     resumable: Option<WorkspaceKey>,
+    /// A device Workspace the operator asked for, chosen once it is in front.
+    pending_choice: Option<WorkspaceKey>,
     /// The right panel the settings file held at start. The snapshot's panel
     /// follows the front Workspace's tools, a projection the settings file
     /// never takes (D-10).
@@ -140,6 +142,7 @@ impl WorkspaceViewStore {
                 front: None,
                 recorded: None,
                 resumable,
+                pending_choice: None,
                 saved_panel,
                 frozen,
                 save_pending: false,
@@ -265,9 +268,23 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_mut() else {
             return;
         };
+        store.pending_choice = None;
+        // A click on a pane of the Workspace already chosen writes nothing.
+        if store.resumable.as_ref() == Some(key) {
+            return;
+        }
         store.resumable = Some(key.clone());
         store.views.entry(&key.0, &key.1).last_used_unix_ms = unix_milliseconds();
         self.persist_workspace_views();
+    }
+
+    /// A device request that chooses a Workspace: the device's Herdr moves
+    /// its front only when it accepts, so the choice is remembered when the
+    /// sync sees the front land there, and a refusal remembers nothing.
+    pub(super) fn choose_when_in_front(&mut self, key: WorkspaceKey) {
+        if let Some(store) = self.workspace_views.as_mut() {
+            store.pending_choice = Some(key);
+        }
     }
 
     /// Applies what the event that just ran asks of the front Workspace.
@@ -412,6 +429,14 @@ impl Runtime {
         if front != store.front {
             self.workspace_views.as_mut().expect("checked above").front = front.clone();
         }
+        if let Some(key) = front.as_ref()
+            && self
+                .workspace_views
+                .as_ref()
+                .is_some_and(|store| store.pending_choice.as_ref() == Some(key))
+        {
+            self.mark_workspace_chosen(key);
+        }
         self.restore_front_when_ready();
         if front.is_some() {
             self.align_editor_with_front();
@@ -436,8 +461,8 @@ impl Runtime {
         let Some(key) = store.front.clone() else {
             return false;
         };
-        if self.front_workspace_key().as_ref() != Some(&key)
-            || store.live.contains(&key)
+        if store.live.contains(&key)
+            || self.front_workspace_key().as_ref() != Some(&key)
             || !self.view_root_ready(&key)
         {
             return false;

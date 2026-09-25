@@ -438,6 +438,22 @@ impl Runtime {
             .separate_view_areas()
             .then(|| self.remote_request_workspace_key(&target_id, &session, &payload.request))
             .flatten();
+        // The Workspace this request chooses, remembered once the device's
+        // front lands there (D-11): a Workspace opened from Main or an
+        // Overview names its checkout; an agent or tab, the checkout holding
+        // it.
+        let chosen_key = match &payload.request {
+            RemoteControlRequest::FocusWorkspace {
+                workspace_id,
+                checkout_id: Some(checkout_id),
+            }
+            | RemoteControlRequest::CreateTab {
+                workspace_id,
+                checkout_id: Some(checkout_id),
+                ..
+            } if self.separate_view_areas() => self.workspace_key(workspace_id, checkout_id),
+            _ => agents_area_key.clone(),
+        };
         let action = match payload.request {
             RemoteControlRequest::FocusPane { .. } => {
                 RemoteControlAction::Pane(PaneControlAction::Focus {
@@ -730,7 +746,9 @@ impl Runtime {
         }
         if let Some(key) = agents_area_key {
             self.apply_area_intent_to(&key, AreaIntent::Agents);
-            self.mark_workspace_chosen(&key);
+        }
+        if let Some(key) = chosen_key {
+            self.choose_when_in_front(key);
         }
         true
     }

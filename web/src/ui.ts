@@ -155,7 +155,9 @@ export const useUiStore = create<UiStore>((set, get) => ({
   watchedRemoval: null,
   recordingShortcut: false,
   escapeLayers: [],
-  setScreen: (screen) => set({ screen }),
+  // Moving by hand drops an open still waiting for its Workspace, so a late
+  // answer does not pull the screen away from where the operator went.
+  setScreen: (screen) => set({ screen, opening: null }),
   setRelation: (relation) => set({ relation }),
   setSidebarMode: (sidebarMode) => set({ sidebarMode }),
   toggleSidebarMode: () => {
