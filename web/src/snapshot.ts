@@ -35,8 +35,6 @@ export type AgentRow = {
   lineage_collapsed?: boolean;
   /** The checkout this row runs in, set only when it differs from its parent's. */
   lineage_worktree_badge?: string | null;
-  /** True when the row's group wanted a sentence and none came, so the status word stands in. */
-  status_word_visible?: boolean;
 };
 
 export type DescendantCounts = { error: number; approval: number; question: number; working: number; done: number };

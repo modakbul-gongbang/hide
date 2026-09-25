@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { badgeLabel, badgeParts, branchChip, directChildren, lineShownAtRest, lineTone, markTone, rowLine, sectionTree } from "./agentRow";
+import { badgeLabel, badgeParts, branchChip, directChildren, lineShownAtRest, lineTone, markTone, rowLine, sectionCount, sectionTree } from "./agentRow";
 import type { AgentRow } from "./snapshot";
 
 function row(pane: string, patch: Partial<AgentRow> = {}): AgentRow {
@@ -95,6 +95,18 @@ describe("the tree a group section draws (D-03, B6)", () => {
       ["g", 2],
       ["c2", 1],
     ]);
+  });
+
+  it("counts every agent a heading speaks for, folded descendants included, each once", () => {
+    const counts = new Map([["p", 3], ["c1", 1]]);
+    const count = (_device: string | null, id: string) => counts.get(id) ?? 0;
+    const other = row("o");
+    const folded = sectionTree([{ agent: parent, device: null }, { agent: other, device: null }], lookup, count);
+    expect(sectionCount(folded)).toBe(5);
+    const open = new Map(all);
+    open.set("p", { ...parent, lineage_collapsed: false });
+    const unfolded = sectionTree([{ agent: open.get("p")!, device: null }, { agent: other, device: null }], (_d, id) => open.get(id), count);
+    expect(sectionCount(unfolded)).toBe(5);
   });
 
   it("lists only the direct children still present for the popover", () => {

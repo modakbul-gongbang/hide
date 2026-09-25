@@ -129,6 +129,15 @@ export function sectionTree(
   return rows;
 }
 
+/**
+ * How many agents a group heading speaks for: each root it lists and every
+ * live descendant beneath it, folded or not, so a delegated row counts once,
+ * under the heading its parent is drawn in.
+ */
+export function sectionCount(rows: TreeRow[]): number {
+  return rows.filter((row) => row.depth === 0).reduce((total, row) => total + 1 + row.descendants, 0);
+}
+
 /** The direct children the badge's popover lists, in lineage order, that are still rows. */
 export function directChildren(agent: AgentRow, byPane: (paneId: string) => AgentRow | undefined): AgentRow[] {
   return (agent.lineage_child_pane_ids ?? []).map(byPane).filter((row): row is AgentRow => row !== undefined);

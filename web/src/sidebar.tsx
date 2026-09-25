@@ -6,7 +6,7 @@ import { RowMenu } from "./components/entry-menu";
 import { Hint } from "./components/ui/tooltip";
 import { DevicePicker } from "./DevicePicker";
 import { NewWorkspace } from "./NewWorkspace";
-import { directChildren, sectionTree } from "./agentRow";
+import { directChildren, sectionCount, sectionTree } from "./agentRow";
 import { AgentRowItem } from "./components/agent-row";
 import { agentSections, allAgents, liveDescendantCounts, type ListedAgent } from "./navigation";
 import { activeCheckouts, activityLabel, inactiveCheckouts, projectRows, pullRequestBadge, type ProjectRow } from "./projects";
@@ -101,7 +101,7 @@ function AgentList({ actions }: { actions: Actions }) {
       {tree.sections.map((section) => (
         <li key={section.group} data-agent-group={section.group}>
           <div className="px-md pb-xxs pt-sm text-micro uppercase text-muted-foreground" id={`agent-group-${section.group}`}>
-            {section.label} · {section.agents.length}
+            {section.label} · {section.count}
           </div>
           <ul aria-labelledby={`agent-group-${section.group}`}>
             {section.rows.map((row) => (
@@ -144,7 +144,8 @@ function agentTree(listed: ListedAgent[]) {
   const sections = agentSections(listed.map((row) => row.agent))
     .map((section) => {
       const roots = section.agents.filter((agent) => !agent.delegated);
-      return { ...section, agents: roots, rows: sectionTree(roots.map((agent) => ({ agent, device: deviceOf.get(agent) ?? null })), lookup, descendantsOf) };
+      const rows = sectionTree(roots.map((agent) => ({ agent, device: deviceOf.get(agent) ?? null })), lookup, descendantsOf);
+      return { group: section.group, label: section.label, rows, count: sectionCount(rows) };
     })
     .filter((section) => section.rows.length > 0);
   return {

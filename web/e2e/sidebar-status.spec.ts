@@ -51,6 +51,8 @@ test("a root waiting on its child, the badge's child list, and the progress line
     await expect(parentRow).toHaveAttribute("data-waiting", "true", { timeout: 20_000 });
     await expect(page.locator(`[data-agent-group="working"] [data-pane="${parent}"]`)).toBeVisible();
     await expect(parentRow.locator('[data-badge-part="working"]')).toHaveText("●1");
+    // The heading counts the folded child with its parent.
+    await expect(page.locator("#agent-group-working")).toHaveText(/· 2$/);
     // Folded by default: the delegated child is drawn under its parent only once unfolded.
     await expect(page.locator(`[data-agent-list] [data-pane="${child}"]`)).toHaveCount(0);
     await screenshot(page, "sidebar-status-waiting");

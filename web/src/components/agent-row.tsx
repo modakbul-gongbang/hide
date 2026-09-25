@@ -96,7 +96,8 @@ export const AgentRowItem = memo(function AgentRowItem({
         {agent.symbol}
       </span>
       <AgentMark kind={agent.agent_kind} className="pointer-events-none" />
-      <span className="pointer-events-none flex min-w-0 flex-1 flex-col">
+      {/* The row button's name already reads all of this out. */}
+      <span className="pointer-events-none flex min-w-0 flex-1 flex-col" aria-hidden="true">
         <span className="flex min-w-0 items-center gap-xs">
           <span className={`min-w-0 flex-1 truncate ${titleTone} ${attention ? "font-medium" : ""}`}>{agent.identity_label}</span>
           {branch ? (
