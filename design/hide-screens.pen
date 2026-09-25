@@ -2142,8 +2142,8 @@
         {
           "type": "text",
           "id": "screen-project-overview-spec",
-          "name": "web/src/MainScreen.tsx (Proj",
-          "content": "web/src/MainScreen.tsx (ProjectRow expanded): a project’s Workspaces and Agents lists under a breadcrumb, with a Sessions shortcut.",
+          "name": "web/src/ProjectOverview.tsx,",
+          "content": "web/src/ProjectOverview.tsx, projectBoard.ts: a project’s Tasks board - header facts, the ad hoc strip, Git columns with 머지됨 folded, a needs-you card in the warning halo - and the same cards on the Agents board.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -2158,17 +2158,17 @@
           "children": [
             {
               "type": "frame",
-              "id": "ovw-l-l",
-              "name": "Wrap",
+              "id": "ovw-l",
+              "name": "Overview",
               "children": [
                 {
                   "type": "frame",
-                  "id": "ov-crumb-l",
-                  "name": "Breadcrumb",
+                  "id": "ov-head-l",
+                  "name": "Header",
                   "children": [
                     {
                       "type": "frame",
-                      "id": "ov-crumb-left-l",
+                      "id": "ov-crumb-l",
                       "name": "Path",
                       "children": [
                         {
@@ -2176,9 +2176,9 @@
                           "id": "ov-crumb1-l",
                           "name": "Main",
                           "content": "Main",
-                          "fill": "$--muted-foreground",
+                          "fill": "$--subtle-foreground",
                           "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
+                          "fontSize": "$--text-caption",
                           "fontWeight": "400"
                         },
                         {
@@ -2188,42 +2188,88 @@
                           "content": "/",
                           "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
+                          "fontSize": "$--text-caption",
                           "fontWeight": "400"
                         },
                         {
                           "type": "text",
                           "id": "ov-crumb3-l",
-                          "name": "sasu-web-design-system-reset",
-                          "content": "sasu-web-design-system-reset",
+                          "name": "herdr-ide",
+                          "content": "herdr-ide",
                           "fill": "$--foreground",
                           "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
+                          "fontSize": "$--text-headline",
                           "fontWeight": "600"
-                        },
-                        {
-                          "id": "ov-device-l",
-                          "type": "ref",
-                          "ref": "hideui:eHAjc",
-                          "name": "This Mac",
-                          "stroke": "$--border",
-                          "fill": "$--secondary",
-                          "strokeWidth": 0,
-                          "descendants": {
-                            "hideui:xXuNa": {
-                              "fill": "$--subtle-foreground",
-                              "enabled": false
-                            },
-                            "hideui:n8L5dm": {
-                              "fill": "$--subtle-foreground",
-                              "content": "This Mac"
-                            }
-                          }
                         }
                       ],
                       "layout": "horizontal",
                       "gap": "$--spacing-xs",
                       "alignItems": "center"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ov-tabs-l",
+                      "name": "Tabs",
+                      "children": [
+                        {
+                          "id": "ov-tabs-l-0",
+                          "type": "ref",
+                          "ref": "hideui:tab-m",
+                          "name": "Tasks",
+                          "fill": "$--secondary",
+                          "descendants": {
+                            "hideui:tab-t": {
+                              "fill": "$--foreground",
+                              "content": "Tasks"
+                            }
+                          }
+                        },
+                        {
+                          "id": "ov-tabs-l-1",
+                          "type": "ref",
+                          "ref": "hideui:tab-m",
+                          "name": "Agents",
+                          "descendants": {
+                            "hideui:tab-t": {
+                              "fill": "$--subtle-foreground",
+                              "content": "Agents"
+                            }
+                          }
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xxs",
+                      "padding": "$--spacing-xxs",
+                      "fill": "$--card",
+                      "cornerRadius": "$--radius-sm"
+                    },
+                    {
+                      "type": "text",
+                      "id": "ov-stats-l",
+                      "name": "5 worktrees   2 open PRs",
+                      "content": "5 worktrees   2 open PRs",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "text",
+                      "id": "ov-behind-l",
+                      "name": "main ↓3 behind origin",
+                      "content": "main ↓3 behind origin",
+                      "fill": "$--warning",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ov-gap-l",
+                      "name": "Spacer",
+                      "children": [],
+                      "width": "fill_container",
+                      "height": 1
                     },
                     {
                       "id": "ov-sessions-l",
@@ -2242,154 +2288,950 @@
                           "content": "Sessions"
                         }
                       }
+                    },
+                    {
+                      "id": "ov-new-l",
+                      "type": "ref",
+                      "ref": "hideui:btn-m",
+                      "name": "New agent",
+                      "fill": "$--primary",
+                      "height": 24,
+                      "descendants": {
+                        "hideui:btn-ic": {
+                          "fill": "$--primary-foreground",
+                          "icon": "plus",
+                          "enabled": true
+                        },
+                        "hideui:btn-lb": {
+                          "fill": "$--primary-foreground",
+                          "content": "New agent"
+                        }
+                      }
                     }
                   ],
                   "layout": "horizontal",
-                  "justifyContent": "space_between",
+                  "gap": "$--spacing-lg",
                   "alignItems": "center",
-                  "width": 560
+                  "width": 1240
                 },
                 {
                   "type": "frame",
-                  "id": "ov-body-l",
-                  "name": "Body",
+                  "id": "ov-adhoc-l",
+                  "name": "즉석",
                   "children": [
                     {
-                      "id": "ov-wssect-l",
-                      "type": "ref",
-                      "ref": "hideui:O79KF",
-                      "name": "WORKSPACES",
-                      "width": 560,
-                      "descendants": {
-                        "hideui:nOk00": {
-                          "fill": "$--muted-foreground"
-                        },
-                        "hideui:VOd6D": {
+                      "type": "frame",
+                      "id": "ov-adhoc-label-l",
+                      "name": "Label",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ov-adhoc-t-l",
+                          "name": "즉석",
+                          "content": "즉석",
                           "fill": "$--subtle-foreground",
-                          "content": "WORKSPACES"
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
                         },
-                        "hideui:rVsKB": {
+                        {
+                          "type": "text",
+                          "id": "ov-adhoc-d-l",
+                          "name": "main · 폴더",
+                          "content": "main · 폴더",
                           "fill": "$--muted-foreground",
-                          "content": "· 2"
-                        },
-                        "hideui:g7fzt": {
-                          "fill": "$--muted-foreground",
-                          "content": ""
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
                         }
-                      }
+                      ],
+                      "layout": "vertical",
+                      "gap": "$--spacing-xxs",
+                      "width": 148
                     },
                     {
-                      "id": "ov-ws1-l",
-                      "type": "ref",
-                      "ref": "hideui:pPtY6",
-                      "name": "prd/web-design-system-reset",
-                      "width": 560,
-                      "descendants": {
-                        "hideui:Uicve": {
-                          "fill": "$--subtle-foreground"
+                      "type": "frame",
+                      "id": "ov-main-l",
+                      "name": "Card",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ov-main-l-head",
+                          "name": "Header",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "ov-main-l-glyph",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 14,
+                              "height": 14,
+                              "icon": "house",
+                              "library": "lucide",
+                              "fill": "$--muted-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-main-l-branch",
+                              "name": "main",
+                              "content": "main",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-title",
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ov-main-l-gap",
+                              "name": "Spacer",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center",
+                          "width": 264
                         },
-                        "hideui:IxbXq": {
-                          "fill": "$--subtle-foreground",
-                          "content": "prd/web-design-system-reset",
-                          "textGrowth": "auto"
-                        },
-                        "hideui:JzcqS": {
-                          "fill": "$--muted-foreground",
-                          "content": "~/projects/sasu/worktrees/web-design-system-reset",
-                          "textGrowth": "auto"
-                        },
-                        "hideui:CvAQF": {
-                          "fill": "$--agent-working"
+                        {
+                          "type": "frame",
+                          "id": "ov-main-l-row0",
+                          "name": "Agent row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ov-main-l-row0-line",
+                              "name": "Line",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ov-main-l-row0-mark",
+                                  "name": "●",
+                                  "content": "●",
+                                  "fill": "$--agent-working",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-main-l-row0-kind",
+                                  "name": "Provider",
+                                  "children": [],
+                                  "width": 16,
+                                  "height": 16,
+                                  "fill": "$--secondary",
+                                  "cornerRadius": "$--radius-xs"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-main-l-row0-title",
+                                  "name": "최신 hide 서버 웹 실행",
+                                  "content": "최신 hide 서버 웹 실행",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-main-l-row0-gap",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-main-l-row0-time",
+                                  "name": "14m",
+                                  "content": "14m",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xs",
+                              "alignItems": "center",
+                              "width": 264
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-main-l-row0-detail",
+                              "name": "main 브랜치에 커밋하고 서버 시작",
+                              "content": "main 브랜치에 커밋하고 서버 시작",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400",
+                              "textGrowth": "fixed-width",
+                              "width": 224
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xxs",
+                          "width": 264
                         }
-                      }
-                    },
-                    {
-                      "id": "ov-ws2-l",
-                      "type": "ref",
-                      "ref": "hideui:pPtY6",
-                      "name": "main",
-                      "width": 560,
-                      "descendants": {
-                        "hideui:Uicve": {
-                          "fill": "$--subtle-foreground"
-                        },
-                        "hideui:IxbXq": {
-                          "fill": "$--subtle-foreground",
-                          "content": "main",
-                          "textGrowth": "auto"
-                        },
-                        "hideui:JzcqS": {
-                          "fill": "$--muted-foreground",
-                          "content": "~/projects/sasu",
-                          "textGrowth": "auto"
-                        },
-                        "hideui:CvAQF": {
-                          "fill": "$--agent-working"
-                        }
-                      }
-                    },
-                    {
-                      "id": "ov-agsect-l",
-                      "type": "ref",
-                      "ref": "hideui:O79KF",
-                      "name": "AGENTS",
-                      "width": 560,
-                      "descendants": {
-                        "hideui:nOk00": {
-                          "fill": "$--muted-foreground"
-                        },
-                        "hideui:VOd6D": {
-                          "fill": "$--subtle-foreground",
-                          "content": "AGENTS"
-                        },
-                        "hideui:rVsKB": {
-                          "fill": "$--muted-foreground",
-                          "content": "· 1"
-                        },
-                        "hideui:g7fzt": {
-                          "fill": "$--muted-foreground",
-                          "content": ""
-                        }
-                      }
-                    },
-                    {
-                      "id": "ov-agent-l",
-                      "type": "ref",
-                      "ref": "hideui:HXWFK",
-                      "name": "pen-system",
-                      "width": 260,
-                      "descendants": {
-                        "hideui:PCeNa": {
-                          "fill": "$--agent-working"
-                        },
-                        "hideui:x0h40": {
-                          "fill": "$--foreground",
-                          "content": "pen-system"
-                        },
-                        "hideui:X6LdE": {
-                          "fill": "$--agent-working",
-                          "content": "Working"
-                        },
-                        "hideui:BsCNW": {
-                          "fill": "$--subtle-foreground"
-                        },
-                        "hideui:jb7mF": {
-                          "fill": "$--muted-foreground"
-                        },
-                        "hideui:w4jdH": {
-                          "fill": "$--muted-foreground"
-                        }
-                      }
+                      ],
+                      "layout": "vertical",
+                      "gap": "$--spacing-xs",
+                      "padding": "$--spacing-sm",
+                      "width": 288,
+                      "fill": "$--card",
+                      "cornerRadius": "$--radius-md",
+                      "stroke": "$--border",
+                      "strokeWidth": "$--size-hairline"
                     }
                   ],
-                  "width": 560,
-                  "layout": "vertical",
-                  "gap": "$--spacing-lg"
+                  "layout": "horizontal",
+                  "gap": "$--spacing-lg",
+                  "alignItems": "start"
+                },
+                {
+                  "type": "frame",
+                  "id": "ov-cols-l",
+                  "name": "Columns",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ov-ready-l",
+                      "name": "준비",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ov-ready-l-title",
+                          "name": "준비  1",
+                          "content": "준비  1",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-c1-l",
+                          "name": "Card",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ov-c1-l-head",
+                              "name": "Header",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "ov-c1-l-glyph",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "git-branch",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-c1-l-branch",
+                                  "name": "prd/right-panel-history",
+                                  "content": "prd/right-panel-history",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-title",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-c1-l-gap",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "id": "ov-c1-l-issue",
+                                  "type": "ref",
+                                  "ref": "hideui:eHAjc",
+                                  "name": "#118",
+                                  "stroke": "$--border",
+                                  "fill": "$--secondary",
+                                  "strokeWidth": 0,
+                                  "descendants": {
+                                    "hideui:xXuNa": {
+                                      "fill": "$--subtle-foreground",
+                                      "enabled": false
+                                    },
+                                    "hideui:n8L5dm": {
+                                      "fill": "$--subtle-foreground",
+                                      "content": "#118"
+                                    }
+                                  }
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xs",
+                              "alignItems": "center",
+                              "width": 264
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-c1-l-purpose",
+                              "name": "History 패널 기획 대기",
+                              "content": "History 패널 기획 대기",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400",
+                              "textGrowth": "fixed-width",
+                              "width": 264
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ov-c1-l-row0",
+                              "name": "Agent row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ov-c1-l-row0-line",
+                                  "name": "Line",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c1-l-row0-mark",
+                                      "name": "○",
+                                      "content": "○",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ov-c1-l-row0-kind",
+                                      "name": "Provider",
+                                      "children": [],
+                                      "width": 16,
+                                      "height": 16,
+                                      "fill": "$--secondary",
+                                      "cornerRadius": "$--radius-xs"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c1-l-row0-title",
+                                      "name": "History 탭 인터뷰",
+                                      "content": "History 탭 인터뷰",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ov-c1-l-row0-gap",
+                                      "name": "Spacer",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 1
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c1-l-row0-time",
+                                      "name": "5d",
+                                      "content": "5d",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xs",
+                                  "alignItems": "center",
+                                  "width": 264
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": "$--spacing-xxs",
+                              "width": 264
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-c1-l-footer",
+                              "name": "변경 없음",
+                              "content": "변경 없음",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xs",
+                          "padding": "$--spacing-sm",
+                          "width": 288,
+                          "fill": "$--card",
+                          "cornerRadius": "$--radius-md",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline"
+                        }
+                      ],
+                      "layout": "vertical",
+                      "gap": "$--spacing-sm",
+                      "width": 288
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ov-working-l",
+                      "name": "작업 중",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ov-working-l-title",
+                          "name": "작업 중  2",
+                          "content": "작업 중  2",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-c2-l",
+                          "name": "Card",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ov-c2-l-head",
+                              "name": "Header",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "ov-c2-l-glyph",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "git-branch",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-c2-l-branch",
+                                  "name": "prd/sidebar-child-status",
+                                  "content": "prd/sidebar-child-status",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-title",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-c2-l-gap",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xs",
+                              "alignItems": "center",
+                              "width": 264
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-c2-l-purpose",
+                              "name": "자식 대기 상태와 badge 팝오버",
+                              "content": "자식 대기 상태와 badge 팝오버",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400",
+                              "textGrowth": "fixed-width",
+                              "width": 264
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ov-c2-l-row0",
+                              "name": "Agent row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ov-c2-l-row0-line",
+                                  "name": "Line",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c2-l-row0-mark",
+                                      "name": "?",
+                                      "content": "?",
+                                      "fill": "$--warning",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ov-c2-l-row0-kind",
+                                      "name": "Provider",
+                                      "children": [],
+                                      "width": 16,
+                                      "height": 16,
+                                      "fill": "$--secondary",
+                                      "cornerRadius": "$--radius-xs"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c2-l-row0-title",
+                                      "name": "사이드바 상태 규칙 구현",
+                                      "content": "사이드바 상태 규칙 구현",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ov-c2-l-row0-gap",
+                                      "name": "Spacer",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 1
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c2-l-row0-time",
+                                      "name": "12m",
+                                      "content": "12m",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xs",
+                                  "alignItems": "center",
+                                  "width": 264
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-c2-l-row0-detail",
+                                  "name": "Done 그룹 회색 링을 기존 표시로 바꿔도 될까요",
+                                  "content": "Done 그룹 회색 링을 기존 표시로 바꿔도 될까요?",
+                                  "fill": "$--warning",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400",
+                                  "textGrowth": "fixed-width",
+                                  "width": 224
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": "$--spacing-xxs",
+                              "width": 264
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-c2-l-footer",
+                              "name": "↑1 커밋",
+                              "content": "↑1 커밋",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xs",
+                          "padding": "$--spacing-sm",
+                          "width": 288,
+                          "fill": "$--card",
+                          "cornerRadius": "$--radius-md",
+                          "stroke": "$--warning",
+                          "strokeWidth": "$--size-hairline"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-c3-l",
+                          "name": "Card",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ov-c3-l-head",
+                              "name": "Header",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "ov-c3-l-glyph",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "git-branch",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-c3-l-branch",
+                                  "name": "prd/web-design-system-reset",
+                                  "content": "prd/web-design-system-reset",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-title",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-c3-l-gap",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xs",
+                              "alignItems": "center",
+                              "width": 264
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-c3-l-purpose",
+                              "name": "shadcn + Tailwind v4 + Pen 기",
+                              "content": "shadcn + Tailwind v4 + Pen 기반 재구성",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400",
+                              "textGrowth": "fixed-width",
+                              "width": 264
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ov-c3-l-row0",
+                              "name": "Agent row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ov-c3-l-row0-line",
+                                  "name": "Line",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c3-l-row0-mark",
+                                      "name": "●",
+                                      "content": "●",
+                                      "fill": "$--agent-working",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ov-c3-l-row0-kind",
+                                      "name": "Provider",
+                                      "children": [],
+                                      "width": 16,
+                                      "height": 16,
+                                      "fill": "$--secondary",
+                                      "cornerRadius": "$--radius-xs"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c3-l-row0-title",
+                                      "name": "웹 디자인 시스템 리셋 구현",
+                                      "content": "웹 디자인 시스템 리셋 구현",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ov-c3-l-row0-gap",
+                                      "name": "Spacer",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 1
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c3-l-row0-time",
+                                      "name": "23m",
+                                      "content": "23m",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xs",
+                                  "alignItems": "center",
+                                  "width": 264
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": "$--spacing-xxs",
+                              "width": 264
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-c3-l-footer",
+                              "name": "변경 3 · ↑4 커밋",
+                              "content": "변경 3 · ↑4 커밋",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xs",
+                          "padding": "$--spacing-sm",
+                          "width": 288,
+                          "fill": "$--card",
+                          "cornerRadius": "$--radius-md",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline"
+                        }
+                      ],
+                      "layout": "vertical",
+                      "gap": "$--spacing-sm",
+                      "width": 288
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ov-review-l",
+                      "name": "리뷰",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ov-review-l-title",
+                          "name": "리뷰  1",
+                          "content": "리뷰  1",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-c4-l",
+                          "name": "Card",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ov-c4-l-head",
+                              "name": "Header",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "ov-c4-l-glyph",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "git-branch",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-c4-l-branch",
+                                  "name": "prd/home-tasks-web",
+                                  "content": "prd/home-tasks-web",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-title",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-c4-l-gap",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xs",
+                              "alignItems": "center",
+                              "width": 264
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-c4-l-purpose",
+                              "name": "Project Home을 web shell로",
+                              "content": "Project Home을 web shell로",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400",
+                              "textGrowth": "fixed-width",
+                              "width": 264
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ov-c4-l-row0",
+                              "name": "Agent row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ov-c4-l-row0-line",
+                                  "name": "Line",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c4-l-row0-mark",
+                                      "name": "○",
+                                      "content": "○",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ov-c4-l-row0-kind",
+                                      "name": "Provider",
+                                      "children": [],
+                                      "width": 16,
+                                      "height": 16,
+                                      "fill": "$--secondary",
+                                      "cornerRadius": "$--radius-xs"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c4-l-row0-title",
+                                      "name": "리뷰 피드백 반영",
+                                      "content": "리뷰 피드백 반영",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ov-c4-l-row0-gap",
+                                      "name": "Spacer",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 1
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c4-l-row0-time",
+                                      "name": "1h",
+                                      "content": "1h",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xs",
+                                  "alignItems": "center",
+                                  "width": 264
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": "$--spacing-xxs",
+                              "width": 264
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-c4-l-footer",
+                              "name": "PR #151 · CI 통과",
+                              "content": "PR #151 · CI 통과",
+                              "fill": "$--success",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xs",
+                          "padding": "$--spacing-sm",
+                          "width": 288,
+                          "fill": "$--card",
+                          "cornerRadius": "$--radius-md",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline"
+                        }
+                      ],
+                      "layout": "vertical",
+                      "gap": "$--spacing-sm",
+                      "width": 288
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ov-merged-l",
+                      "name": "머지됨",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ov-merged-t-l",
+                          "name": "머지됨  3  ›",
+                          "content": "머지됨  3  ›",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-merged-names-l",
+                          "name": "Names",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ov-merged-n1-l",
+                              "name": "view-areas",
+                              "content": "view-areas",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-merged-n2-l",
+                              "name": "sessions-screen",
+                              "content": "sessions-screen",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xxs",
+                          "padding": "$--spacing-sm",
+                          "fill": "$--card",
+                          "cornerRadius": "$--radius-md",
+                          "width": 148
+                        }
+                      ],
+                      "layout": "vertical",
+                      "gap": "$--spacing-sm",
+                      "width": 148
+                    }
+                  ],
+                  "layout": "horizontal",
+                  "gap": "$--spacing-md",
+                  "alignItems": "start"
                 }
               ],
               "layout": "vertical",
               "gap": "$--spacing-lg",
-              "width": 560
+              "width": 1240
             }
           ],
           "theme": {
@@ -2410,17 +3252,17 @@
           "children": [
             {
               "type": "frame",
-              "id": "ovw-d-d",
-              "name": "Wrap",
+              "id": "ovw-d",
+              "name": "Overview",
               "children": [
                 {
                   "type": "frame",
-                  "id": "ov-crumb-d",
-                  "name": "Breadcrumb",
+                  "id": "ov-head-d",
+                  "name": "Header",
                   "children": [
                     {
                       "type": "frame",
-                      "id": "ov-crumb-left-d",
+                      "id": "ov-crumb-d",
                       "name": "Path",
                       "children": [
                         {
@@ -2428,9 +3270,9 @@
                           "id": "ov-crumb1-d",
                           "name": "Main",
                           "content": "Main",
-                          "fill": "$--muted-foreground",
+                          "fill": "$--subtle-foreground",
                           "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
+                          "fontSize": "$--text-caption",
                           "fontWeight": "400"
                         },
                         {
@@ -2440,42 +3282,88 @@
                           "content": "/",
                           "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
+                          "fontSize": "$--text-caption",
                           "fontWeight": "400"
                         },
                         {
                           "type": "text",
                           "id": "ov-crumb3-d",
-                          "name": "sasu-web-design-system-reset",
-                          "content": "sasu-web-design-system-reset",
+                          "name": "herdr-ide",
+                          "content": "herdr-ide",
                           "fill": "$--foreground",
                           "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
+                          "fontSize": "$--text-headline",
                           "fontWeight": "600"
-                        },
-                        {
-                          "id": "ov-device-d",
-                          "type": "ref",
-                          "ref": "hideui:eHAjc",
-                          "name": "This Mac",
-                          "stroke": "$--border",
-                          "fill": "$--secondary",
-                          "strokeWidth": 0,
-                          "descendants": {
-                            "hideui:xXuNa": {
-                              "fill": "$--subtle-foreground",
-                              "enabled": false
-                            },
-                            "hideui:n8L5dm": {
-                              "fill": "$--subtle-foreground",
-                              "content": "This Mac"
-                            }
-                          }
                         }
                       ],
                       "layout": "horizontal",
                       "gap": "$--spacing-xs",
                       "alignItems": "center"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ov-tabs-d",
+                      "name": "Tabs",
+                      "children": [
+                        {
+                          "id": "ov-tabs-d-0",
+                          "type": "ref",
+                          "ref": "hideui:tab-m",
+                          "name": "Tasks",
+                          "fill": "$--secondary",
+                          "descendants": {
+                            "hideui:tab-t": {
+                              "fill": "$--foreground",
+                              "content": "Tasks"
+                            }
+                          }
+                        },
+                        {
+                          "id": "ov-tabs-d-1",
+                          "type": "ref",
+                          "ref": "hideui:tab-m",
+                          "name": "Agents",
+                          "descendants": {
+                            "hideui:tab-t": {
+                              "fill": "$--subtle-foreground",
+                              "content": "Agents"
+                            }
+                          }
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xxs",
+                      "padding": "$--spacing-xxs",
+                      "fill": "$--card",
+                      "cornerRadius": "$--radius-sm"
+                    },
+                    {
+                      "type": "text",
+                      "id": "ov-stats-d",
+                      "name": "5 worktrees   2 open PRs",
+                      "content": "5 worktrees   2 open PRs",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "text",
+                      "id": "ov-behind-d",
+                      "name": "main ↓3 behind origin",
+                      "content": "main ↓3 behind origin",
+                      "fill": "$--warning",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ov-gap-d",
+                      "name": "Spacer",
+                      "children": [],
+                      "width": "fill_container",
+                      "height": 1
                     },
                     {
                       "id": "ov-sessions-d",
@@ -2494,154 +3382,950 @@
                           "content": "Sessions"
                         }
                       }
+                    },
+                    {
+                      "id": "ov-new-d",
+                      "type": "ref",
+                      "ref": "hideui:btn-m",
+                      "name": "New agent",
+                      "fill": "$--primary",
+                      "height": 24,
+                      "descendants": {
+                        "hideui:btn-ic": {
+                          "fill": "$--primary-foreground",
+                          "icon": "plus",
+                          "enabled": true
+                        },
+                        "hideui:btn-lb": {
+                          "fill": "$--primary-foreground",
+                          "content": "New agent"
+                        }
+                      }
                     }
                   ],
                   "layout": "horizontal",
-                  "justifyContent": "space_between",
+                  "gap": "$--spacing-lg",
                   "alignItems": "center",
-                  "width": 560
+                  "width": 1240
                 },
                 {
                   "type": "frame",
-                  "id": "ov-body-d",
-                  "name": "Body",
+                  "id": "ov-adhoc-d",
+                  "name": "즉석",
                   "children": [
                     {
-                      "id": "ov-wssect-d",
-                      "type": "ref",
-                      "ref": "hideui:O79KF",
-                      "name": "WORKSPACES",
-                      "width": 560,
-                      "descendants": {
-                        "hideui:nOk00": {
-                          "fill": "$--muted-foreground"
-                        },
-                        "hideui:VOd6D": {
+                      "type": "frame",
+                      "id": "ov-adhoc-label-d",
+                      "name": "Label",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ov-adhoc-t-d",
+                          "name": "즉석",
+                          "content": "즉석",
                           "fill": "$--subtle-foreground",
-                          "content": "WORKSPACES"
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
                         },
-                        "hideui:rVsKB": {
+                        {
+                          "type": "text",
+                          "id": "ov-adhoc-d-d",
+                          "name": "main · 폴더",
+                          "content": "main · 폴더",
                           "fill": "$--muted-foreground",
-                          "content": "· 2"
-                        },
-                        "hideui:g7fzt": {
-                          "fill": "$--muted-foreground",
-                          "content": ""
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
                         }
-                      }
+                      ],
+                      "layout": "vertical",
+                      "gap": "$--spacing-xxs",
+                      "width": 148
                     },
                     {
-                      "id": "ov-ws1-d",
-                      "type": "ref",
-                      "ref": "hideui:pPtY6",
-                      "name": "prd/web-design-system-reset",
-                      "width": 560,
-                      "descendants": {
-                        "hideui:Uicve": {
-                          "fill": "$--subtle-foreground"
+                      "type": "frame",
+                      "id": "ov-main-d",
+                      "name": "Card",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ov-main-d-head",
+                          "name": "Header",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "ov-main-d-glyph",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 14,
+                              "height": 14,
+                              "icon": "house",
+                              "library": "lucide",
+                              "fill": "$--muted-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-main-d-branch",
+                              "name": "main",
+                              "content": "main",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-title",
+                              "fontWeight": "600"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ov-main-d-gap",
+                              "name": "Spacer",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center",
+                          "width": 264
                         },
-                        "hideui:IxbXq": {
-                          "fill": "$--subtle-foreground",
-                          "content": "prd/web-design-system-reset",
-                          "textGrowth": "auto"
-                        },
-                        "hideui:JzcqS": {
-                          "fill": "$--muted-foreground",
-                          "content": "~/projects/sasu/worktrees/web-design-system-reset",
-                          "textGrowth": "auto"
-                        },
-                        "hideui:CvAQF": {
-                          "fill": "$--agent-working"
+                        {
+                          "type": "frame",
+                          "id": "ov-main-d-row0",
+                          "name": "Agent row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ov-main-d-row0-line",
+                              "name": "Line",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ov-main-d-row0-mark",
+                                  "name": "●",
+                                  "content": "●",
+                                  "fill": "$--agent-working",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-main-d-row0-kind",
+                                  "name": "Provider",
+                                  "children": [],
+                                  "width": 16,
+                                  "height": 16,
+                                  "fill": "$--secondary",
+                                  "cornerRadius": "$--radius-xs"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-main-d-row0-title",
+                                  "name": "최신 hide 서버 웹 실행",
+                                  "content": "최신 hide 서버 웹 실행",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-main-d-row0-gap",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-main-d-row0-time",
+                                  "name": "14m",
+                                  "content": "14m",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xs",
+                              "alignItems": "center",
+                              "width": 264
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-main-d-row0-detail",
+                              "name": "main 브랜치에 커밋하고 서버 시작",
+                              "content": "main 브랜치에 커밋하고 서버 시작",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400",
+                              "textGrowth": "fixed-width",
+                              "width": 224
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xxs",
+                          "width": 264
                         }
-                      }
-                    },
-                    {
-                      "id": "ov-ws2-d",
-                      "type": "ref",
-                      "ref": "hideui:pPtY6",
-                      "name": "main",
-                      "width": 560,
-                      "descendants": {
-                        "hideui:Uicve": {
-                          "fill": "$--subtle-foreground"
-                        },
-                        "hideui:IxbXq": {
-                          "fill": "$--subtle-foreground",
-                          "content": "main",
-                          "textGrowth": "auto"
-                        },
-                        "hideui:JzcqS": {
-                          "fill": "$--muted-foreground",
-                          "content": "~/projects/sasu",
-                          "textGrowth": "auto"
-                        },
-                        "hideui:CvAQF": {
-                          "fill": "$--agent-working"
-                        }
-                      }
-                    },
-                    {
-                      "id": "ov-agsect-d",
-                      "type": "ref",
-                      "ref": "hideui:O79KF",
-                      "name": "AGENTS",
-                      "width": 560,
-                      "descendants": {
-                        "hideui:nOk00": {
-                          "fill": "$--muted-foreground"
-                        },
-                        "hideui:VOd6D": {
-                          "fill": "$--subtle-foreground",
-                          "content": "AGENTS"
-                        },
-                        "hideui:rVsKB": {
-                          "fill": "$--muted-foreground",
-                          "content": "· 1"
-                        },
-                        "hideui:g7fzt": {
-                          "fill": "$--muted-foreground",
-                          "content": ""
-                        }
-                      }
-                    },
-                    {
-                      "id": "ov-agent-d",
-                      "type": "ref",
-                      "ref": "hideui:HXWFK",
-                      "name": "pen-system",
-                      "width": 260,
-                      "descendants": {
-                        "hideui:PCeNa": {
-                          "fill": "$--agent-working"
-                        },
-                        "hideui:x0h40": {
-                          "fill": "$--foreground",
-                          "content": "pen-system"
-                        },
-                        "hideui:X6LdE": {
-                          "fill": "$--agent-working",
-                          "content": "Working"
-                        },
-                        "hideui:BsCNW": {
-                          "fill": "$--subtle-foreground"
-                        },
-                        "hideui:jb7mF": {
-                          "fill": "$--muted-foreground"
-                        },
-                        "hideui:w4jdH": {
-                          "fill": "$--muted-foreground"
-                        }
-                      }
+                      ],
+                      "layout": "vertical",
+                      "gap": "$--spacing-xs",
+                      "padding": "$--spacing-sm",
+                      "width": 288,
+                      "fill": "$--card",
+                      "cornerRadius": "$--radius-md",
+                      "stroke": "$--border",
+                      "strokeWidth": "$--size-hairline"
                     }
                   ],
-                  "width": 560,
-                  "layout": "vertical",
-                  "gap": "$--spacing-lg"
+                  "layout": "horizontal",
+                  "gap": "$--spacing-lg",
+                  "alignItems": "start"
+                },
+                {
+                  "type": "frame",
+                  "id": "ov-cols-d",
+                  "name": "Columns",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ov-ready-d",
+                      "name": "준비",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ov-ready-d-title",
+                          "name": "준비  1",
+                          "content": "준비  1",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-c1-d",
+                          "name": "Card",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ov-c1-d-head",
+                              "name": "Header",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "ov-c1-d-glyph",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "git-branch",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-c1-d-branch",
+                                  "name": "prd/right-panel-history",
+                                  "content": "prd/right-panel-history",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-title",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-c1-d-gap",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "id": "ov-c1-d-issue",
+                                  "type": "ref",
+                                  "ref": "hideui:eHAjc",
+                                  "name": "#118",
+                                  "stroke": "$--border",
+                                  "fill": "$--secondary",
+                                  "strokeWidth": 0,
+                                  "descendants": {
+                                    "hideui:xXuNa": {
+                                      "fill": "$--subtle-foreground",
+                                      "enabled": false
+                                    },
+                                    "hideui:n8L5dm": {
+                                      "fill": "$--subtle-foreground",
+                                      "content": "#118"
+                                    }
+                                  }
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xs",
+                              "alignItems": "center",
+                              "width": 264
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-c1-d-purpose",
+                              "name": "History 패널 기획 대기",
+                              "content": "History 패널 기획 대기",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400",
+                              "textGrowth": "fixed-width",
+                              "width": 264
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ov-c1-d-row0",
+                              "name": "Agent row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ov-c1-d-row0-line",
+                                  "name": "Line",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c1-d-row0-mark",
+                                      "name": "○",
+                                      "content": "○",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ov-c1-d-row0-kind",
+                                      "name": "Provider",
+                                      "children": [],
+                                      "width": 16,
+                                      "height": 16,
+                                      "fill": "$--secondary",
+                                      "cornerRadius": "$--radius-xs"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c1-d-row0-title",
+                                      "name": "History 탭 인터뷰",
+                                      "content": "History 탭 인터뷰",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ov-c1-d-row0-gap",
+                                      "name": "Spacer",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 1
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c1-d-row0-time",
+                                      "name": "5d",
+                                      "content": "5d",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xs",
+                                  "alignItems": "center",
+                                  "width": 264
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": "$--spacing-xxs",
+                              "width": 264
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-c1-d-footer",
+                              "name": "변경 없음",
+                              "content": "변경 없음",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xs",
+                          "padding": "$--spacing-sm",
+                          "width": 288,
+                          "fill": "$--card",
+                          "cornerRadius": "$--radius-md",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline"
+                        }
+                      ],
+                      "layout": "vertical",
+                      "gap": "$--spacing-sm",
+                      "width": 288
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ov-working-d",
+                      "name": "작업 중",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ov-working-d-title",
+                          "name": "작업 중  2",
+                          "content": "작업 중  2",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-c2-d",
+                          "name": "Card",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ov-c2-d-head",
+                              "name": "Header",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "ov-c2-d-glyph",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "git-branch",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-c2-d-branch",
+                                  "name": "prd/sidebar-child-status",
+                                  "content": "prd/sidebar-child-status",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-title",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-c2-d-gap",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xs",
+                              "alignItems": "center",
+                              "width": 264
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-c2-d-purpose",
+                              "name": "자식 대기 상태와 badge 팝오버",
+                              "content": "자식 대기 상태와 badge 팝오버",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400",
+                              "textGrowth": "fixed-width",
+                              "width": 264
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ov-c2-d-row0",
+                              "name": "Agent row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ov-c2-d-row0-line",
+                                  "name": "Line",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c2-d-row0-mark",
+                                      "name": "?",
+                                      "content": "?",
+                                      "fill": "$--warning",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ov-c2-d-row0-kind",
+                                      "name": "Provider",
+                                      "children": [],
+                                      "width": 16,
+                                      "height": 16,
+                                      "fill": "$--secondary",
+                                      "cornerRadius": "$--radius-xs"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c2-d-row0-title",
+                                      "name": "사이드바 상태 규칙 구현",
+                                      "content": "사이드바 상태 규칙 구현",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ov-c2-d-row0-gap",
+                                      "name": "Spacer",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 1
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c2-d-row0-time",
+                                      "name": "12m",
+                                      "content": "12m",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xs",
+                                  "alignItems": "center",
+                                  "width": 264
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-c2-d-row0-detail",
+                                  "name": "Done 그룹 회색 링을 기존 표시로 바꿔도 될까요",
+                                  "content": "Done 그룹 회색 링을 기존 표시로 바꿔도 될까요?",
+                                  "fill": "$--warning",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400",
+                                  "textGrowth": "fixed-width",
+                                  "width": 224
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": "$--spacing-xxs",
+                              "width": 264
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-c2-d-footer",
+                              "name": "↑1 커밋",
+                              "content": "↑1 커밋",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xs",
+                          "padding": "$--spacing-sm",
+                          "width": 288,
+                          "fill": "$--card",
+                          "cornerRadius": "$--radius-md",
+                          "stroke": "$--warning",
+                          "strokeWidth": "$--size-hairline"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-c3-d",
+                          "name": "Card",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ov-c3-d-head",
+                              "name": "Header",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "ov-c3-d-glyph",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "git-branch",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-c3-d-branch",
+                                  "name": "prd/web-design-system-reset",
+                                  "content": "prd/web-design-system-reset",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-title",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-c3-d-gap",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xs",
+                              "alignItems": "center",
+                              "width": 264
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-c3-d-purpose",
+                              "name": "shadcn + Tailwind v4 + Pen 기",
+                              "content": "shadcn + Tailwind v4 + Pen 기반 재구성",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400",
+                              "textGrowth": "fixed-width",
+                              "width": 264
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ov-c3-d-row0",
+                              "name": "Agent row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ov-c3-d-row0-line",
+                                  "name": "Line",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c3-d-row0-mark",
+                                      "name": "●",
+                                      "content": "●",
+                                      "fill": "$--agent-working",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ov-c3-d-row0-kind",
+                                      "name": "Provider",
+                                      "children": [],
+                                      "width": 16,
+                                      "height": 16,
+                                      "fill": "$--secondary",
+                                      "cornerRadius": "$--radius-xs"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c3-d-row0-title",
+                                      "name": "웹 디자인 시스템 리셋 구현",
+                                      "content": "웹 디자인 시스템 리셋 구현",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ov-c3-d-row0-gap",
+                                      "name": "Spacer",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 1
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c3-d-row0-time",
+                                      "name": "23m",
+                                      "content": "23m",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xs",
+                                  "alignItems": "center",
+                                  "width": 264
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": "$--spacing-xxs",
+                              "width": 264
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-c3-d-footer",
+                              "name": "변경 3 · ↑4 커밋",
+                              "content": "변경 3 · ↑4 커밋",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xs",
+                          "padding": "$--spacing-sm",
+                          "width": 288,
+                          "fill": "$--card",
+                          "cornerRadius": "$--radius-md",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline"
+                        }
+                      ],
+                      "layout": "vertical",
+                      "gap": "$--spacing-sm",
+                      "width": 288
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ov-review-d",
+                      "name": "리뷰",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ov-review-d-title",
+                          "name": "리뷰  1",
+                          "content": "리뷰  1",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-c4-d",
+                          "name": "Card",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ov-c4-d-head",
+                              "name": "Header",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "ov-c4-d-glyph",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "git-branch",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-c4-d-branch",
+                                  "name": "prd/home-tasks-web",
+                                  "content": "prd/home-tasks-web",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-title",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-c4-d-gap",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xs",
+                              "alignItems": "center",
+                              "width": 264
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-c4-d-purpose",
+                              "name": "Project Home을 web shell로",
+                              "content": "Project Home을 web shell로",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400",
+                              "textGrowth": "fixed-width",
+                              "width": 264
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ov-c4-d-row0",
+                              "name": "Agent row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ov-c4-d-row0-line",
+                                  "name": "Line",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c4-d-row0-mark",
+                                      "name": "○",
+                                      "content": "○",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ov-c4-d-row0-kind",
+                                      "name": "Provider",
+                                      "children": [],
+                                      "width": 16,
+                                      "height": 16,
+                                      "fill": "$--secondary",
+                                      "cornerRadius": "$--radius-xs"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c4-d-row0-title",
+                                      "name": "리뷰 피드백 반영",
+                                      "content": "리뷰 피드백 반영",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ov-c4-d-row0-gap",
+                                      "name": "Spacer",
+                                      "children": [],
+                                      "width": "fill_container",
+                                      "height": 1
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ov-c4-d-row0-time",
+                                      "name": "1h",
+                                      "content": "1h",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xs",
+                                  "alignItems": "center",
+                                  "width": 264
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": "$--spacing-xxs",
+                              "width": 264
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-c4-d-footer",
+                              "name": "PR #151 · CI 통과",
+                              "content": "PR #151 · CI 통과",
+                              "fill": "$--success",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xs",
+                          "padding": "$--spacing-sm",
+                          "width": 288,
+                          "fill": "$--card",
+                          "cornerRadius": "$--radius-md",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline"
+                        }
+                      ],
+                      "layout": "vertical",
+                      "gap": "$--spacing-sm",
+                      "width": 288
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ov-merged-d",
+                      "name": "머지됨",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ov-merged-t-d",
+                          "name": "머지됨  3  ›",
+                          "content": "머지됨  3  ›",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-merged-names-d",
+                          "name": "Names",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ov-merged-n1-d",
+                              "name": "view-areas",
+                              "content": "view-areas",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-merged-n2-d",
+                              "name": "sessions-screen",
+                              "content": "sessions-screen",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xxs",
+                          "padding": "$--spacing-sm",
+                          "fill": "$--card",
+                          "cornerRadius": "$--radius-md",
+                          "width": 148
+                        }
+                      ],
+                      "layout": "vertical",
+                      "gap": "$--spacing-sm",
+                      "width": 148
+                    }
+                  ],
+                  "layout": "horizontal",
+                  "gap": "$--spacing-md",
+                  "alignItems": "start"
                 }
               ],
               "layout": "vertical",
               "gap": "$--spacing-lg",
-              "width": 560
+              "width": 1240
             }
           ],
           "theme": {

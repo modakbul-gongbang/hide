@@ -366,30 +366,89 @@ function buildMain(tokens) {
 
 // -- Screen / Project Overview -------------------------------------------------
 
+// The Overview board (PRD web-project-overview): a header with the Tasks/Agents
+// tabs, the stat strip, Sessions and New agent; the ad hoc strip; the four Git
+// columns with 머지됨 folded. Cards and agent rows are authored here on local
+// tokens, since no library master draws them; the controls are library refs.
 function buildProjectOverview(tokens) {
-  function build(suffix) {
-    // An explicit width is required for justifyContent: space_between to actually
-    // distribute space between the two sides, rather than packing them together
-    // with zero gap (proven empirically drawing Settings' Accent row).
-    const crumb = frame(`ov-crumb-${suffix}`, 'Breadcrumb', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', width: 560}, [
-      frame(`ov-crumb-left-${suffix}`, 'Path', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-        text(`ov-crumb1-${suffix}`, 'Main', {fill: '$--muted-foreground'}),
-        text(`ov-crumb2-${suffix}`, '/', {fill: '$--muted-foreground'}),
-        text(`ov-crumb3-${suffix}`, 'sasu-web-design-system-reset', {weight: '600'}),
-        screenBadge(`ov-device-${suffix}`, 'This Mac'),
+  const column = num(tokens, '--home-column-width');
+  const folded = num(tokens, '--home-collapsed-width');
+  function agentRow(id, {mark, markFill, title, time, detail, detailFill, width}) {
+    return frame(id, 'Agent row', {layout: 'vertical', gap: '$--spacing-xxs', width}, [
+      frame(`${id}-line`, 'Line', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width}, [
+        text(`${id}-mark`, mark, {fill: markFill, mono: true}),
+        frame(`${id}-kind`, 'Provider', {width: 16, height: 16, fill: '$--secondary', cornerRadius: '$--radius-xs'}, []),
+        text(`${id}-title`, title, {weight: '500'}),
+        frame(`${id}-gap`, 'Spacer', {width: 'fill_container', height: 1}, []),
+        text(`${id}-time`, time, {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
       ]),
-      screenButton(`ov-sessions-${suffix}`, 'Sessions', {variant: 'ghost', height: num(tokens, '--size-control-sm')}),
+      ...(detail ? [text(`${id}-detail`, detail, {size: '$--text-caption', fill: detailFill, width: width - 40})] : []),
     ]);
-    const body = frame(`ov-body-${suffix}`, 'Body', {width: 560, layout: 'vertical', gap: '$--spacing-lg'}, [
-      screenSectionHeader(`ov-wssect-${suffix}`, {label: 'WORKSPACES', count: '· 2', detail: '', width: 560}),
-      screenWorkspaceRow(`ov-ws1-${suffix}`, {title: 'prd/web-design-system-reset', role: '~/projects/sasu/worktrees/web-design-system-reset', width: 560}),
-      screenWorkspaceRow(`ov-ws2-${suffix}`, {title: 'main', role: '~/projects/sasu', width: 560}),
-      screenSectionHeader(`ov-agsect-${suffix}`, {label: 'AGENTS', count: '· 1', detail: '', width: 560}),
-      screenAgentIdentity(`ov-agent-${suffix}`, {title: 'pen-system', status: 'Working'}),
-    ]);
-    return [crumb, body];
   }
-  return screenSheet('screen-project-overview', 'Screen / Project Overview', 'web/src/MainScreen.tsx (ProjectRow expanded): a project’s Workspaces and Agents lists under a breadcrumb, with a Sessions shortcut.', s => [frame(`ovw-l-${s}`, 'Wrap', {layout: 'vertical', gap: '$--spacing-lg', width: 560}, build(s))], s => [frame(`ovw-d-${s}`, 'Wrap', {layout: 'vertical', gap: '$--spacing-lg', width: 560}, build(s))]);
+  function card(id, {branch, glyph = 'git-branch', purpose, issue, rows, footer, footerFill = '$--muted-foreground', halo = false}) {
+    const inner = column - 24;
+    return frame(id, 'Card', {layout: 'vertical', gap: '$--spacing-xs', padding: '$--spacing-sm', width: column, fill: '$--card', cornerRadius: '$--radius-md', stroke: halo ? '$--warning' : '$--border', strokeWidth: '$--size-hairline'}, [
+      frame(`${id}-head`, 'Header', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: inner}, [
+        icon(`${id}-glyph`, glyph, {fill: '$--muted-foreground'}),
+        text(`${id}-branch`, branch, {size: '$--text-title', weight: '600'}),
+        frame(`${id}-gap`, 'Spacer', {width: 'fill_container', height: 1}, []),
+        ...(issue ? [screenBadge(`${id}-issue`, issue)] : []),
+      ]),
+      ...(purpose ? [text(`${id}-purpose`, purpose, {size: '$--text-caption', fill: '$--subtle-foreground', width: inner})] : []),
+      ...rows.map((row, index) => agentRow(`${id}-row${index}`, {...row, width: inner})),
+      ...(footer ? [text(`${id}-footer`, footer, {size: '$--text-caption', fill: footerFill, mono: true})] : []),
+    ]);
+  }
+  function stageColumn(id, label, count, cards) {
+    return frame(id, label, {layout: 'vertical', gap: '$--spacing-sm', width: column}, [
+      text(`${id}-title`, `${label}  ${count}`, {size: '$--text-subhead', weight: '600'}),
+      ...cards,
+    ]);
+  }
+  function build(suffix) {
+    const idle = {mark: '○', markFill: '$--subtle-foreground'};
+    const header = frame(`ov-head-${suffix}`, 'Header', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'center', width: 1240}, [
+      frame(`ov-crumb-${suffix}`, 'Path', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+        text(`ov-crumb1-${suffix}`, 'Main', {size: '$--text-caption', fill: '$--subtle-foreground'}),
+        text(`ov-crumb2-${suffix}`, '/', {size: '$--text-caption', fill: '$--muted-foreground'}),
+        text(`ov-crumb3-${suffix}`, 'herdr-ide', {size: '$--text-headline', weight: '600'}),
+      ]),
+      screenTabs(`ov-tabs-${suffix}`, ['Tasks', 'Agents'], 0),
+      text(`ov-stats-${suffix}`, '5 worktrees   2 open PRs', {size: '$--text-caption', fill: '$--subtle-foreground', mono: true}),
+      text(`ov-behind-${suffix}`, 'main ↓3 behind origin', {size: '$--text-caption', fill: '$--warning', mono: true}),
+      frame(`ov-gap-${suffix}`, 'Spacer', {width: 'fill_container', height: 1}, []),
+      screenButton(`ov-sessions-${suffix}`, 'Sessions', {variant: 'ghost', height: num(tokens, '--size-control-sm')}),
+      screenButton(`ov-new-${suffix}`, 'New agent', {height: num(tokens, '--size-control-sm'), icon: 'plus'}),
+    ]);
+    const adHoc = frame(`ov-adhoc-${suffix}`, '즉석', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'start'}, [
+      frame(`ov-adhoc-label-${suffix}`, 'Label', {layout: 'vertical', gap: '$--spacing-xxs', width: folded}, [
+        text(`ov-adhoc-t-${suffix}`, '즉석', {size: '$--text-subhead', weight: '600', fill: '$--subtle-foreground'}),
+        text(`ov-adhoc-d-${suffix}`, 'main · 폴더', {size: '$--text-caption', fill: '$--muted-foreground'}),
+      ]),
+      card(`ov-main-${suffix}`, {branch: 'main', glyph: 'house', rows: [{mark: '●', markFill: '$--agent-working', title: '최신 hide 서버 웹 실행', time: '14m', detail: 'main 브랜치에 커밋하고 서버 시작', detailFill: '$--foreground'}]}),
+    ]);
+    const columns = frame(`ov-cols-${suffix}`, 'Columns', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
+      stageColumn(`ov-ready-${suffix}`, '준비', '1', [
+        card(`ov-c1-${suffix}`, {branch: 'prd/right-panel-history', purpose: 'History 패널 기획 대기', issue: '#118', rows: [{...idle, title: 'History 탭 인터뷰', time: '5d'}], footer: '변경 없음'}),
+      ]),
+      stageColumn(`ov-working-${suffix}`, '작업 중', '2', [
+        card(`ov-c2-${suffix}`, {branch: 'prd/sidebar-child-status', purpose: '자식 대기 상태와 badge 팝오버', halo: true, rows: [{mark: '?', markFill: '$--warning', title: '사이드바 상태 규칙 구현', time: '12m', detail: 'Done 그룹 회색 링을 기존 표시로 바꿔도 될까요?', detailFill: '$--warning'}], footer: '↑1 커밋'}),
+        card(`ov-c3-${suffix}`, {branch: 'prd/web-design-system-reset', purpose: 'shadcn + Tailwind v4 + Pen 기반 재구성', rows: [{mark: '●', markFill: '$--agent-working', title: '웹 디자인 시스템 리셋 구현', time: '23m'}], footer: '변경 3 · ↑4 커밋'}),
+      ]),
+      stageColumn(`ov-review-${suffix}`, '리뷰', '1', [
+        card(`ov-c4-${suffix}`, {branch: 'prd/home-tasks-web', purpose: 'Project Home을 web shell로', rows: [{...idle, title: '리뷰 피드백 반영', time: '1h'}], footer: 'PR #151 · CI 통과', footerFill: '$--success'}),
+      ]),
+      frame(`ov-merged-${suffix}`, '머지됨', {layout: 'vertical', gap: '$--spacing-sm', width: folded}, [
+        text(`ov-merged-t-${suffix}`, '머지됨  3  ›', {size: '$--text-subhead', weight: '600'}),
+        frame(`ov-merged-names-${suffix}`, 'Names', {layout: 'vertical', gap: '$--spacing-xxs', padding: '$--spacing-sm', fill: '$--card', cornerRadius: '$--radius-md', width: folded}, [
+          text(`ov-merged-n1-${suffix}`, 'view-areas', {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
+          text(`ov-merged-n2-${suffix}`, 'sessions-screen', {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
+        ]),
+      ]),
+    ]);
+    return [frame(`ovw-${suffix}`, 'Overview', {layout: 'vertical', gap: '$--spacing-lg', width: 1240}, [header, adHoc, columns])];
+  }
+  return screenSheet('screen-project-overview', 'Screen / Project Overview', 'web/src/ProjectOverview.tsx, projectBoard.ts: a project’s Tasks board - header facts, the ad hoc strip, Git columns with 머지됨 folded, a needs-you card in the warning halo - and the same cards on the Agents board.', s => build(s), s => build(s));
 }
 
 // -- Screen / Workspace ---------------------------------------------------------

@@ -88,8 +88,8 @@ It draws the agent and project sidebar beside the Projects list, grouped by devi
 Its web files are `web/src/App.tsx`, `web/src/sidebar.tsx`, and `web/src/MainScreen.tsx`.
 
 Project Overview is `Screen / Project Overview`.
-It draws a project's Workspaces and Agents lists under a breadcrumb, with a Sessions shortcut.
-Its web file is `web/src/MainScreen.tsx` (the expanded `ProjectRow`).
+It draws a project's Tasks board under its header: the ad hoc strip, the four Git columns with Merged folded, and a needs-you card in the warning halo.
+Its web files are `web/src/ProjectOverview.tsx`, `web/src/projectBoard.ts`, and `web/src/components/agent-line.tsx`.
 
 Workspace is `Screen / Workspace`.
 It draws the tab strip, the layout switch, and the split content of a terminal beside the Explorer.

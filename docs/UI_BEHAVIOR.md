@@ -163,14 +163,29 @@ Reintroducing a shared attachment shelf requires a supported provider contract f
 
 ## Project Home
 
-Native owner: `HideTheme.Home` and the SwiftUI Project Home views; there is no web implementation yet.
+Native owner: `HideTheme.Home` and the SwiftUI Project Home views.
+Web owner: `web/src/ProjectOverview.tsx` (the Project Overview screen), `web/src/projectBoard.ts` (the board rules), `web/src/components/agent-line.tsx` (a card's agent row).
+Both shells place a checkout by the same rules; `web/src/projectBoard.test.ts` carries the Swift `ProjectHomeTests` cases.
 
 Project Home uses the shared tab choice, badges, agent identity marks, settings field, icon buttons, and command tooltip.
 Tasks is the session default, with ad hoc requests above four Git-derived columns; Agents reuses each card in three canonical lifecycle columns.
-Needs You uses the warning halo and an error uses danger, without moving the card out of its Git column.
-Only the current delivery fact and linked issue appear in the footer.
-Merged and Seen columns start collapsed.
+A checkout's stage is merged when its worktree or its pull request is merged, review with an open pull request, working with changed files or commits ahead, and ready otherwise; agents and the issue's Project status never move it.
+Merged is Git ancestry against the base the core resolves, so a branch with no commits of its own reads as merged once its base resolves.
+The ad hoc strip holds the checkouts that are not linked worktrees (the primary checkout, a folder) and only while an agent works in them; an open issue no checkout is linked to is a backlog card in ready.
+Needs You uses the warning halo and an error uses danger, and raises the card to the top of its own column without moving it out of its Git column.
+Only the current delivery fact and linked issue appear in the footer; an issue whose Project status names another stage carries a mismatch chip whose tooltip names both.
+GitHub's age appears only in the issue chip's tooltip, as the last successful read, never as a banner.
+Merged and Seen columns start collapsed and list only their names while folded.
 The board scrolls horizontally below its column minimum, and titles wrap to two lines; branch labels truncate at the tail with the full text in a shared tooltip and accessibility help.
+
+On the web, the board is the Project Overview: the sidebar's project name, Main's project row, the palette and the Workspace toolbar menu open it, and ⌘⇧H opens it for the checkout in front.
+Escape, once no dialog or menu is open, returns to the Workspace in front, or to Main when there is none; an agent row opens its pane and a card header opens its checkout.
+The header carries the path back, the Tasks/Agents choice, the worktree count, the open pull-request count once GitHub has answered, main's distance behind origin only above zero, Sessions, and New agent.
+New agent opens the New worktree dialog on a Git project and the folder's Workspace otherwise.
+A project with no agent at all shows only an empty state with New agent, a folder with agents only the ad hoc strip, and before the first snapshot the shell's own connecting state shows instead.
+While hided or a device is unreachable the board keeps the last snapshot and the existing connection or device line is the only signal.
+A card's agent row is one line - status mark, provider mark, title, elapsed time - and gains a second line only while the agent waits on the operator (in warning), changed since it was seen, or is the pane in front; a descendant working in another checkout carries that checkout's branch chip, and a parent waiting on a live descendant shows a hollow ring.
+The whole lineage is drawn inside its card, so a card row carries no descendant badge.
 
 ## Explorer file management
 
