@@ -142,7 +142,7 @@ export class DesktopHost {
 
   private async findCli(attempt: number): Promise<string | null> {
     let searchPath = this.env.path;
-    if (app.isPackaged) {
+    if (app.isPackaged && !this.env.cliPath) {
       // Finder starts an app with launchd's PATH, not the operator's.
       if (this.loginPath === undefined) {
         const result = await this.runCli(this.env.shell, LOGIN_PATH_ARGS, LOGIN_PATH_TIMEOUT_MS);
