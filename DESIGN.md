@@ -974,7 +974,7 @@ The item labels above are fixed; the reason wording is the implementation's.
 
 A view whose file is being read shows `Opening…`.
 A restored view whose device or root is not ready says what it waits for, such as `Waiting for <device> to connect`, and reads its file by itself once that is ready.
-A view whose file cannot be read shows why, with Close view and Retry, and its tab title is struck through in `{colors.muted}`.
+A view whose file cannot be read shows why, with Close view and Retry, and its tab title is struck through in `{colors.muted}`; like a tab's close button, either acts on that view alone and leaves the active area where it was.
 Each state belongs to its view alone, so one missing file never blanks another view or area.
 After a restart the app reopens the last Workspace it was on as it was left: its areas and their sizes, each area's tabs in order with its preview, pinned views and active view, the active area, the layout and the tools; unsaved text returns from the browser's drafts, and Herdr's current tabs and panes are used as they are.
 A first run, or a last Workspace that no longer exists, starts on Main.

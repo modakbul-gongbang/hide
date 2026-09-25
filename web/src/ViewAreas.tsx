@@ -509,10 +509,12 @@ function DisplayBody({ display }: { display: ViewDisplaySnapshot }) {
   if (display.state === "waiting") return <AreaEmpty state="view-waiting" text={display.reason ?? `Waiting to read ${display.path}.`} />;
   return (
     <AreaEmpty state="view-unavailable" text={`${display.path} is unavailable${display.reason ? `: ${display.reason}` : "."}`}>
-      <Button onClick={() => tree.actions.closeView(display.id)} data-close-unavailable={display.id}>
+      {/* Each button is one action on this view alone, like a tab's ×: its
+          press does not also make the area active (one action, one event). */}
+      <Button onPointerDown={(event) => event.stopPropagation()} onClick={() => tree.actions.closeView(display.id)} data-close-unavailable={display.id}>
         Close view
       </Button>
-      <Button appearance="quiet" onClick={() => tree.actions.retryView(display.id)} data-retry-unavailable={display.id}>
+      <Button appearance="quiet" onPointerDown={(event) => event.stopPropagation()} onClick={() => tree.actions.retryView(display.id)} data-retry-unavailable={display.id}>
         Retry
       </Button>
     </AreaEmpty>
