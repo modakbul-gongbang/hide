@@ -92,7 +92,7 @@ export function installKeyboard(actions: Actions): () => void {
       case "open_file":
         return actions.openFilePalette();
       case "project_home":
-        return actions.notReady("Project home (⌘⇧H)");
+        return actions.openProjectOverview();
       case "toggle_right_panel":
         return actions.toggleRightPanel();
       case "toggle_left_sidebar":
@@ -175,6 +175,13 @@ export function installKeyboard(actions: Actions): () => void {
         ui().closeOverlay();
         consume();
         return;
+      }
+      // With no layer open, Escape leaves a Project's Overview for the
+      // Workspace in front, or Main when there is none (web-project-overview B1).
+      // Every dialog, menu and popover is an escape layer, answered above.
+      if (ui().screen?.kind === "overview") {
+        actions.leaveProjectOverview();
+        consume();
       }
       return;
     }

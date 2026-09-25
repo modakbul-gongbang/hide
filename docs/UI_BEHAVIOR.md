@@ -116,7 +116,19 @@ A child pane has a compact Return mark in its identity row, named with the paren
 The pane menu (from its overflow control or a right-click on the header) lists the parent, the other siblings, and the children as explicit Open items, then Copy pane name and Close pane; opening it moves no focus and marks nothing read.
 
 The Agents explorer groups every current agent, this machine's and each connected device's, under Needs You, Done, Working, and Seen, and leaves an empty group out; a device's row names its device before the agent kind, and a device that is not connected lists nothing it only last reported.
-A delegated row is indented and muted, and a row with live descendants carries a badge whose tooltip counts them by state.
+Each group lists its root rows; a delegated row is drawn only beneath its parent, indented one step per level and muted, while the operator has that parent unfolded.
+A group's heading counts every agent it speaks for, its roots and all their live descendants whether folded or not, so each agent is counted once, under its root's heading.
+Descendants start folded; the parent's chevron folds and unfolds them, and the choice is the core's `expanded_agent_pane_ids`, so it survives a restart.
+A folded parent with live descendants carries a badge after its title: one mark and count per state (error, approval, question, working, done), summed over every live descendant, or `↳N` when all of them are merely ready.
+The badge is a button: a click, Enter or Space opens a list of the direct children with their status mark, name, status word, branch when it differs, and elapsed time; the arrow keys move the highlight, Enter or the highlighted row's arrow opens that child's pane, the last item unfolds the children in the list, and Escape closes it and returns focus to the parent row.
+The list has no Stop action, drops a child the moment it leaves the projection, and closes when no child is left.
+
+A root whose own turn is over while a descendant still works or asks is waiting on its children (docs/status-model.md): it stays in Working with its ring in the working color, and its badge, not its own sentence, says what is going on.
+
+An agent row's first line is always its status mark, provider mark, stable task name, a branch chip only when a delegated row's checkout differs from its parent's, a device chip for a row on an SSH device, the badge, and the elapsed time.
+A second line appears only when the row has something to say: a question, approval or error keeps its request in the warning color (red for an error) until it is resolved, however often the row is read; a row that changed since the operator last looked shows its sentence bright until it is read; and the selected or hovered row reveals its full sentence over up to two lines, with the whole of it in the row's tooltip.
+Every other row is one line, and no row draws a progress number or step the agent did not report.
+Web owner: `web/src/agentRow.ts` (rules, reusable by any list of agents), `web/src/components/agent-row.tsx`, `web/src/components/agent-children-popover.tsx`.
 
 ## Web Project Sessions
 
@@ -163,14 +175,29 @@ Reintroducing a shared attachment shelf requires a supported provider contract f
 
 ## Project Home
 
-Native owner: `HideTheme.Home` and the SwiftUI Project Home views; there is no web implementation yet.
+Native owner: `HideTheme.Home` and the SwiftUI Project Home views.
+Web owner: `web/src/ProjectOverview.tsx` (the Project Overview screen), `web/src/projectBoard.ts` (the board rules); a card's agent row is the Agents list's `web/src/components/agent-row.tsx`.
+Both shells place a checkout by the same rules; `web/src/projectBoard.test.ts` carries the Swift `ProjectHomeTests` cases.
 
 Project Home uses the shared tab choice, badges, agent identity marks, settings field, icon buttons, and command tooltip.
 Tasks is the session default, with ad hoc requests above four Git-derived columns; Agents reuses each card in three canonical lifecycle columns.
-Needs You uses the warning halo and an error uses danger, without moving the card out of its Git column.
-Only the current delivery fact and linked issue appear in the footer.
-Merged and Seen columns start collapsed.
+A checkout's stage is merged when its worktree or its pull request is merged, review with an open pull request, working with changed files or commits ahead, and ready otherwise; agents and the issue's Project status never move it.
+Merged is Git ancestry against the base the core resolves, so a branch with no commits of its own reads as merged once its base resolves.
+The ad hoc strip holds the checkouts that are not linked worktrees (the primary checkout, a folder) and only while an agent works in them; an open issue no checkout is linked to is a backlog card in ready.
+Needs You uses the warning halo and an error uses danger, and raises the card to the top of its own column without moving it out of its Git column.
+Only the current delivery fact and linked issue appear in the footer; an issue whose Project status names another stage carries a mismatch chip whose tooltip names both.
+GitHub's age appears only in the issue chip's tooltip, as the last successful read, never as a banner.
+Merged and Seen columns start collapsed and list only their names while folded.
 The board scrolls horizontally below its column minimum, and titles wrap to two lines; branch labels truncate at the tail with the full text in a shared tooltip and accessibility help.
+
+On the web, the board is the Project Overview: the sidebar's project name, Main's project row, the palette and the Workspace toolbar menu open it, and ⌘⇧H opens it for the checkout in front.
+Escape, once no dialog or menu is open, returns to the Workspace in front, or to Main when there is none; an agent row opens its pane and a card header opens its checkout.
+The header carries the path back, the Tasks/Agents choice, the worktree count, the open pull-request count once GitHub has answered, main's distance behind origin only above zero, Sessions, and New agent.
+New agent opens the New worktree dialog on a Git project and the folder's Workspace otherwise.
+A project with no agent at all shows only an empty state with New agent, a folder with agents only the ad hoc strip, and before the first snapshot the shell's own connecting state shows instead.
+While hided or a device is unreachable the board keeps the last snapshot and the existing connection or device line is the only signal.
+A card's agent row follows the Agents list's row rules above (`web/src/agentRow.ts`): the same first line, second line and branch chip, and the core's waiting-on-children ring.
+The whole lineage is drawn inside its card whatever the sidebar has folded, so a card row carries no chevron and no descendant badge.
 
 ## Explorer file management
 

@@ -195,6 +195,7 @@
   --size-pane-header-sentence-min: 120px;
   --size-terminal-min: 540px;
   --size-terminal-ideal: 760px;
+  --size-agent-children-popover: 280px;
   --size-pr-popover: 360px;
   --size-relationship-list-max: 360px;
   --text-git-row: 12px;

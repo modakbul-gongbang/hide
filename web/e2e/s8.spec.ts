@@ -257,7 +257,7 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await expect(other.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
     await other.locator("[data-main-project]", { hasText: "fixture" }).click();
     const [, second] = herdr.panes;
-    await other.locator(`[data-overview-agent="${second}"]`).click();
+    await other.locator(`[data-overview-screen] [data-agent-open="${second}"]`).click();
     await expect(other.locator("[data-workspace-screen]")).toBeVisible();
     await expect(other.locator(`[data-pane-view="${second}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     // This window has seen the focus move, and its Project and list stayed.
