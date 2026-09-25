@@ -592,7 +592,7 @@ The Electron column is empty until that host exists (TODO: fill it from `ShellMe
 | Next / previous recent tab | ⌃Tab / ⌃⇧Tab | ⌥` / ⌥⇧` (moved) | TODO |
 | Next / previous recent project | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab | TODO |
 | Search, Open file, Toggle right panel | ⌘K, ⌘P, ⌘⇧B | same chords; ⌘K and ⌘P answered by the palettes | TODO |
-| Project home | ⌘⇧H | same chord, answered "준비 중" | TODO |
+| Project home | ⌘⇧H | same chord; opens the front checkout's Project Overview | TODO |
 | Save file | ⌘S | ⌘S | TODO |
 | Toggle left sidebar, Toggle sidebar view, Toggle right panel, Find in pane, Keep open | ⌘B, ⌘E, ⌘⇧B, ⌘F, ⌘⇧K | same chords | TODO |
 | Split right / down | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D | TODO |

@@ -6,9 +6,10 @@ import { pruneDrafts, settleDraft } from "./editor/draft";
 import { ConnectionBadge } from "./badge";
 import { configureFileBytes } from "./fileBytes";
 import { installKeyboard } from "./keyboard";
-import { MainScreen, OverviewScreen } from "./MainScreen";
+import { MainScreen } from "./MainScreen";
 import { ConfirmClose, ConfirmTrash, CycleOverlay, NoticeBar } from "./Overlays";
 import { Palette } from "./Palette";
+import { ProjectOverview } from "./ProjectOverview";
 import { installProbe, probeEnabled } from "./probe";
 import { rememberCheckout, rememberTab } from "./recent";
 import { SettingsGate } from "./SettingsSheet";
@@ -282,7 +283,7 @@ function CenterScreen({ actions }: { actions: Actions }) {
       </div>
     );
   }
-  if (screen.kind === "overview") return <OverviewScreen projectId={screen.projectId} actions={actions} />;
+  if (screen.kind === "overview") return <ProjectOverview projectId={screen.projectId} actions={actions} />;
   if (screen.kind === "sessions") return <SessionsScreen projectId={screen.projectId} actions={actions} />;
   if (screen.kind === "workspace" && front && hasView) return <WorkspaceScreen actions={actions} />;
   return <MainScreen actions={actions} />;

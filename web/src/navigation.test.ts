@@ -48,13 +48,13 @@ describe("Main while this machine's Herdr does not answer", () => {
 });
 
 describe("a Project's Overview", () => {
-  it("lists no agents while its Herdr does not answer and none a stale device only last reported", () => {
+  it("keeps the rows its device last reported and says it cannot answer now", () => {
     const down = {
       navigator: { devices: [{ id: "local", kind: "local", label: "This Mac" }], workspaces: [project("a", "local")] },
       status: { herdr: { state: "unreachable", message: "Herdr did not answer" } },
     } as unknown as SnapshotRest;
     const local = overviewProject(down, [{ pane_id: "a-pane", group: "working" }] as never, "a");
-    expect(local?.agents).toBeNull();
+    expect(local?.deviceAgents.map((row) => row.pane_id)).toEqual(["a-pane"]);
     expect(local?.availability).toMatchObject({ state: "unavailable", retry: null });
 
     const stale = {
@@ -62,7 +62,7 @@ describe("a Project's Overview", () => {
       status: { remote: [{ target_id: "mini", state: "stale", message: null, session: { workspaces: [project("m", "mini")], agents: [{ pane_id: "m-pane", group: "working" }] } }] },
     } as unknown as SnapshotRest;
     const device = overviewProject(stale, [], "m");
-    expect(device?.agents).toBeNull();
+    expect(device?.deviceAgents.map((row) => row.pane_id)).toEqual(["m-pane"]);
     expect(device?.availability).toMatchObject({ state: "unavailable", retry: "connect" });
 
     const catalog = {
@@ -72,12 +72,12 @@ describe("a Project's Overview", () => {
     expect(overviewProject(catalog, [], "m")?.availability).toEqual({ state: "unavailable", text: "helper refused", retry: "helper" });
   });
 
-  it("lists the agents of a device that answers", () => {
+  it("hands the board every agent of the device, since a descendant may work in another project", () => {
     const up = {
       navigator: { devices: [{ id: "local", kind: "local", label: "This Mac" }], workspaces: [project("a", "local")] },
       status: { herdr: { state: "connected" } },
     } as unknown as SnapshotRest;
-    expect(overviewProject(up, [{ pane_id: "a-pane", group: "working" }, { pane_id: "x", group: "seen" }] as never, "a")?.agents).toHaveLength(1);
+    expect(overviewProject(up, [{ pane_id: "a-pane", group: "working" }, { pane_id: "x", group: "seen" }] as never, "a")?.deviceAgents).toHaveLength(2);
   });
 });
 

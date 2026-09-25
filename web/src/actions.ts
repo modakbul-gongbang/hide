@@ -22,11 +22,13 @@ import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import type { OpenTarget } from "./navigation";
 import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
 import {
+  catalogWorkspaces,
   deviceOfCheckout,
   editorFor,
   editorTabFor,
   explorerContext,
   focusedCheckout,
+  frontCheckout,
   visibleTab,
   type AgentRow,
   type Checkout,
@@ -1136,9 +1138,21 @@ export function createActions(dispatch: DispatchFn) {
       ui().openOverlay("new_workspace");
     },
 
-    /** ⌘K, ⌘P and the right-panel chords are claimed now and answered in S3. */
-    notReady(label: string) {
-      ui().setNotice({ text: `${label}: 준비 중 (S3)`, refreshable: false });
+    /**
+     * ⌘⇧H: the Overview of the Project the front checkout belongs to, on
+     * whichever device (web-project-overview B1). With nothing in front there
+     * is no Project to name, so nothing moves and the diagnostic says why.
+     */
+    openProjectOverview() {
+      const front = frontCheckout(rest());
+      const project = front ? catalogWorkspaces(rest()).find((row) => row.checkouts.some((checkout) => checkout.id === front.id)) : null;
+      if (!project) return diagnostic("project overview: no checkout is in front");
+      ui().setScreen({ kind: "overview", projectId: project.id });
+    },
+
+    /** Back from an Overview to the pane grid in front, or to Main when no Workspace is in front (B1). */
+    leaveProjectOverview() {
+      ui().setScreen(frontCheckout(rest()) && rest()?.workspace_view ? { kind: "workspace" } : { kind: "main" });
     },
 
     /** ⌘P: the file palette over hided's index of the focused checkout. */

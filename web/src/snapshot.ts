@@ -81,7 +81,37 @@ export type PullRequest = {
   badge: "merged" | "closed" | "review" | "open";
   review: "review_required" | "changes_requested" | "approved" | null;
   is_draft: boolean;
+  /** The CI rollup; unknown and absent checks never read as a pass (`PullRequestChecks`). */
+  checks?: "unknown" | "none" | "pending" | "failed" | "passing";
 };
+
+/** How a repository's `gh` lookup is doing, apart from what it found (`GithubStatusSnapshot`). */
+export type GithubStatus = {
+  failure_category: string | null;
+  available: boolean;
+  loading: boolean;
+  stale: boolean;
+  last_success_at_unix_ms: number | null;
+  unavailable_reason: string | null;
+};
+
+export type IssueReference = { repository: string; number: number };
+
+/** One GitHub issue as `gh` reported it (`IssueSnapshot`); `state` is `OPEN` or `CLOSED`. */
+export type Issue = {
+  reference: IssueReference;
+  title: string;
+  url: string;
+  state: string;
+  project_status: string | null;
+  updated_at_unix_ms: number | null;
+};
+
+/** The issue a checkout is linked to and where the link came from (`IssueLinkSnapshot`). */
+export type IssueLink = { issue: Issue; source: string };
+
+/** A project's open issues, capped by the core (`ProjectIssuesSnapshot`). */
+export type ProjectIssues = { repository: string | null; issues: Issue[]; overflow: boolean };
 
 export type Purpose = { text: string; origin: string };
 
@@ -134,6 +164,10 @@ export type WorktreeRow = {
   missing: boolean;
   dirty: boolean;
   changed_file_count: number;
+  /** Whether the branch is merged into its base; null when it could not be told. */
+  merged?: boolean | null;
+  /** Commits the upstream has that this branch does not, as of the last fetch; null when unread or no upstream. */
+  behind_upstream?: number | null;
   pane_count: number;
   running_agent_count: number;
   deletion_gate: DeletionGate;
@@ -152,6 +186,12 @@ export type Checkout = {
   /** The worktree row behind a Git checkout, or null for a plain folder. */
   worktree?: WorktreeRow | null;
   pull_request: PullRequest | null;
+  /** The issue this checkout's work is linked to. */
+  issue?: IssueLink | null;
+  github?: GithubStatus;
+  changed_file_count?: number;
+  /** Commits on this branch since its base. */
+  ahead?: number;
   tabs: Tab[];
   active_tab_id: string | null;
   strip: StripTab[];
@@ -176,6 +216,8 @@ export type Workspace = {
   removal?: { pane_count: number; running_agent_count: number };
   checkouts: Checkout[];
   inactive_checkouts: { expanded: boolean; checkout_ids: string[] };
+  /** The repository's open issues, for the Overview's backlog cards. */
+  home_issues?: ProjectIssues;
 };
 
 export type InactiveProjectGroup = { device_id: string; expanded: boolean; project_ids: string[] };
