@@ -1057,11 +1057,8 @@ test("a narrow window floats the tools, shows one region and one area with a way
 
 // PRD B12 and DESIGN.md "Narrow windows": a click outside the narrow tools
 // overlay closes it and returns the keyboard to the toggle that opened it,
-// as Escape does. The page closes it but leaves the keyboard on the page's
-// body when the click lands on something that takes no focus: the outside
-// press handler in `Tools` (web/src/Tools.tsx) closes without restoring focus.
+// as Escape does, when the click lands on something that takes no focus.
 test("an outside click that closes the narrow tools overlay gives the keyboard back to its toggle", async ({ page }) => {
-  test.fail(true, "product bug: Tools.tsx closes the overlay on an outside press without returning focus to the toggle (PRD B12)");
   await page.setViewportSize({ width: 1920, height: 1080 });
   const stack = await startStack(page, "s7-overlay-focus", { "a.txt": "a\n" });
   try {

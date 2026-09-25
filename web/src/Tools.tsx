@@ -14,9 +14,10 @@ import { useUiStore } from "./ui";
 // the same tools float over the work area instead, and only once the
 // operator asks for one (S7 B12, D-08): the overlay never opens by itself.
 // It takes the keyboard when it opens; Escape inside it, or a click outside,
-// closes it, and Escape gives the keyboard back to whatever had it. Closing
-// it is this page's only, so the core still holds the tools shown and a
-// wider window brings the column back.
+// closes it and gives the keyboard back to whatever had it, unless the click
+// itself gave the keyboard to what it landed on. Closing it is this page's
+// only, so the core still holds the tools shown and a wider window brings the
+// column back.
 
 export function Tools({ explorer, changes, overlay, actions }: { explorer: boolean; changes: boolean; overlay: boolean; actions: Actions }) {
   const panel = useRef<HTMLElement>(null);
@@ -24,6 +25,12 @@ export function Tools({ explorer, changes, overlay, actions }: { explorer: boole
   const invoker = useRef<HTMLElement | null>(null);
   const open = overlay && (explorer || changes);
   const toggle = explorer ? "explorer" : "changes";
+  const giveBack = () => {
+    const back = invoker.current?.isConnected ? invoker.current : document.querySelector<HTMLElement>(`[data-tool-toggle="${toggle}"]`);
+    back?.focus({ preventScroll: true });
+  };
+  const giveBackRef = useRef(giveBack);
+  giveBackRef.current = giveBack;
   useLayoutEffect(() => {
     if (!open) return undefined;
     const active = document.activeElement;
@@ -31,11 +38,18 @@ export function Tools({ explorer, changes, overlay, actions }: { explorer: boole
     panel.current?.focus({ preventScroll: true });
     // A press on the toggles is theirs to answer, and a dialog the tools
     // opened (Move to Trash) is part of them. A press elsewhere closes the
-    // overlay and keeps the focus it gives.
+    // overlay and keeps the focus it gives; a press on something that takes
+    // no focus would leave the keyboard nowhere once the overlay is gone, so
+    // it goes back where the overlay was asked for (B12). The check waits
+    // for the press to have focused what it landed on.
     const outside = (event: PointerEvent) => {
       const target = event.target instanceof Element ? event.target : null;
       if (!target || panel.current?.contains(target) || target.closest('[data-tool-toggle], [role="dialog"], [role="alertdialog"]')) return;
       useUiStore.getState().closeTools();
+      window.setTimeout(() => {
+        const active = document.activeElement;
+        if (active === null || active === document.body || !active.isConnected) giveBackRef.current();
+      }, 0);
     };
     window.addEventListener("pointerdown", outside, true);
     return () => window.removeEventListener("pointerdown", outside, true);
@@ -48,8 +62,7 @@ export function Tools({ explorer, changes, overlay, actions }: { explorer: boole
     event.preventDefault();
     event.stopPropagation();
     useUiStore.getState().closeTools();
-    const back = invoker.current?.isConnected ? invoker.current : document.querySelector<HTMLElement>(`[data-tool-toggle="${toggle}"]`);
-    back?.focus({ preventScroll: true });
+    giveBack();
   };
   return (
     <aside
