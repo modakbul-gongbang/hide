@@ -2501,26 +2501,17 @@ impl Runtime {
                 }
                 // Herdr owns the pane's history, so the wheel is a request it
                 // answers with a fresh frame rather than a local buffer move.
-                // A pane another client controls is read-only, not broken, so
-                // it simply does not scroll - the same shape as resize.
-                if let Some(said) = self.scroll_withheld_for_missing_size(&payload.pane_id) {
-                    return said;
-                }
                 let lines =
                     i32::from(payload.lines) * if payload.direction == "up" { 1 } else { -1 };
-                if let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id)
-                    && session.mode == TerminalSessionMode::Control
-                    && let Err(message) = session.scroll(live::ScrollRequest {
+                self.scroll_pane(
+                    &payload.pane_id,
+                    live::ScrollRequest {
                         lines,
                         column: payload.column,
                         row: payload.row,
                         modifiers: payload.modifiers,
-                    })
-                {
-                    self.set_error("terminal.scroll_failed", message, true);
-                    return true;
-                }
-                false
+                    },
+                )
             }
             Event::TerminalViewport(payload) => {
                 let size = (payload.rows, payload.cols);
@@ -2543,7 +2534,6 @@ impl Runtime {
                     return true;
                 }
                 let size = (payload.rows, payload.cols);
-                self.panes_scrolled_before_size.remove(&payload.pane_id);
                 let previous = self.terminal_sizes.insert(payload.pane_id.clone(), size);
                 // A view reporting the size the pane is already running at is
                 // the common case right after an attach. Sending it on would
@@ -2573,17 +2563,29 @@ impl Runtime {
                 crate::diagnostic!(
                     serde_json::json!({"kind":"terminal.resize_settled", "pane_id":payload.pane_id, "rows":payload.rows, "cols":payload.cols})
                 );
-                if self.terminal_sessions.contains_key(&payload.pane_id) {
-                    if let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id)
-                        && session.mode == TerminalSessionMode::Control
-                        && let Err(message) = session.resize(payload.rows, payload.cols)
-                    {
-                        self.set_error("terminal.resize_failed", message, true);
-                        return true;
-                    }
+                let Some(session) = self.terminal_sessions.get_mut(&payload.pane_id) else {
                     return false;
+                };
+                match session.mode {
+                    TerminalSessionMode::Control => {
+                        if let Err(message) = session.resize(payload.rows, payload.cols) {
+                            self.set_error("terminal.resize_failed", message, true);
+                            return true;
+                        }
+                        false
+                    }
+                    // An observer cannot resize and Herdr keeps drawing it at
+                    // the grid it attached with; an idle pane sends no frame
+                    // that would show the change, so the view would keep the
+                    // old frame reflowed. It attaches again at the new grid
+                    // once the size settles (`reattach_resized_observers`).
+                    TerminalSessionMode::Observe if previous != Some(size) => {
+                        self.observers_resized
+                            .insert(payload.pane_id, unix_milliseconds());
+                        false
+                    }
+                    TerminalSessionMode::Observe => false,
                 }
-                false
             }
             Event::PaneFind(payload) => {
                 if payload.term.is_empty() {
@@ -2593,16 +2595,19 @@ impl Runtime {
                     self.snapshot.find = PaneFindSnapshot::default();
                     return true;
                 }
-                let Some(context) = self.live.as_ref().cloned() else {
-                    self.snapshot.find = PaneFindSnapshot {
-                        pane_id: Some(payload.pane_id.clone()),
-                        term: payload.term.clone(),
-                        unavailable_reason: Some(
-                            "Searching a pane's history needs a live Herdr connection".to_owned(),
-                        ),
-                        ..PaneFindSnapshot::default()
-                    };
-                    return true;
+                // A device's pane is searched through that device's Herdr; one
+                // that cannot be reached says why in the bar.
+                let route = match self.pane_api_route(&payload.pane_id) {
+                    Ok(route) => route,
+                    Err(reason) => {
+                        self.snapshot.find = PaneFindSnapshot {
+                            pane_id: Some(payload.pane_id.clone()),
+                            term: payload.term.clone(),
+                            unavailable_reason: Some(reason),
+                            ..PaneFindSnapshot::default()
+                        };
+                        return true;
+                    }
                 };
                 // A step continues from the match the operator is on, which is
                 // only the stored one when it belongs to this pane and term.
@@ -2615,7 +2620,6 @@ impl Runtime {
                     0
                 };
                 let request = live::PaneFindRequest {
-                    pane_id: payload.pane_id.clone(),
                     term: payload.term.clone(),
                     options: crate::find::PaneFindOptions {
                         case_sensitive: payload.case_sensitive,
@@ -2625,7 +2629,7 @@ impl Runtime {
                     step: payload.step,
                     current_index,
                 };
-                if let Err(message) = live::spawn_pane_find(context, request) {
+                if let Err(message) = live::spawn_pane_find(route, request) {
                     self.set_error("pane.find_worker_failed", message, true);
                 }
                 false

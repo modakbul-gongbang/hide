@@ -61,7 +61,14 @@ export async function enterWorkspace(page: Page, project?: string): Promise<void
   await expect(workspace).toBeVisible();
 }
 
-export function screenshot(page: Page, name: string): Promise<unknown> {
+/**
+ * Captures the page once the terminals have painted: xterm draws a written
+ * buffer on the next animation frame, so a capture taken straight after a
+ * probe read the rows can still show the cleared canvas of a resize.
+ */
+export async function screenshot(page: Page, name: string): Promise<unknown> {
   const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
-  return dir ? page.screenshot({ path: path.join(dir, `${name}.png`) }) : Promise.resolve();
+  if (!dir) return;
+  await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+  return page.screenshot({ path: path.join(dir, `${name}.png`) });
 }

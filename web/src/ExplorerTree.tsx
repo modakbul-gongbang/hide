@@ -20,6 +20,7 @@ import {
   rowTitle,
   selectionAfterRemoval,
   type ExplorerRow,
+  helperNeedsSettings,
 } from "./explorer";
 import { changesFor, explorerContext } from "./snapshot";
 import { useShellStore } from "./store";
@@ -86,6 +87,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   // core drops a list read for another device before this could show it.
   const changes = useShellStore((s) => changesFor(s.changes, s.rest?.navigator?.changes_root_path ?? null));
   const unavailable = useShellStore((s) => (s.directoryUnavailable && s.directoryUnavailable.device_id === device ? s.directoryUnavailable : null));
+  const needsSettings = useShellStore((s) => helperNeedsSettings(s.rest?.navigator?.devices?.find((row) => row.id === device)?.host));
   const selectedPath = useShellStore((s) => s.rest?.ui_state?.selected_path ?? null);
   const pathRefusal = useShellStore((s) => s.pathRefusal);
   const operation = useShellStore((s) => s.rest?.explorer_operation ?? null);
@@ -368,17 +370,28 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
           <span className="min-w-0 flex-1 break-words">
             {unavailable.root_path === rootPath ? "This checkout" : baseName(unavailable.root_path)} could not be listed: {unavailable.message}
           </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-auto shrink-0 px-none text-subtle-foreground hover:bg-transparent hover:text-foreground"
-            onClick={() => {
-              pending.current.clear();
-              setRefreshTick((tick) => tick + 1);
-            }}
-          >
-            Retry
-          </Button>
+          {needsSettings ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-auto shrink-0 px-none text-subtle-foreground hover:bg-transparent hover:text-foreground"
+              onClick={() => actions.openSettings("devices")}
+            >
+              Open Settings
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-auto shrink-0 px-none text-subtle-foreground hover:bg-transparent hover:text-foreground"
+              onClick={() => {
+                pending.current.clear();
+                setRefreshTick((tick) => tick + 1);
+              }}
+            >
+              Retry
+            </Button>
+          )}
         </div>
       ) : null}
       {!rootListing && !refused && !rootUnavailable ? (

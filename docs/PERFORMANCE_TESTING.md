@@ -340,7 +340,8 @@ Record uptime, the restart time, and both sample windows in the run directory, a
 - Send every whole-row wheel promptly; combine signed rows only from consecutive requests already waiting in the writer queue, send no cancelling sum, and never wait for a terminal frame or timer.
   Preserve actual pointer cell/modifiers and Herdr-owned mouse/history routing; do not invent fallback geometry, reconstruct history from viewport frames, or append a same-size resize to force repaint.
   Resolve the first wheel at its real AppKit target, then reuse that route only while events stay consecutive and stationary, so a sidebar gesture does not repeat SwiftUI's responder-tree hit test on every tick.
-  A missing view size emits its diagnostic once and sends no wheel.
+  A wheel on a pane with no session yet (no view size, or an attach still starting) emits its diagnostic once and is summed and sent with the pane's first frame, never dropped.
+  An observed pane's wheel is `pane.scroll` on a worker off the mutex: two socket requests per landed wheel, at most one in flight per pane, and the wheels arriving meanwhile summed into one pending value; a net zero sends nothing.
   The accepted matching-pane Claude policy sends SGR press/release without Enter and records its detection basis; other or unknown panes retain local selection.
 - Parse immediately, settle geometry over two stable display ticks, and submit pending damage once per display tick.
   Hidden panes remain undrawn; matching full frames replace a held canvas after geometry/control transitions.

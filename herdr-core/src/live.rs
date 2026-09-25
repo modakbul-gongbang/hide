@@ -1757,7 +1757,6 @@ const PANE_FIND_LINE_LIMIT: u32 = 10_000;
 /// carries no reference back into runtime state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PaneFindRequest {
-    pub pane_id: String,
     pub term: String,
     pub options: PaneFindOptions,
     /// Which match to move to once the search lands: 0 keeps the current one,
@@ -1781,35 +1780,160 @@ pub struct PaneFindOutcome {
     pub scroll: Option<(String, u16)>,
 }
 
+/// Where one pane's socket requests go: this machine's Herdr, or a device's,
+/// with the id that Herdr knows the pane by beside the id the core projects.
+#[derive(Clone)]
+pub struct PaneApiRoute {
+    pane_id: String,
+    herdr_pane_id: String,
+    api_connector: Arc<dyn ApiConnector>,
+    runtime: Weak<Mutex<Runtime>>,
+    notifier: ChangeNotifier,
+}
+
+impl PaneApiRoute {
+    pub(crate) fn local(context: &LiveContext, pane_id: &str) -> Self {
+        Self {
+            pane_id: pane_id.to_owned(),
+            herdr_pane_id: pane_id.to_owned(),
+            api_connector: Arc::clone(&context.api_connector),
+            runtime: context.runtime.clone(),
+            notifier: context.notifier.clone(),
+        }
+    }
+
+    pub(crate) fn remote(
+        context: &RemoteControlContext,
+        pane_id: &str,
+        herdr_pane_id: &str,
+    ) -> Self {
+        Self {
+            pane_id: pane_id.to_owned(),
+            herdr_pane_id: herdr_pane_id.to_owned(),
+            api_connector: Arc::clone(&context.api_connector),
+            runtime: context.runtime.clone(),
+            notifier: context.notifier.clone(),
+        }
+    }
+
+    /// Runs `work` on its own thread and hands its result to `ingest` under
+    /// the runtime lock, notifying when that changed the snapshot.
+    fn spawn<T: Send + 'static>(
+        self,
+        name: &str,
+        work: impl FnOnce(&dyn ApiConnector, &str) -> T + Send + 'static,
+        ingest: impl FnOnce(&mut Runtime, &str, T) -> bool + Send + 'static,
+    ) -> Result<(), String> {
+        thread::Builder::new()
+            .name(name.to_owned())
+            .spawn(move || {
+                let result = work(self.api_connector.as_ref(), &self.herdr_pane_id);
+                let Some(runtime) = self.runtime.upgrade() else {
+                    return;
+                };
+                let changed = match runtime.lock() {
+                    Ok(mut guard) => ingest(&mut guard, &self.pane_id, result),
+                    Err(_) => return,
+                };
+                drop(runtime);
+                if changed {
+                    self.notifier.notify();
+                }
+            })
+            .map(|_| ())
+            .map_err(|error| format!("{name} worker could not be started: {error}"))
+    }
+}
+
 /// Searches a pane's whole scrollback and moves the viewport to the match.
 ///
 /// The two reads and the search happen on this thread, never under the runtime
 /// mutex: the buffer is thousands of lines and every shell snapshot read blocks
 /// on that mutex.
-pub fn spawn_pane_find(context: LiveContext, request: PaneFindRequest) -> Result<(), String> {
-    thread::Builder::new()
-        .name("herdr-core-pane-find".to_owned())
-        .spawn(move || {
-            let pane_id = request.pane_id.clone();
-            let result = run_pane_find(context.api_connector.as_ref(), &request);
-            let Some(runtime) = context.runtime.upgrade() else {
-                return;
-            };
-            let changed = match runtime.lock() {
-                Ok(mut guard) => guard.ingest_pane_find(&pane_id, result),
-                Err(_) => return,
-            };
-            drop(runtime);
-            if changed {
-                context.notifier.notify();
+pub fn spawn_pane_find(route: PaneApiRoute, request: PaneFindRequest) -> Result<(), String> {
+    route.spawn(
+        "herdr-core-pane-find",
+        move |connector, herdr_pane_id| run_pane_find(connector, herdr_pane_id, &request),
+        |runtime, pane_id, result| runtime.ingest_pane_find(pane_id, result),
+    )
+}
+
+/// Herdr's scroll position for one pane, in lines above the bottom.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PaneScroll {
+    pub offset_from_bottom: u64,
+    pub max_offset_from_bottom: u64,
+}
+
+/// Moves an observed pane's viewport by `lines` (positive shows older lines).
+///
+/// `pane.scroll` takes an absolute offset and any socket client may send it,
+/// which is what an observer without a terminal writer has; the offset comes
+/// from the metrics `pane.get` reports, and Herdr clamps an overshoot at the
+/// top. Two requests off the runtime mutex; the core keeps one in flight per
+/// pane and sums the wheels that arrive meanwhile.
+pub fn spawn_viewport_scroll(route: PaneApiRoute, lines: i32) -> Result<(), String> {
+    route.spawn(
+        "herdr-core-viewport-scroll",
+        move |connector, herdr_pane_id| scroll_viewport(connector, herdr_pane_id, lines),
+        |runtime, pane_id, result| runtime.ingest_viewport_scroll(pane_id, result),
+    )
+}
+
+/// Why an observed pane's viewport did not move.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ViewportScrollError {
+    /// Herdr answered and refused the request (an older device Herdr without
+    /// `pane.scroll`, say): this client cannot scroll the pane.
+    Refused(String),
+    /// Herdr was not reached or answered something unreadable; nothing is
+    /// known about the pane's scrolling.
+    Unreachable(String),
+}
+
+fn scroll_request(
+    connector: &dyn ApiConnector,
+    method: &str,
+    params: Value,
+) -> Result<Option<PaneScroll>, ViewportScrollError> {
+    let answer = request_with_connector(connector, method, params, Duration::from_secs(5))
+        .map_err(|error| match error {
+            ApiError::Remote { code, message } => {
+                ViewportScrollError::Refused(format!("{method} was refused: {code}: {message}"))
             }
-        })
-        .map(|_| ())
-        .map_err(|error| format!("pane find worker could not be started: {error}"))
+            ApiError::Transport(message) | ApiError::Malformed(message) => {
+                ViewportScrollError::Unreachable(format!("{method} failed: {message}"))
+            }
+        })?;
+    wire::pane_scroll(answer).map_err(ViewportScrollError::Unreachable)
+}
+
+fn scroll_viewport(
+    connector: &dyn ApiConnector,
+    pane_id: &str,
+    lines: i32,
+) -> Result<Option<PaneScroll>, ViewportScrollError> {
+    let target = wire::pane_target_params(pane_id).map_err(ViewportScrollError::Unreachable)?;
+    let Some(current) = scroll_request(connector, "pane.get", target)? else {
+        return Ok(None);
+    };
+    let distance = u64::from(lines.unsigned_abs());
+    let target = if lines > 0 {
+        current.offset_from_bottom.saturating_add(distance)
+    } else {
+        current.offset_from_bottom.saturating_sub(distance)
+    };
+    if target == current.offset_from_bottom {
+        return Ok(Some(current));
+    }
+    let params =
+        wire::pane_scroll_params(pane_id, target).map_err(ViewportScrollError::Unreachable)?;
+    scroll_request(connector, "pane.scroll", params)
 }
 
 fn run_pane_find(
     connector: &dyn ApiConnector,
+    pane_id: &str,
     request: &PaneFindRequest,
 ) -> Result<PaneFindOutcome, String> {
     if request.term.is_empty() {
@@ -1818,7 +1942,7 @@ fn run_pane_find(
             ..PaneFindOutcome::default()
         });
     }
-    let buffer = read_pane_text(connector, &request.pane_id, "recent")?;
+    let buffer = read_pane_text(connector, pane_id, "recent")?;
     let matches = crate::find::find_matches(&buffer.text, &request.term, &request.options)?;
     let total = matches.len();
     if total == 0 {
@@ -1838,7 +1962,7 @@ fn run_pane_find(
     let next = (current - 1 + request.step).rem_euclid(count);
     let target = matches[next as usize];
 
-    let visible = read_pane_text(connector, &request.pane_id, "visible")?;
+    let visible = read_pane_text(connector, pane_id, "visible")?;
     let viewport_rows = visible.text.lines().count();
     let scroll = crate::find::viewport_anchor(&buffer.text, &visible.text)
         .map(|top| crate::find::scroll_delta(target.line, top, viewport_rows))

@@ -5,7 +5,7 @@
 // slot are all testable without a browser.
 
 import { fileIcon, type FileIcon } from "./fileIcons";
-import type { ChangedFileStatus, ChangesSnapshot } from "./snapshot";
+import type { ChangedFileStatus, ChangesSnapshot, DeviceHost } from "./snapshot";
 import type { DirectoryList } from "./store";
 
 /** The one Git slot a row carries: a letter for a file, a dot for a folder. */
@@ -98,6 +98,15 @@ export function explorerGitLine(changes: ChangesSnapshot | null): { state: "load
   if (changes.unavailable_reason) return { state: "unavailable", text: `Git status unavailable: ${changes.unavailable_reason}` };
   if (changes.stale_reason) return { state: "stale", text: `Git status may be out of date: ${changes.stale_reason}` };
   return null;
+}
+
+/**
+ * Whether a device's files wait on a Settings decision rather than on the
+ * device: without the helper consent, or after its identity changed, only
+ * Settings > Devices can change the answer, so retrying the listing cannot.
+ */
+export function helperNeedsSettings(host: DeviceHost | null | undefined): boolean {
+  return host?.state === "not_allowed" || host?.state === "identity_changed";
 }
 
 /**

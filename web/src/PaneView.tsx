@@ -9,8 +9,12 @@ import type { PaneRow, TerminalPane } from "./snapshot";
 import { useShellStore } from "./store";
 import { attachTerminal, bracketedPaste, focusTerminal, requestView, setTextScale } from "./terminals";
 
-/** Transport states with a live stream; anything else is drawn as a caption in the header. */
-const LIVE_STATES = new Set(["connected", "controlling", "idle"]);
+/**
+ * Transport states with a live stream; anything else is drawn as a caption in
+ * the header. An observed pane (another client holds Herdr's control) streams
+ * too, and its wheel moves Herdr's viewport.
+ */
+const LIVE_STATES = new Set(["connected", "controlling", "observing", "idle"]);
 
 export function paneTitle(pane: PaneRow): string {
   // A remote pane's id is scoped to its device (`remote:<device>:pane:w1:p2`);
@@ -28,6 +32,9 @@ export function transportCaption(transport: TerminalPane | undefined, local = tr
   // With its host's connection down, a remote attach ends as `closing`; the
   // pane is not closing, its device is unreachable.
   if (offline) return { text: "disconnected", reconnects: false };
+  // The core found the last wheel unmoved on a pane another client controls
+  // (B3): said where the wheel went rather than dropped silently.
+  if (transport?.scroll_held_elsewhere) return { text: "scroll held by another client", reconnects: false };
   if (!transport || LIVE_STATES.has(transport.transport_state)) return null;
   if (!local) {
     const state = transport.transport_state;

@@ -19,7 +19,7 @@ import { Tools } from "./Tools";
 import { useUiStore, type WorkingRegion } from "./ui";
 import { ViewAreas } from "./ViewAreas";
 import { narrowWorkspace, shownTools } from "./viewLayout";
-import { LAYOUTS, agentEntries, agentWidth, layoutLabel, shareAt, workspaceViewOf, type ViewMode } from "./workspace";
+import { LAYOUTS, agentEntries, agentWidth, drawnMode, layoutLabel, shareAt, workspaceViewOf, type ViewMode } from "./workspace";
 
 // A Workspace (PRD S6 D-01..D-05, B4-B11; S7 B12, B13): one checkout's Agent
 // area (its Herdr tabs and their panes) and View areas (its files and diffs),
@@ -43,7 +43,11 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
   const [body, setBody] = useState<HTMLDivElement | null>(null);
   const width = useWidth(body);
   const sizes = useMemo(() => ({ areaMin: tokenPx("--size-workspace-area-min"), panelMin: tokenPx("--size-panel-min"), divider: tokenPx("--size-resize-handle") }), []);
-  const narrow = view ? narrowWorkspace({ bodyWidth: width, mode: view.mode, ...sizes }) : WIDE;
+  const opening = useShellStore((s) => (s.editor?.opening ?? []).some((row) => row.checkout_id === checkout?.id));
+  // With nothing open in the View areas the agents take their space; the
+  // stored layout, the toolbar's choice and the tools stay as they are.
+  const mode = view ? drawnMode(view, opening) : "agents";
+  const narrow = view ? narrowWorkspace({ bodyWidth: width, mode, ...sizes }) : WIDE;
   // The column while there is room for it; past that, an overlay that stays
   // closed until the operator asks for a tool (S7 B12).
   useEffect(() => {
@@ -68,7 +72,7 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
     <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={`Workspace ${checkout.branch ?? checkout.label}`} data-workspace-screen={checkout.id} data-layout={view.mode}>
       <WorkspaceToolbar checkout={checkout} mode={view.mode} explorer={explorer} changes={changes} singleRegion={narrow.singleRegion} actions={actions} />
       <div ref={setBody} className="relative flex min-h-0 flex-1" data-workspace-body={narrow.toolsOverlay ? "narrow" : "wide"}>
-        <Areas checkout={checkout} mode={view.mode} share={view.agent_share} single={narrow.singleRegion} actions={actions} />
+        <Areas checkout={checkout} mode={mode} share={view.agent_share} single={narrow.singleRegion} actions={actions} />
         <Tools explorer={explorer} changes={changes} overlay={narrow.toolsOverlay} actions={actions} />
       </div>
     </section>
@@ -352,7 +356,7 @@ function Areas({ checkout, mode, share, single, actions }: { checkout: Checkout;
       ) : null}
       {views ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-view-area="true" onPointerDownCapture={workIn("views")} onFocusCapture={workIn("views")}>
-          <ViewAreas checkout={checkout} actions={actions} />
+          <ViewAreas actions={actions} />
         </div>
       ) : null}
       {guide !== null ? <div className="pointer-events-none absolute inset-y-0 w-[var(--size-resize-handle)] bg-primary" style={{ left: guide }} data-area-guide="true" /> : null}
@@ -448,6 +452,7 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
       )}
       <AgentTabBar checkout={view.checkout} activeTabId={view.tab?.id ?? null} agents={session?.agents ?? null} device actions={actions} />
       <RelationStatus actions={actions} />
+      <FindBar actions={actions} />
       <RemotePaneCanvas view={view} connected={connected} actions={actions} />
     </>
   );

@@ -67,11 +67,14 @@ test("Main, Overview and a Workspace with its layouts, tools and delegated child
     const before = sent.get("workspace_view") ?? 0;
     await page.locator('[data-layout-choice="together"]').click();
     await expect(workspace).toHaveAttribute("data-layout", "together");
-    await expect(page.locator("[data-view-area]")).toBeVisible();
-    await expect(page.locator('[data-area-empty]')).toBeVisible();
+    // With nothing open the View areas take no space, in either layout that
+    // shows them (web-pane-scroll-find-areas B8, B10).
+    await expect(page.locator("[data-view-area]")).toHaveCount(0);
+    await expect(page.locator("[data-agent-area]")).toBeVisible();
     await page.locator('[data-layout-choice="views"]').click();
     await expect(workspace).toHaveAttribute("data-layout", "views");
-    await expect(page.locator("[data-agent-area]")).toHaveCount(0);
+    await expect(page.locator("[data-view-area]")).toHaveCount(0);
+    await expect(page.locator("[data-agent-area]")).toBeVisible();
     await page.keyboard.press("Meta+KeyK");
     await page.keyboard.type("Layout: Agents only");
     await page.keyboard.press("Enter");

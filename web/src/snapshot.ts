@@ -190,6 +190,8 @@ export type TerminalPane = {
   exit_code: number | null;
   transport_state: string;
   transport_message: string | null;
+  /** This client only observes the pane and Herdr did not move it for the last wheel; absent while false. */
+  scroll_held_elsewhere?: boolean;
 };
 
 export type AsyncOperation = {
