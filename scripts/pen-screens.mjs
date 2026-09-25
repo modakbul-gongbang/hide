@@ -37,7 +37,7 @@
 // so there is nothing there for either side to miss.
 
 import {read as readTokenPlan, loadCanvas, CANVAS} from './pen-tokens.mjs';
-import {BUTTON_VARIANTS, BADGE_VARIANTS} from './pen-system.mjs';
+import {BUTTON_VARIANTS, BADGE_VARIANTS, frame, icon, num, text} from './pen-system.mjs';
 
 const LOCAL_TOKEN = /^\$--[A-Za-z0-9_-]+$/;
 const THEMED_PROPS = ['fill', 'stroke'];
@@ -116,28 +116,6 @@ const LIBRARY_AUTHORED_VARIABLES = ['--font-ui', '--font-mono'];
 
 export const ALIAS = 'hideui';
 export const LIBRARY_PATH = './hide-ui.lib.pen';
-
-function num(tokens, name) {
-  const token = tokens[name];
-  if (!token) throw new Error(`pen-screens needs token ${name}, which tokens.json does not carry`);
-  return token.type === 'alias' ? num(tokens, token.value) : token.value;
-}
-
-function text(id, content, {fill = '$--foreground', size = '$--text-body', weight = '400', mono = false, width, align} = {}) {
-  return {
-    type: 'text', id, name: content.length > 28 ? content.slice(0, 28) : content, content, fill,
-    fontFamily: mono ? '$--font-mono' : '$--font-ui', fontSize: size, fontWeight: weight,
-    ...(width ? {textGrowth: 'fixed-width', width} : {}), ...(align ? {textAlign: align} : {}),
-  };
-}
-
-function icon(id, glyph, {size = 14, fill = '$--foreground', enabled = true} = {}) {
-  return {type: 'icon', id, name: 'Glyph', enabled, width: size, height: size, icon: glyph, library: 'lucide', fill};
-}
-
-function frame(id, name, props, children) {
-  return {type: 'frame', id, name, children, ...props};
-}
 
 // A cross-library ref: the target and every descendant-override key need the
 // `hideui:` alias prefix (the key, not just the ref target - confirmed empirically,

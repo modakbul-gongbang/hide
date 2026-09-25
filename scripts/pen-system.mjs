@@ -53,25 +53,26 @@
 const UI = '$--font-ui';
 const MONO = '$--font-mono';
 
-function num(tokens, name) {
+// The node helpers every Pen generator shares; pen-screens.mjs imports them.
+export function num(tokens, name) {
   const token = tokens[name];
-  if (!token) throw new Error(`pen-system needs token ${name}, which tokens.json does not carry`);
+  if (!token) throw new Error(`the Pen generator needs token ${name}, which tokens.json does not carry`);
   return token.type === 'alias' ? num(tokens, token.value) : token.value;
 }
 
-function text(id, content, {fill = '$--foreground', size = '$--text-body', weight = '400', mono = false, width} = {}) {
+export function text(id, content, {fill = '$--foreground', size = '$--text-body', weight = '400', mono = false, width, align} = {}) {
   return {
     type: 'text', id, name: content.length > 28 ? content.slice(0, 28) : content, content, fill,
     fontFamily: mono ? MONO : UI, fontSize: size, fontWeight: weight,
-    ...(width ? {textGrowth: 'fixed-width', width} : {}),
+    ...(width ? {textGrowth: 'fixed-width', width} : {}), ...(align ? {textAlign: align} : {}),
   };
 }
 
-function icon(id, glyph, {size = 14, fill = '$--foreground', enabled = true} = {}) {
+export function icon(id, glyph, {size = 14, fill = '$--foreground', enabled = true} = {}) {
   return {type: 'icon', id, name: 'Glyph', enabled, width: size, height: size, icon: glyph, library: 'lucide', fill};
 }
 
-function frame(id, name, props, children) {
+export function frame(id, name, props, children) {
   return {type: 'frame', id, name, children, ...props};
 }
 
