@@ -28,69 +28,70 @@ export function applyEditorTheme() {
   for (const view of openEditors) view.dispatch({ effects });
 }
 
-/** The base chrome: transparent over the shell background, with a caret and
- * selection that read against it, and a search panel in the shell's palette. */
-export const baseTheme = () => [
-  appearance.of(EditorView.darkTheme.of(pageIsDark())),
-  tracked,
-  EditorView.theme(
-    {
-      "&": {
-        color: "var(--foreground)",
-        backgroundColor: "var(--background)",
-        height: "100%",
-      },
-      ".cm-content": {
-        caretColor: "var(--primary)",
-        fontFamily: "var(--font-mono)",
-      },
-      ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--primary)" },
-      "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
-        { backgroundColor: "var(--secondary)" },
-      ".cm-activeLine": { backgroundColor: "var(--card)" },
-      ".cm-gutters": {
-        backgroundColor: "var(--background)",
-        color: "var(--muted-foreground)",
-        border: "none",
-      },
-      ".cm-activeLineGutter": { backgroundColor: "var(--card)", color: "var(--subtle-foreground)" },
-      ".cm-panels": { backgroundColor: "var(--card)", color: "var(--foreground)" },
-      ".cm-panels.cm-panels-top": { borderBottom: "var(--size-hairline) solid var(--border)" },
-      ".cm-searchMatch": { backgroundColor: "var(--secondary)", outline: "var(--size-hairline) solid var(--border)" },
-      ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "var(--popover)" },
-      ".cm-button": {
-        backgroundImage: "none",
-        backgroundColor: "var(--secondary)",
-        color: "var(--foreground)",
-        border: "var(--size-hairline) solid var(--border)",
-      },
-      ".cm-textfield": {
-        backgroundColor: "var(--background)",
-        color: "var(--foreground)",
-        border: "var(--size-hairline) solid var(--border)",
-      },
-      ".cm-tooltip": { backgroundColor: "var(--popover)", border: "var(--size-hairline) solid var(--border)" },
+// The base chrome: transparent over the shell background, with a caret and
+// selection that read against it, and a search panel in the shell's palette.
+// Built once, so every editor shares one set of mounted style rules.
+const chrome = EditorView.theme(
+  {
+    "&": {
+      color: "var(--foreground)",
+      backgroundColor: "var(--background)",
+      height: "100%",
     },
-  ),
-  syntaxHighlighting(
-    HighlightStyle.define([
-      { tag: [t.comment, t.lineComment, t.blockComment], color: "var(--muted-foreground)" },
-      { tag: [t.keyword, t.modifier, t.controlKeyword, t.operatorKeyword], color: "var(--file-purple)" },
-      { tag: [t.string, t.special(t.string)], color: "var(--file-green)" },
-      { tag: [t.number, t.bool, t.null], color: "var(--file-orange)" },
-      { tag: [t.function(t.variableName), t.function(t.propertyName)], color: "var(--file-yellow)" },
-      { tag: [t.typeName, t.className, t.namespace], color: "var(--file-blue)" },
-      { tag: [t.propertyName, t.attributeName], color: "var(--file-blue)" },
-      { tag: [t.variableName, t.definition(t.variableName)], color: "var(--foreground)" },
-      { tag: [t.tagName], color: "var(--file-orange)" },
-      { tag: [t.heading], color: "var(--file-blue)", fontWeight: "bold" },
-      { tag: [t.emphasis], fontStyle: "italic" },
-      { tag: [t.strong], fontWeight: "bold" },
-      { tag: [t.link, t.url], color: "var(--file-blue)", textDecoration: "underline" },
-      { tag: [t.invalid], color: "var(--destructive)" },
-    ]),
-  ),
-];
+    ".cm-content": {
+      caretColor: "var(--primary)",
+      fontFamily: "var(--font-mono)",
+    },
+    ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--primary)" },
+    "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
+      { backgroundColor: "var(--secondary)" },
+    ".cm-activeLine": { backgroundColor: "var(--card)" },
+    ".cm-gutters": {
+      backgroundColor: "var(--background)",
+      color: "var(--muted-foreground)",
+      border: "none",
+    },
+    ".cm-activeLineGutter": { backgroundColor: "var(--card)", color: "var(--subtle-foreground)" },
+    ".cm-panels": { backgroundColor: "var(--card)", color: "var(--foreground)" },
+    ".cm-panels.cm-panels-top": { borderBottom: "var(--size-hairline) solid var(--border)" },
+    ".cm-searchMatch": { backgroundColor: "var(--secondary)", outline: "var(--size-hairline) solid var(--border)" },
+    ".cm-searchMatch.cm-searchMatch-selected": { backgroundColor: "var(--popover)" },
+    ".cm-button": {
+      backgroundImage: "none",
+      backgroundColor: "var(--secondary)",
+      color: "var(--foreground)",
+      border: "var(--size-hairline) solid var(--border)",
+    },
+    ".cm-textfield": {
+      backgroundColor: "var(--background)",
+      color: "var(--foreground)",
+      border: "var(--size-hairline) solid var(--border)",
+    },
+    ".cm-tooltip": { backgroundColor: "var(--popover)", border: "var(--size-hairline) solid var(--border)" },
+  },
+);
+
+const highlighting = syntaxHighlighting(
+  HighlightStyle.define([
+    { tag: [t.comment, t.lineComment, t.blockComment], color: "var(--muted-foreground)" },
+    { tag: [t.keyword, t.modifier, t.controlKeyword, t.operatorKeyword], color: "var(--file-purple)" },
+    { tag: [t.string, t.special(t.string)], color: "var(--file-green)" },
+    { tag: [t.number, t.bool, t.null], color: "var(--file-orange)" },
+    { tag: [t.function(t.variableName), t.function(t.propertyName)], color: "var(--file-yellow)" },
+    { tag: [t.typeName, t.className, t.namespace], color: "var(--file-blue)" },
+    { tag: [t.propertyName, t.attributeName], color: "var(--file-blue)" },
+    { tag: [t.variableName, t.definition(t.variableName)], color: "var(--foreground)" },
+    { tag: [t.tagName], color: "var(--file-orange)" },
+    { tag: [t.heading], color: "var(--file-blue)", fontWeight: "bold" },
+    { tag: [t.emphasis], fontStyle: "italic" },
+    { tag: [t.strong], fontWeight: "bold" },
+    { tag: [t.link, t.url], color: "var(--file-blue)", textDecoration: "underline" },
+    { tag: [t.invalid], color: "var(--destructive)" },
+  ]),
+);
+
+/** The editor's theme, starting on the page's current Light or Dark variant. */
+export const baseTheme = () => [appearance.of(EditorView.darkTheme.of(pageIsDark())), tracked, chrome, highlighting];
 
 /** The text scale the core holds for the editor (`ui_state.editor_text_scale`). */
 export function scaleTheme(scale: number) {
