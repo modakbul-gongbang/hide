@@ -421,33 +421,43 @@ mod tests {
         assert_eq!(listed.base_branch, None);
     }
 
-    /// A5, B16: a View diff outside the folder History reads is not taken,
-    /// and its display says why and names that folder, so the empty diff
-    /// never reads as a file without changes.
+    /// A5, contract 3.2, B16: a View display names its diff by absolute
+    /// path, the helper answers under the folder History reads, and the
+    /// answer comes back under the path the display asked with. A diff
+    /// outside that folder is not taken, and its display says why and names
+    /// the folder, so the empty diff never reads as a file without changes.
     #[test]
-    fn a_view_diff_outside_the_history_folder_names_the_folder_history_reads() {
+    fn view_diffs_come_back_under_their_paths_and_one_outside_names_the_folder() {
         let temporary = tempfile::tempdir().unwrap();
         let checkout = temporary.path().canonicalize().unwrap();
         git(&checkout, &["init", "-q"]);
         let folder = checkout.join("registered");
         std::fs::create_dir(&folder).unwrap();
+        std::fs::write(folder.join("inside.txt"), "INSIDE\n").unwrap();
         std::fs::write(checkout.join("outside.txt"), "OUTSIDE\n").unwrap();
+        let inside = folder.join("inside.txt").to_string_lossy().into_owned();
         let outside = checkout.join("outside.txt").to_string_lossy().into_owned();
         let mut asked = request(&checkout, &folder, None);
-        asked.diffs = vec![DiffTarget {
-            path: outside.clone(),
-            committed: false,
-        }];
+        asked.diffs = [&inside, &outside]
+            .into_iter()
+            .map(|path| DiffTarget {
+                path: path.clone(),
+                committed: false,
+            })
+            .collect();
 
         let listed = read(&asked);
-        let [shown] = listed.diffs.as_slice() else {
-            panic!("one View diff: {:?}", listed.diffs);
+        let [taken, left] = listed.diffs.as_slice() else {
+            panic!("two View diffs: {:?}", listed.diffs);
         };
+        assert_eq!(taken.path, inside);
+        assert!(taken.text.contains("INSIDE"), "{}", taken.text);
+        assert_eq!(taken.notice, None);
         assert_eq!(
-            (shown.path.as_str(), shown.text.as_str()),
+            (left.path.as_str(), left.text.as_str()),
             (outside.as_str(), "")
         );
-        let notice = shown.notice.as_deref().unwrap_or_default();
+        let notice = left.notice.as_deref().unwrap_or_default();
         assert!(
             notice.contains(&*folder.to_string_lossy()),
             "the notice names the folder History reads: {notice}"

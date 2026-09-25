@@ -140,6 +140,17 @@ fn explicit_opens_bring_the_hidden_area_back_and_status_changes_do_not() {
     assert_eq!(mode(&runtime), ViewMode::Together);
 
     layout(&mut runtime, serde_json::json!({"mode": "views"}));
+    // B22: choosing Views alone makes no split.
+    assert!(matches!(
+        runtime
+            .snapshot
+            .workspace_view
+            .as_ref()
+            .expect("a front Workspace")
+            .layout
+            .root,
+        crate::model::ViewNodeSnapshot::Area(_)
+    ));
     let tabs = ["w-order:t1", "w-order:t2"];
     runtime.ingest_session(Ok(tab_order_payload(
         &directory.to_string_lossy(),

@@ -1579,6 +1579,103 @@ fn a_preview_open_landing_right_after_its_restore_read_replaces_that_preview() {
     assert_eq!(tabs, vec!["a.txt"], "the replaced preview's document goes");
 }
 
+/// S7 B23: this machine and a device can hold a checkout at the same path,
+/// and each is its own Workspace: the file opened in each is two documents,
+/// each shown by its own Workspace's view, so a draft in one leaves the
+/// other as it was.
+#[test]
+fn the_same_path_on_two_devices_is_two_documents_in_two_views() {
+    let f = Fixture::new();
+    let path = f.root.to_string_lossy().into_owned();
+    let (local_id, local_checkout) = ("workspace:local-same-path", "checkout:local-same-path");
+    let views_dir = tempfile::tempdir().unwrap();
+    {
+        let mut runtime = f.shared.lock().unwrap();
+        studio_connecting(&mut runtime);
+        helper_ready(&mut runtime, &f.device);
+        runtime.snapshot.navigator.workspaces.push(workspace(
+            local_id,
+            "Local",
+            &path,
+            vec![checkout(local_id, local_checkout, &path, None)],
+        ));
+        let opened = std::fs::File::open(&f.root).unwrap();
+        runtime.set_file_roots(crate::files::FileRoots::from_opened(vec![(
+            f.root.clone(),
+            opened,
+        )]));
+        runtime.workspace_views = Some(
+            WorkspaceViewStore::open(views_dir.path().join("views.json"), Default::default()).0,
+        );
+        runtime.sync_workspace_view();
+    }
+    let device_tab = Runtime::file_tab_id(WORKSPACE, CHECKOUT, &f.path("a.txt"));
+    let local_tab = Runtime::file_tab_id(local_id, local_checkout, &f.path("a.txt"));
+    f.open("a.txt");
+    f.wait("the device's document", |runtime| {
+        runtime.editor_documents.contains_key(&device_tab)
+    });
+    {
+        let mut runtime = f.shared.lock().unwrap();
+        runtime.snapshot.navigator.focused_workspace_id = Some(local_id.to_owned());
+        runtime.snapshot.navigator.focused_checkout_id = Some(local_checkout.to_owned());
+        runtime.sync_workspace_view();
+    }
+    f.dispatch(
+        "file_open",
+        serde_json::json!({"path": f.path("a.txt"), "workspace_id": local_id, "checkout_id": local_checkout}),
+    );
+    f.wait("this machine's document", |runtime| {
+        runtime.editor_documents.contains_key(&local_tab)
+    });
+    assert_ne!(device_tab, local_tab);
+
+    f.dispatch(
+        "file_draft",
+        serde_json::json!({"tab_id": local_tab, "contents_utf8": "local draft\n"}),
+    );
+    let mut runtime = f.shared.lock().unwrap();
+    runtime.sync_workspace_view();
+    let bound = |device: &str| {
+        runtime
+            .workspace_views
+            .as_ref()
+            .unwrap()
+            .views
+            .get(device, &path)
+            .map(|view| {
+                view.layout
+                    .displays()
+                    .map(|display| display.tab_id.clone())
+                    .collect::<Vec<_>>()
+            })
+    };
+    assert_eq!(bound(DEVICE), Some(vec![Some(device_tab.clone())]));
+    assert_eq!(
+        bound(workspace::LOCAL_DEVICE_ID),
+        Some(vec![Some(local_tab.clone())])
+    );
+    let dirty = |tab_id: &str| {
+        runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id)
+            .map(|tab| tab.dirty)
+    };
+    assert_eq!(
+        (dirty(&local_tab), dirty(&device_tab)),
+        (Some(true), Some(false))
+    );
+    assert_eq!(
+        runtime.editor_documents[&device_tab]
+            .contents_utf8
+            .as_deref(),
+        Some("old\n")
+    );
+}
+
 /// S7 contract 3, B16: a view whose file could not be read shows `opening`
 /// while Retry reads it again, not its old failure with Retry still offered,
 /// and `open` once the read lands.

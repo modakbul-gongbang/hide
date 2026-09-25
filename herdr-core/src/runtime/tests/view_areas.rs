@@ -665,6 +665,104 @@ fn a_repeated_split_request_splits_once() {
     assert_eq!(labels(&mut runtime), vec![vec!["a.md"], vec!["b.md"]]);
 }
 
+/// B2: Keep Open, from the view's own action or from the file's, pins a
+/// preview view, so the next single click opens a new preview beside it
+/// rather than replacing it.
+#[test]
+fn keep_open_pins_a_preview_view_so_the_next_click_opens_beside_it() {
+    for entry in ["view_layout", "file_keep_open"] {
+        let name = format!("view-keep-open-{entry}");
+        let (mut runtime, checkout_id, directory) = views_runtime(&name);
+        files(&directory, &["x.md", "y.md"]);
+        open(
+            &mut runtime,
+            &checkout_id,
+            &directory.join("x.md"),
+            true,
+            false,
+        );
+        assert_eq!(labels(&mut runtime), vec![vec!["x.md*"]]);
+
+        if entry == "view_layout" {
+            let x = display(&mut runtime, 0, "x.md");
+            act(
+                &mut runtime,
+                serde_json::json!({"action": "keep_open", "display_id": x}),
+            );
+        } else {
+            let tab_id = tab_of(&runtime, "x.md");
+            runtime.dispatch_json(&explorer_event(
+                "file_keep_open",
+                serde_json::json!({"tab_id": tab_id}),
+            ));
+        }
+        assert_eq!(runtime.snapshot.status.last_error, None, "{entry}");
+        assert_eq!(labels(&mut runtime), vec![vec!["x.md"]], "{entry}");
+
+        open(
+            &mut runtime,
+            &checkout_id,
+            &directory.join("y.md"),
+            true,
+            false,
+        );
+        assert_eq!(labels(&mut runtime), vec![vec!["x.md", "y.md*"]], "{entry}");
+    }
+}
+
+/// Contract 4.1: `focus_area` moves the area in use, as keyboard focus
+/// between areas does, and an id the Workspace does not have is refused
+/// with its reason and changes nothing.
+#[test]
+fn focus_area_moves_the_area_in_use_and_an_unknown_id_changes_nothing() {
+    let (mut runtime, checkout_id, directory) = views_runtime("view-focus-area");
+    files(&directory, &["a.md", "b.md"]);
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("a.md"),
+        false,
+        false,
+    );
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("b.md"),
+        false,
+        true,
+    );
+    let first = area_id(&mut runtime, 0);
+    assert_ne!(tree(&mut runtime).active_area, first);
+
+    act(
+        &mut runtime,
+        serde_json::json!({"action": "focus_area", "area_id": first}),
+    );
+    assert_eq!(tree(&mut runtime).active_area, first);
+    assert_eq!(active_label(&runtime).as_deref(), Some("a.md"));
+
+    let before = tree(&mut runtime);
+    for (payload, kind) in [
+        (
+            serde_json::json!({"action": "focus", "display_id": "d404"}),
+            "view_layout.unknown_display",
+        ),
+        (
+            serde_json::json!({"action": "focus_area", "area_id": "a404"}),
+            "view_layout.unknown_area",
+        ),
+        (
+            serde_json::json!({"action": "resize", "split_id": "s404", "ratio": 0.3}),
+            "view_layout.unknown_split",
+        ),
+    ] {
+        act(&mut runtime, payload);
+        let refused = runtime.snapshot.status.last_error.clone().expect(kind);
+        assert_eq!(refused.kind, kind);
+        assert_eq!(tree(&mut runtime), before, "{kind}");
+    }
+}
+
 /// B9: moving an area's last display away closes the area, and its
 /// neighbour takes the space.
 #[test]
@@ -981,7 +1079,15 @@ fn closing_the_last_display_of_a_dirty_document_saves_it_first() {
     });
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "draft\n");
     let mut runtime = shared.lock().unwrap();
-    assert_eq!(tree(&mut runtime).display_count, 0);
+    let emptied = tree(&mut runtime);
+    assert_eq!(emptied.display_count, 0);
+    // B10: the Views empty out without the mode changing, and the last area
+    // stays, empty.
+    assert!(matches!(emptied.root, ViewNodeSnapshot::Area(_)));
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().mode,
+        crate::workspace_views::ViewMode::Together
+    );
 }
 
 /// B5: a draft in one display keeps every display of that document open.
