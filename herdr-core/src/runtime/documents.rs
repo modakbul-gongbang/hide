@@ -449,6 +449,8 @@ impl Runtime {
                 return true;
             }
             let prepared = PreparedFileTab::Open(tab_id.to_owned());
+            let in_front = self.front_checkout()
+                == Some((request.workspace_id.as_str(), request.checkout_id.as_str()));
             if let Some(reveal) = &request.reveal
                 && self.front_checkout_owned() == reveal.front
             {
@@ -458,9 +460,21 @@ impl Runtime {
                     &request.path,
                     Some(prepared),
                 );
-            } else if self.front_checkout()
-                == Some((request.workspace_id.as_str(), request.checkout_id.as_str()))
-            {
+            } else if let Some(placement) = request.placement {
+                // With View areas it lands where it was asked for, as a
+                // fresh read does: Open to the side of it opens beside.
+                self.reconcile_view_displays();
+                self.place_document(
+                    &placement.key,
+                    tab_id,
+                    placement.preview,
+                    placement.beside,
+                    Some(&placement.area),
+                );
+                if in_front {
+                    self.snapshot.ui_state.selected_path = Some(request.path.clone());
+                }
+            } else if in_front {
                 self.show_file_tab(
                     prepared,
                     &request.workspace_id,

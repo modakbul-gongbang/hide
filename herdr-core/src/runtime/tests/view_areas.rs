@@ -1310,6 +1310,52 @@ fn a_restart_restores_the_view_tree_and_marks_a_missing_file_unavailable() {
     );
 }
 
+/// B4, B20: Open to the side of a file restored as unavailable, once the
+/// file is back, opens it in a new area beside the view that could not show
+/// it, as it would any file, rather than only focusing that view.
+#[test]
+fn open_to_the_side_of_a_restored_file_that_came_back_opens_it_beside() {
+    let (runtime, checkout_id, directory) = strip_checkout("view-back-beside");
+    let state = views_path("view-back-beside");
+    let gone = directory.join("gone.md");
+    let mut views = crate::workspace_views::WorkspaceViews::default();
+    let layout = &mut views
+        .entry(workspace::LOCAL_DEVICE_ID, &directory.to_string_lossy())
+        .layout;
+    let restored = layout.new_display(
+        &gone.to_string_lossy(),
+        crate::view_layout::DisplayKind::File,
+        None,
+        false,
+    );
+    layout.insert("a1", restored, 1).unwrap();
+    crate::workspace_views::save(&state, &views).unwrap();
+    let mut runtime = with_views(runtime, &state);
+    assert_eq!(
+        display_states(&mut runtime)
+            .into_iter()
+            .map(|(label, state, _)| (label, state))
+            .collect::<Vec<_>>(),
+        vec![("gone.md".to_owned(), ViewDisplayState::Unavailable)]
+    );
+
+    std::fs::write(&gone, "back\n").expect("fixture");
+    open(&mut runtime, &checkout_id, &gone, false, true);
+
+    assert_eq!(labels(&mut runtime), vec![vec!["gone.md"], vec!["gone.md"]]);
+    let view = tree(&mut runtime);
+    assert_eq!(
+        view.active_area,
+        areas(&view)[1].0,
+        "the view beside is in use"
+    );
+    assert!(
+        display_states(&mut runtime)
+            .iter()
+            .all(|(_, state, _)| *state == ViewDisplayState::Open)
+    );
+}
+
 /// A restarted runtime whose stored Views hold one diff display of `x.md`,
 /// stored with the Changes group `committed`.
 fn restored_diff(name: &str, committed: Option<bool>) -> (Runtime, PathBuf) {
