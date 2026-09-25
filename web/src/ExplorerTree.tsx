@@ -152,6 +152,22 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
     }
   }, [rootPath, expandedPaths, listings, refreshTick, folderChanges, actions, invalidateListings]);
 
+  // A device folder refused while its helper was still starting is asked
+  // again once the helper is ready, as the views read their files again then
+  // (S7 B14, B16); otherwise a restored device Workspace kept its Explorer
+  // on the helper's old refusal until the operator pressed Retry.
+  const hostReady = useShellStore(
+    (s) => device !== "local" && s.rest?.navigator?.devices?.find((row) => row.id === device)?.host?.state === "ready",
+  );
+  const wasReady = useRef(hostReady);
+  useEffect(() => {
+    const became = hostReady && !wasReady.current;
+    wasReady.current = hostReady;
+    if (!became) return;
+    pending.current.clear();
+    setRefreshTick((tick) => tick + 1);
+  }, [hostReady]);
+
   // A reveal (or an open from anywhere) sets the core's selected_path. A
   // palette pick also sets the local cursor before the core replies; a panel
   // remount must not replace that newer pick with the older snapshot path.
