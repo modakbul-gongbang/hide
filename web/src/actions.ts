@@ -1066,6 +1066,11 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "inactive_checkouts_toggle", payload: { project_path: projectPath } });
     },
 
+    /** Folds or unfolds an agent's descendants in the Agents list; the core keeps the choice. */
+    toggleAgentTree(paneId: string) {
+      dispatch({ schema_version: 2, kind: "agent_tree_toggle", payload: { pane_id: paneId } });
+    },
+
     toggleInactiveProjects(deviceId: string) {
       dispatch({ schema_version: 2, kind: "inactive_projects_toggle", payload: { device_id: deviceId } });
     },

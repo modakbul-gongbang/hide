@@ -241,6 +241,13 @@ pub enum Ownership {
 }
 
 /// The group a row belongs to, given who owns it.
+///
+/// `waiting_on_descendants` is the lineage pass's answer for a root that is
+/// quiet itself while a descendant is still busy: such a row has not
+/// finished, so it sits in Working, and it reaches Done only once it and
+/// every descendant are quiet (sidebar-agent-status D-01). Its own unread
+/// demand or a blocked prompt still wins, because the flag is only ever set
+/// on a row with no demand of its own.
 pub fn agent_group_for(
     demand: AgentDemand,
     activity: AgentActivity,
@@ -248,6 +255,7 @@ pub fn agent_group_for(
     unread: bool,
     blocked: bool,
     ownership: Ownership,
+    waiting_on_descendants: bool,
 ) -> AgentGroup {
     if ownership == Ownership::Delegated {
         // The row keeps its own mark and status word; only its claim on the
@@ -260,6 +268,8 @@ pub fn agent_group_for(
     }
     if blocked || (demand != AgentDemand::None && unread) {
         AgentGroup::NeedsYou
+    } else if waiting_on_descendants {
+        AgentGroup::Working
     } else if demand == AgentDemand::None
         && activity == AgentActivity::Stopped
         && completed
@@ -333,6 +343,7 @@ fn rank_within(agent: &SidebarAgentSnapshot, ownership: Ownership) -> (u8, u8) {
         unread,
         agent.blocked,
         ownership,
+        agent.waiting_on_descendants,
     );
     (group.rank(), demand_rank)
 }
@@ -499,6 +510,9 @@ pub fn sync_checkout_purposes(
 /// read is `Done`; an ordinary stopped pane and a read completion are `Idle`.
 /// No view ever shows an axis value, so nothing underscored can reach the
 /// screen.
+/// The status word of a root waiting on its children.
+const WAITING_ON_DESCENDANTS_LABEL: &str = "Waiting";
+
 fn agent_status_label(
     demand: AgentDemand,
     activity: AgentActivity,
@@ -763,6 +777,8 @@ pub fn apply_lineage(
         // the operator has it in the expanded set (PRD D-06).
         agent.lineage_collapsed = !expanded.contains(&agent.pane_id);
         agent.descendant_counts = descendant_counts[index];
+        agent.waiting_on_descendants =
+            depth == 0 && quiet_itself(agent) && descendants_busy(&descendant_counts[index]);
         agent.descendant_signals = std::mem::take(&mut descendant_signals[index]);
     }
     // Ownership was unknown when the rows were first derived, because it is
@@ -774,6 +790,21 @@ pub fn apply_lineage(
     for agent in agents.iter_mut() {
         derive_from_axes(agent);
     }
+}
+
+/// A row with no demand of its own that is stopped, idle or done: the half
+/// of the waiting-on-children judgement the row answers for itself.
+fn quiet_itself(agent: &SidebarAgentSnapshot) -> bool {
+    let (demand, activity, _) = axes_of(agent);
+    demand == AgentDemand::None && activity == AgentActivity::Stopped && !agent.blocked
+}
+
+/// Whether any live descendant is still busy: working, or holding a
+/// question, approval or error. A ready or finished child is quiet, and one
+/// whose activity Herdr cannot classify is not counted as busy, because a
+/// waiting state the projection cannot vouch for is not drawn (D-01).
+fn descendants_busy(counts: &crate::model::DescendantCountsSnapshot) -> bool {
+    counts.error + counts.approval + counts.question + counts.working > 0
 }
 
 /// What one descendant contributes to its ancestors' badges.
@@ -869,20 +900,29 @@ pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapsh
 /// for (`expected_reply`), or what happened (`progress`) when nothing is
 /// asked. A working row shows only its progress: the mark already says it is
 /// working. A row the operator has read, and a row whose activity is unknown,
-/// say nothing more than their name. With no sentence at all, a row that
+/// say nothing more than their name, unless it still holds a request. With no sentence at all, a row that
 /// would have shown one keeps the status word alone, so a pane with no label
 /// plugin behind it still reads as it did before (PRD B6, B13).
 ///
 /// Returns whether the status word is drawn and the sentence beside it.
 fn agent_second_line(
     group: AgentGroup,
+    demand: AgentDemand,
     expected_reply: Option<&str>,
     progress: Option<&str>,
 ) -> (bool, Option<String>) {
+    // An unresolved demand keeps its request whatever group the row sits in:
+    // a read question in Seen and a delegated child's approval still say what
+    // they are asking, so a view can keep that line until the request is
+    // answered rather than until it is looked at (sidebar-agent-status B7).
+    // Only a group that wanted a sentence falls back to the status word.
+    let request = (demand != AgentDemand::None)
+        .then(|| expected_reply.or(progress))
+        .flatten();
     let sentence = match group {
         AgentGroup::NeedsYou | AgentGroup::Done => expected_reply.or(progress),
-        AgentGroup::Working => progress,
-        AgentGroup::Seen => return (false, None),
+        AgentGroup::Working => request.or(progress),
+        AgentGroup::Seen => return (false, request.map(str::to_owned)),
     };
     // The word is the sentence's stand-in, never its prefix: the mark and the
     // group heading already say Question or Done, and the word beside a
@@ -1058,6 +1098,7 @@ pub fn group_of(agent: &SidebarAgentSnapshot) -> AgentGroup {
         unread,
         agent.blocked,
         ownership_of(agent),
+        agent.waiting_on_descendants,
     )
 }
 
@@ -1076,6 +1117,7 @@ pub fn demand_of(agent: &SidebarAgentSnapshot) -> AgentDemand {
 /// describe a different read state than the row they sit on.
 fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
     let (demand, activity, unread) = axes_of(agent);
+    let waiting = agent.waiting_on_descendants;
     let group = agent_group_for(
         demand,
         activity,
@@ -1083,15 +1125,30 @@ fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
         unread,
         agent.blocked,
         ownership_of(agent),
+        waiting,
     );
     agent.group = group.name().to_owned();
-    agent.symbol = agent_symbol(demand, activity, agent.completed, unread).to_owned();
+    // A root waiting on its children keeps the hollow ring and says so: its
+    // own completion is not the news while a child is still busy, and the
+    // badge beside it says what the children are doing (D-01, D-02).
+    agent.symbol = if waiting {
+        "\u{25cb}"
+    } else {
+        agent_symbol(demand, activity, agent.completed, unread)
+    }
+    .to_owned();
     // A row the operator still has to deal with is drawn bright; everything
     // already read or merely running is subdued.
     agent.emphasized = matches!(group, AgentGroup::NeedsYou | AgentGroup::Done);
-    agent.status_label = agent_status_label(demand, activity, agent.completed, unread).to_owned();
+    agent.status_label = if waiting {
+        WAITING_ON_DESCENDANTS_LABEL
+    } else {
+        agent_status_label(demand, activity, agent.completed, unread)
+    }
+    .to_owned();
     let (status_word_visible, detail) = agent_second_line(
         group,
+        demand,
         agent.expected_reply.as_deref(),
         agent.progress.as_deref(),
     );
@@ -1171,6 +1228,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref()).map(str::to_owned),
         delegated: false,
         descendant_counts: crate::model::DescendantCountsSnapshot::default(),
+        waiting_on_descendants: false,
         descendant_signals: BTreeSet::new(),
         lineage_parent_pane_id: None,
         lineage_path_pane_ids: Vec::new(),
@@ -1913,7 +1971,8 @@ mod tests {
                 false,
                 false,
                 true,
-                Ownership::Operator
+                Ownership::Operator,
+                false
             ),
             AgentGroup::NeedsYou
         );
@@ -1924,7 +1983,8 @@ mod tests {
                 false,
                 false,
                 false,
-                Ownership::Operator
+                Ownership::Operator,
+                false
             ),
             AgentGroup::Seen
         );
@@ -2001,6 +2061,7 @@ mod tests {
                 unread,
                 blocked,
                 Ownership::Operator,
+                false,
             );
             assert_eq!(
                 agent_requires_close_confirmation(activity, demand, blocked),
@@ -2262,38 +2323,50 @@ mod tests {
 
     /// PRD D-06: the second line by group. `agent_second_line` is what
     /// `derive_from_axes` writes into `detail` and `status_word_visible`.
+    /// An unresolved demand keeps its request in every group, so a read
+    /// question and a delegated child's approval still say what they ask
+    /// (sidebar-agent-status B7).
     #[test]
-    fn second_line_is_chosen_by_group() {
+    fn second_line_is_chosen_by_group_and_a_request_outlives_reading() {
+        use AgentDemand::{None as Quiet, Question};
         let reply = Some("A/B 선택 후 승인");
         let progress = Some("푸시 완료, 승인 대기 중");
-        assert_eq!(
-            agent_second_line(AgentGroup::NeedsYou, reply, progress),
-            (false, Some("A/B 선택 후 승인".to_owned()))
-        );
-        assert_eq!(
-            agent_second_line(AgentGroup::NeedsYou, None, progress),
-            (false, Some("푸시 완료, 승인 대기 중".to_owned()))
-        );
-        assert_eq!(
-            agent_second_line(AgentGroup::NeedsYou, None, None),
-            (true, None)
-        );
-        assert_eq!(
-            agent_second_line(AgentGroup::Done, None, progress),
-            (false, Some("푸시 완료, 승인 대기 중".to_owned()))
-        );
-        assert_eq!(
-            agent_second_line(AgentGroup::Working, reply, progress),
-            (false, Some("푸시 완료, 승인 대기 중".to_owned()))
-        );
-        assert_eq!(
-            agent_second_line(AgentGroup::Working, None, None),
-            (true, None)
-        );
-        assert_eq!(
-            agent_second_line(AgentGroup::Seen, reply, progress),
-            (false, None)
-        );
+        let asked = (false, Some("A/B 선택 후 승인".to_owned()));
+        let said = (false, Some("푸시 완료, 승인 대기 중".to_owned()));
+        let cases = [
+            (
+                AgentGroup::NeedsYou,
+                Question,
+                reply,
+                progress,
+                asked.clone(),
+            ),
+            (AgentGroup::NeedsYou, Question, None, progress, said.clone()),
+            (AgentGroup::NeedsYou, Question, None, None, (true, None)),
+            (AgentGroup::Done, Quiet, None, progress, said.clone()),
+            (AgentGroup::Working, Quiet, reply, progress, said.clone()),
+            (AgentGroup::Working, Quiet, None, None, (true, None)),
+            // A delegated child still running while it asks.
+            (
+                AgentGroup::Working,
+                Question,
+                reply,
+                progress,
+                asked.clone(),
+            ),
+            (AgentGroup::Seen, Quiet, reply, progress, (false, None)),
+            // A read question, and a delegated child's question, in Seen.
+            (AgentGroup::Seen, Question, reply, progress, asked),
+            (AgentGroup::Seen, Question, None, progress, said),
+            (AgentGroup::Seen, Question, None, None, (false, None)),
+        ];
+        for (group, demand, reply, progress, expected) in cases {
+            assert_eq!(
+                agent_second_line(group, demand, reply, progress),
+                expected,
+                "{group:?} {demand:?} reply={reply:?} progress={progress:?}"
+            );
+        }
     }
 
     /// The projected row carries the second line: a working row shows its

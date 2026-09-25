@@ -1070,9 +1070,9 @@ fn a_descendants_demand_or_completion_turns_every_ancestor_unread_and_nothing_el
     let _ = std::fs::remove_file(&runtime.state_path);
 }
 
-// PRD B7, D-03: nothing a child does moves its ancestor out of the group the
-// ancestor's own axes decide. A working root stays Working; an idle root
-// with a reported completion is Done; neither is ever Needs You for a child.
+// PRD B7, D-03: a child never makes its ancestor Needs You. A working root
+// stays Working on its own account; a quiet root with a busy child is waiting
+// on it and also stays Working (sidebar-agent-status D-01).
 #[test]
 fn an_ancestors_group_comes_from_its_own_axes_and_a_child_never_makes_it_needs_you() {
     let mut runtime = runtime();
@@ -1086,6 +1086,10 @@ fn an_ancestors_group_comes_from_its_own_axes_and_a_child_never_makes_it_needs_y
     );
     let root = agent_row(&runtime, "w1:p1");
     assert_eq!(root.group, "working");
+    assert!(
+        !root.waiting_on_descendants,
+        "a root that is working itself is not waiting"
+    );
     assert!(root.unread);
     assert!(
         !root.emphasized,
@@ -1106,27 +1110,148 @@ fn an_ancestors_group_comes_from_its_own_axes_and_a_child_never_makes_it_needs_y
             .iter()
             .all(|row| row.group != "needs_you")
     );
+    let _ = std::fs::remove_file(&runtime.state_path);
+}
 
+// sidebar-agent-status B1-B4, D-01: a root that is quiet itself while a
+// descendant works or asks is waiting on it: a Working row with the hollow
+// ring, never Done and never Needs You, until it and every descendant are
+// quiet. Its own question or its own work outranks the waiting state.
+#[test]
+fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() {
+    let mut runtime = runtime();
+    // B1: the root finished its own turn and a child is working.
     ingest_lineage(
         &mut runtime,
         &[
             ("w1:p1", None, "done", ""),
-            ("w1:p2", Some("w1:p1"), "idle", "status_error_new"),
-            ("w1:p3", Some("w1:p1"), "blocked", ""),
+            ("w1:p2", Some("w1:p1"), "working", ""),
         ],
     );
     let root = agent_row(&runtime, "w1:p1");
+    assert!(root.waiting_on_descendants);
+    assert_eq!(root.group, "working", "a waiting root is not Done");
+    assert_eq!(root.symbol, "\u{25cb}");
+    assert_eq!(root.status_label, "Waiting");
+    assert!(!root.emphasized);
+    assert_eq!(root.descendant_counts.working, 1);
+    let wire = serde_json::to_value(root).unwrap();
+    assert_eq!(wire["waiting_on_descendants"], true);
     assert_eq!(
-        root.group, "done",
-        "the root's own completion is what raises it"
+        wire["group"], "working",
+        "no new group value reaches the wire"
     );
     look_at(&mut runtime, "w1:p1");
-    assert_eq!(agent_row(&runtime, "w1:p1").group, "seen");
     assert_eq!(
-        agent_row(&runtime, "w1:p1").descendant_counts.error,
-        1,
-        "reading the ancestor leaves the badge where it was"
+        agent_row(&runtime, "w1:p1").group,
+        "working",
+        "reading a waiting root does not make it Seen"
     );
+
+    // B2: the child asks. The root keeps waiting in Working, the badge
+    // carries the question, and the root turns unread - never Needs You.
+    ingest_lineage(
+        &mut runtime,
+        &[
+            ("w1:p1", None, "done", ""),
+            ("w1:p2", Some("w1:p1"), "idle", "status_question_new"),
+        ],
+    );
+    let root = agent_row(&runtime, "w1:p1");
+    assert!(root.waiting_on_descendants);
+    assert_eq!(root.group, "working");
+    assert_eq!(root.descendant_counts.question, 1);
+    assert!(root.unread, "a child's question is news to the root");
+    assert!(
+        runtime
+            .snapshot
+            .navigator
+            .agents
+            .iter()
+            .all(|row| row.group != "needs_you")
+    );
+    look_at(&mut runtime, "w1:p1");
+
+    // B4: the root's own question outranks waiting; its own work does too.
+    ingest_lineage(
+        &mut runtime,
+        &[
+            ("w1:p1", None, "idle", "status_question_new"),
+            ("w1:p2", Some("w1:p1"), "working", ""),
+        ],
+    );
+    let root = agent_row(&runtime, "w1:p1");
+    assert!(!root.waiting_on_descendants);
+    assert_eq!(
+        (root.group.as_str(), root.symbol.as_str()),
+        ("needs_you", "?")
+    );
+    ingest_lineage(
+        &mut runtime,
+        &[
+            ("w1:p1", None, "working", ""),
+            ("w1:p2", Some("w1:p1"), "working", ""),
+        ],
+    );
+    let root = agent_row(&runtime, "w1:p1");
+    assert!(!root.waiting_on_descendants);
+    assert_eq!(
+        (root.group.as_str(), root.symbol.as_str()),
+        ("working", "\u{25cf}")
+    );
+
+    // B3: the root and every descendant are quiet: Done, and the ring goes.
+    ingest_lineage(
+        &mut runtime,
+        &[
+            ("w1:p1", None, "done", ""),
+            ("w1:p2", Some("w1:p1"), "done", ""),
+        ],
+    );
+    let root = agent_row(&runtime, "w1:p1");
+    assert!(!root.waiting_on_descendants);
+    assert_eq!((root.group.as_str(), root.symbol.as_str()), ("done", "✓"));
+
+    // A grandchild keeps the root waiting through a quiet middle row, and
+    // closing its pane releases the root on the next projection.
+    ingest_lineage(
+        &mut runtime,
+        &[
+            ("w1:p1", None, "done", ""),
+            ("w1:p2", Some("w1:p1"), "idle", ""),
+            ("w1:p3", Some("w1:p2"), "working", ""),
+        ],
+    );
+    let root = agent_row(&runtime, "w1:p1");
+    assert!(root.waiting_on_descendants);
+    assert_eq!(root.group, "working");
+    assert!(
+        !agent_row(&runtime, "w1:p2").waiting_on_descendants,
+        "only a lineage root waits; a delegated row keeps its own mark"
+    );
+    ingest_lineage(
+        &mut runtime,
+        &[
+            ("w1:p1", None, "done", ""),
+            ("w1:p2", Some("w1:p1"), "idle", ""),
+        ],
+    );
+    let root = agent_row(&runtime, "w1:p1");
+    assert!(!root.waiting_on_descendants);
+    assert_ne!(
+        root.group, "working",
+        "a closed child no longer holds the root"
+    );
+
+    // A child Herdr cannot classify does not make the root wait.
+    ingest_lineage(
+        &mut runtime,
+        &[
+            ("w1:p1", None, "idle", ""),
+            ("w1:p2", Some("w1:p1"), "unrecognized", ""),
+        ],
+    );
+    assert!(!agent_row(&runtime, "w1:p1").waiting_on_descendants);
     let _ = std::fs::remove_file(&runtime.state_path);
 }
 
@@ -1676,8 +1801,11 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
             .iter()
             .map(|chip| chip.detail.as_deref())
             .collect::<Vec<_>>(),
-        [None, Some("구현 중: 계보 투영과 위임 표시")],
-        "a delegated question is Seen and says nothing more; a delegated worker keeps its progress (PRD D-06)"
+        [
+            Some("정체 임계값을 물어보는 중"),
+            Some("구현 중: 계보 투영과 위임 표시")
+        ],
+        "a delegated question is Seen and still says what it asks; a delegated worker keeps its progress (PRD D-06, sidebar-agent-status B7)"
     );
     assert_eq!(
         parent.representative.as_ref().unwrap().label,

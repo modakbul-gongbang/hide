@@ -639,6 +639,15 @@ pub struct SidebarAgentSnapshot {
     /// direct children, because a grandchild's question is still this row's
     /// to answer (PRD B3, B4, D-05).
     pub descendant_counts: DescendantCountsSnapshot,
+    /// A lineage root that is itself quiet - no demand of its own, stopped,
+    /// idle or done - while at least one live descendant is working or holds
+    /// a question, approval or error. The row is waiting on its children, so
+    /// it stays in Working rather than reading as finished, and it reaches
+    /// Done only once it and every descendant are quiet (sidebar-agent-status
+    /// D-01). It travels as this additive flag beside `group: working`, never
+    /// as a new group value, so a decoder that does not know it draws an
+    /// ordinary Working row (D-10).
+    pub waiting_on_descendants: bool,
     /// The demands and completions of this row's live descendants, keyed by
     /// the descendant pane. It is what the read record compares against, so
     /// a descendant asking or finishing turns this row unread the same way

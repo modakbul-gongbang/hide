@@ -6,8 +6,9 @@ import { RowMenu } from "./components/entry-menu";
 import { Hint } from "./components/ui/tooltip";
 import { DevicePicker } from "./DevicePicker";
 import { NewWorkspace } from "./NewWorkspace";
-import { chipTone } from "./lineage";
-import { agentSections, allAgents, liveDescendantCounts } from "./navigation";
+import { directChildren, sectionCount, sectionTree } from "./agentRow";
+import { AgentRowItem } from "./components/agent-row";
+import { agentSections, allAgents, liveDescendantCounts, type ListedAgent } from "./navigation";
 import { activeCheckouts, activityLabel, inactiveCheckouts, projectRows, pullRequestBadge, type ProjectRow } from "./projects";
 import { displayBrowser } from "./shortcuts";
 import { contextAgents, contextWorkspaces, deviceCatalogLine, remoteContext, remoteView } from "./remote";
@@ -78,8 +79,10 @@ export function Sidebar({ actions }: { actions: Actions }) {
 /**
  * Every current agent, this machine's and each connected device's, under
  * Needs You, Done, Working and Seen (S6 B13); a device's row names its
- * device. Showing the list changes nothing: no focus moves and nothing is
- * marked read.
+ * device. Each section draws its roots, and a root's descendants follow it
+ * while the operator has it unfolded; folded, the root's badge speaks for
+ * them and opens their list (PRD sidebar-agent-status D-02, D-03). Showing
+ * the list changes nothing: no focus moves and nothing is marked read.
  */
 function AgentList({ actions }: { actions: Actions }) {
   // Only what the list reads, so a terminal frame or an editor change does
@@ -88,30 +91,30 @@ function AgentList({ actions }: { actions: Actions }) {
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const localAgents = useShellStore((s) => s.agents);
   const listed = useMemo(() => allAgents(remote, devices, localAgents), [remote, devices, localAgents]);
-  const agents = useMemo(() => listed.map((row) => row.agent), [listed]);
-  const deviceOf = useMemo(() => new Map(listed.map((row) => [row.agent.pane_id, row.device])), [listed]);
-  const descendants = useMemo(() => liveDescendantCounts(agents), [agents]);
-  const sections = useMemo(() => agentSections(agents), [agents]);
+  const tree = useMemo(() => agentTree(listed), [listed]);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
-  if (sections.length === 0) {
+  if (tree.sections.length === 0) {
     return <div className="min-h-0 flex-1 px-md py-sm text-caption text-muted-foreground" data-agents-empty="true">No agents are running</div>;
   }
   return (
     <ul className="min-h-0 flex-1 overflow-auto" data-agent-list="true">
-      {sections.map((section) => (
+      {tree.sections.map((section) => (
         <li key={section.group} data-agent-group={section.group}>
           <div className="px-md pb-xxs pt-sm text-micro uppercase text-muted-foreground" id={`agent-group-${section.group}`}>
-            {section.label} · {section.agents.length}
+            {section.label} · {section.count}
           </div>
           <ul aria-labelledby={`agent-group-${section.group}`}>
-            {section.agents.map((agent) => (
-              <AgentRowView
-                key={agent.id}
-                agent={agent}
-                device={deviceOf.get(agent.pane_id) ?? null}
-                descendants={descendants.get(agent.pane_id) ?? 0}
-                selected={agent.pane_id === focusedPaneId}
+            {section.rows.map((row) => (
+              <AgentRowItem
+                key={`${row.device ?? "local"}:${row.agent.id}`}
+                agent={row.agent}
+                device={row.device}
+                depth={row.depth}
+                descendants={row.descendants}
+                childRows={tree.children(row.device, row.agent)}
+                selected={row.agent.pane_id === focusedPaneId}
                 onOpen={actions.openAgent}
+                onToggleTree={actions.toggleAgentTree}
               />
             ))}
           </ul>
@@ -121,82 +124,35 @@ function AgentList({ actions }: { actions: Actions }) {
   );
 }
 
-function descendantDetail(agent: AgentRow, count: number): string {
-  const counts = agent.descendant_counts;
-  const parts = counts
-    ? (
-        [
-          ["error", counts.error],
-          ["approval", counts.approval],
-          ["question", counts.question],
-          ["working", counts.working],
-          ["done", counts.done],
-        ] as const
-      )
-        .filter(([, value]) => value > 0)
-        .map(([name, value]) => `${value} ${name}`)
-    : [];
-  return `${count} live ${count === 1 ? "descendant" : "descendants"}${parts.length > 0 ? `: ${parts.join(", ")}` : ""}`;
+/**
+ * The sections and the rows each draws, from one index per device: pane ids
+ * are scoped to the device that reported them, so a lineage never crosses
+ * devices.
+ */
+function agentTree(listed: ListedAgent[]) {
+  const byDevice = new Map<string | null, AgentRow[]>();
+  for (const { agent, device } of listed) {
+    const rows = byDevice.get(device) ?? [];
+    rows.push(agent);
+    byDevice.set(device, rows);
+  }
+  const index = new Map([...byDevice].map(([device, rows]) => [device, new Map(rows.map((row) => [row.pane_id, row]))]));
+  const counts = new Map([...byDevice].map(([device, rows]) => [device, liveDescendantCounts(rows)]));
+  const deviceOf = new Map(listed.map((row) => [row.agent, row.device]));
+  const lookup = (device: string | null, paneId: string) => index.get(device)?.get(paneId);
+  const descendantsOf = (device: string | null, paneId: string) => counts.get(device)?.get(paneId) ?? 0;
+  const sections = agentSections(listed.map((row) => row.agent))
+    .map((section) => {
+      const roots = section.agents.filter((agent) => !agent.delegated);
+      const rows = sectionTree(roots.map((agent) => ({ agent, device: deviceOf.get(agent) ?? null })), lookup, descendantsOf);
+      return { group: section.group, label: section.label, rows, count: sectionCount(rows) };
+    })
+    .filter((section) => section.rows.length > 0);
+  return {
+    sections,
+    children: (device: string | null, agent: AgentRow) => directChildren(agent, (paneId) => lookup(device, paneId)),
+  };
 }
-
-const AgentRowView = memo(function AgentRowView({
-  agent,
-  device,
-  descendants,
-  selected,
-  onOpen,
-}: {
-  agent: AgentRow;
-  device: string | null;
-  descendants: number;
-  selected: boolean;
-  onOpen: (paneId: string) => void;
-}) {
-  const attention = agent.group === "needs_you" || agent.unread;
-  // A delegated row is somebody else's work: drawn quieter and indented,
-  // and never loud, since it is only ever Working or Seen.
-  const tone = agent.delegated ? "text-muted-foreground" : agent.emphasized || attention ? "text-foreground" : "text-subtle-foreground";
-  return (
-    <li>
-      <Hint label={device ? `${agent.identity_label} · ${device}` : agent.identity_label}>
-      <button
-        type="button"
-        onClick={() => onOpen(agent.pane_id)}
-        data-pane={agent.pane_id}
-        data-attention={attention ? "true" : "false"}
-        data-delegated={agent.delegated ? "true" : "false"}
-        data-agent-device={device ?? "local"}
-        className={`flex w-full flex-col items-start py-xs pr-md text-left outline-none focus-visible:bg-accent ${
-          agent.delegated ? "pl-[calc(var(--spacing-md)+var(--size-lineage-indent))]" : "pl-md"
-        } ${selected ? "bg-secondary" : ""} ${tone}`}
-      >
-        <span className="flex w-full items-baseline gap-xs text-body">
-          <span className={`w-[var(--size-agent-mark)] font-mono text-caption ${agent.delegated ? "" : chipTone({ demand: agent.demand ?? "none", activity: agent.activity ?? "", emphasized: agent.emphasized })}`}>
-            {agent.symbol}
-          </span>
-          <span className="flex-1 truncate">{agent.identity_label}</span>
-          {descendants > 0 ? (
-            <Hint label={descendantDetail(agent, descendants)} reveals>
-            <span
-              className="shrink-0 rounded-xs bg-secondary px-xxs text-micro text-subtle-foreground"
-              aria-label={descendantDetail(agent, descendants)}
-              data-descendant-badge={descendants}
-            >
-              ↳{descendants}
-            </span>
-            </Hint>
-          ) : null}
-          <span className="text-micro text-muted-foreground">{agent.elapsed}</span>
-        </span>
-        <span className="pl-[var(--size-agent-mark)] text-caption text-subtle-foreground">
-          {device ? `${device} · ` : ""}
-          {agent.unknown ? "unknown" : `${agent.agent_kind}${agent.detail ? ` / ${agent.detail}` : ""}`}
-        </span>
-      </button>
-      </Hint>
-    </li>
-  );
-});
 
 const NO_GROUPS: InactiveProjectGroup[] = [];
 
