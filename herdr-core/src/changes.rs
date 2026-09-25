@@ -246,8 +246,11 @@ pub fn read(request: &ChangesRequest) -> ChangesSnapshot {
             .map(|relative| relative.to_string_lossy().into_owned())
     };
     let selected = request.selected_path.as_deref().and_then(&relative);
-    // A View diff outside the folder History describes cannot be taken here;
-    // its display says so rather than waiting for text that never comes.
+    // A View diff outside the folder History reads cannot be taken here: the
+    // helper answers only paths under that folder, and a Workspace's views
+    // are shared by every Project registered in its checkout. Its display
+    // says so, naming the folder, rather than waiting for text that never
+    // comes.
     let mut diffs = Vec::new();
     let mut outside = Vec::new();
     for target in &request.diffs {
@@ -308,7 +311,9 @@ pub fn read(request: &ChangesRequest) -> ChangesSnapshot {
             path: target.path.clone(),
             committed: target.committed,
             text: String::new(),
-            notice: Some("This file is outside the folder History describes".to_owned()),
+            notice: Some(format!(
+                "This file is outside {root_path}, the folder History reads for the Project in front; its diff shows when a Project that holds it is in front"
+            )),
         }))
         .collect();
     ChangesSnapshot {
@@ -414,6 +419,39 @@ mod tests {
         assert_eq!(listed.selected_path.as_deref(), Some(diff.path.as_str()));
         assert!(listed.committed.is_empty());
         assert_eq!(listed.base_branch, None);
+    }
+
+    /// A5, B16: a View diff outside the folder History reads is not taken,
+    /// and its display says why and names that folder, so the empty diff
+    /// never reads as a file without changes.
+    #[test]
+    fn a_view_diff_outside_the_history_folder_names_the_folder_history_reads() {
+        let temporary = tempfile::tempdir().unwrap();
+        let checkout = temporary.path().canonicalize().unwrap();
+        git(&checkout, &["init", "-q"]);
+        let folder = checkout.join("registered");
+        std::fs::create_dir(&folder).unwrap();
+        std::fs::write(checkout.join("outside.txt"), "OUTSIDE\n").unwrap();
+        let outside = checkout.join("outside.txt").to_string_lossy().into_owned();
+        let mut asked = request(&checkout, &folder, None);
+        asked.diffs = vec![DiffTarget {
+            path: outside.clone(),
+            committed: false,
+        }];
+
+        let listed = read(&asked);
+        let [shown] = listed.diffs.as_slice() else {
+            panic!("one View diff: {:?}", listed.diffs);
+        };
+        assert_eq!(
+            (shown.path.as_str(), shown.text.as_str()),
+            (outside.as_str(), "")
+        );
+        let notice = shown.notice.as_deref().unwrap_or_default();
+        assert!(
+            notice.contains(&*folder.to_string_lossy()),
+            "the notice names the folder History reads: {notice}"
+        );
     }
 
     #[test]
