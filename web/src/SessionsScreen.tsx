@@ -282,12 +282,7 @@ function ListNotice({ state, onRetry, onClearFilters, onShowHere }: { state: Exc
         </p>
       );
     case "empty":
-      return (
-        <>
-          <Status tone="muted">No sessions yet</Status>
-          <p className="text-caption text-muted">Sessions appear here after an agent runs in one of this project's Workspaces.</p>
-        </>
-      );
+      return <Status tone="muted">No sessions yet</Status>;
     case "no_match":
       return (
         <>
