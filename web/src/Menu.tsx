@@ -129,10 +129,9 @@ export function ContextMenu<Id extends string>({
     setAt(null);
     host.current?.querySelector<HTMLElement>("[tabindex], button")?.focus({ preventScroll: true });
   }).current;
-  const openAt = (x: number, y: number) => {
-    const box = host.current?.getBoundingClientRect();
-    setAt({ x: x - (box?.left ?? 0), y: y - (box?.top ?? 0) });
-  };
+  // Viewport coordinates, drawn fixed: a target inside a scrolling strip
+  // (the tab rows) would otherwise clip its own menu.
+  const openAt = (x: number, y: number) => setAt({ x, y });
   const entries = at ? items() : [];
   return (
     <div
@@ -159,7 +158,7 @@ export function ContextMenu<Id extends string>({
           items={entries}
           onSelect={onSelect}
           onClose={close}
-          className="absolute"
+          className="fixed"
           style={{ left: at.x, top: at.y }}
         />
       ) : null}

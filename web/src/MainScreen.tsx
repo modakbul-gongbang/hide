@@ -267,7 +267,7 @@ function ProjectAgents({ agents, workspace, actions }: { agents: AgentRow[] | nu
     return (
       <section aria-label="Agents in this project" data-overview-agents="unknown">
         <h2 className="pb-xs text-micro uppercase text-muted">Agents · …</h2>
-        <p className="px-sm py-xs text-caption text-muted">Its agents show once the device answers.</p>
+        <p className="px-sm py-xs text-caption text-muted">Its agents show once this device's Herdr answers.</p>
       </section>
     );
   }
