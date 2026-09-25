@@ -903,7 +903,17 @@ pub struct Runtime {
     /// sizes the PTY from the attach, so starting one at a guess costs a
     /// full frame at the wrong size and a second one after the resize.
     panes_awaiting_size: HashSet<String>,
-    panes_scrolled_before_size: HashSet<String>,
+    /// Wheel lines that arrived before the pane had a session to take them
+    /// (no size reported yet, or its attach still starting after a tab
+    /// switch), summed per pane and sent at the pane's first frame through
+    /// whichever mode it attached in.
+    wheel_before_attach: HashMap<String, i32>,
+    /// Observed panes with a `pane.scroll` request in flight, and the lines
+    /// that arrived meanwhile, which go out as one request when it lands.
+    viewport_scrolls: HashMap<String, i32>,
+    /// Observed panes whose last wheel Herdr did not move: another client
+    /// holds their scrolling (`TerminalPaneSnapshot::scroll_held_elsewhere`).
+    panes_scroll_held: HashSet<String>,
     /// The tabs that have been on screen, most recent first. An attach lives
     /// for as long as its tab is in this window; every other pane's session is
     /// released. Herdr renders a pane for every attached client, so an attach
@@ -1287,7 +1297,9 @@ impl Runtime {
             terminal_foreign_frame_sizes: HashMap::new(),
             terminal_sizes: pane_terminal_sizes.into_iter().collect(),
             panes_awaiting_size: HashSet::new(),
-            panes_scrolled_before_size: HashSet::new(),
+            wheel_before_attach: HashMap::new(),
+            viewport_scrolls: HashMap::new(),
+            panes_scroll_held: HashSet::new(),
             pane_relocations_in_flight: BTreeMap::new(),
             pane_hook_tokens: BTreeMap::new(),
             hook_diagnosis: None,

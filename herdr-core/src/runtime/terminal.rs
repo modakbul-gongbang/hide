@@ -50,6 +50,7 @@ impl Runtime {
                 transport_last_attempt_at_unix_ms: None,
                 transport_exit_category: None,
                 transport_retry_decision: idle_lifecycle.retry_decision.to_owned(),
+                scroll_held_elsewhere: false,
             };
             if *pane != idle {
                 *pane = idle;
@@ -105,8 +106,9 @@ impl Runtime {
         self.terminal_foreign_frame_sizes
             .retain(|pane_id, _| keep(pane_id));
         self.panes_awaiting_size.retain(|pane_id| keep(pane_id));
-        self.panes_scrolled_before_size
-            .retain(|pane_id| keep(pane_id));
+        self.wheel_before_attach.retain(|pane_id, _| keep(pane_id));
+        self.viewport_scrolls.retain(|pane_id, _| keep(pane_id));
+        self.panes_scroll_held.retain(|pane_id| keep(pane_id));
         before != self.terminal_state_len()
     }
     /// Every pane-keyed terminal map, counted together so a retain pass can
@@ -121,7 +123,9 @@ impl Runtime {
             + self.terminal_frames_need_full.len()
             + self.terminal_foreign_frame_sizes.len()
             + self.panes_awaiting_size.len()
-            + self.panes_scrolled_before_size.len()
+            + self.wheel_before_attach.len()
+            + self.viewport_scrolls.len()
+            + self.panes_scroll_held.len()
             + self.panes_closing.len()
     }
     pub(super) fn reconcile_remote_terminal_selection(&mut self) -> bool {
@@ -182,6 +186,7 @@ impl Runtime {
                 .and_then(|r| r.last_attempt_at_unix_ms),
             transport_exit_category: lifecycle.exit_category,
             transport_retry_decision: lifecycle.retry_decision.to_owned(),
+            scroll_held_elsewhere: self.panes_scroll_held.contains(pane_id),
         }
     }
     pub(super) fn sync_transport_projection(&mut self, pane_id: &str) {
@@ -205,6 +210,7 @@ impl Runtime {
                 .and_then(|r| r.last_attempt_at_unix_ms);
             pane.transport_exit_category = lifecycle.exit_category;
             pane.transport_retry_decision = lifecycle.retry_decision.to_owned();
+            pane.scroll_held_elsewhere = self.panes_scroll_held.contains(pane_id);
         }
     }
     pub(super) fn sync_focused_terminal_projection(&mut self) {
@@ -261,9 +267,9 @@ impl Runtime {
     }
     /// Stores what a pane search found and moves the viewport to the match.
     ///
-    /// The scroll goes through the same terminal-control write the wheel uses,
-    /// because Herdr owns the pane's history and answers a viewport move with a
-    /// fresh frame either way.
+    /// The scroll goes through the same router the wheel uses, because Herdr
+    /// owns the pane's history and answers a viewport move with a fresh frame
+    /// whichever way this client reaches it.
     pub fn ingest_pane_find(
         &mut self,
         pane_id: &str,
@@ -291,45 +297,187 @@ impl Runtime {
         let changed = self.snapshot.find != next;
         self.snapshot.find = next;
         if let Some((direction, lines)) = outcome.scroll {
-            if let Some(said) = self.scroll_withheld_for_missing_size(pane_id) {
-                return said || changed;
-            }
             let lines = i32::from(lines) * if direction == "up" { 1 } else { -1 };
-            if let Some(session) = self.terminal_sessions.get_mut(pane_id)
-                && session.mode == TerminalSessionMode::Control
-                && let Err(message) = session.scroll(live::ScrollRequest {
+            return self.scroll_pane(
+                pane_id,
+                live::ScrollRequest {
                     lines,
                     ..Default::default()
-                })
-            {
-                self.set_error("terminal.scroll_failed", message, true);
-                return true;
-            }
+                },
+            ) || changed;
         }
         changed
     }
-    /// Whether a scroll must be withheld because the pane reported no size,
-    /// and whether saying so changed the snapshot.
+    /// Moves a pane's view by a wheel's signed lines (positive shows older
+    /// lines), and whether that changed the snapshot.
     ///
-    /// `None` means the pane can be scrolled. The attach is held back until
-    /// the same size arrives, so a pane without one has nothing to write to,
-    /// and the guessed 24x80 that used to stand in only ever resized the PTY
-    /// to a grid it was not running at. Every scroll producer goes through
-    /// here so the wait is said once per pane rather than once per producer.
-    pub(super) fn scroll_withheld_for_missing_size(&mut self, pane_id: &str) -> Option<bool> {
-        if self.terminal_sizes.contains_key(pane_id) {
-            return None;
+    /// Herdr gives terminal control to one client per pane. The controlling
+    /// session writes `terminal.scroll`, which Herdr routes to the program's
+    /// mouse handling or the history. A pane another client controls (the
+    /// Swift shell on the same server, say) is observed, and an observer has
+    /// no writer, so its wheel moves Herdr's viewport with `pane.scroll`
+    /// instead; Herdr keeps one viewport per pane, so both clients see the
+    /// move. A pane with no session yet keeps the lines for its first frame.
+    /// Every scroll producer comes through here, so none of them drops a wheel.
+    pub(super) fn scroll_pane(&mut self, pane_id: &str, request: live::ScrollRequest) -> bool {
+        if request.lines == 0 {
+            return false;
         }
-        if self.panes_scrolled_before_size.insert(pane_id.to_owned()) {
-            self.push_diagnostic(
-                "terminal.scroll_deferred",
-                format!(
-                    "Pane {pane_id} was scrolled before its view reported a size; nothing was sent"
-                ),
+        match self
+            .terminal_sessions
+            .get(pane_id)
+            .map(|session| session.mode)
+        {
+            Some(TerminalSessionMode::Control) => {
+                let session = self
+                    .terminal_sessions
+                    .get(pane_id)
+                    .expect("the session was just read");
+                if let Err(message) = session.scroll(request) {
+                    self.set_error("terminal.scroll_failed", message, true);
+                    return true;
+                }
+                false
+            }
+            Some(TerminalSessionMode::Observe) => {
+                if let Some(pending) = self.viewport_scrolls.get_mut(pane_id) {
+                    *pending = pending.saturating_add(request.lines);
+                    return false;
+                }
+                self.start_viewport_scroll(pane_id, request.lines)
+            }
+            None => {
+                let first = !self.wheel_before_attach.contains_key(pane_id);
+                let pending = self
+                    .wheel_before_attach
+                    .entry(pane_id.to_owned())
+                    .or_insert(0);
+                *pending = pending.saturating_add(request.lines);
+                if first {
+                    self.push_diagnostic(
+                        "terminal.scroll_deferred",
+                        format!(
+                            "Pane {pane_id} was scrolled before its terminal attached; the wheel is sent with its first frame"
+                        ),
+                    );
+                }
+                first
+            }
+        }
+    }
+    /// Sends the wheel a pane held while it had no session, now that its
+    /// first frame shows which mode it attached in.
+    fn release_wheel_before_attach(&mut self, pane_id: &str) {
+        if self.wheel_before_attach.is_empty() {
+            return;
+        }
+        if let Some(lines) = self.wheel_before_attach.remove(pane_id) {
+            self.scroll_pane(
+                pane_id,
+                live::ScrollRequest {
+                    lines,
+                    ..Default::default()
+                },
             );
-            return Some(true);
         }
-        Some(false)
+    }
+    fn start_viewport_scroll(&mut self, pane_id: &str, lines: i32) -> bool {
+        if lines == 0 {
+            return false;
+        }
+        let route = match self.pane_api_route(pane_id) {
+            Ok(route) => route,
+            Err(reason) => return self.hold_scroll_elsewhere(pane_id, &reason),
+        };
+        self.viewport_scrolls.insert(pane_id.to_owned(), 0);
+        if let Err(message) = live::spawn_viewport_scroll(route, lines) {
+            self.viewport_scrolls.remove(pane_id);
+            self.set_error("terminal.scroll_failed", message, true);
+            return true;
+        }
+        false
+    }
+    /// Applies a landed `pane.scroll`: the marker follows whether Herdr moved
+    /// anything, and the lines that arrived meanwhile go out as one request.
+    pub fn ingest_viewport_scroll(
+        &mut self,
+        pane_id: &str,
+        result: Result<Option<live::PaneScroll>, String>,
+    ) -> bool {
+        let Some(pending) = self.viewport_scrolls.remove(pane_id) else {
+            return false;
+        };
+        let mut changed = match result {
+            Ok(Some(scroll)) if scroll.max_offset_from_bottom > 0 => {
+                self.release_scroll_hold(pane_id)
+            }
+            // An alternate-screen program has no history in Herdr's viewport;
+            // only the controlling client's wheel reaches the program itself.
+            Ok(_) => self.hold_scroll_elsewhere(
+                pane_id,
+                "Herdr has no history to move for this pane, and only the client controlling it can scroll the program",
+            ),
+            Err(message) => self.hold_scroll_elsewhere(pane_id, &message),
+        };
+        changed |= self.scroll_pane(
+            pane_id,
+            live::ScrollRequest {
+                lines: pending,
+                ..Default::default()
+            },
+        );
+        changed
+    }
+    fn hold_scroll_elsewhere(&mut self, pane_id: &str, reason: &str) -> bool {
+        if !self.panes_scroll_held.insert(pane_id.to_owned()) {
+            return false;
+        }
+        crate::diagnostic!(serde_json::json!({
+            "component": "terminal", "kind": "terminal.scroll_held_elsewhere",
+            "pane_id": pane_id, "reason": reason,
+        }));
+        self.sync_transport_projection(pane_id);
+        true
+    }
+    pub(super) fn release_scroll_hold(&mut self, pane_id: &str) -> bool {
+        if !self.panes_scroll_held.remove(pane_id) {
+            return false;
+        }
+        self.sync_transport_projection(pane_id);
+        true
+    }
+    /// Where a pane's socket requests go: this machine's Herdr, or the
+    /// device's Herdr under the id that Herdr knows the pane by. The error is
+    /// the reason, worded for the operator.
+    pub(super) fn pane_api_route(&self, pane_id: &str) -> Result<live::PaneApiRoute, String> {
+        if !pane_id.starts_with("remote:") {
+            return self
+                .live
+                .as_ref()
+                .map(|context| live::PaneApiRoute::local(context, pane_id))
+                .ok_or_else(|| "This pane needs a live Herdr connection".to_owned());
+        }
+        let (device, source_pane_id) = self
+            .snapshot
+            .ui_state
+            .device_registrations
+            .iter()
+            .find_map(|device| {
+                super::remote_pane_source_id(&device.id, pane_id).map(|source| (device, source))
+            })
+            .ok_or_else(|| "This pane's device is no longer registered".to_owned())?;
+        let connected = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .any(|status| status.target_id == device.id && status.state == "connected");
+        let context = self
+            .remote_controls
+            .get(&device.id)
+            .filter(|_| connected)
+            .ok_or_else(|| format!("{} is not connected", device.label))?;
+        Ok(live::PaneApiRoute::remote(context, pane_id, source_pane_id))
     }
     pub fn ingest_pane_control_result(
         &mut self,
@@ -700,6 +848,7 @@ impl Runtime {
             }
             self.sync_transport_projection(pane_id);
         }
+        self.release_wheel_before_attach(pane_id);
         self.append_terminal_chunk(pane_id.to_owned(), live::encode_base64(bytes));
         self.snapshot
             .terminal
@@ -1559,6 +1708,10 @@ impl Runtime {
                     TerminalSessionMode::Control => "controlling",
                     TerminalSessionMode::Observe => "observing",
                 };
+                // This client's own wheel reaches a controlled pane.
+                if mode == TerminalSessionMode::Control {
+                    self.panes_scroll_held.remove(pane_id);
+                }
                 self.terminal_session_lifecycles.insert(
                     pane_id.to_owned(),
                     TerminalSessionLifecycle {
