@@ -425,19 +425,40 @@ impl Runtime {
 /// Why one session cannot be read, in words. The catalog reports codes that
 /// the Swift panel keeps showing as they are; this screen says what they mean.
 fn session_reason(reason: &str) -> String {
-    let limit_mib = hide_session::SESSION_READ_LIMIT_BYTES / (1024 * 1024);
     match reason {
         "session_missing" => "The session file is missing.".to_owned(),
         "session_malformed" => "The session file could not be parsed.".to_owned(),
-        "session_too_large" => format!("The session file is larger than {limit_mib} MiB."),
+        "session_too_large" => too_large(),
         _ => match reason
             .strip_prefix("session_unreadable:")
             .or_else(|| reason.strip_prefix("Session unavailable: "))
         {
-            Some(detail) => format!("The session file could not be read: {detail}"),
+            Some(error) => read_failure(error),
             None => reason.to_owned(),
         },
     }
+}
+
+/// A session reader error (`hide_session::SessionError`'s text) in words;
+/// an I/O failure keeps the operating system's own words after its code.
+fn read_failure(error: &str) -> String {
+    if error == "session_file_missing" {
+        return "The session file is missing.".to_owned();
+    }
+    if error.starts_with("session_capacity:") {
+        return too_large();
+    }
+    // `session_<operation>: <io error>`
+    let detail = error
+        .strip_prefix("session_")
+        .and_then(|rest| rest.split_once(": "))
+        .map_or(error, |(_, detail)| detail);
+    format!("The session file could not be read: {detail}")
+}
+
+fn too_large() -> String {
+    let limit_mib = hide_session::SESSION_READ_LIMIT_BYTES / (1024 * 1024);
+    format!("The session file is larger than {limit_mib} MiB.")
 }
 
 /// Why a Project's history could not be read, in words.
@@ -455,4 +476,35 @@ fn history_failure(message: &str) -> String {
         }
     }
     format!("The Project's sessions could not be read: {message}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::session_reason;
+
+    #[test]
+    fn session_reader_errors_read_as_words_without_their_codes() {
+        assert_eq!(
+            session_reason(
+                "Session unavailable: session_open: No such file or directory (os error 2)"
+            ),
+            "The session file could not be read: No such file or directory (os error 2)"
+        );
+        assert_eq!(
+            session_reason("Session unavailable: session_file_missing"),
+            "The session file is missing."
+        );
+        assert_eq!(
+            session_reason("Session unavailable: session_capacity:bytes:67108864"),
+            "The session file is larger than 64 MiB."
+        );
+        assert_eq!(
+            session_reason("session_unreadable:Permission denied (os error 13)"),
+            "The session file could not be read: Permission denied (os error 13)"
+        );
+        assert_eq!(
+            session_reason("Session source is no longer available"),
+            "Session source is no longer available"
+        );
+    }
 }

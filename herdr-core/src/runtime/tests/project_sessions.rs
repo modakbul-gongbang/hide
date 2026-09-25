@@ -452,3 +452,70 @@ fn the_project_sessions_section_rides_the_wire_only_once_a_project_is_named() {
     let (_, unchanged) = wire(latest);
     assert!(unchanged.get("project_sessions").is_none());
 }
+
+#[test]
+fn a_session_whose_file_moved_away_stays_listed_as_unavailable_from_its_memory_record() {
+    let fixture = fixture();
+    let shared = shared(&fixture);
+    // The Memory store sits beside the state file; keep it in the fixture,
+    // not in the shared temporary directory every test runtime names.
+    let database = {
+        let mut runtime = shared.lock().unwrap();
+        runtime.state_path = fixture.home.with_file_name("state").join("hide.json");
+        runtime.memory_database_path()
+    };
+    fs::create_dir_all(database.parent().unwrap()).unwrap();
+    let identity =
+        hide_project::resolve(&fixture.alpha, workspace::LOCAL_DEVICE_ID).expect("alpha resolves");
+    let moved = fixture.alpha.join("moved-away.jsonl");
+    {
+        let store = hide_memory::MemoryStore::open(&database).unwrap();
+        store
+            .ensure_project(&identity.id, &identity.root, workspace::LOCAL_DEVICE_ID)
+            .unwrap();
+        store
+            .upsert_session_source(&hide_memory::SessionSourceRecord {
+                id: "claude-moved".to_owned(),
+                project_id: identity.id.clone(),
+                provider: "claude".to_owned(),
+                locator: moved.to_string_lossy().into_owned(),
+                checkout_path: fixture.alpha.to_string_lossy().into_owned(),
+                started_at_unix_ms: Some(1),
+                updated_at_unix_ms: 2,
+                unavailable_reason: None,
+            })
+            .unwrap();
+    }
+
+    let project = workspace_id(&fixture.alpha);
+    dispatch(
+        &shared,
+        "sessions_refresh",
+        serde_json::json!({"workspace_id": project}),
+    );
+    let sessions = settled(&shared);
+    let row = sessions
+        .rows
+        .iter()
+        .find(|row| row.id == "claude-moved")
+        .expect("a recorded session stays listed after its file moved");
+    assert_eq!(row.locator, moved.to_string_lossy());
+    assert_eq!(
+        row.unavailable_reason.as_deref(),
+        Some("Session source is no longer available")
+    );
+
+    // Its detail answers with the same reason and reads no file (B5).
+    dispatch(
+        &shared,
+        "archive_open",
+        serde_json::json!({"kind": "session", "id": "claude-moved", "workspace_id": project}),
+    );
+    let detail = settled(&shared).detail.expect("an open session");
+    assert_eq!(
+        detail.failure.as_deref(),
+        Some("Session source is no longer available")
+    );
+    assert_eq!(detail.locator, moved.to_string_lossy());
+    assert!(detail.archive.is_none());
+}
