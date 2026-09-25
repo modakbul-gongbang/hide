@@ -18,6 +18,7 @@ pub struct SnapshotDeltaDocument {
     pub editor: Option<serde_json::Value>,
     pub changes: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub documents: Option<serde_json::Value>,
     pub project_sessions: Option<serde_json::Value>,
     pub find: serde_json::Value,
     pub input_generation: u64,

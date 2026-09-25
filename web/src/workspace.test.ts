@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { AgentRow, Checkout, EditorSnapshot, EditorTabSnapshot, StripTab, Tab } from "./snapshot";
-import { activeViewTab, agentEntries, agentWidth, shareAt, tabAgent, tabIdentity, viewEntries } from "./workspace";
+import type { AgentRow, Checkout, StripTab, Tab } from "./snapshot";
+import { agentEntries, agentWidth, shareAt, tabAgent, tabIdentity } from "./workspace";
 
 const strip: StripTab[] = [
   { id: "herdr:1", kind: "herdr", source_id: "t1", label: "1", preview: false },
@@ -11,26 +11,13 @@ const strip: StripTab[] = [
 
 const checkout = { id: "c1", strip, tabs: [], active_tab_id: "t1" } as unknown as Checkout;
 
-function fileTab(id: string, checkoutId: string, kind: EditorTabSnapshot["kind"] = "file"): EditorTabSnapshot {
-  return { id, workspace_id: "w", checkout_id: checkoutId, path: `/repo/${id}`, label: id, kind, diff_committed: kind === "diff" ? false : null, markdown_live: true, wrap: false, dirty: false, preview: false };
-}
-
 function agent(pane: string, kind: string): AgentRow {
   return { id: pane, pane_id: pane, identity_label: `task ${pane}`, agent_kind: kind, symbol: "●", group: "working", status_label: "Working", elapsed: "1m", emphasized: false, unread: false };
 }
 
 describe("the Workspace strips", () => {
-  it("splits one core strip into Agent tabs and View tabs in the core's order", () => {
+  it("takes the Agent tabs from the core strip in the core's order", () => {
     expect(agentEntries(checkout).map((entry) => entry.source_id)).toEqual(["t1", "t2"]);
-    expect(viewEntries(checkout).map((entry) => entry.source_id)).toEqual(["f-a", "d-b"]);
-  });
-
-  it("shows the editor's active tab only when it is a file or diff of this checkout", () => {
-    const editor = (active: string | null, tabs: EditorTabSnapshot[]): EditorSnapshot => ({ active_tab_id: active, document: null, tabs });
-    expect(activeViewTab(editor("f-a", [fileTab("f-a", "c1")]), checkout)?.id).toBe("f-a");
-    expect(activeViewTab(editor("f-x", [fileTab("f-x", "c2")]), checkout)).toBeNull();
-    expect(activeViewTab(editor("s", [fileTab("s", "c1", "session")]), checkout)).toBeNull();
-    expect(activeViewTab(editor(null, [fileTab("f-a", "c1")]), checkout)).toBeNull();
   });
 });
 
@@ -46,11 +33,8 @@ describe("tab identity", () => {
 
   it("names the kind and the full identity without replacing Herdr's tab name", () => {
     const entry = strip[0]!;
-    expect(tabIdentity(entry, agent("p1", "codex"), null)).toBe("codex agent tab 1 · task p1 · Working");
-    expect(tabIdentity(entry, null, null)).toBe("Terminal tab 1");
-    const unavailable = { ...fileTab("f-a", "c1"), unavailable_reason: "gone" };
-    expect(tabIdentity(strip[1]!, null, unavailable)).toBe("File: /repo/f-a · Unavailable");
-    expect(tabIdentity(strip[3]!, null, fileTab("d-b", "c1", "diff"))).toBe("Working diff: /repo/d-b");
+    expect(tabIdentity(entry, agent("p1", "codex"))).toBe("codex agent tab 1 · task p1 · Working");
+    expect(tabIdentity(entry, null)).toBe("Terminal tab 1");
   });
 });
 

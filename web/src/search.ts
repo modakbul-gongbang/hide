@@ -5,6 +5,7 @@
 
 import { contextAgents, contextWorkspaces } from "./remote";
 import type { SnapshotRest } from "./snapshot";
+import { besideUnavailable, shownTools, viewCommands, type Geometry, type LayoutSizes, type ToolsPlacement, type ViewCommandId } from "./viewLayout";
 import { LAYOUTS, workspaceViewOf, type ViewMode } from "./workspace";
 
 export type SearchEntry = {
@@ -17,7 +18,9 @@ export type SearchEntry = {
   workspaceId?: string;
   checkoutId?: string;
   /** What a command entry changes on the Workspace in front. */
-  command?: { layout: ViewMode } | { tool: "explorer" | "changes"; visible: boolean };
+  command?: { layout: ViewMode } | { tool: "explorer" | "changes"; visible: boolean } | { view: ViewCommandId } | { openBeside: true };
+  /** Why a command cannot run now; the palette shows it and runs nothing. */
+  unavailable?: string | null;
 };
 
 /** The fuzzy score of `query` against `candidate`, mirroring the Swift scorer
@@ -43,13 +46,22 @@ export function fuzzyScore(candidate: string, query: string): number | null {
 }
 
 /**
- * The Workspace commands ⌘K offers while a Workspace is on screen: the three
- * layouts by the names the layout menu uses (S6 B5), and each tool shown or
- * hidden by what it would do.
+ * The Workspace on screen as the page draws it: what it last drew of the
+ * View areas (a split's room is judged on it), and where its tools stand
+ * (a narrow window's closed overlay shows none of them, S7 B12).
  */
-export function workspaceCommands(rest: SnapshotRest | null): SearchEntry[] {
+export type WorkspaceOnScreen = { drawn: { geometry: Geometry; sizes: LayoutSizes } | null; placement: ToolsPlacement };
+
+/**
+ * The Workspace commands ⌘K offers while a Workspace is on screen: the three
+ * layouts by the names the layout menu uses (S6 B5), each tool shown or
+ * hidden by what it would do on screen, and the View area commands (S7 B20)
+ * with the reason any of them cannot run now.
+ */
+export function workspaceCommands(rest: SnapshotRest | null, screen: WorkspaceOnScreen): SearchEntry[] {
   const view = workspaceViewOf(rest);
   if (!view) return [];
+  const shown = shownTools(view, screen.placement);
   const entries: SearchEntry[] = LAYOUTS.filter((layout) => layout.mode !== view.mode).map((layout) => ({
     id: `command:layout:${layout.mode}`,
     title: `Layout: ${layout.label}`,
@@ -59,17 +71,36 @@ export function workspaceCommands(rest: SnapshotRest | null): SearchEntry[] {
   }));
   entries.push({
     id: "command:tool:explorer",
-    title: view.explorer ? "Hide Explorer" : "Show Explorer",
+    title: shown.explorer ? "Hide Explorer" : "Show Explorer",
     subtitle: "Workspace tool",
     kind: "command",
-    command: { tool: "explorer", visible: !view.explorer },
+    command: { tool: "explorer", visible: !shown.explorer },
   });
   entries.push({
     id: "command:tool:changes",
-    title: view.changes ? "Hide History" : "Show History",
+    title: shown.changes ? "Hide History" : "Show History",
     subtitle: "Workspace tool",
     kind: "command",
-    command: { tool: "changes", visible: !view.changes },
+    command: { tool: "changes", visible: !shown.changes },
+  });
+  if (!view.layout) return entries;
+  for (const command of viewCommands(view.layout, screen.drawn)) {
+    entries.push({
+      id: `command:view:${command.id}`,
+      title: command.title,
+      subtitle: "View areas",
+      kind: "command",
+      command: { view: command.id },
+      unavailable: command.unavailable,
+    });
+  }
+  entries.push({
+    id: "command:open_beside",
+    title: "Open file to the side",
+    subtitle: "View areas",
+    kind: "command",
+    command: { openBeside: true },
+    unavailable: besideUnavailable(view.layout, screen.drawn),
   });
   return entries;
 }
@@ -80,9 +111,9 @@ export function workspaceCommands(rest: SnapshotRest | null): SearchEntry[] {
  * pick on a selected SSH device focuses that host's row rather than one on
  * this machine behind it.
  */
-export function searchEntries(rest: SnapshotRest | null, workspaceOnScreen = false): SearchEntry[] {
+export function searchEntries(rest: SnapshotRest | null, screen: WorkspaceOnScreen | null = null): SearchEntry[] {
   if (!rest) return [];
-  const entries: SearchEntry[] = workspaceOnScreen ? workspaceCommands(rest) : [];
+  const entries: SearchEntry[] = screen ? workspaceCommands(rest, screen) : [];
   for (const agent of contextAgents(rest, rest.navigator?.agents ?? [])) {
     entries.push({
       id: `agent:${agent.pane_id}`,

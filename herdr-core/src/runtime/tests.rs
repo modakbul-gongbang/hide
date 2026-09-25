@@ -33,6 +33,8 @@ mod session_navigation;
 mod snapshot_delta;
 #[path = "tests/terminal.rs"]
 mod terminal;
+#[path = "tests/view_areas.rs"]
+mod view_areas;
 #[path = "tests/workspace_view.rs"]
 mod workspace_view;
 

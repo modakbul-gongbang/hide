@@ -354,28 +354,91 @@ export function storedDraftOnClose(stored: StoredBuffer | null, document: { cont
 }
 
 /**
- * What a close that carried a save learns from the next snapshot. The core
- * removes the tab only after that save landed, so a tab gone from the same
- * daemon over a live connection, with its device still registered, is a
- * landed close and its draft goes. A dropped connection, another daemon or a
- * removed device can also take the tab away without the save landing, so
- * the draft is then kept for recovery.
+ * What closing one display of a document carries (PRD S7 B5, contract 4.1):
+ * the document's unsaved text as the save the close waits on whenever there
+ * is any, since the core and not this page's frame decides whether the
+ * display is the document's last; nothing for a document with no unsaved
+ * work; or `unloaded` for unsaved work this page cannot reproduce (a
+ * background document it never loaded), which only the operator's explicit
+ * Don't save may drop. The newest keystroke decides, not the last frame's
+ * dirty flag, and a document that takes no edits has no text to carry.
  */
-export function closeWithSaveOutcome(
-  watch: { tabId: string; hostId: string | null | undefined; device: string; errorAt: number | null },
-  next: { connection: string; hostId: string | null | undefined; tabIds: string[]; deviceIds: string[]; error: { kind: string; occurred_at: number } | null },
-): "wait" | "landed" | "keep" {
-  if (next.connection !== "live" || next.hostId !== watch.hostId) return "keep";
-  if (next.tabIds.includes(watch.tabId)) {
-    // A save failure reported after the close was asked for, while the tab
-    // is still there, is taken as this close refused: the watch ends and the
-    // draft stays, so a later removal of the tab cannot pass for it landing.
-    // Another tab's failure read this way only keeps a draft, never loses one.
-    const failed = next.error !== null && next.error.occurred_at !== watch.errorAt && next.error.kind.startsWith("file.save_");
-    return failed ? "keep" : "wait";
+export function documentCloseCarries(input: {
+  draft: string | null;
+  document: { contents_utf8: string | null; dirty: boolean; readonly_reason: string | null; save: unknown } | null;
+  dirty: boolean;
+}): { kind: "save"; contents: string } | { kind: "clean" } | { kind: "unloaded" } {
+  const { draft, document } = input;
+  const editable = document ? document.readonly_reason === null && document.contents_utf8 !== null : true;
+  const unsaved = input.dirty || (document?.dirty ?? false) || (document?.save ?? null) !== null;
+  if (editable && draft !== null) return { kind: "save", contents: draft };
+  if (editable && unsaved && document?.contents_utf8 != null) return { kind: "save", contents: document.contents_utf8 };
+  return unsaved ? { kind: "unloaded" } : { kind: "clean" };
+}
+
+/** A close that carried a save, while this page waits to learn what came of it. */
+export type CloseWatch = {
+  tabId: string;
+  /** The Workspace the close was taken on, by its key, and the display it named there. */
+  workspace: string;
+  displayId: string;
+  hostId: string | null | undefined;
+  device: string;
+  errorAt: number | null;
+  /** The text the close carried. */
+  contents: string;
+  /** Whether a frame showed the document's save in flight after the close was sent. */
+  sawSave: boolean;
+};
+
+/** What one frame says about a watched close. */
+export type CloseWatchFrame = {
+  connection: string;
+  hostId: string | null | undefined;
+  tabIds: string[];
+  deviceIds: string[];
+  /** The Workspace in front, by its key, and every display it shows. */
+  workspace: string | null;
+  displayIds: string[];
+  error: { kind: string; occurred_at: number } | null;
+  /** The newest text this page holds for the document, or null. */
+  draft: string | null;
+  /** The document's save as the frame shows it; `hidden` while no area shows the document. */
+  save: "in_flight" | "settled" | "hidden";
+};
+
+/**
+ * What a close that carried a save learns from a frame. The core removes the
+ * tab only after that save landed, so a tab gone from the same daemon over a
+ * live connection, with its device still registered, is a landed close and
+ * its draft goes. A dropped connection, another daemon or a removed device
+ * can also take the tab away without the save landing, so the draft is then
+ * kept for recovery. While the tab stays, the watch ends as `keep` once
+ * nothing more can come of the close - a failure or refusal reported after
+ * it, the operator editing the document again, another Workspace in front
+ * (a close that arrived after the front moved is only logged), its display
+ * gone without the document (the core took it as not the last), or its
+ * save settled - so the document's autosave and save on leaving come back
+ * (interface-2).
+ */
+export function closeWithSaveOutcome(watch: CloseWatch, next: CloseWatchFrame): { outcome: "wait" | "landed" | "keep"; sawSave: boolean } {
+  const keep = { outcome: "keep" as const, sawSave: watch.sawSave };
+  if (next.connection !== "live" || next.hostId !== watch.hostId) return keep;
+  if (!next.tabIds.includes(watch.tabId)) {
+    if (watch.device !== "local" && !next.deviceIds.includes(watch.device)) return keep;
+    return { outcome: "landed", sawSave: watch.sawSave };
   }
-  if (watch.device !== "local" && !next.deviceIds.includes(watch.device)) return "keep";
-  return "landed";
+  // Another document's failure read this way only keeps a draft, never loses one.
+  const failed =
+    next.error !== null &&
+    next.error.occurred_at !== watch.errorAt &&
+    (next.error.kind.startsWith("file.save_") || next.error.kind.startsWith("view_layout."));
+  if (failed) return keep;
+  if (next.draft !== null && next.draft !== watch.contents) return keep;
+  if (next.workspace !== watch.workspace || !next.displayIds.includes(watch.displayId)) return keep;
+  if (next.save === "in_flight") return { outcome: "wait", sawSave: true };
+  if (next.save === "settled" && watch.sawSave) return keep;
+  return { outcome: "wait", sawSave: watch.sawSave };
 }
 
 export function draftStorageHold(input: { storageFull: boolean; unstored: boolean; dirty: boolean }): "unstored" | "held" | null {

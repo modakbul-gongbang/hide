@@ -832,6 +832,7 @@ A dirty tab is never replaced: the core promotes it where it sits and opens the 
 Every other entry point - Cmd+P, Reopen Closed Tab, a Markdown or terminal link, a file the Explorer just created - opens an ordinary tab, and a single click on a file that already has a tab focuses it without touching the slot.
 A replaced preview tab is not a close: its document, Markdown mode and wrap state are dropped and nothing enters Recent Closed; closing the tab yourself records it as any file tab.
 Editor tabs stay ephemeral, so the flag is never persisted.
+This one-slot model is the native shell's; the web Workspace keeps one preview per View area and remembers it with its layout (see [Web Workspace](#web-workspace)).
 
 The italic variant is `HideTheme.Typography.previewSlant`, an oblique of the bundled Inter face applied through the font matrix, because that face carries no italic axis; it is reached only through `hideFont(italic:)`.
 The tooltip and the accessibility label read `name · Preview` while the tab is one and drop the suffix on promotion (`EditorTabTitlePresentation`); the tab's colors, close button, keycap and its Recent Panels row are the ordinary tab's.
@@ -888,21 +889,114 @@ Switching Workspaces replaces the decoration root, and no per-row, hover, select
 
 ## Web Workspace
 
-The web shell's Workspace screen follows the approved S6 proposal (candidate A), and the native shell is unchanged until its own stage.
+The web shell's Workspace screen follows the approved S6 proposal (candidate A), and its View areas follow the approved drag-review boards of PRD S7 (`agents/prd/workspace-views-layout/prd.md`); the native shell is unchanged until its own stage.
 Its toolbar reads left to right: the path back (`Main / Project / Workspace`, with the device named when it is not this Mac), the layout switch, then the two tool toggles.
 The layout switch is three adjacent icons in one segmented group, Agents only, Agents and Views, and Views only, with the chosen one on `{colors.elevated}` and the others muted; the same three names appear in its menu and as palette commands, and each icon's tooltip is its accessible name.
 Its library master is `Component / Layout switch` in `design/hide-ui.lib.pen`.
 Explorer and History are toggles that open and close independently, drawn pressed while shown; with both shown they share the tool column, Explorer above History, and each has its own close.
 A right-click or the menu key on the toolbar offers the layouts, each tool, Copy Workspace path and Open Project Overview.
 
-Agents and Views sit side by side, each with its own tab row, and a boundary between them drags with a guide line and lands once on release.
-Neither area narrows below `--size-workspace-area-min` (`HideTheme.Layout.workspaceAreaMinWidth`) at the supported 1024-wide window: the tool column gives way first, down to `--size-panel-min`, and only when both minimums still cannot fit do the two split evenly.
-An empty Agent area offers New tab; an empty View area says no file or diff is open and offers Show Explorer when the Explorer is hidden, and Open file.
-Changing the layout only changes space: it closes no tab, document or pane and makes no split.
+Agents and Views sit side by side, each region with its own tabs, and a boundary between them drags with a guide line and lands once on release.
+Neither region narrows below `--size-workspace-area-min` (`HideTheme.Layout.workspaceAreaMinWidth`) at the supported 1024-wide window: the tool column gives way first, down to `--size-panel-min`, and a narrower window follows the rules under Narrow windows.
+An empty Agent area offers New tab.
+Changing the layout only changes space: it closes no tab, document or pane, and choosing Views only never makes a split; a split comes only from a split command or a drop on an edge.
 
 An Agent tab carries its provider's mark (Claude, Codex) or a neutral terminal mark for any other kind, and never replaces Herdr's tab name; its tooltip and accessible name carry the kind, the full name and the agent's state.
-A View tab carries the file-type mark, and a diff tab the comparison mark; a file that could not be restored is drawn struck through as unavailable, and its only action is Close view.
-Closing a View is always called Close view, distinct from moving a file to the Trash and from closing a pane or tab.
+A View tab carries the file-type mark, and a diff tab the comparison mark, so a kind is never told by color alone.
+Its title is one line cut at the tail within `--size-tab-preferred`, and its tooltip and accessible name carry the kind, the full path, and `Preview` or `Unavailable` while the view is one, so a long Korean or English path stays readable.
+A dirty view shows `●` in `--color-warning` after its title.
+Closing a view is always called Close view, distinct from moving a file to the Trash and from closing a pane or tab.
+
+### View areas
+
+The Views region holds one or more View areas, each with its own tab bar above its own view, split left and right or up and down as often as the limits allow.
+A split divides one area in two along one axis, and either half can split again along either axis, so every arrangement of side-by-side and stacked areas is a tree of halves.
+One area is active: the next file opens there, the palette and the keyboard act on it, and its active view's tab alone carries the accent indicator (`--size-tab-indicator` in `{colors.accent}`).
+Every other area still shows its own active view's tab on `{colors.background}` with a primary title and no indicator, so the operator sees what each area holds and which one is in charge.
+An area whose tabs outrun its width scrolls its own strip so the shown view's tab stays in sight whenever the shown view changes or the area is resized.
+Clicking a tab or a view, or moving focus to another area from the palette, makes that area active.
+Between two areas is a divider `--size-resize-handle` wide in `{colors.divider}`, turning `{colors.accent}` on hover and keyboard focus; it drags with a guide line and lands once on release, as the boundary between Agents and Views does, so a drag never resizes a document or a terminal on every pointer move.
+A focused divider moves with the arrow keys along its axis, one step and one change per press; the size of the step is the implementation's.
+No area narrows below `--size-workspace-area-min` or gets shorter than `--size-view-area-min-height` (144), a divider stops where either neighbour would, and each side of a split keeps between 15 and 85 percent of it.
+An area whose last view leaves disappears, and its neighbour takes the space.
+When the last view of the whole Views region closes, one empty area stays and says that no file or diff is open, with Show Explorer when the Explorer is hidden and Open file (`⌘P`), and the layout does not change on its own.
+
+A Workspace holds at most 6 View areas, no area sits more than 3 splits deep, and at most 64 views are open at once.
+A split past the area or depth limit is refused with its reason, an open past 64 says `This Workspace has 64 views open. Close a view to open another.`, and in both cases every open view stays as it was.
+Opening a file that is already shown moves to its view, so it is never refused.
+The limits and the minimum sizes are fixed; they bound what one Workspace can ask of the page and of the core.
+
+### Opening, preview and Open to the side
+
+A single click on an Explorer file or a History row opens it in the active area's preview view, whose title is italic, and the next single click replaces that preview in place, so browsing leaves one tab per area rather than a trail.
+Each area has at most one preview, and a click never touches another area or a pinned view.
+A double-click on the row or the tab, Keep open, or the first edit pins the preview where it is.
+Because the first edit pins, a document that is dirty, saving, or whose save failed is never a preview, in any area that shows it.
+Opening a file that is already shown moves to its view instead of adding a tab, and when several views show it the one used last is chosen.
+Opening a file from Agents only switches to Agents and Views and focuses the active View area.
+Diffs are placed by the same rules.
+
+Open to the side, from the Explorer's file menu, a History row's menu or the palette, is the only way to show one file twice.
+It puts a pinned second view in the area beside the active one, trying right, then left, then below, then above, or in a new area on the right when there is only one area; when that area already shows the file, its view is focused instead, and with no view open at all it opens in the empty area.
+From the only area, Open to the side is a split, so it is offered only where Split right would be and otherwise stays listed, disabled, with its reason, in the Explorer's menu, History's menu and the palette alike.
+Both views show one document: an edit in either appears in the other at once, and each keeps its own scroll position, cursor and selection.
+Korean input composes in either view, and neither view's composition or echo breaks the other's.
+Closing one of them leaves the document, its text and its unsaved state in the other; closing the last one goes through the save and conflict protection every document close has, and a save whose outcome is unknown is never shown as saved.
+Dragging a tab moves its view and never copies it.
+
+### Dragging a view
+
+A View tab dragged past `--size-tab-drag-activation` lifts a floating copy on `{colors.elevated}` with a hairline `{colors.divider}` border that follows the pointer, while the tab keeps its place and nothing on screen resizes.
+Over a tab bar, a thin insertion line (`--size-tab-indicator` in `{colors.accent}`) marks where the tab will land: in its own bar the drop reorders, and in another area's bar it moves the view there with no split and no copy; when that area already shows the same document, the moved view lands at the line and that area's view of the document gives way, so no area holds one document twice.
+Over the left, right, top or bottom edge of an area's content, the half of that area the drop would create is washed at `--opacity-selected-fill` inside a hairline `{colors.accent}` boundary, with one short label such as `Split right`, and the drop creates that area and moves the view into it.
+Only one destination is highlighted at a time, and moving to another edge or bar replaces it.
+Where the view cannot go, because it is the only view of the area whose edge it is over, the area cannot be halved at its minimum size, the Workspace is at its area or depth limit, or the target is not a View area, no overlay appears and the pointer shows the forbidden cursor.
+Escape, a release outside a valid target or outside the window, and a target that disappeared or became ineligible before the release keep the original order and layout; only a valid drop changes the layout, once.
+Nothing is resized, reattached or saved while a drag is in progress, and the drag itself is never stored.
+The half-area preview, the one-winner rule and the eligibility rules are fixed; how close to an edge the pointer has to be is the implementation's.
+A drag never moves a view to another Workspace, never turns an Agent tab into a view, and never splits a terminal.
+
+### The View tab menu
+
+A right-click on a View tab, or the menu key while the tab has focus, opens its menu with these items in this order: Keep open, Split right, Split left, Split up, Split down, Move right, Move left, Move up, Move down, Copy path, Reveal in Explorer, Close view.
+Keep open appears only on a preview view.
+A Move item appears only toward an area that exists in that direction, and moves the view into it without a split.
+A Split item the Workspace cannot make stays listed, disabled, with its reason under it, the way every web menu draws an item its target cannot use.
+The labels say where the view goes, never Move to Group.
+Close view closes the view and never the file on disk; the menu has no file deletion and never closes a pane or a tab.
+Opening the menu moves no focus and changes nothing, and Escape closes it.
+Every item is also a palette command for the active view, and the palette adds Open to the side, focus to the next or previous area, and resizing the active area, so every split, move, close and resize can be done from the keyboard.
+A palette command that cannot run now is drawn muted with its whole reason under its title, and picking it does nothing.
+No new shortcut is assigned: the existing tab close and move chords act on the active view.
+The item labels above are fixed; the reason wording is the implementation's.
+
+### View states
+
+A view whose file is being read shows `Opening…`.
+A restored view whose device or root is not ready says what it waits for, such as `Waiting for <device> to connect`, and reads its file by itself once that is ready.
+A view whose file cannot be read shows why, with Close view and Retry, and its tab title is struck through in `{colors.muted}`; like a tab's close button, either acts on that view alone and leaves the active area where it was.
+Each state belongs to its view alone, so one missing file never blanks another view or area.
+After a restart the app reopens the last Workspace it was on as it was left: its areas and their sizes, each area's tabs in order with its preview, pinned views and active view, the active area, the layout and the tools; unsaved text returns from the browser's drafts, and Herdr's current tabs and panes are used as they are.
+A first run, or a last Workspace that no longer exists, starts on Main.
+A layout file that cannot be read is kept aside and the app starts on Main, where the operator picks a Workspace and continues with a new layout.
+
+### Narrow windows
+
+When the window cannot give the working regions their minimum beside the tool column at `--size-panel-min`, Explorer and History open as a temporary overlay above the working regions instead of a column; Escape or a click outside closes it and returns focus to the toggle that opened it.
+When Agents and Views cannot both have their minimum width side by side, the region used last fills the width and an explicit switch leads to the other.
+When the View areas cannot all have their minimum, only the active area shows, with an area switcher to the others.
+Widening the window brings back the chosen layout, the area sizes and the tool column, because none of these narrow arrangements is stored or sent to the core.
+The breakpoints follow from the minimum-size tokens; the switch and switcher wording is the implementation's.
+
+### Library masters
+
+The View area masters in `design/hide-ui.lib.pen` are `Component / View tab`, `Component / View insertion line`, `Component / View split overlay`, `Component / View tab menu` and `Component / View area message`.
+Their sheets carry the states as refs: the View tab sheet draws preview, pinned, hover, active in the active area, active in another area, dirty, unavailable, diff, a long Korean title and the floating drag copy; the View placement sheet draws a reorder, a move into another area, a right and a down split, and an ineligible target; the View tab menu sheet draws a preview's menu and a pinned view's menu with a disabled Split and its reason; the View area states sheet draws the empty Views and each view's opening, waiting and unavailable states.
+The canvas draws the unavailable strike as a hairline over the sample title and the minimum area height as its literal 144; the product strikes the title through and reads `--size-view-area-min-height`.
+
+### Agent panes and the Agents explorer
+
+Several View areas leave the Agent side as S6 drew it: the layout switch, the independent tool toggles, and the child chips below behave the same with one area or six.
 
 A pane whose agent delegated work shows every direct child on one row under its header, each chip a status mark, the provider mark and a title capped at `--size-pane-child-chip-max`; the row scrolls sideways instead of growing, and a pane with no children has no row.
 Its library masters are `Component / Pane child chip` and `Component / Pane child row`; the native pane header keeps its first child and `+N` until the native shell changes.

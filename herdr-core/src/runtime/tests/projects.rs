@@ -112,12 +112,13 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
     );
     assert!(runtime.ingest_changes(crate::changes::ChangesAnswer {
         key: Some(key),
+        selection: request.selection(),
         changes: listed,
     }));
 
     // B22: a failed read of the same checkout keeps the confirmed list,
     // marked stale with the reason, and the next good read clears the mark.
-    let confirmed = runtime.snapshot.changes.clone();
+    let confirmed = crate::model::ChangesSnapshot::clone(&runtime.snapshot.changes);
     let failed = crate::model::ChangesSnapshot {
         root_path: confirmed.root_path.clone(),
         unavailable_reason: Some("The device is busy".to_owned()),
@@ -125,6 +126,7 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
     };
     assert!(runtime.ingest_changes(crate::changes::ChangesAnswer {
         key: runtime.changes_key(),
+        selection: (None, false),
         changes: failed,
     }));
     assert_eq!(runtime.snapshot.changes.entries, confirmed.entries);
@@ -135,6 +137,7 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
     );
     assert!(runtime.ingest_changes(crate::changes::ChangesAnswer {
         key: runtime.changes_key(),
+        selection: (None, false),
         changes: confirmed.clone(),
     }));
     assert_eq!(runtime.snapshot.changes.stale_reason, None);

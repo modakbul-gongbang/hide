@@ -9,7 +9,7 @@ use std::os::unix::fs::symlink;
 use std::path::Path;
 use std::process::Command;
 
-use hide_host::git::{ChangesQuery, FileStatus, MAX_DIFF_BYTES, changes};
+use hide_host::git::{ChangesQuery, DiffTarget, FileStatus, MAX_DIFF_BYTES, MAX_DIFFS, changes};
 use hide_host::protocol::{Call, RootRef};
 use hide_host::{ErrorCode, Root};
 
@@ -40,6 +40,7 @@ fn query(scope: &str, selected: Option<&str>, committed: bool, base: Option<&str
         selected: selected.map(str::to_owned),
         committed,
         base: base.map(str::to_owned),
+        diffs: Vec::new(),
     }
 }
 
@@ -242,6 +243,7 @@ fn a_checkout_replaced_after_it_was_opened_is_never_read() {
         selected: None,
         committed: false,
         base: None,
+        diffs: Vec::new(),
     })
     .unwrap_err();
     assert_eq!(refused.code, ErrorCode::RootReplaced);
@@ -262,4 +264,69 @@ fn a_large_untracked_patch_is_cut_within_the_wire_budget() {
     .unwrap();
     assert!(diff.text.len() <= MAX_DIFF_BYTES);
     assert!(diff.notice.unwrap().contains("truncated"));
+}
+
+#[test]
+fn one_read_answers_each_view_diff_in_its_group_and_a_notice_for_one_gone_from_it() {
+    let temporary = tempfile::tempdir().unwrap();
+    let checkout = temporary.path().join("checkout");
+    repository(&checkout);
+    fs::write(checkout.join("kept.txt"), "kept base\n").unwrap();
+    fs::write(checkout.join("branch.txt"), "branch base\n").unwrap();
+    git(&checkout, &["add", "."]);
+    git(&checkout, &["commit", "-q", "-m", "base"]);
+    git(&checkout, &["checkout", "-q", "-b", "feature"]);
+    fs::write(checkout.join("branch.txt"), "branch committed\n").unwrap();
+    git(&checkout, &["commit", "-q", "-am", "feature"]);
+    fs::write(checkout.join("kept.txt"), "kept working\n").unwrap();
+    let root = Root::open(&checkout).unwrap();
+    let target = |path: &str, committed: bool| DiffTarget {
+        path: path.to_owned(),
+        committed,
+    };
+
+    // `branch.txt` has no uncommitted change, so the selection outside its
+    // group is still no diff, while the View display of it gets a notice.
+    let mut asked = query("", Some("branch.txt"), false, Some("main"));
+    asked.diffs = vec![
+        target("kept.txt", false),
+        target("branch.txt", true),
+        target("branch.txt", false),
+    ];
+    let answer = read(&root, &asked).unwrap();
+    assert_eq!(answer.diff, None);
+    let shown = answer
+        .diffs
+        .iter()
+        .map(|shown| {
+            (
+                shown.diff.path.as_str(),
+                shown.committed,
+                shown.diff.text.contains("+kept working")
+                    || shown.diff.text.contains("+branch committed"),
+                shown.diff.notice.as_deref(),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        shown,
+        [
+            ("kept.txt", false, true, None),
+            ("branch.txt", true, true, None),
+            (
+                "branch.txt",
+                false,
+                false,
+                Some("This file has no uncommitted changes")
+            ),
+        ]
+    );
+
+    // A selection a display also shows is the same diff; targets past the
+    // cap are not answered.
+    let mut asked = query("", Some("kept.txt"), false, Some("main"));
+    asked.diffs = vec![target("kept.txt", false); MAX_DIFFS + 1];
+    let answer = read(&root, &asked).unwrap();
+    assert_eq!(answer.diffs.len(), MAX_DIFFS);
+    assert_eq!(answer.diff.as_ref(), Some(&answer.diffs[0].diff));
 }

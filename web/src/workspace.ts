@@ -1,10 +1,10 @@
 // The Workspace screen's rules (PRD S6 B5-B11, B17): which strip entries are
-// Agent tabs and which are View tabs, which View tab shows, what a tab is
-// called and marked with, and where the Agent/View boundary may sit. The core
-// owns every value here (`rest.workspace_view`, the strip, the editor's active
-// tab); these functions only read them, so they are testable without a page.
+// Agent tabs, what an Agent tab is called and marked with, and where the
+// Agent/View boundary may sit. The core owns every value here
+// (`rest.workspace_view`, the strip); these functions only read them, so they
+// are testable without a page. The View areas' own rules are `viewLayout.ts`.
 
-import type { AgentRow, Checkout, EditorSnapshot, EditorTabSnapshot, SnapshotRest, StripTab, Tab } from "./snapshot";
+import type { AgentRow, Checkout, SnapshotRest, StripTab, Tab, ViewLayoutSnapshot } from "./snapshot";
 
 export type ViewMode = "agents" | "together" | "views";
 
@@ -18,6 +18,8 @@ export type WorkspaceView = {
   agent_share: number;
   /** The Workspace the operator last chose, now or before a restart, so the page opens on it (D-11). */
   resumed?: boolean;
+  /** The View areas (S7); absent only from a core that predates them. */
+  layout?: ViewLayoutSnapshot;
 };
 
 /** The three layouts, in the order the toolbar and the menu offer them (D-03). */
@@ -38,23 +40,6 @@ export function workspaceViewOf(rest: SnapshotRest | null): WorkspaceView | null
 /** Herdr tabs: the Agent area's strip, in the core's order. */
 export function agentEntries(checkout: Checkout): StripTab[] {
   return checkout.strip.filter((entry) => entry.kind === "herdr");
-}
-
-/** Files and diffs: the View area's strip, in the core's order. */
-export function viewEntries(checkout: Checkout): StripTab[] {
-  return checkout.strip.filter((entry) => entry.kind === "file" || entry.kind === "diff");
-}
-
-/**
- * The View tab the View area shows: the editor's active tab when it is a file
- * or diff of this checkout. The core keeps it on the front Workspace's View
- * tab, so a terminal choice never empties the View area (D-04).
- */
-export function activeViewTab(editor: EditorSnapshot | null, checkout: Checkout | null): EditorTabSnapshot | null {
-  if (!editor?.active_tab_id || !checkout) return null;
-  const tab = editor.tabs.find((row) => row.id === editor.active_tab_id);
-  if (!tab || (tab.kind !== "file" && tab.kind !== "diff")) return null;
-  return tab.checkout_id === checkout.id ? tab : null;
 }
 
 /** The agent kinds whose own mark Hide ships; any other agent is drawn with the neutral mark (D-09). */
@@ -85,17 +70,11 @@ export function tabAgent(tab: Tab | null | undefined, agents: AgentRow[], focuse
   return null;
 }
 
-/** What a tab is, read in its tooltip and by assistive technology with its full name (B17). */
-export function tabIdentity(entry: StripTab, agent: AgentRow | null, editorTab: EditorTabSnapshot | null): string {
-  if (entry.kind === "herdr") {
-    const kind = agent ? `${agent.agent_kind} agent` : "Terminal";
-    const pane = agent ? ` · ${agent.identity_label} · ${agent.status_label}` : "";
-    return `${kind} tab ${entry.label}${pane}`;
-  }
-  if (!editorTab) return entry.label;
-  const kind = entry.kind === "diff" ? `${editorTab.diff_committed ? "Branch" : "Working"} diff` : "File";
-  const state = editorTab.unavailable_reason ? " · Unavailable" : entry.preview ? " · Preview" : "";
-  return `${kind}: ${editorTab.path}${state}`;
+/** What an Agent tab is, read in its tooltip and by assistive technology with its full name (B17). */
+export function tabIdentity(entry: StripTab, agent: AgentRow | null): string {
+  const kind = agent ? `${agent.agent_kind} agent` : "Terminal";
+  const pane = agent ? ` · ${agent.identity_label} · ${agent.status_label}` : "";
+  return `${kind} tab ${entry.label}${pane}`;
 }
 
 /**

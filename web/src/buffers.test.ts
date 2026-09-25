@@ -1,5 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { bufferDecision, bufferFor, closeWithSaveOutcome, draftStorageHold, storedDraftOnClose, identity, recoveryBuffers, tabBufferKey, type BufferKey, type StoredBuffer } from "./buffers";
+import {
+  bufferDecision,
+  bufferFor,
+  closeWithSaveOutcome,
+  documentCloseCarries,
+  draftStorageHold,
+  storedDraftOnClose,
+  identity,
+  recoveryBuffers,
+  tabBufferKey,
+  type BufferKey,
+  type CloseWatch,
+  type CloseWatchFrame,
+  type StoredBuffer,
+} from "./buffers";
 import { draftPlace } from "./DraftRecovery";
 import type { SnapshotRest } from "./snapshot";
 
@@ -143,18 +157,76 @@ describe("a stored draft when its tab closes (S5.5 B10-B12, B44)", () => {
   });
 
   it("goes after a close with a save only when that close landed", () => {
-    const watch = { tabId: "t", hostId: "host-a", device: "mac", errorAt: 5 };
-    const next = { connection: "live", hostId: "host-a", tabIds: [] as string[], deviceIds: ["mac"], error: { kind: "file.save_failed", occurred_at: 5 } };
-    expect(closeWithSaveOutcome(watch, { ...next, tabIds: ["t"] })).toBe("wait");
-    // A save failure after the close was asked for, with the tab still
-    // there, is that close refused: the watch ends and the draft is kept, so
-    // a later removal of the tab cannot count as the close landing.
-    expect(closeWithSaveOutcome(watch, { ...next, tabIds: ["t"], error: { kind: "file.save_conflict", occurred_at: 9 } })).toBe("keep");
-    expect(closeWithSaveOutcome(watch, { ...next, tabIds: ["t"], error: { kind: "device.test_failed", occurred_at: 9 } })).toBe("wait");
-    expect(closeWithSaveOutcome(watch, next)).toBe("landed");
-    expect(closeWithSaveOutcome(watch, { ...next, deviceIds: [] })).toBe("keep");
-    expect(closeWithSaveOutcome(watch, { ...next, connection: "reconnecting" })).toBe("keep");
-    expect(closeWithSaveOutcome(watch, { ...next, hostId: "host-b" })).toBe("keep");
-    expect(closeWithSaveOutcome({ ...watch, device: "local" }, { ...next, deviceIds: [] })).toBe("landed");
+    const watch: CloseWatch = { tabId: "t", workspace: "w", displayId: "d2", hostId: "host-a", device: "mac", errorAt: 5, contents: "draft", sawSave: false };
+    const next: CloseWatchFrame = {
+      connection: "live",
+      hostId: "host-a",
+      tabIds: [],
+      deviceIds: ["mac"],
+      workspace: "w",
+      displayIds: ["d2"],
+      error: { kind: "file.save_failed", occurred_at: 5 },
+      draft: "draft",
+      save: "hidden",
+    };
+    const outcome = (w: CloseWatch, n: CloseWatchFrame) => closeWithSaveOutcome(w, n).outcome;
+    expect(outcome(watch, { ...next, tabIds: ["t"] })).toBe("wait");
+    // A save failure or a refusal after the close was asked for, with the
+    // tab still there, is that close refused: the watch ends and the draft is
+    // kept, so a later removal of the tab cannot count as the close landing.
+    expect(outcome(watch, { ...next, tabIds: ["t"], error: { kind: "file.save_conflict", occurred_at: 9 } })).toBe("keep");
+    expect(outcome(watch, { ...next, tabIds: ["t"], error: { kind: "view_layout.unsaved", occurred_at: 9 } })).toBe("keep");
+    expect(outcome(watch, { ...next, tabIds: ["t"], error: { kind: "device.test_failed", occurred_at: 9 } })).toBe("wait");
+    expect(outcome(watch, next)).toBe("landed");
+    expect(outcome(watch, { ...next, deviceIds: [] })).toBe("keep");
+    expect(outcome(watch, { ...next, connection: "reconnecting" })).toBe("keep");
+    expect(outcome(watch, { ...next, hostId: "host-b" })).toBe("keep");
+    expect(outcome({ ...watch, device: "local" }, { ...next, deviceIds: [] })).toBe("landed");
+  });
+
+  it("ends as keep while the tab stays once nothing more can come of the close (interface-2)", () => {
+    const watch: CloseWatch = { tabId: "t", workspace: "w", displayId: "d2", hostId: "host-a", device: "local", errorAt: null, contents: "draft", sawSave: false };
+    const open: CloseWatchFrame = { connection: "live", hostId: "host-a", tabIds: ["t"], deviceIds: [], workspace: "w", displayIds: ["d2"], error: null, draft: "draft", save: "settled" };
+    // The frame before the core took the close says nothing yet.
+    expect(closeWithSaveOutcome(watch, open)).toEqual({ outcome: "wait", sawSave: false });
+    // The save runs, then settles with the document still open (a newer
+    // draft kept it dirty, or a queued device save wrote older text).
+    const saving = closeWithSaveOutcome(watch, { ...open, save: "in_flight" });
+    expect(saving).toEqual({ outcome: "wait", sawSave: true });
+    expect(closeWithSaveOutcome({ ...watch, sawSave: saving.sawSave }, open).outcome).toBe("keep");
+    // The operator edits the document again.
+    expect(closeWithSaveOutcome(watch, { ...open, draft: "draft and more" }).outcome).toBe("keep");
+    // The display went and the document stayed: the core found another view of it.
+    expect(closeWithSaveOutcome(watch, { ...open, displayIds: ["d5"] }).outcome).toBe("keep");
+    // Another Workspace is in front, whose ids say nothing about this close
+    // (and a close that arrived after the front moved is only logged).
+    expect(closeWithSaveOutcome(watch, { ...open, workspace: "other" }).outcome).toBe("keep");
+  });
+});
+
+describe("what a view's close carries (S7 B5, contract 4.1)", () => {
+  const document = (patch: Partial<{ contents_utf8: string | null; dirty: boolean; readonly_reason: string | null; save: unknown }> = {}) => ({
+    contents_utf8: "disk",
+    dirty: false,
+    readonly_reason: null,
+    save: null,
+    ...patch,
+  });
+
+  it("carries the newest unsaved text whether or not this page thinks the view is the last", () => {
+    expect(documentCloseCarries({ draft: "typed", document: document(), dirty: false })).toEqual({ kind: "save", contents: "typed" });
+    expect(documentCloseCarries({ draft: null, document: document({ contents_utf8: "edited", dirty: true }), dirty: true })).toEqual({ kind: "save", contents: "edited" });
+    // A document whose save failed is not clean even when the frame's flag lags.
+    expect(documentCloseCarries({ draft: null, document: document({ contents_utf8: "edited", save: { state: "refused" } }), dirty: false })).toEqual({ kind: "save", contents: "edited" });
+  });
+
+  it("carries nothing for a clean document", () => {
+    expect(documentCloseCarries({ draft: null, document: document(), dirty: false })).toEqual({ kind: "clean" });
+    expect(documentCloseCarries({ draft: null, document: null, dirty: false })).toEqual({ kind: "clean" });
+  });
+
+  it("names unsaved work this page cannot reproduce, which only an explicit Don't save may drop", () => {
+    expect(documentCloseCarries({ draft: null, document: null, dirty: true })).toEqual({ kind: "unloaded" });
+    expect(documentCloseCarries({ draft: "typed", document: document({ readonly_reason: "too large", dirty: true }), dirty: true })).toEqual({ kind: "unloaded" });
   });
 });

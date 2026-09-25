@@ -19,7 +19,10 @@ import {
 import { changesFor, explorerContext } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type ExplorerDraft } from "./ui";
+import { drawnViews } from "./viewFocus";
+import { besideUnavailable } from "./viewLayout";
 import { expandedUnderRoot, watchedFolders } from "./watch";
+import { workspaceViewOf } from "./workspace";
 
 // The Explorer tree (PRD B1, B3, B9, B10): a lazy tree over the focused
 // checkout. The core owns which folders are expanded (`ui_state.expanded_paths`)
@@ -148,6 +151,22 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
       if (listings[folder]) pending.current.delete(folder);
     }
   }, [rootPath, expandedPaths, listings, refreshTick, folderChanges, actions, invalidateListings]);
+
+  // A device folder refused while its helper was still starting is asked
+  // again once the helper is ready, as the views read their files again then
+  // (S7 B14, B16); otherwise a restored device Workspace kept its Explorer
+  // on the helper's old refusal until the operator pressed Retry.
+  const hostReady = useShellStore(
+    (s) => device !== "local" && s.rest?.navigator?.devices?.find((row) => row.id === device)?.host?.state === "ready",
+  );
+  const wasReady = useRef(hostReady);
+  useEffect(() => {
+    const became = hostReady && !wasReady.current;
+    wasReady.current = hostReady;
+    if (!became) return;
+    pending.current.clear();
+    setRefreshTick((tick) => tick + 1);
+  }, [hostReady]);
 
   // A reveal (or an open from anywhere) sets the core's selected_path. A
   // palette pick also sets the local cursor before the core replies; a panel
@@ -434,7 +453,21 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
           </div>
         </div>
       )}
-      {menu ? <ContextMenu menu={menu} onDismiss={() => setMenu(null)} onNewFile={beginCreate} onRename={beginRename} onTrash={requestTrash} rowFor={(path) => rowForPath(rows, path)} /> : null}
+      {menu ? (
+        <ContextMenu
+          menu={menu}
+          onDismiss={() => setMenu(null)}
+          onOpenBeside={(path) => {
+            setMenu(null);
+            setSelection(path);
+            actions.openFileBeside(path);
+          }}
+          onNewFile={beginCreate}
+          onRename={beginRename}
+          onTrash={requestTrash}
+          rowFor={(path) => rowForPath(rows, path)}
+        />
+      ) : null}
     </div>
   );
 }
@@ -497,6 +530,7 @@ function DraftRowView({
 function ContextMenu({
   menu,
   onDismiss,
+  onOpenBeside,
   onNewFile,
   onRename,
   onTrash,
@@ -504,6 +538,8 @@ function ContextMenu({
 }: {
   menu: { path: string; isDirectory: boolean; x: number; y: number };
   onDismiss: () => void;
+  /** A second, pinned display of the file beside the active View area (S7 B4). */
+  onOpenBeside: (path: string) => void;
   onNewFile: (parent: string, kind: "file" | "folder") => void;
   onRename: (row: ExplorerRow) => void;
   onTrash: (row: ExplorerRow) => void;
@@ -519,6 +555,8 @@ function ContextMenu({
     };
   }, [onDismiss]);
   const row = rowFor(menu.path);
+  // Read as the menu opens: the room beside the only View area (S7 B9, D-06).
+  const besideReason = besideUnavailable(workspaceViewOf(useShellStore.getState().rest)?.layout, drawnViews());
   return (
     <div
       role="menu"
@@ -532,6 +570,8 @@ function ContextMenu({
           <MenuItem label="New File" testId="new-file" onClick={() => onNewFile(menu.path, "file")} />
           <MenuItem label="New Folder" testId="new-folder" onClick={() => onNewFile(menu.path, "folder")} />
         </>
+      ) : row ? (
+        <MenuItem label="Open to the side" testId="open-beside" unavailable={besideReason} onClick={() => onOpenBeside(row.path)} />
       ) : null}
       {row ? <MenuItem label="Rename" testId="rename" onClick={() => onRename(row)} /> : null}
       {row ? <MenuItem label="Move to Trash" testId="trash" danger onClick={() => onTrash(row)} /> : null}
@@ -539,16 +579,26 @@ function ContextMenu({
   );
 }
 
-function MenuItem({ label, testId, danger, onClick }: { label: string; testId: string; danger?: boolean; onClick: () => void }) {
+function MenuItem({ label, testId, danger, unavailable = null, onClick }: {
+  label: string;
+  testId: string;
+  danger?: boolean;
+  /** Why the item cannot run now; drawn disabled with the reason under it, as every web menu does. */
+  unavailable?: string | null;
+  onClick: () => void;
+}) {
   return (
     <button
       type="button"
       role="menuitem"
       data-menu-item={testId}
-      className={`block w-full px-md py-xs text-left hover:bg-elevated ${danger ? "text-danger" : "text-primary"}`}
+      disabled={unavailable !== null}
+      title={unavailable ?? undefined}
+      className={`flex w-full flex-col items-start px-md py-xs text-left hover:bg-elevated disabled:text-muted disabled:hover:bg-transparent ${danger ? "text-danger" : "text-primary"}`}
       onClick={onClick}
     >
-      {label}
+      <span>{label}</span>
+      {unavailable ? <span className="text-caption text-muted">{unavailable}</span> : null}
     </button>
   );
 }

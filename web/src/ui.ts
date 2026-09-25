@@ -5,6 +5,9 @@
 import { create } from "zustand";
 import type { Relation } from "./lineage";
 import type { Opening } from "./navigation";
+import { placementForWidth, type ToolsPlacement, type ViewFocusRequest, type ViewWorkspace } from "./viewLayout";
+
+export type { ToolsPlacement, ViewFocusRequest } from "./viewLayout";
 
 export type SidebarMode = "agents" | "projects";
 
@@ -32,7 +35,22 @@ export type PendingClose = {
  */
 export type Screen = { kind: "main" } | { kind: "overview"; projectId: string } | { kind: "sessions"; projectId: string } | { kind: "workspace" };
 
-export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_palette" | "search" | "settings";
+/** `file_palette_beside` is ⌘P's list for "Open file to the side" (S7 B4): its pick opens beside the active View area. */
+export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_palette" | "file_palette_beside" | "search" | "settings";
+
+/** The two working regions of a Workspace, for a Together window too narrow for both (S7 B13). */
+export type WorkingRegion = "agents" | "views";
+
+/**
+ * A notice the operator can act on: `refreshable` offers `refresh_status`
+ * (activity unknown), and `dontSave` offers closing a view whose document
+ * holds unsaved work this page cannot save, without saving it (S7 B5).
+ */
+export type Notice = {
+  text: string;
+  refreshable: boolean;
+  dontSave?: { workspace: ViewWorkspace; displayId: string };
+};
 
 /** A project or checkout management dialog, named by the row that opened it. */
 export type WorkspaceDialog =
@@ -82,8 +100,24 @@ type UiStore = {
   /** The Explorer row the operator last touched; the core owns the opened
    * document's `selected_path`, and a reveal syncs that into here. */
   explorerSelection: string | null;
-  /** Bumped by ⌘F while a document shows; the editor opens its find panel. */
+  /** Bumped by ⌘F while a document shows; the editor of `editorFindDisplay` opens its find panel. */
   editorFindRequest: number;
+  /** The display the latest ⌘F is for; one display answers it, whichever else shows the document. */
+  editorFindDisplay: string | null;
+  viewFocusRequest: ViewFocusRequest | null;
+  /**
+   * The working region the operator last worked in, and the one a Together
+   * window too narrow for both shows (S7 B13). This page's presentation
+   * only: it is never sent or stored, so widening shows both again.
+   */
+  workingRegion: WorkingRegion;
+  /**
+   * How the Workspace tools stand (S7 B12, D-08): the column while the window
+   * has room for it, else an overlay that stays closed until the operator
+   * asks for a tool. The Workspace screen keeps it in step with the window's
+   * width; the tools the core stores are never changed by it.
+   */
+  toolsPlacement: ToolsPlacement;
   /** The Explorer's inline name field, or null. */
   explorerDraft: ExplorerDraft | null;
   /** The trash confirmation the Explorer is showing, or null. */
@@ -91,8 +125,8 @@ type UiStore = {
   overlay: Overlay;
   pendingClose: PendingClose | null;
   cycle: Cycle | null;
-  /** A notice the operator can act on; `refreshable` offers `refresh_status` (activity unknown). */
-  notice: { text: string; refreshable: boolean } | null;
+  /** A notice the operator can act on. */
+  notice: Notice | null;
   /** The management dialog a sidebar menu opened, or null. */
   workspaceDialog: WorkspaceDialog | null;
   /**
@@ -119,14 +153,22 @@ type UiStore = {
   setSidebarMode: (mode: SidebarMode) => void;
   toggleSidebarMode: () => void;
   setExplorerSelection: (path: string | null) => void;
-  requestEditorFind: () => void;
+  requestEditorFind: (displayId: string | null) => void;
+  setViewFocusRequest: (request: ViewFocusRequest | null) => void;
+  setWorkingRegion: (region: WorkingRegion) => void;
+  /** Follows the window: `column` when wide, a closed overlay when it turns narrow. */
+  setToolsNarrow: (narrow: boolean) => void;
+  /** The operator asked for a tool: a narrow window's overlay opens. */
+  openTools: () => void;
+  /** Escape or a click outside closes a narrow window's overlay. */
+  closeTools: () => void;
   setExplorerDraft: (draft: ExplorerDraft | null) => void;
   setPendingTrash: (trash: PendingTrash | null) => void;
   openOverlay: (overlay: Overlay) => void;
   closeOverlay: (overlay?: Overlay) => void;
   setPendingClose: (pending: PendingClose | null) => void;
   setCycle: (cycle: Cycle | null) => void;
-  setNotice: (notice: { text: string; refreshable: boolean } | null) => void;
+  setNotice: (notice: Notice | null) => void;
   setWorkspaceDialog: (dialog: WorkspaceDialog | null) => void;
   setWatchedTask: (id: number | null) => void;
   setFocusWhenListed: (paneId: string | null) => void;
@@ -143,6 +185,10 @@ export const useUiStore = create<UiStore>((set, get) => ({
   sidebarMode: "agents",
   explorerSelection: null,
   editorFindRequest: 0,
+  editorFindDisplay: null,
+  viewFocusRequest: null,
+  workingRegion: "agents",
+  toolsPlacement: "column",
   explorerDraft: null,
   pendingTrash: null,
   overlay: "none",
@@ -166,7 +212,22 @@ export const useUiStore = create<UiStore>((set, get) => ({
     set({ sidebarMode: SIDEBAR_MODES[(index + 1) % SIDEBAR_MODES.length] });
   },
   setExplorerSelection: (explorerSelection) => set({ explorerSelection }),
-  requestEditorFind: () => set({ editorFindRequest: get().editorFindRequest + 1 }),
+  requestEditorFind: (displayId) => set({ editorFindRequest: get().editorFindRequest + 1, editorFindDisplay: displayId }),
+  setViewFocusRequest: (viewFocusRequest) => set({ viewFocusRequest }),
+  setWorkingRegion: (workingRegion) => {
+    if (get().workingRegion !== workingRegion) set({ workingRegion });
+  },
+  setToolsNarrow: (narrow) => {
+    const current = get().toolsPlacement;
+    const next = placementForWidth(current, narrow);
+    if (next !== current) set({ toolsPlacement: next });
+  },
+  openTools: () => {
+    if (get().toolsPlacement === "closed") set({ toolsPlacement: "open" });
+  },
+  closeTools: () => {
+    if (get().toolsPlacement === "open") set({ toolsPlacement: "closed" });
+  },
   setExplorerDraft: (explorerDraft) => set({ explorerDraft }),
   setPendingTrash: (pendingTrash) => set({ pendingTrash }),
   openOverlay: (overlay) => set({ overlay }),

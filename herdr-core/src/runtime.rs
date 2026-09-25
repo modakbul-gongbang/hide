@@ -20,12 +20,14 @@ mod projects;
 mod session;
 mod snapshot_delta;
 mod terminal;
+mod view_areas;
 mod workspace_view;
 
 pub use snapshot_delta::serialize_snapshot_delta;
 
 use events::*;
 use operations::*;
+use view_areas::ViewLayoutPayload;
 use workspace_view::{AreaIntent, WorkspaceViewPayload, WorkspaceViewStore};
 
 use crate::ffi::ChangeNotifier;
@@ -37,7 +39,7 @@ use crate::live::{
 };
 use crate::model::{
     ArchiveDetailSnapshot, CheckoutSnapshot, CoreOptions, DEFAULT_PANE_TEXT_SCALE,
-    DiagnosticSnapshot, EditorDocumentSnapshot, EditorTabKind, EditorTabSnapshot,
+    DiagnosticSnapshot, Edited, EditorDocumentSnapshot, EditorTabKind, EditorTabSnapshot,
     ExplorerOperationSnapshot, LastErrorSnapshot, PANE_TEXT_SCALE_STEP, PaneFindSnapshot,
     PaneFocusRequestSnapshot, PaneForkSnapshot, PaneLayoutNodeSnapshot, PaneLayoutSnapshot,
     PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot, PetSnapshot, RemoteFileEntrySnapshot,
@@ -978,7 +980,9 @@ pub struct Runtime {
     #[cfg(test)]
     suppress_terminal_session_workers: bool,
     workspace_creations_in_flight: HashSet<String>,
-    editor_documents: HashMap<String, EditorDocumentSnapshot>,
+    /// Each open file tab's document, edited under a number so a snapshot
+    /// read re-sends a View document only when it moved.
+    editor_documents: HashMap<String, Edited<EditorDocumentSnapshot>>,
     archive_documents: HashMap<String, ArchiveDetailSnapshot>,
     session_catalog_rows: Vec<SessionRowSnapshot>,
     memory_catalog_rows: Vec<crate::model::MemoryRowSnapshot>,
@@ -1218,19 +1222,19 @@ impl Runtime {
             });
         }
         let workspace_views = options.workspace_views_path.as_ref().map(|path| {
-            let (store, diagnostic) = WorkspaceViewStore::open(
+            let (store, diagnostics) = WorkspaceViewStore::open(
                 PathBuf::from(path),
                 (
                     snapshot.ui_state.right_panel_visible,
                     snapshot.ui_state.right_panel_section,
                 ),
             );
-            if let Some((kind, message)) = diagnostic {
+            for (kind, message) in diagnostics {
                 crate::diagnostic!(serde_json::json!({
                     "component": "workspace_views",
                     "kind": kind,
                     "message": message,
-                    "fallback": "defaults"
+                    "fallback": if kind == "workspace_views.unreadable" { "defaults" } else { "none" }
                 }));
                 snapshot.status.diagnostics.push(DiagnosticSnapshot {
                     kind: kind.to_owned(),
@@ -1514,15 +1518,18 @@ impl Runtime {
             .separate_view_areas()
             .then(|| AreaIntent::of(&event))
             .flatten();
-        let high_frequency = event.is_terminal_io();
+        // A keystroke in a document is as frequent as terminal input and
+        // moves no area either: its first edit keeps its own displays open,
+        // and the next snapshot read's sync publishes that.
+        let high_frequency = event.is_terminal_io() || matches!(event, Event::FileDraft(_));
         let chooses_workspace = matches!(
             event,
             Event::FocusCheckout(_) | Event::FocusPane(_) | Event::FocusTab(_)
         );
         let changed = self.apply(event) || cleared_error;
         // The areas follow the event that moved the screen, in the same
-        // frame (D-08); terminal input and output never move them, so they
-        // skip the pass.
+        // frame (D-08); terminal input and output and a document's
+        // keystrokes never move them, so they skip the pass.
         if self.separate_view_areas() && !high_frequency {
             if let Some(intent) = intent
                 && self.snapshot.status.last_error.is_none()

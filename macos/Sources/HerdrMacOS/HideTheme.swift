@@ -437,6 +437,7 @@ enum HideTheme {
         static let rightPanelIdealWidth: CGFloat = 355
         static let rightPanelMaxWidth: CGFloat = 560
         static let workspaceAreaMinWidth: CGFloat = 224
+        static let viewAreaMinHeight: CGFloat = 144
     }
 
     static func color(for hex: String) -> Color {

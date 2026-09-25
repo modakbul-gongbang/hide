@@ -186,9 +186,16 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         Arc::clone(&shutdown),
         supervisor_exe,
     );
+    let roots = Arc::new(RootFollower::new(
+        Arc::clone(&core),
+        Arc::clone(&boundary),
+        Arc::clone(&watch),
+        Arc::clone(&index),
+    ));
     let app = AppState {
         core,
         boundary,
+        roots,
         watch: Arc::clone(&watch),
         index: Arc::clone(&index),
         attachments: Arc::clone(&attachments),
@@ -224,16 +231,14 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         })),
     };
     let env_state_dir = env.state_dir.clone();
-    // Seeded before the server accepts a client, so an Explorer event can
-    // never arrive at a boundary that holds no root yet; the core has already
-    // loaded its registrations by the time `CoreHandle::spawn` returns.
-    refresh_roots(&app.core, &app.boundary, &app.watch, &app.index);
-    spawn_root_refresh(
-        Arc::clone(&app.core),
-        Arc::clone(&app.boundary),
-        Arc::clone(&app.watch),
-        Arc::clone(&app.index),
-    );
+    // Seeded before the server accepts a client with the registrations the
+    // core loaded in `CoreHandle::spawn`. A checkout the core learns later,
+    // from Herdr's first sync, reaches a client's snapshot and these roots on
+    // separate reads; a refused event catches them up (`server::admit_event`).
+    if let Err(error) = app.roots.catch_up() {
+        roots_failed(&error);
+    }
+    spawn_root_refresh(Arc::clone(&app.roots));
     tokio::spawn(async move {
         if let Err(error) = server::serve(listener, app).await {
             eprintln!(
@@ -255,13 +260,95 @@ pub async fn wait_shutdown(running: &RunningDaemon) {
     running.shutdown.notified().await;
 }
 
-/// Keeps the boundary's checkout roots in step with the core: one snapshot read
-/// per change notification, and the checkouts in it replace the root set
-/// wholesale.
+/// Follows the core's checkout roots into the boundary, the watch service and
+/// the index: each read takes what the core changed since the last one, and
+/// the checkouts in it replace the root set wholesale.
 ///
-/// The read runs here rather than in a client's event, so no client waits on it
-/// and nothing runs under the runtime mutex. The first read seeds the roots
-/// in `start_daemon` before the server serves.
+/// Three readers share it: the seed in `start_daemon` before the server
+/// serves, the notification reader (`spawn_root_refresh`), and a client event
+/// the boundary refused as outside every checkout (`server::admit_event`). One
+/// pair of cursors behind one lock means each read starts where the last one
+/// ended, a reader never applies an older snapshot over a newer one, and a
+/// read that waited for another to finish finds the roots that one applied.
+///
+/// Reading with a cursor keeps the whole rest/editor/changes payload off the
+/// notify path: a delta that changed only terminal chunks carries no `rest`,
+/// and roots and expanded folders both live in it. Nothing here runs under
+/// the runtime mutex.
+pub struct RootFollower {
+    core: Arc<CoreHandle>,
+    boundary: Arc<Boundary>,
+    watch: Arc<watch::WatchService>,
+    index: Arc<IndexService>,
+    /// The revision and terminal sequence the last read reached.
+    cursors: Mutex<(u64, u64)>,
+}
+
+impl RootFollower {
+    pub fn new(
+        core: Arc<CoreHandle>,
+        boundary: Arc<Boundary>,
+        watch: Arc<watch::WatchService>,
+        index: Arc<IndexService>,
+    ) -> Self {
+        Self {
+            core,
+            boundary,
+            watch,
+            index,
+            cursors: Mutex::new((0, 0)),
+        }
+    }
+
+    /// Reads what the core changed since the last read and applies the roots
+    /// in it; true when the read carried them. An error means the core's
+    /// owner thread is gone.
+    pub fn catch_up(&self) -> Result<bool, String> {
+        let mut cursors = self
+            .cursors
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let reply = self.core.snapshot(cursors.0, cursors.1)?;
+        if reply.bytes.is_empty() {
+            return Ok(false);
+        }
+        let value = match serde_json::from_slice::<Value>(&reply.bytes) {
+            Ok(value) => value,
+            Err(error) => {
+                roots_failed(&format!("snapshot decode: {error}"));
+                return Ok(false);
+            }
+        };
+        if let Some(revision) = value.get("revision").and_then(Value::as_u64) {
+            cursors.0 = revision;
+        }
+        // Advancing the terminal cursor keeps the retained chunk window out of
+        // every later read: this reader uses none of those bytes.
+        if let Some(sequence) = value.get("terminal_sequence").and_then(Value::as_u64) {
+            cursors.1 = sequence;
+        }
+        if !carries_roots(&value) {
+            return Ok(false);
+        }
+        apply_snapshot(&value, &self.core, &self.boundary, &self.watch, &self.index);
+        Ok(true)
+    }
+}
+
+/// The one line a failed root read leaves.
+pub(crate) fn roots_failed(message: &str) {
+    eprintln!(
+        "{}",
+        serde_json::json!({
+            "component": "hided",
+            "kind": "boundary.roots_failed",
+            "message": message,
+        })
+    );
+}
+
+/// Keeps the boundary's checkout roots in step with the core: one read per
+/// change notification.
 ///
 /// The notification the snapshot stream already consumes is the only trigger,
 /// so the roots change exactly when a snapshot can change and nothing here runs
@@ -269,19 +356,9 @@ pub async fn wait_shutdown(running: &RunningDaemon) {
 /// beyond the first are drained before it, and the ones that do run take a
 /// snapshot that already carries every change the burst announced, so a repeat
 /// read converges on the same root set instead of piling up work.
-fn spawn_root_refresh(
-    core: Arc<CoreHandle>,
-    boundary: Arc<Boundary>,
-    watch: Arc<watch::WatchService>,
-    index: Arc<IndexService>,
-) {
-    let mut changes = core.notify.subscribe();
+fn spawn_root_refresh(roots: Arc<RootFollower>) {
+    let mut changes = roots.core.notify.subscribe();
     tokio::spawn(async move {
-        // Reading with a cursor keeps the whole rest/editor/changes payload off
-        // the notify path: a delta that changed only terminal chunks carries no
-        // `rest`, and roots and expanded folders both live in it.
-        let mut have_revision = 0u64;
-        let mut have_sequence = 0u64;
         loop {
             match changes.recv().await {
                 Ok(()) => {}
@@ -291,35 +368,10 @@ fn spawn_root_refresh(
                 Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
             }
             while changes.try_recv().is_ok() {}
-            let Ok(reply) = core.snapshot(have_revision, have_sequence) else {
-                eprintln!(
-                    "{}",
-                    serde_json::json!({
-                        "component": "hided",
-                        "kind": "boundary.roots_failed",
-                        "message": "core owner thread is gone",
-                    })
-                );
+            if let Err(error) = roots.catch_up() {
+                roots_failed(&error);
                 return;
-            };
-            if reply.bytes.is_empty() {
-                continue;
             }
-            let Ok(value) = serde_json::from_slice::<Value>(&reply.bytes) else {
-                continue;
-            };
-            if let Some(revision) = value.get("revision").and_then(Value::as_u64) {
-                have_revision = revision;
-            }
-            // Advancing the terminal cursor keeps the retained chunk window out
-            // of every read this reader makes: it uses none of those bytes.
-            if let Some(sequence) = value.get("terminal_sequence").and_then(Value::as_u64) {
-                have_sequence = sequence;
-            }
-            if !carries_roots(&value) {
-                continue;
-            }
-            apply_snapshot(&value, &core, &boundary, &watch, &index);
         }
     });
 }
@@ -376,35 +428,6 @@ fn apply_snapshot(
         .collect();
     watch.reconcile(boundary, root, expanded);
     watch.reconcile_device(device_watch::target_from_value(value));
-}
-
-fn refresh_roots(
-    core: &CoreHandle,
-    boundary: &Boundary,
-    watch: &watch::WatchService,
-    index: &IndexService,
-) {
-    match core.snapshot(0, 0) {
-        Ok(reply) => match serde_json::from_slice::<Value>(&reply.bytes) {
-            Ok(value) => apply_snapshot(&value, core, boundary, watch, index),
-            Err(error) => eprintln!(
-                "{}",
-                serde_json::json!({
-                    "component": "hided",
-                    "kind": "boundary.roots_failed",
-                    "message": format!("snapshot decode: {error}"),
-                })
-            ),
-        },
-        Err(error) => eprintln!(
-            "{}",
-            serde_json::json!({
-                "component": "hided",
-                "kind": "boundary.roots_failed",
-                "message": error,
-            })
-        ),
-    }
 }
 
 /// The folders whose changes the Explorer wants announced: the focused

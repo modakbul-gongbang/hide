@@ -6,6 +6,7 @@ import type { Device, EditorSnapshot, RemoteSession, RemoteStatus, SnapshotRest,
 import { useShellStore, type DaemonInfo } from "./store";
 import { draftExported, unstoredDeviceDrafts } from "./settings";
 import { useUiStore } from "./ui";
+import type { WorkspaceView } from "./workspace";
 
 const LOCAL_PANE = "w1:p1";
 const PANE_A = "remote:studio:pane:w9:p1";
@@ -132,6 +133,20 @@ function rest(focusedDevice: string, state = "connected"): SnapshotRest {
   };
 }
 
+/** The device Workspace in front, its one area showing a device file. */
+function deviceViews(mode: WorkspaceView["mode"]): WorkspaceView {
+  const notes = { id: "d2", tab_id: "file:studio:/home/remote/app/notes.md", path: "/home/remote/app/notes.md", label: "notes.md", kind: "file" as const, committed: null, preview: false, state: "open" as const, reason: null };
+  return {
+    device_id: "studio",
+    path: "/home/remote/app",
+    mode,
+    explorer: false,
+    changes: false,
+    agent_share: 0.5,
+    layout: { root: { area: { id: "a1", active: "d2", displays: [notes] } }, active_area: "a1", limits: { areas: 6, depth: 3, displays: 64 }, display_count: 1 },
+  };
+}
+
 function seed(value: SnapshotRest) {
   useShellStore.setState({ rest: null, agents: [], focusedPaneId: null });
   useShellStore.getState().applyFrame({ type: "snapshot", payload: { revision: 1, rest: value } });
@@ -216,6 +231,30 @@ describe("commands with an SSH device selected", () => {
     actions.closeTab();
     expect(sent).toHaveLength(0);
     expect(useUiStore.getState().notice?.text).toContain("Studio Mac is not connected");
+  });
+
+  it("closes the device Workspace's active view with the close chord while only its Views show, connected or not", () => {
+    for (const state of ["connected", "stale"]) {
+      useUiStore.setState({ notice: null, pendingClose: null });
+      seed({ ...rest("studio", state), workspace_view: deviceViews("views") });
+      const { sent, actions } = recorder();
+      actions.closeTab();
+      expect(sent).toHaveLength(1);
+      expect(sent[0]).toMatchObject({
+        kind: "view_layout",
+        payload: { action: "close", display_id: "d2", workspace: { device_id: "studio", path: "/home/remote/app" } },
+      });
+      expect(useUiStore.getState().notice).toBeNull();
+      expect(useUiStore.getState().pendingClose).toBeNull();
+    }
+  });
+
+  it("closes the device's Herdr tab with the close chord while its Workspace shows only agents", () => {
+    seed({ ...rest("studio"), workspace_view: deviceViews("agents") });
+    const { sent, actions } = recorder();
+    actions.closeTab();
+    expect(sent).toHaveLength(0);
+    expect(useUiStore.getState().pendingClose).toMatchObject({ kind: "tab", id: "remote:studio:tab:w9:t1", targetId: "studio" });
   });
 
   it("refuses the local-only commands instead of running them on this machine", () => {

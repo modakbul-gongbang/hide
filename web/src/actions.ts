@@ -2,18 +2,62 @@
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
-import { closeWithSaveOutcome, deleteBuffer, flushBuffer, settledBuffer, storedDraftOnClose, tabBufferKey, type BufferKey } from "./buffers";
+import {
+  closeWithSaveOutcome,
+  deleteBuffer,
+  documentCloseCarries,
+  flushBuffer,
+  settledBuffer,
+  storedDraftOnClose,
+  tabBufferKey,
+  type BufferKey,
+  type CloseWatch,
+  type CloseWatchFrame,
+} from "./buffers";
 import { closeDecision, statusUnknownNotice } from "./close";
 import { draftExported, unstoredDeviceDrafts } from "./settings";
-import { latestDraft, noteSent } from "./editor/draft";
+import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import type { OpenTarget } from "./navigation";
 import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
-import { activeEditorTab, deviceOfCheckout, editorFor, explorerContext, focusedCheckout, visibleTab, type AgentRow, type Checkout, type Tab } from "./snapshot";
+import {
+  deviceOfCheckout,
+  editorFor,
+  editorTabFor,
+  explorerContext,
+  focusedCheckout,
+  visibleTab,
+  type AgentRow,
+  type Checkout,
+  type EditorDocumentSnapshot,
+  type EditorTabSnapshot,
+  type Tab,
+} from "./snapshot";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
-import { viewAreaInUse } from "./viewFocus";
+import { drawnViews, viewAreaInUse } from "./viewFocus";
+import {
+  activeDisplay,
+  adjacentInOrder,
+  areasOf,
+  displaysOfDocument,
+  findArea,
+  isMenuCommand,
+  locateDisplay,
+  menuEdge,
+  neighbourArea,
+  resizeTarget,
+  shownTools,
+  viewCommands,
+  viewLayoutPayload,
+  workspaceKey,
+  type Edge,
+  type ViewCommandId,
+  type ViewFrame,
+  type ViewMenuId,
+  type ViewWorkspace,
+} from "./viewLayout";
 import { workspaceViewOf, type ViewMode } from "./workspace";
 
 /** The `device_id` an event carries: none for this machine, which the core takes as the default. */
@@ -209,14 +253,33 @@ export function createActions(dispatch: DispatchFn) {
     dispatch({ schema_version: 2, kind: "workspace_view", payload: patch });
   };
 
-  const showExplorerPanel = () => setWorkspaceView({ explorer: true });
+  /**
+   * Shows one tool (B10). The operator asked for it, so a narrow window's
+   * overlay opens (S7 B12); nothing is sent when the core already stores it
+   * shown, since the overlay closing never stored it hidden.
+   */
+  const showTool = (tool: "explorer" | "changes") => {
+    const view = workspaceViewOf(rest());
+    if (!view) return diagnostic("workspace_view: no Workspace in front");
+    ui().openTools();
+    if (!(tool === "explorer" ? view.explorer : view.changes)) setWorkspaceView(tool === "explorer" ? { explorer: true } : { changes: true });
+  };
 
-  /** ⌘⇧B: hides the Workspace tools when any shows, else shows the Explorer. */
+  const showExplorerPanel = () => showTool("explorer");
+
+  /**
+   * ⌘⇧B: hides the Workspace tools when any shows, else shows them. Tools a
+   * narrow window's closed overlay keeps out of sight are not showing, so the
+   * key opens the overlay on the tools the core stores rather than storing
+   * them hidden (S7 B12, B13).
+   */
   const toggleRightPanel = () => {
     const view = workspaceViewOf(rest());
     if (!view) return diagnostic("toggle tools: no Workspace in front");
-    if (view.explorer || view.changes) setWorkspaceView({ explorer: false, changes: false });
-    else setWorkspaceView({ explorer: true });
+    const shown = shownTools(view, ui().toolsPlacement);
+    if (shown.explorer || shown.changes) return setWorkspaceView({ explorer: false, changes: false });
+    if (view.explorer || view.changes) return ui().openTools();
+    showTool("explorer");
   };
 
   /**
@@ -254,40 +317,134 @@ export function createActions(dispatch: DispatchFn) {
     return context.checkout ? { checkout: context.checkout, device: context.device } : null;
   };
 
-  /** `file_open` for a path in the checkout in front, naming its device. */
-  const openInFront = (path: string, preview: boolean, what: string) => {
+  /**
+   * `file_open` for a path in the checkout in front, naming its device.
+   * `beside` asks for a pinned display in the area next to the active one,
+   * or a new area to its right (S7 B4); the core places it.
+   */
+  const openInFront = (path: string, preview: boolean, what: string, beside = false) => {
     const here = explorerHere();
     if (!here) return diagnostic(`${what}: no focused checkout`);
     revealAncestors(path);
+    // A file asked for is what the operator works on next, so a window too
+    // narrow for Agents and Views together shows the Views (S7 B13).
+    ui().setWorkingRegion("views");
     dispatch({
       schema_version: 2,
       kind: "file_open",
-      payload: { path, workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, preview, ...deviceField(here.device) },
+      payload: {
+        path,
+        workspace_id: here.checkout.workspace_id,
+        checkout_id: here.checkout.id,
+        preview: beside ? false : preview,
+        ...(beside ? { beside: true } : {}),
+        ...deviceField(here.device),
+      },
     });
   };
 
-  /** The contents a save or a close would send for one file tab, or null. */
-  const draftFor = (tabId: string): string | null => {
-    const state = useShellStore.getState();
-    const draft = latestDraft(tabId);
-    if (draft !== null) return draft;
-    const showing = activeEditorTab(state.editor);
-    if (showing?.id === tabId) return state.editor?.document?.contents_utf8 ?? null;
-    return null;
+  /**
+   * The View areas the operator acted on (contract 4.1): the frame the page
+   * has drawn, else the front Workspace's as the store holds it, for a chord
+   * while the Views are hidden. Every View action names this frame's
+   * Workspace and reads its ids from this frame's layout.
+   */
+  const frameNow = (): ViewFrame | null => {
+    const drawn = drawnViews();
+    if (drawn) return { workspace: drawn.workspace, layout: drawn.layout };
+    const view = workspaceViewOf(rest());
+    return view?.layout ? { workspace: { device_id: view.device_id, path: view.path }, layout: view.layout } : null;
   };
 
-  /** Saves the showing document, or the named tab when one is given. */
+  /** The frame an action acts on, or null with a diagnostic naming the action. */
+  const frameFor = (action: string): ViewFrame | null => {
+    const frame = frameNow();
+    if (!frame) diagnostic(`view_layout ${action}: no View areas in front`);
+    return frame;
+  };
+
+  /**
+   * One `view_layout` action (S7 contract 4.1): one operator action is one
+   * event, naming the Workspace of the frame it was taken on, and the core
+   * applies it whole or refuses it.
+   */
+  const viewLayout = (frame: ViewFrame, action: { action: string } & Record<string, unknown>) => {
+    dispatch({ schema_version: 2, kind: "view_layout", payload: viewLayoutPayload(frame.workspace, action) });
+  };
+
+  /**
+   * Moves the keyboard to a display or an area once the core shows it there
+   * (S7 B20). A display is asked for from where it stands in this frame, so
+   * a move or split of the active view waits for the frame that lands it.
+   */
+  const followFocus = (frame: ViewFrame, target: { displayId: string } | { areaId: string }) => {
+    const workspace = workspaceKey(frame.workspace);
+    if ("areaId" in target) return ui().setViewFocusRequest({ workspace, areaId: target.areaId });
+    const located = locateDisplay(frame.layout.root, target.displayId);
+    ui().setViewFocusRequest({ workspace, displayId: target.displayId, from: located ? { areaId: located.area.id, index: located.index } : null });
+  };
+
+  const focusView = (displayId: string) => {
+    const frame = frameFor("focus");
+    if (frame) viewLayout(frame, { action: "focus", display_id: displayId });
+  };
+
+  const focusViewArea = (areaId: string) => {
+    const frame = frameFor("focus_area");
+    if (!frame) return;
+    followFocus(frame, { areaId });
+    viewLayout(frame, { action: "focus_area", area_id: areaId });
+  };
+
+  /** A display into `areaId` at `index`, its final position there; a reorder when it is already there. */
+  const moveView = (displayId: string, areaId: string, index: number) => {
+    const frame = frameFor("move");
+    if (!frame) return;
+    followFocus(frame, { displayId });
+    viewLayout(frame, { action: "move", display_id: displayId, area_id: areaId, index });
+  };
+
+  /** A new area at `edge` of `areaId`, taking half of it, with the display moved in (S7 B7, B9). */
+  const splitView = (displayId: string, areaId: string, edge: Edge) => {
+    const frame = frameFor("split");
+    if (!frame) return;
+    followFocus(frame, { displayId });
+    // A repeated request id is a no-op in the core, so a split that arrives
+    // twice splits once (S7 B18).
+    viewLayout(frame, { action: "split", display_id: displayId, area_id: areaId, edge, request_id: remoteRequestId() });
+  };
+
+  /** A split's ratio after a divider drag or a keyboard step; one event per landing (S7 B9). */
+  const resizeViewSplit = (splitId: string, ratio: number) => {
+    const frame = frameFor("resize");
+    if (frame) viewLayout(frame, { action: "resize", split_id: splitId, ratio });
+  };
+
+  /** The active View area's active display, which a chord acts on. */
+  const activeDisplayNow = () => {
+    const frame = frameNow();
+    return frame ? activeDisplay(frame.layout) : null;
+  };
+
+  /**
+   * The contents a save or a close would send for one document, or null: the
+   * newest keystroke, else the document a display shows (the `documents`
+   * section carries only the documents on screen).
+   */
+  const draftFor = (tabId: string): string | null =>
+    latestDraft(tabId) ?? useShellStore.getState().documents[tabId]?.contents_utf8 ?? null;
+
+  /** Saves the document of the active display, or the named document when one is given. */
   const saveFile = (tabId?: string) => {
     const state = useShellStore.getState();
-    const showing = activeEditorTab(state.editor);
-    const tab = tabId ? state.editor?.tabs.find((row) => row.id === tabId) : showing;
+    const tab = editorTabFor(state.editor, tabId ?? state.editor?.active_tab_id ?? null);
     if (!tab || tab.kind !== "file") {
       diagnostic("file_save: no showing document");
       return false;
     }
     // A read-only or preview-only document has nothing the core would accept:
     // a save of it is refused, and the refusal would mark it dirty.
-    const document = showing?.id === tab.id ? state.editor?.document : null;
+    const document = state.documents[tab.id] ?? null;
     if (document && (document.readonly_reason !== null || document.contents_utf8 === null)) {
       diagnostic(`file_save: ${tab.path} is not editable here`);
       return false;
@@ -318,67 +475,210 @@ export function createActions(dispatch: DispatchFn) {
     return true;
   };
 
-  const closeFileTab = (tabId: string) => {
+  /**
+   * `changes_select` for a History row of the checkout in front (S4, S7
+   * contract 4.2): the core places a diff by the rules a file open follows,
+   * so a window too narrow for Agents and Views together shows the Views.
+   */
+  const selectChangeIn = (path: string, committed: boolean, preview: boolean, beside: boolean) => {
+    const here = explorerContext(rest()).checkout;
+    const changes = useShellStore.getState().changes;
+    const scope = rest()?.navigator?.changes_root_path;
+    if (!here || !scope || changes?.root_path !== scope || (scope !== here.path && !scope.startsWith(`${here.path}/`))) {
+      return diagnostic("changes_select: checkout is unavailable");
+    }
+    const group = committed ? changes.committed : changes.entries;
+    if (!group.some((entry) => entry.path === path)) return diagnostic("changes_select: row is no longer available");
+    ui().setWorkingRegion("views");
+    dispatch({ schema_version: 2, kind: "changes_select", payload: { path, committed, preview, ...(beside ? { beside: true } : {}) } });
+  };
+
+  /** What one frame says about a watched close (`closeWithSaveOutcome`). */
+  const closeWatchFrame = (state: ReturnType<typeof useShellStore.getState>, tabId: string): CloseWatchFrame => {
+    const document = state.documents[tabId];
+    const save = document?.save?.state;
+    const view = workspaceViewOf(state.rest);
+    const layout = view?.layout;
+    return {
+      connection: state.connection,
+      hostId: state.daemon?.host_id,
+      tabIds: (state.editor?.tabs ?? []).map((row) => row.id),
+      deviceIds: (state.rest?.navigator?.devices ?? []).map((row) => row.id),
+      workspace: view ? workspaceKey(view) : null,
+      displayIds: layout ? areasOf(layout.root).flatMap((area) => area.displays.map((display) => display.id)) : [],
+      error: state.rest?.status?.last_error ?? null,
+      draft: latestDraft(tabId),
+      save: !document ? "hidden" : save === "saving" || save === "waiting" || save === "checking" ? "in_flight" : "settled",
+    };
+  };
+
+  /**
+   * Settles the stored draft of a document whose last display this frame
+   * closes (D-14). A close that carries a save is watched until it lands,
+   * or until nothing more can come of it, and meanwhile the document is not
+   * autosaved or saved on leaving, since the close carries that save. A
+   * close with nothing to carry deletes a stored draft only when it matches
+   * what the core holds, once this tab's queued write has landed.
+   */
+  const watchDocumentClose = (
+    tab: EditorTabSnapshot,
+    target: { workspace: ViewWorkspace; displayId: string },
+    pending: { tab_id: string; path: string; contents_utf8: string } | null,
+    document: EditorDocumentSnapshot | null,
+  ) => {
     const state = useShellStore.getState();
-    const tab = state.editor?.tabs.find((row) => row.id === tabId);
-    if (!tab) return;
-    // Only unsaved work rides a close: the newest keystroke decides, not the
-    // last snapshot's dirty flag, and a clean tab closes in one step rather
-    // than through a save the core may refuse (B4, D-10). A dirty tab whose
-    // text this shell cannot reproduce stays open with a note instead.
-    const showing = activeEditorTab(state.editor);
-    const document = showing?.id === tabId ? state.editor?.document : null;
-    // A read-only or preview-only document has no draft the core would accept,
-    // so its close is one step however the tab got marked (D-10, D-14).
-    const editable = document ? document.readonly_reason === null && document.contents_utf8 !== null : true;
-    let contents = editable ? latestDraft(tabId) : null;
-    if (contents === null && tab.dirty && editable) {
-      if (document) contents = document.contents_utf8 ?? null;
-    }
-    if (contents === null && tab.dirty && editable) {
-      return diagnostic(`file_close: ${tab.path} has unsaved changes this shell cannot reproduce; open it and save first`);
-    }
-    const pending =
-      contents !== null
-        ? { tab_id: tab.id, path: tab.path, contents_utf8: contents }
-        : null;
     const draftKey = tabBufferKey(state.daemon?.host_id, state.rest, tab);
-    if (pending) {
-      // The draft goes when the close lands, not when it is asked for: the
-      // core closes the tab only after its save landed clean, and a close it
-      // refuses, or a tab that leaves for another reason, keeps the recovery
-      // copy (D-14).
-      const watch = {
-        tabId,
-        hostId: state.daemon?.host_id,
-        device: deviceOfCheckout(state.rest, tab.checkout_id),
-        errorAt: state.rest?.status?.last_error?.occurred_at ?? null,
-      };
-      const unsubscribe = useShellStore.subscribe((next) => {
-        const outcome = closeWithSaveOutcome(watch, {
-          connection: next.connection,
-          hostId: next.daemon?.host_id,
-          tabIds: (next.editor?.tabs ?? []).map((row) => row.id),
-          deviceIds: (next.rest?.navigator?.devices ?? []).map((row) => row.id),
-          error: next.rest?.status?.last_error ?? null,
-        });
-        if (outcome === "wait") return;
-        unsubscribe();
-        if (outcome === "landed" && draftKey) void deleteBuffer(draftKey);
-      });
-    } else if (draftKey) {
-      // Nothing rides this close, but a stored draft may still hold work this
-      // page never loaded; it goes only when it matches what the core holds.
-      // It is read once this tab's queued write has landed, so an edit
-      // typed just before the close is judged rather than left behind.
+    if (!pending) {
+      if (!draftKey) return;
       const known = document ? { contents_utf8: document.contents_utf8, dirty: document.dirty } : null;
       void settledBuffer(draftKey).then((stored) => {
         const decision = storedDraftOnClose(stored, known);
         if (decision === "delete") void deleteBuffer(draftKey);
-        else if (decision === "keep") diagnostic(`file_close: the stored draft of ${tab.path} is kept as a recovery item`);
+        else if (decision === "keep") diagnostic(`view_layout close: the stored draft of ${tab.path} is kept as a recovery item`);
       });
+      return;
     }
-    dispatch({ schema_version: 2, kind: "file_close", payload: { tab_id: tabId, pending_save: pending } });
+    // The draft goes when the close lands, not when it is asked for: a
+    // close the core refuses, one that turns out not to be the last view, or
+    // a tab that leaves for another reason keeps the recovery copy.
+    let watch: CloseWatch = {
+      tabId: tab.id,
+      workspace: workspaceKey(target.workspace),
+      displayId: target.displayId,
+      hostId: state.daemon?.host_id,
+      device: deviceOfCheckout(state.rest, tab.checkout_id),
+      errorAt: state.rest?.status?.last_error?.occurred_at ?? null,
+      contents: pending.contents_utf8,
+      sawSave: false,
+    };
+    noteClosing(tab.id, true);
+    const unsubscribe = useShellStore.subscribe((next, previous) => {
+      // Only a frame that can change the answer is read; terminal output is not one.
+      if (
+        next.editor === previous.editor &&
+        next.documents === previous.documents &&
+        next.rest === previous.rest &&
+        next.connection === previous.connection &&
+        next.daemon === previous.daemon
+      ) {
+        return;
+      }
+      const { outcome, sawSave } = closeWithSaveOutcome(watch, closeWatchFrame(next, tab.id));
+      watch = { ...watch, sawSave };
+      if (outcome === "wait") return;
+      unsubscribe();
+      noteClosing(tab.id, false);
+      if (outcome === "landed" && draftKey) void deleteBuffer(draftKey);
+      else if (outcome === "keep") diagnostic(`view_layout close: ${tab.path} did not close; its draft is kept`);
+    });
+  };
+
+  /**
+   * Closes one display (S7 B5, contract 4.1). The document's unsaved text
+   * rides every close as `pending_save`, since the core and not this frame
+   * knows whether the display is the document's last; on any other display
+   * the core drops it and the document keeps its draft and dirty state. When
+   * this frame shows the document's last display, the close is watched, and
+   * unsaved work this page cannot reproduce is not sent at all: a notice
+   * offers Don't save, the only close that drops unsaved text.
+   */
+  const closeView = (displayId: string) => {
+    const frame = frameFor("close");
+    if (!frame) return;
+    const located = locateDisplay(frame.layout.root, displayId);
+    if (!located) return diagnostic(`view_layout close: ${displayId} is not open`);
+    const state = useShellStore.getState();
+    const tab = editorTabFor(state.editor, located.display.tab_id);
+    if (!tab || tab.kind !== "file") return viewLayout(frame, { action: "close", display_id: displayId });
+    const last = displaysOfDocument(frame.layout.root, tab.id).length === 1;
+    const document = state.documents[tab.id] ?? null;
+    const carries = documentCloseCarries({ draft: latestDraft(tab.id), document, dirty: tab.dirty });
+    if (carries.kind === "unloaded" && last) {
+      ui().setNotice({
+        text: `${tab.label} has unsaved changes this page has not loaded. Show its view to save them, or close it without saving.`,
+        refreshable: false,
+        dontSave: { workspace: frame.workspace, displayId },
+      });
+      return;
+    }
+    const pending = carries.kind === "save" ? { tab_id: tab.id, path: tab.path, contents_utf8: carries.contents } : null;
+    if (last) watchDocumentClose(tab, { workspace: frame.workspace, displayId }, pending, document);
+    viewLayout(frame, { action: "close", display_id: displayId, ...(pending ? { pending_save: pending } : {}) });
+  };
+
+  /**
+   * The operator's explicit Don't save (contract 4.1): the view closes, and
+   * with it its document without the unsaved text, on the Workspace the
+   * close was asked on. A copy stored in this browser stays a recovery item.
+   */
+  const closeViewWithoutSaving = (target: { workspace: ViewWorkspace; displayId: string }) => {
+    ui().setNotice(null);
+    dispatch({ schema_version: 2, kind: "view_layout", payload: viewLayoutPayload(target.workspace, { action: "close", display_id: target.displayId, discard: true }) });
+  };
+
+  /** A preview display becomes an ordinary one (B2): the named one, or the active one. */
+  const keepViewOpen = (displayId?: string) => {
+    const frame = frameNow();
+    if (!frame) return;
+    const located = displayId ? locateDisplay(frame.layout.root, displayId) : activeDisplay(frame.layout);
+    if (!located?.display.preview) return;
+    viewLayout(frame, { action: "keep_open", display_id: located.display.id });
+  };
+
+  /** Shows the Explorer with a file's row unfolded and selected; nothing is opened. */
+  const revealInExplorer = (path: string) => {
+    ui().openTools();
+    setWorkspaceView({ explorer: true, reveal: path });
+    ui().setExplorerSelection(path);
+  };
+
+  /** One command of a display's tab menu, its area's overflow menu or the palette (B11, B20). */
+  const runViewMenu = (id: ViewMenuId, displayId: string) => {
+    const frame = frameFor(id);
+    const located = frame ? locateDisplay(frame.layout.root, displayId) : null;
+    if (!frame || !located) return diagnostic(`view menu ${id}: ${displayId} is not open`);
+    const edge = menuEdge(id);
+    if (id === "keep_open") return keepViewOpen(displayId);
+    if (id === "copy_path") return void navigator.clipboard?.writeText(located.display.path).catch(() => undefined);
+    if (id === "reveal") return revealInExplorer(located.display.path);
+    if (id === "close_view") return closeView(displayId);
+    if (!edge) return;
+    if (id.startsWith("split_")) return splitView(displayId, located.area.id, edge);
+    const target = findArea(frame.layout.root, neighbourArea(frame.layout.root, located.area.id, edge) ?? "");
+    if (!target) return diagnostic(`view menu ${id}: no view area lies ${edge} of ${located.area.id}`);
+    moveView(displayId, target.id, target.displays.length);
+  };
+
+  /**
+   * A View command from the palette (S7 B20): a menu command on the active
+   * view, or a focus or resize of the active area. One that cannot run now
+   * is not sent; the palette shows its reason.
+   */
+  const runViewCommand = (id: ViewCommandId) => {
+    const frame = frameFor(id);
+    if (!frame) return;
+    const drawn = drawnViews();
+    const command = viewCommands(frame.layout, drawn).find((row) => row.id === id);
+    if (!command || command.unavailable) return diagnostic(`view command ${id}: ${command?.unavailable ?? "unknown"}`);
+    if (isMenuCommand(id)) {
+      const active = activeDisplay(frame.layout);
+      if (active) runViewMenu(id, active.display.id);
+      return;
+    }
+    switch (id) {
+      case "focus_next":
+      case "focus_previous": {
+        const next = adjacentInOrder(frame.layout.root, frame.layout.active_area, id === "focus_next" ? 1 : -1);
+        if (next) focusViewArea(next.id);
+        return;
+      }
+      case "grow":
+      case "shrink": {
+        const target = resizeTarget(frame.layout, drawn?.geometry ?? null, id === "grow");
+        if ("ratio" in target) resizeViewSplit(target.splitId, target.ratio);
+        return;
+      }
+    }
   };
 
   return {
@@ -529,6 +829,8 @@ export function createActions(dispatch: DispatchFn) {
     /** An agent chosen on an Overview or in the Agents list: its Workspace and pane (B12). */
     openAgent(paneId: string) {
       beginOpening({ paneId });
+      // An agent asked for is what a window too narrow for both regions shows (S7 B13).
+      ui().setWorkingRegion("agents");
       const target = remoteTargetOfPane(rest(), paneId) ?? "local";
       const forward = (rest()?.navigator?.focused_device_id ?? "local") !== target;
       if (target !== "local") {
@@ -630,6 +932,11 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     closeTab(tabId?: string) {
+      // The close chord closes the active display when the View area holds
+      // the keyboard or is all that shows, on this machine or a device, and
+      // the Agent tab otherwise.
+      const display = tabId ? null : activeDisplayNow();
+      if (display && viewAreaInUse(rest())) return closeView(display.display.id);
       if (remoteContext(rest())) {
         const host = remoteHost("Close tab");
         if (!host) return;
@@ -638,10 +945,6 @@ export function createActions(dispatch: DispatchFn) {
         requestClose("tab", tab.id, tab.panes, host.targetId, host.agents);
         return;
       }
-      // The close chord closes the View tab when the View area holds the
-      // keyboard or is all that shows, and the Agent tab otherwise.
-      const fileTab = activeEditorTab(useShellStore.getState().editor);
-      if (!tabId && fileTab && viewAreaInUse(rest())) return closeFileTab(fileTab.id);
       const here = current();
       const id = tabId ?? here?.tab?.id;
       if (!here || !id) return diagnostic("close_tab: no visible tab");
@@ -781,28 +1084,26 @@ export function createActions(dispatch: DispatchFn) {
       setWorkspaceView({ mode });
     },
 
-    /** Shows the Explorer with a file's row unfolded and selected; nothing is opened. */
-    revealInExplorer(path: string) {
-      setWorkspaceView({ explorer: true, reveal: path });
-      ui().setExplorerSelection(path);
-    },
+    revealInExplorer,
 
-    /** Explorer and Changes open and close independently (B10). */
+    /**
+     * Explorer and Changes open and close independently (B10). Showing a tool
+     * a narrow window's overlay kept out of sight opens the overlay without
+     * an event when the core already stores it shown (S7 B12, B13).
+     */
     setTool(tool: "explorer" | "changes", visible: boolean) {
-      setWorkspaceView(tool === "explorer" ? { explorer: visible } : { changes: visible });
+      if (visible) return showTool(tool);
+      setWorkspaceView(tool === "explorer" ? { explorer: false } : { changes: false });
     },
 
+    /** A History row's diff in the active View area's preview (a single click) or pinned (a double click). */
     selectChange(path: string, committed: boolean, preview: boolean) {
-      const here = explorerContext(rest()).checkout;
-      const changes = useShellStore.getState().changes;
-      const scope = rest()?.navigator?.changes_root_path;
-      if (!here || !scope || changes?.root_path !== scope ||
-          (scope !== here.path && !scope.startsWith(`${here.path}/`))) {
-        return diagnostic("changes_select: checkout is unavailable");
-      }
-      const group = committed ? changes.committed : changes.entries;
-      if (!group.some((entry) => entry.path === path)) return diagnostic("changes_select: row is no longer available");
-      dispatch({ schema_version: 2, kind: "changes_select", payload: { path, committed, preview } });
+      selectChangeIn(path, committed, preview, false);
+    },
+
+    /** "Open to the side" on a History row (S7 B4): its diff pinned beside the active View area. */
+    openChangeBeside(path: string, committed: boolean) {
+      selectChangeIn(path, committed, false, true);
     },
 
     openShortcuts() {
@@ -856,6 +1157,18 @@ export function createActions(dispatch: DispatchFn) {
       openInFront(path, true, "file_open");
     },
 
+    /** A pick from "Open file to the side": a pinned display beside the active area (S7 B4). */
+    openIndexEntryBeside(path: string) {
+      ui().closeOverlay();
+      ui().setExplorerSelection(path);
+      openInFront(path, false, "file_open", true);
+    },
+
+    /** "Open file to the side" from the palette: ⌘P's list, whose pick opens beside. */
+    openFilePaletteBeside() {
+      ui().openOverlay("file_palette_beside");
+    },
+
     /** Registers a folder on `deviceId`; a device's own helper judges it against that device's home. */
     createWorkspace(path: string, label: string, deviceId = "local") {
       dispatch({ schema_version: 2, kind: "create_workspace", payload: { ...deviceField(deviceId), path, label, initialize_git: false } });
@@ -881,17 +1194,33 @@ export function createActions(dispatch: DispatchFn) {
       updateUiState(expandedPatch(explorerContext(rest()).device, paths));
     },
 
-    /** A single click opens the checkout's preview slot; a double click pins it. */
+    /** A single click opens the active area's preview slot; a double click pins it. */
     openFile(path: string, preview: boolean) {
       openInFront(path, preview, "file_open");
     },
 
-    /** ⌘⇧K: the showing preview tab becomes an ordinary tab. */
-    keepOpenFile(tabId?: string) {
-      const editor = useShellStore.getState().editor;
-      const tab = tabId ? editor?.tabs.find((candidate) => candidate.id === tabId) : activeEditorTab(editor);
-      if (!tab || !tab.preview) return;
-      dispatch({ schema_version: 2, kind: "file_keep_open", payload: { tab_id: tab.id } });
+    /** "Open to the side" (S7 B4): a second, pinned display in the next area. */
+    openFileBeside(path: string) {
+      openInFront(path, false, "file_open", true);
+    },
+
+    /** ⌘⇧K, a double click or Keep open: a preview display becomes an ordinary one. */
+    keepViewOpen,
+
+    focusView,
+    focusViewArea,
+    moveView,
+    splitView,
+    resizeViewSplit,
+    closeView,
+    closeViewWithoutSaving,
+    runViewMenu,
+    runViewCommand,
+
+    /** Re-reads an unavailable display's file (S7 B16). */
+    retryView(displayId: string) {
+      const frame = frameFor("retry");
+      if (frame) viewLayout(frame, { action: "retry", display_id: displayId });
     },
 
     /** A new file or folder in `parent`; the core opens a created file (B9). */
@@ -945,15 +1274,9 @@ export function createActions(dispatch: DispatchFn) {
       ui().setPendingTrash(null);
     },
 
-    focusFileTab(tabId: string) {
-      dispatch({ schema_version: 2, kind: "file_focus", payload: { tab_id: tabId } });
-    },
-
-    closeFileTab,
-
-    /** One keystroke's contents; the core keeps the draft and the dirty flag. */
-    updateDraft(contents: string) {
-      dispatch({ schema_version: 2, kind: "file_draft", payload: { contents_utf8: contents } });
+    /** One keystroke's contents for one document; the core keeps the draft and the dirty flag. */
+    updateDraft(tabId: string, contents: string) {
+      dispatch({ schema_version: 2, kind: "file_draft", payload: { tab_id: tabId, contents_utf8: contents } });
     },
 
     /**
@@ -964,21 +1287,20 @@ export function createActions(dispatch: DispatchFn) {
      */
     saveFile,
 
-    /** The tab's Markdown mode and wrap choice; the core persists both. */
-    setFileView(live: boolean, wrap: boolean) {
-      const tab = activeEditorTab(useShellStore.getState().editor);
-      if (!tab) return;
-      dispatch({ schema_version: 2, kind: "file_view", payload: { tab_id: tab.id, markdown_live: live, wrap } });
+    /** A document's Markdown mode and wrap choice; the core persists both. */
+    setFileView(tabId: string, live: boolean, wrap: boolean) {
+      dispatch({ schema_version: 2, kind: "file_view", payload: { tab_id: tabId, markdown_live: live, wrap } });
     },
 
     /** "reload" reads the disk contents; "keep_editing" accepts the disk
      * timestamp so the next save overwrites. */
-    resolveConflict(action: "reload" | "keep_editing") {
-      dispatch({ schema_version: 2, kind: "file_conflict", payload: { action } });
+    resolveConflict(tabId: string, action: "reload" | "keep_editing") {
+      dispatch({ schema_version: 2, kind: "file_conflict", payload: { tab_id: tabId, action } });
     },
 
-    requestEditorFind() {
-      ui().requestEditorFind();
+    /** ⌘F for one display, by default the active one: only its editor opens its find panel. */
+    requestEditorFind(displayId?: string) {
+      ui().requestEditorFind(displayId ?? activeDisplayNow()?.display.id ?? null);
     },
 
     /** `step` 0 searches and keeps the current match; +1 and -1 move (core `PaneFindPayload`). */

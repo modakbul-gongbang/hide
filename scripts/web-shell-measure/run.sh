@@ -149,6 +149,9 @@ page_url="http://127.0.0.1:$hided_port/?probe=1#token=$hided_token"
 spawn_owned chrome "$chrome_bin" --user-data-dir="$MEASURE_RUN_DIR/chrome-profile" --remote-debugging-port="$MEASURE_CDP_PORT" --remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check --disable-sync --disable-background-networking --disable-component-update --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --window-size=1280,900 "$page_url"
 chrome_pid=$owned_pid
 wait_url "http://127.0.0.1:$MEASURE_CDP_PORT/json/list"
+# A first run opens on Main (PRD S6 D-11): choose the fixture's Project, then
+# its Workspace in the Overview, one click per poll until the Workspace shows.
+wait_js "(() => { if (document.querySelector('[data-workspace-screen]')) return true; const next = document.querySelector('[data-overview-workspace]') ?? document.querySelector('[data-main-project]:not([disabled])'); if (next) next.click(); return false; })()"
 wait_js 'Boolean(window.__hideProbe && window.__hideProbe.paneId())'
 sleep 2
 if [[ "$scenario" == multi ]]; then

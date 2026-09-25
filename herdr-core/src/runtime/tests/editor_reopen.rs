@@ -851,8 +851,8 @@ fn revealing_into_an_unregistered_checkout_changes_nothing_and_reports_it() {
 fn selecting_a_change_opens_one_diff_tab_and_keeps_its_reader_alive() {
     let (mut runtime, root, checkout_id, _second, _second_id) = reveal_runtime();
     let path = root.join("tracked.json");
-    runtime.snapshot.changes.root_path = Some(root.to_string_lossy().into_owned());
-    runtime.snapshot.changes.entries = vec![crate::model::ChangedFileSnapshot {
+    runtime.snapshot.changes.edit().root_path = Some(root.to_string_lossy().into_owned());
+    runtime.snapshot.changes.edit().entries = vec![crate::model::ChangedFileSnapshot {
         path: path.to_string_lossy().into_owned(),
         relative_path: "tracked.json".to_owned(),
         previous_relative_path: None,
@@ -1020,7 +1020,7 @@ fn explorer_rename_carries_expansion_and_open_tabs_to_the_new_path() {
     .expect("fixture document");
     runtime
         .editor_documents
-        .insert("file:lib".to_owned(), document);
+        .insert("file:lib".to_owned(), crate::model::Edited::new(document));
     runtime.document_places.insert("file:lib".to_owned(), place);
 
     assert!(runtime.dispatch_json(&explorer_event(
@@ -1153,7 +1153,7 @@ fn explorer_trash_removes_the_item_selects_the_named_row_and_keeps_its_tab() {
     document.dirty = true;
     runtime
         .editor_documents
-        .insert("file:lib".to_owned(), document);
+        .insert("file:lib".to_owned(), crate::model::Edited::new(document));
 
     assert!(runtime.dispatch_json(&explorer_event(
         "path_trash",

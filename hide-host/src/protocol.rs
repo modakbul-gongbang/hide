@@ -14,7 +14,9 @@ use crate::root::RootIdentity;
 
 /// Bumped when a request or an answer changes shape. The core refuses a
 /// helper that reports another version and installs the one it carries.
-pub const PROTOCOL_VERSION: u32 = 8;
+/// 9: `changes` takes the View displays' `diffs` and answers each (PRD S7
+/// A5); a helper on 8 would ignore them and answer none.
+pub const PROTOCOL_VERSION: u32 = 9;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -103,13 +105,16 @@ pub enum Call {
         inode: Option<u64>,
     },
     /// The checkout's Git changes under `scope`, with the diff of `selected`
-    /// from the working or the committed group (`hide_host::git`).
+    /// from the working or the committed group, and of each of `diffs`
+    /// (`hide_host::git`).
     Changes {
         root: RootRef,
         scope: String,
         selected: Option<String>,
         committed: bool,
         base: Option<String>,
+        #[serde(default)]
+        diffs: Vec<crate::git::DiffTarget>,
     },
     /// The project facts of a folder on this machine (`hide_project::facts`):
     /// a Herdr pane's directory or a registered project's path, which the

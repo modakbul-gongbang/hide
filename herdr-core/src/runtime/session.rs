@@ -3078,7 +3078,9 @@ impl Runtime {
                             .map(str::to_owned)
                             .unwrap_or_else(|| moved.clone());
                         tab.path = moved.clone();
-                        if let Some(document) = self.editor_documents.get_mut(&tab.id) {
+                        if let Some(document) =
+                            self.editor_documents.get_mut(&tab.id).map(Edited::edit)
+                        {
                             document.path = moved.clone();
                         }
                         if let Some(place) = self.document_places.get_mut(&tab.id)
@@ -3105,7 +3107,8 @@ impl Runtime {
                         .map(|tab| tab.id.clone())
                         .collect();
                     for tab_id in removed {
-                        if let Some(document) = self.editor_documents.get_mut(&tab_id)
+                        if let Some(document) =
+                            self.editor_documents.get_mut(&tab_id).map(Edited::edit)
                             && let Some(revision) = document.revision.clone()
                         {
                             document.conflict = Some(crate::model::EditorConflictSnapshot {
@@ -3663,6 +3666,21 @@ impl Runtime {
             self.settle_reveal_path(&payload, None);
             return true;
         }
+        // A revealed file opens into a display, so a Workspace at its display
+        // cap refuses it before it is read.
+        if self.separate_view_areas()
+            && let Some(key) = self.workspace_key(&payload.workspace_id, &payload.checkout_id)
+            && !self.admit_view_open(
+                &key,
+                &payload.path,
+                crate::view_layout::DisplayKind::File,
+                None,
+                false,
+                false,
+            )
+        {
+            return true;
+        }
         // Nothing moves before the file is read: a reveal settles the whole
         // screen at once, and a file that cannot be read must not leave the
         // checkout focused and the tree expanded around a document that never
@@ -3680,7 +3698,8 @@ impl Runtime {
                         preview: false,
                         reload: false,
                         reveal: Some(documents::PendingReveal { front }),
-                        restore: None,
+                        restore: false,
+                        placement: None,
                     },
                 );
             }

@@ -299,16 +299,67 @@ export type EditorDocumentSnapshot = {
   save: EditorSaveSnapshot | null;
 };
 
-/** The core's editor section: its tabs, which one shows, and that tab's document. */
 /** A file a device is still reading; its tab shows when the answer arrives. */
 export type EditorOpeningSnapshot = { workspace_id: string; checkout_id: string; path: string };
 
+/**
+ * The core's editor section: every open document (one buffer per device,
+ * checkout and document, S5.5) and the document of the active View area's
+ * active display. The web shell reads documents from the `documents` section
+ * instead (`DocumentsSection`); the wire's `document` field is the Swift
+ * shell's and is always null here.
+ */
 export type EditorSnapshot = {
   tabs: EditorTabSnapshot[];
   active_tab_id: string | null;
-  document: EditorDocumentSnapshot | null;
   opening?: EditorOpeningSnapshot[];
 };
+
+/**
+ * The documents the front Workspace's visible displays show (S7 contract
+ * 3.1), a delta section of its own beside `editor`: `visible` names every
+ * document on screen, `changed` carries only those past this reader's cursor.
+ */
+export type DocumentsSection = {
+  visible: string[];
+  changed: { tab_id: string; document: EditorDocumentSnapshot }[];
+};
+
+/** What a display shows now (S7 contract 3): its document, a read in flight, a root not readable yet, or a read that failed. */
+export type ViewDisplayState = "open" | "opening" | "waiting" | "unavailable";
+
+/** One place a file or diff is shown in a View area; several displays may show one document. */
+export type ViewDisplaySnapshot = {
+  id: string;
+  /** The editor tab (document buffer) it shows; null while it is opening or waiting. */
+  tab_id: string | null;
+  path: string;
+  label: string;
+  kind: "file" | "diff";
+  /** Which History group a diff shows; null for a file. */
+  committed: boolean | null;
+  preview: boolean;
+  state: ViewDisplayState;
+  /** Why it is waiting or unavailable. */
+  reason: string | null;
+};
+
+export type ViewAreaSnapshot = { id: string; active: string | null; displays: ViewDisplaySnapshot[] };
+
+/** `row`: first left, second right; `column`: first top, second bottom. `ratio` is the first child's share. */
+export type ViewSplitSnapshot = { id: string; axis: "row" | "column"; ratio: number; first: ViewNode; second: ViewNode };
+
+export type ViewNode = { area: ViewAreaSnapshot } | { split: ViewSplitSnapshot };
+
+/** The front Workspace's View areas as the core owns them (S7 D-11). */
+export type ViewLayoutSnapshot = {
+  root: ViewNode;
+  active_area: string;
+  limits: { areas: number; depth: number; displays: number };
+  display_count: number;
+};
+
+export type DiffSnapshot = { path: string; committed: boolean; text: string; notice: string | null };
 
 /** The six working-tree states the core presents (ChangedFileStatus). */
 export type ChangedFileStatus = "modified" | "added" | "deleted" | "untracked" | "renamed" | "conflict";
@@ -336,7 +387,10 @@ export type ChangesSnapshot = {
   base_branch: string | null;
   selected_path: string | null;
   selected_committed: boolean;
+  /** The Swift shell's selected diff; the web shell reads `diffs`. */
   diff: { path: string; text: string; notice: string | null } | null;
+  /** One bounded patch per visible diff display of the front Workspace (S7 contract 3.2); absent when none shows. */
+  diffs?: DiffSnapshot[];
   unavailable_reason: string | null;
   /** Why the latest read failed while these entries, from the last good read, are still shown (S5.5 B22). */
   stale_reason?: string | null;
@@ -715,33 +769,17 @@ export function layoutForTab(rest: SnapshotRest | null, tabId: string | null): P
 }
 
 /**
- * The core's editor section when it holds a showing tab, else null. The canvas
- * reads null as "the terminal owns the surface": the core keeps the editor's
- * tabs while a terminal tab shows, so the tabs alone do not say what is drawn.
+ * The core's editor section when the active View area shows an open
+ * document, else null: a chord that could mean the document or the pane
+ * (⌘F, text size) reads null as "the terminal owns it".
  */
 export function editorFor(editor: EditorSnapshot | null): EditorSnapshot | null {
   return editor?.active_tab_id ? editor : null;
 }
 
-/**
- * The device file or diff the editor shows in `checkout`, or null when the host's
- * terminal tab does. The core keeps one active editor tab across devices, so
- * a tab of another checkout is not this surface's.
- */
-export function remoteEditorTab(editor: EditorSnapshot | null, checkout: Checkout): EditorTabSnapshot | null {
-  const tab = activeEditorTab(editor);
-  return tab && (tab.kind === "file" || tab.kind === "diff") && tab.workspace_id === checkout.workspace_id && tab.checkout_id === checkout.id ? tab : null;
-}
-
-/** The editor tab the core says is showing, or null when the terminal does. */
-export function activeEditorTab(editor: EditorSnapshot | null): EditorTabSnapshot | null {
-  const active = editorFor(editor);
-  if (!active) return null;
-  return active.tabs.find((tab) => tab.id === active.active_tab_id) ?? null;
-}
-
-/** The editor tab a strip entry stands behind, or null for a Herdr entry. */
-export function editorTabFor(editor: EditorSnapshot | null, tabId: string): EditorTabSnapshot | null {
+/** The editor tab (document) with this id, or null once the core closed it. */
+export function editorTabFor(editor: EditorSnapshot | null, tabId: string | null): EditorTabSnapshot | null {
+  if (!tabId) return null;
   return editor?.tabs.find((tab) => tab.id === tabId) ?? null;
 }
 

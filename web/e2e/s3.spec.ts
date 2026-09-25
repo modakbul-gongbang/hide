@@ -213,15 +213,15 @@ test("the Explorer lists a checkout, expands a folder and opens a preview tab", 
     expect(lastSent.get("file_open")).toMatchObject({ path: `${repo}/src/main.ts`, preview: true });
     await screenshot(page, "s3-preview-tab");
 
-    // ⌘⇧K promotes the preview to an ordinary tab (B3).
+    // ⌘⇧K promotes the preview display to an ordinary one (B3; S7 B2).
     await page.keyboard.press("Meta+Shift+KeyK");
-    await expect.poll(() => sent.get("file_keep_open")).toBe(1);
+    await expect.poll(() => sent.get("view_layout.keep_open")).toBe(1);
     await expect(fileTab).toHaveAttribute("data-preview", "false");
 
-    // Closing the tab is one file_close and the terminal canvas returns.
+    // Closing the view is one view_layout close and the terminal canvas returns.
     await fileTab.hover();
     await fileTab.locator("button").click();
-    await expect.poll(() => sent.get("file_close")).toBe(1);
+    await expect.poll(() => sent.get("view_layout.close")).toBe(1);
     await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
     await expect(page.locator("[data-canvas]")).toBeVisible();
   } finally {
@@ -472,7 +472,7 @@ test("closing a dirty tab saves the draft instead of dropping it", async ({ page
     await tab.hover();
     await tab.locator('button[aria-label^="Close view"]').click();
     await expect
-      .poll(() => (lastSent.get("file_close")?.pending_save as { contents_utf8?: string } | null)?.contents_utf8)
+      .poll(() => (lastSent.get("view_layout.close")?.pending_save as { contents_utf8?: string } | null)?.contents_utf8)
       .toBe(`${SOURCE}X`);
     await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
     await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe(`${SOURCE}X`);
@@ -535,7 +535,7 @@ test("a conflicted background tab is not closed away with its draft", async ({ p
     const conflicted = page.locator(`[data-tab-kind="file"]`, { hasText: "main.ts" });
     await conflicted.hover();
     await conflicted.locator('button[aria-label^="Close view"]').click();
-    await expect.poll(() => sent.get("file_close")).toBe(1);
+    await expect.poll(() => sent.get("view_layout.close")).toBe(1);
     await expect(page.locator(`[data-tab-kind="file"]`, { hasText: "main.ts" })).toHaveCount(1);
     await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 0;\n");
 
@@ -556,7 +556,7 @@ test("the close chord closes the file tab that is showing", async ({ page }) => 
   try {
     await page.locator('[data-editor-body] .cm-content').click();
     await page.keyboard.press("Alt+KeyW");
-    await expect.poll(() => sent.get("file_close")).toBe(1);
+    await expect.poll(() => sent.get("view_layout.close")).toBe(1);
     await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
     // The terminal tab the file tab was covering is still there.
     await expect(page.locator('[data-tab-kind="herdr"]').first()).toBeVisible();
@@ -876,8 +876,8 @@ test("a preview-only document closes without a save", async ({ page }) => {
     await page.locator('[data-tab-kind="file"]').hover();
     await page.locator('[data-tab-kind="file"] button[aria-label^="Close view"]').click();
     await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
-    await expect.poll(() => sent.get("file_close")).toBe(1);
-    expect(lastSent.get("file_close")?.pending_save ?? null).toBeNull();
+    await expect.poll(() => sent.get("view_layout.close")).toBe(1);
+    expect(lastSent.get("view_layout.close")?.pending_save ?? null).toBeNull();
   } finally {
     close(fixture);
   }

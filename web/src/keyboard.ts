@@ -12,6 +12,7 @@ import { matchBrowser, resolvedRegistry, type CommandId } from "./shortcuts";
 import { editorFor, focusedCheckout, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type Cycle } from "./ui";
+import { drawnViews } from "./viewFocus";
 
 /** The checkout whose tabs ⌥` walks: this machine's focused one, or the selected device's visible one. */
 function cycleCheckout(rest: SnapshotRest | null) {
@@ -87,17 +88,18 @@ export function installKeyboard(actions: Actions): () => void {
       case "toggle_sidebar_view":
         return actions.toggleSidebarView();
       case "find_in_pane":
-        // One chord, two surfaces: a showing document finds in itself, else
-        // the focused terminal pane's find bar opens.
-        if (editorFor(useShellStore.getState().editor)) return actions.requestEditorFind();
+        // One chord, two surfaces: the active display's document finds in
+        // itself while the View areas are on screen, else the focused
+        // terminal pane's find bar opens.
+        if (editorFor(useShellStore.getState().editor) && drawnViews()) return actions.requestEditorFind();
         return actions.openFind();
       case "save_file":
         return actions.saveFile();
       case "keep_open":
-        // The same chord answers a pending close and a preview editor tab:
-        // the confirmation is showing first, so it wins when it is.
+        // The same chord answers a pending close and the active preview
+        // display: the confirmation is showing first, so it wins when it is.
         if (ui().pendingClose) return actions.keepOpen();
-        return actions.keepOpenFile();
+        return actions.keepViewOpen();
       case "split_right":
         return actions.split("right");
       case "split_down":

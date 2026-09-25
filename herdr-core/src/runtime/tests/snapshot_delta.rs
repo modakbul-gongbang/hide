@@ -172,6 +172,61 @@ fn snapshot_delivery_leaves_the_rest_section_alone_when_a_republish_moves_nothin
     );
 }
 
+/// A5, contract 3.2. The Changes section carries every diff on screen, and
+/// a snapshot read runs on every terminal output burst, so a snapshot read
+/// tells it moved by its edit number, which a landing Changes read takes
+/// only when it differs: a read that brings nothing new leaves the reader
+/// current, and two reads that land between snapshot reads send the last.
+#[test]
+fn a_changes_read_resends_the_section_only_when_it_differs() {
+    fn answer(runtime: &Runtime, files: &[&str]) -> crate::changes::ChangesAnswer {
+        let root = "/private/tmp/hide-changes-edit";
+        crate::changes::ChangesAnswer {
+            key: runtime.changes_key(),
+            selection: (None, false),
+            changes: crate::model::ChangesSnapshot {
+                root_path: Some(root.to_owned()),
+                entries: files
+                    .iter()
+                    .map(|name| crate::model::ChangedFileSnapshot {
+                        path: format!("{root}/{name}"),
+                        relative_path: (*name).to_owned(),
+                        previous_relative_path: None,
+                        status: crate::model::ChangedFileStatus::Modified,
+                        added_lines: Some(1),
+                        removed_lines: Some(0),
+                    })
+                    .collect(),
+                ..Default::default()
+            },
+        }
+    }
+    let entries = |delta: &crate::model::SnapshotDeltaPayload| {
+        delta.changes.as_ref().map(|changes| {
+            changes
+                .entries
+                .iter()
+                .map(|entry| entry.relative_path.clone())
+                .collect::<Vec<_>>()
+        })
+    };
+
+    let mut runtime = runtime();
+    assert!(runtime.ingest_changes(answer(&runtime, &["a.txt"])));
+    let first = runtime.snapshot_delta_payload(0, 0);
+    assert_eq!(entries(&first), Some(vec!["a.txt".to_owned()]));
+
+    assert!(!runtime.ingest_changes(answer(&runtime, &["a.txt"])));
+    let same = runtime.snapshot_delta_payload(first.revision, 0);
+    assert_eq!(entries(&same), None, "an identical read is not sent again");
+    assert_eq!(same.revision, first.revision);
+
+    assert!(runtime.ingest_changes(answer(&runtime, &["a.txt", "b.txt"])));
+    assert!(runtime.ingest_changes(answer(&runtime, &["b.txt"])));
+    let moved = runtime.snapshot_delta_payload(first.revision, 0);
+    assert_eq!(entries(&moved), Some(vec!["b.txt".to_owned()]));
+}
+
 /// R6, AC12. The delta used to be serialized with the runtime mutex held,
 /// so every attach thread and the shell's next read waited behind the
 /// whole navigator, ui state and terminal output going through serde.

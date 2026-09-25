@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { filterEntries, fuzzyScore, searchEntries, type SearchEntry } from "./search";
-import type { SnapshotRest } from "./snapshot";
+import type { SnapshotRest, ViewNode } from "./snapshot";
+import { viewGeometry } from "./viewLayout";
 
 describe("fuzzy score", () => {
   it("needs the query's characters in order", () => {
@@ -55,12 +56,50 @@ describe("search entries", () => {
 
 describe("workspace commands", () => {
   const rest = { workspace_view: { device_id: "local", path: "/repo", mode: "together", explorer: true, changes: false, agent_share: 0.5 } } as unknown as SnapshotRest;
+  const wide = { drawn: null, placement: "column" } as const;
 
   it("offers the other layouts by the menu's names and each tool by what it would do", () => {
-    expect(searchEntries(rest, true).map((entry) => entry.title)).toEqual(["Layout: Agents only", "Layout: Views only", "Hide Explorer", "Show History"]);
+    expect(searchEntries(rest, wide).map((entry) => entry.title)).toEqual(["Layout: Agents only", "Layout: Views only", "Hide Explorer", "Show History"]);
+  });
+
+  it("offers a tool a narrow window's closed overlay keeps out of sight as one to show (S7 B12)", () => {
+    const explorer = (placement: "closed" | "open") => searchEntries(rest, { drawn: null, placement }).find((entry) => entry.id === "command:tool:explorer");
+    expect(explorer("closed")).toMatchObject({ title: "Show Explorer", command: { tool: "explorer", visible: true } });
+    expect(explorer("open")).toMatchObject({ title: "Hide Explorer", command: { tool: "explorer", visible: false } });
   });
 
   it("offers no Workspace command when no Workspace is on screen", () => {
-    expect(searchEntries(rest, false)).toEqual([]);
+    expect(searchEntries(rest, null)).toEqual([]);
+  });
+
+  it("offers every View tab menu command and the area commands, with the reason one cannot run now", () => {
+    const display = { id: "d1", tab_id: "file:a", path: "/repo/a.md", label: "a.md", kind: "file", committed: null, preview: true, state: "open", reason: null };
+    const layout = { root: { area: { id: "a1", active: "d1", displays: [display] } }, active_area: "a1", limits: { areas: 6, depth: 3, displays: 64 }, display_count: 1 };
+    const withViews = { workspace_view: { ...(rest.workspace_view as object), layout } } as unknown as SnapshotRest;
+    const sizes = { areaMinWidth: 224, areaMinHeight: 144, divider: 2, tabStrip: 32 };
+    const drawn = { geometry: viewGeometry(layout.root as ViewNode, { x: 0, y: 0, width: 1000, height: 600 }, sizes), sizes };
+    const commands = searchEntries(withViews, { drawn, placement: "column" }).filter((entry) => entry.subtitle === "View areas");
+    expect(commands.map((entry) => entry.title)).toEqual([
+      "Keep open",
+      "Split right",
+      "Split left",
+      "Split up",
+      "Split down",
+      "Move right",
+      "Move left",
+      "Move up",
+      "Move down",
+      "Copy path",
+      "Reveal in Explorer",
+      "Close view",
+      "Focus next view area",
+      "Focus previous view area",
+      "Grow view area",
+      "Shrink view area",
+      "Open file to the side",
+    ]);
+    expect(commands.find((entry) => entry.title === "Split right")?.unavailable).toBe("This is the only view in its area.");
+    expect(commands.find((entry) => entry.title === "Move up")?.unavailable).toBe("There is no view area above.");
+    expect(commands.find((entry) => entry.title === "Keep open")?.unavailable).toBeNull();
   });
 });

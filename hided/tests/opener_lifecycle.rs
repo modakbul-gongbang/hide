@@ -55,8 +55,12 @@ fn supervisor() -> &'static Path {
 fn wait_for_pid(path: &Path) -> i32 {
     let until = Instant::now() + Duration::from_secs(5);
     loop {
-        if let Ok(value) = std::fs::read_to_string(path) {
-            return value.parse().unwrap();
+        // The fake opener's shell creates the file before printf writes into
+        // it, so an empty read means the pid is not there yet.
+        if let Ok(value) = std::fs::read_to_string(path)
+            && let Ok(pid) = value.parse()
+        {
+            return pid;
         }
         assert!(Instant::now() < until, "fake opener never wrote its pid");
         std::thread::sleep(Duration::from_millis(20));

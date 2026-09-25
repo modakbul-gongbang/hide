@@ -32,20 +32,15 @@ fn remote_purpose_unavailable_reason(version: Option<&str>) -> String {
 impl Runtime {
     /// What the changes view needs read, or `None` while nothing on screen
     /// shows it. The checkout in front may be on this machine or on a device;
-    /// either is read by its own host.
+    /// either is read by its own host. The diffs the front Workspace's View
+    /// areas show ride the same read (PRD S7 A5).
     pub fn changes_request(&mut self) -> Option<crate::changes::ChangesRequest> {
         let (workspace_id, checkout_id, root_path) = self.changes_target()?;
         let root = self.document_root(&workspace_id, &checkout_id).ok()?;
         let channel = self
             .changes_channel(&root.device_id)
             .map(crate::changes::ChannelRef);
-        let active_diff = self.active_diff_tab();
-        let selected_path = active_diff
-            .map(|tab| tab.path.clone())
-            .or_else(|| self.snapshot.changes.selected_path.clone());
-        let selected_committed = active_diff
-            .and_then(|tab| tab.diff_committed)
-            .unwrap_or(self.snapshot.changes.selected_committed);
+        let (selected_path, selected_committed) = self.changes_selection();
         // The base comes from the checkout row, so the committed group and
         // the card's `↑A ↓B` are measured against the same branch; a device
         // checkout has none, and its host uses the repository default.
@@ -59,7 +54,21 @@ impl Runtime {
             selected_path,
             selected_committed,
             base_branch,
+            diffs: self.visible_view_diffs(),
         })
+    }
+
+    /// The row whose diff the next read takes, and its group: the diff in
+    /// front, otherwise the row History has selected.
+    fn changes_selection(&self) -> (Option<String>, bool) {
+        let active_diff = self.active_diff_tab();
+        let selected_path = active_diff
+            .map(|tab| tab.path.clone())
+            .or_else(|| self.snapshot.changes.selected_path.clone());
+        let selected_committed = active_diff
+            .and_then(|tab| tab.diff_committed)
+            .unwrap_or(self.snapshot.changes.selected_committed);
+        (selected_path, selected_committed)
     }
 
     /// The device and folder the changes view is about now, the fence every
@@ -105,6 +114,7 @@ impl Runtime {
         if !section_visible(RightPanelSection::Changes)
             && !section_visible(RightPanelSection::Explorer)
             && self.active_diff_tab().is_none()
+            && self.visible_view_diffs().is_empty()
         {
             return None;
         }
@@ -172,7 +182,9 @@ impl Runtime {
         // than shown under the new device until the next read lands (B22).
         let front = self.front_changes_key();
         if self.changes_published_key.is_some() && self.changes_published_key != front {
-            self.snapshot.changes = crate::model::ChangesSnapshot::default();
+            self.snapshot
+                .changes
+                .set(crate::model::ChangesSnapshot::default());
             self.changes_published_key = None;
         }
     }
@@ -2138,15 +2150,34 @@ impl Runtime {
             && self.snapshot.changes.unavailable_reason.is_none()
             && self.snapshot.changes.root_path == changes.root_path
         {
-            let mut kept = self.snapshot.changes.clone();
+            let mut kept = crate::model::ChangesSnapshot::clone(&self.snapshot.changes);
             kept.stale_reason = Some(reason);
             changes = kept;
         }
+        // An answer lands one wake after its request, and with View areas a
+        // file in front leaves the next request asking for the row History
+        // shows. An answer for a row the operator has left since would put
+        // that row back, the next request would ask for it again, and the
+        // two rows would chase each other with a read and a frame on every
+        // tick while nothing is driven. Its list is still the newest, so only
+        // the row and its diff stay as they are. The closed view's empty
+        // projection is taken whole, so its diff text leaves the wire, and
+        // the Swift shell's reading is left as it was.
+        if self.separate_view_areas()
+            && answer.key.is_some()
+            && answer.selection != self.changes_selection()
+        {
+            changes.selected_path = self.snapshot.changes.selected_path.clone();
+            changes.selected_committed = self.snapshot.changes.selected_committed;
+            changes.diff = self.snapshot.changes.diff.clone();
+        }
         self.changes_published_key = answer.key;
+        // The one comparison of the section: it takes a new edit number, and
+        // is sent again, only when this read changed it.
         if self.snapshot.changes == changes {
             return false;
         }
-        self.snapshot.changes = changes;
+        self.snapshot.changes.set(changes);
         true
     }
 

@@ -21,6 +21,7 @@ import { useShellStore } from "./store";
 import { WorkspaceDialogs, WorkspaceNotices } from "./WorkspaceDialogs";
 import { attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
 import { useUiStore } from "./ui";
+import { viewRefusal } from "./viewLayout";
 import { SessionsScreen } from "./SessionsScreen";
 import { WorkspaceScreen } from "./WorkspaceScreen";
 import { connectShell, type DispatchFn } from "./ws";
@@ -68,8 +69,17 @@ export function App() {
         useUiStore.getState().setNotice(null);
       }
       const error = state.rest?.status?.last_error;
-      if (error && error.occurred_at !== previous.rest?.status?.last_error?.occurred_at && error.kind.startsWith("remote.control.")) {
-        useUiStore.getState().setNotice({ text: error.message, refreshable: error.kind === "remote.control.close_status_unknown" });
+      const fresh = error && error.occurred_at !== previous.rest?.status?.last_error?.occurred_at ? error : null;
+      if (fresh?.kind.startsWith("remote.control.")) {
+        useUiStore.getState().setNotice({ text: fresh.message, refreshable: fresh.kind === "remote.control.close_status_unknown" });
+      }
+      // A View action or open the core refused changed nothing, and the
+      // operator is told why in the core's words (S7 B19); the keyboard stays
+      // where it is rather than waiting for a move that will not land.
+      const refusal = viewRefusal(fresh);
+      if (refusal) {
+        useUiStore.getState().setNotice({ text: refusal, refreshable: false });
+        useUiStore.getState().setViewFocusRequest(null);
       }
       const checkout = focusedCheckout(state.rest);
       if (!checkout) return;

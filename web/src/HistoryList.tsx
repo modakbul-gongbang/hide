@@ -2,8 +2,12 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { fileIcon } from "./fileIcons";
+import { ContextMenu, type MenuEntry } from "./Menu";
 import { changesFor, frontCheckout, type ChangedFileSnapshot, type ChangedFileStatus } from "./snapshot";
 import { useShellStore } from "./store";
+import { drawnViews } from "./viewFocus";
+import { besideUnavailable } from "./viewLayout";
+import { workspaceViewOf } from "./workspace";
 
 const STATUS: Record<ChangedFileStatus, { mark: string; label: string; color: string }> = {
   modified: { mark: "M", label: "Modified", color: "text-warning" },
@@ -33,27 +37,40 @@ function ChangeRow({ entry, committed, selected, actions }: {
   const icon = fileIcon(name);
   const status = STATUS[entry.status];
   const title = identity(entry, committed);
+  // The row's diff beside the active View area (S7 B4, contract 4.2), as a
+  // click would open it in the active area; a deleted file has a diff too.
+  const menu = (): MenuEntry<"open_beside">[] => [
+    { id: "open_beside", label: "Open to the side", unavailable: besideUnavailable(workspaceViewOf(useShellStore.getState().rest)?.layout, drawnViews()) },
+  ];
   return (
-    <button
-      type="button"
-      className={`flex h-[var(--size-pane-child-row)] w-full min-w-0 items-center gap-xs px-sm text-left text-caption hover:bg-elevated ${selected ? "bg-elevated text-primary" : "text-secondary"}`}
-      aria-label={title}
-      aria-current={selected ? "true" : undefined}
-      title={title}
-      data-history-path={entry.relative_path}
-      data-history-group={committed ? "committed" : "working"}
-      onClick={() => actions.selectChange(entry.path, committed, true)}
-      onDoubleClick={() => actions.selectChange(entry.path, committed, false)}
+    <ContextMenu
+      label={`${name} actions`}
+      items={menu}
+      onSelect={() => actions.openChangeBeside(entry.path, committed)}
+      className="block"
+      data-history-menu={entry.relative_path}
     >
-      <span aria-hidden="true" className={`shrink-0 ${icon.color}`} style={{ fontFamily: "seti" }}>{icon.glyph}</span>
-      <span className="flex min-w-0 flex-1 items-baseline gap-xs overflow-hidden">
-        <span className="shrink-0 truncate">{name}</span>
-        {parent ? <span className="min-w-0 truncate text-muted">{parent}</span> : null}
-      </span>
-      {entry.added_lines !== null ? <span className="shrink-0 text-success" aria-label={`${entry.added_lines} lines added`}>+{entry.added_lines}</span> : null}
-      {entry.removed_lines !== null ? <span className="shrink-0 text-danger" aria-label={`${entry.removed_lines} lines removed`}>-{entry.removed_lines}</span> : null}
-      <span className={`shrink-0 ${status.color}`} aria-hidden="true">{status.mark}</span>
-    </button>
+      <button
+        type="button"
+        className={`flex h-[var(--size-pane-child-row)] w-full min-w-0 items-center gap-xs px-sm text-left text-caption hover:bg-elevated ${selected ? "bg-elevated text-primary" : "text-secondary"}`}
+        aria-label={title}
+        aria-current={selected ? "true" : undefined}
+        title={title}
+        data-history-path={entry.relative_path}
+        data-history-group={committed ? "committed" : "working"}
+        onClick={() => actions.selectChange(entry.path, committed, true)}
+        onDoubleClick={() => actions.selectChange(entry.path, committed, false)}
+      >
+        <span aria-hidden="true" className={`shrink-0 ${icon.color}`} style={{ fontFamily: "seti" }}>{icon.glyph}</span>
+        <span className="flex min-w-0 flex-1 items-baseline gap-xs overflow-hidden">
+          <span className="shrink-0 truncate">{name}</span>
+          {parent ? <span className="min-w-0 truncate text-muted">{parent}</span> : null}
+        </span>
+        {entry.added_lines !== null ? <span className="shrink-0 text-success" aria-label={`${entry.added_lines} lines added`}>+{entry.added_lines}</span> : null}
+        {entry.removed_lines !== null ? <span className="shrink-0 text-danger" aria-label={`${entry.removed_lines} lines removed`}>-{entry.removed_lines}</span> : null}
+        <span className={`shrink-0 ${status.color}`} aria-hidden="true">{status.mark}</span>
+      </button>
+    </ContextMenu>
   );
 }
 
@@ -112,7 +129,10 @@ export function HistoryList({ actions }: { actions: Actions }) {
         {virtualizer.getVirtualItems().map((virtualRow) => {
           const item = items[virtualRow.index];
           if (!item) return null;
-          return <div key={item.kind === "group" ? `group:${item.committed}` : `${item.committed}:${item.entry.path}`} className="absolute inset-x-0 top-0" style={{ transform: `translateY(${virtualRow.start}px)` }}>
+          // Placed by `top`, not a transform: a transformed row would hold its
+          // row menu's fixed position, drawing the menu away from the pointer
+          // and clipping it inside this list (S7 B4, B9).
+          return <div key={item.kind === "group" ? `group:${item.committed}` : `${item.committed}:${item.entry.path}`} className="absolute inset-x-0" style={{ top: virtualRow.start }}>
             {item.kind === "group" ? <button
               type="button"
               className="flex h-[var(--size-pane-child-row)] w-full items-center gap-xs px-sm text-left text-caption text-secondary hover:bg-elevated"

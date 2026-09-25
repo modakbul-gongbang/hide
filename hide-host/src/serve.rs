@@ -254,6 +254,7 @@ pub fn handle(call: Call) -> HostResult<Value> {
             selected,
             committed,
             base,
+            diffs,
         } => {
             let root = open_root(&root)?;
             let scope_path = relative_path(&scope)?;
@@ -265,6 +266,7 @@ pub fn handle(call: Call) -> HostResult<Value> {
                     selected,
                     committed,
                     base,
+                    diffs,
                 },
             )?)
         }

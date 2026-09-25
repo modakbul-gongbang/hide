@@ -350,8 +350,8 @@ fn file_and_diff_previews_share_one_slot() {
     let second = directory.join("second.md");
     std::fs::write(&second, "second\n").expect("fixture");
     assert!(open(&mut runtime, &checkout_id, &notes, true));
-    runtime.snapshot.changes.root_path = Some(directory.to_string_lossy().into_owned());
-    runtime.snapshot.changes.entries = vec![crate::model::ChangedFileSnapshot {
+    runtime.snapshot.changes.edit().root_path = Some(directory.to_string_lossy().into_owned());
+    runtime.snapshot.changes.edit().entries = vec![crate::model::ChangedFileSnapshot {
         path: second.to_string_lossy().into_owned(),
         relative_path: "second.md".to_owned(),
         previous_relative_path: None,
@@ -388,8 +388,8 @@ fn file_and_diff_previews_share_one_slot() {
 fn double_clicking_the_active_diff_keeps_it_open_in_the_same_slot() {
     let (mut runtime, checkout_id, directory) = strip_checkout("preview-diff-promote");
     let changed = directory.join("second.md");
-    runtime.snapshot.changes.root_path = Some(directory.to_string_lossy().into_owned());
-    runtime.snapshot.changes.entries = vec![crate::model::ChangedFileSnapshot {
+    runtime.snapshot.changes.edit().root_path = Some(directory.to_string_lossy().into_owned());
+    runtime.snapshot.changes.edit().entries = vec![crate::model::ChangedFileSnapshot {
         path: changed.to_string_lossy().into_owned(),
         relative_path: "second.md".to_owned(),
         previous_relative_path: None,

@@ -21,6 +21,10 @@ use crate::root::Root;
 /// cut or allowed to dominate the wire.
 pub const MAX_DIFF_BYTES: usize = 256 * 1024;
 
+/// The further diffs one read answers at most: one per View area the shell
+/// can show side by side (PRD S7 A5), so a read stays bounded whoever asks.
+pub const MAX_DIFFS: usize = 6;
+
 /// What to read: the folder below the root the answer is limited to, the
 /// file whose diff to fetch and which group it is in, and the branch the
 /// committed group is measured against. `base: None` measures against the
@@ -31,6 +35,18 @@ pub struct ChangesQuery {
     pub selected: Option<String>,
     pub committed: bool,
     pub base: Option<String>,
+    /// Further diffs to take in the same read, one per View display of a
+    /// diff; past `MAX_DIFFS` they are not answered.
+    #[serde(default)]
+    pub diffs: Vec<DiffTarget>,
+}
+
+/// A file whose diff a View display shows, relative to the scope like every
+/// path in the answer, and the group it is taken in.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub struct DiffTarget {
+    pub path: String,
+    pub committed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -44,6 +60,18 @@ pub struct Changes {
     /// resolved it.
     pub base: Option<String>,
     pub diff: Option<Diff>,
+    /// One diff per answered target of `ChangesQuery::diffs`, in order. A
+    /// target no longer in its group is answered with empty text and a
+    /// notice saying so, never left out.
+    #[serde(default)]
+    pub diffs: Vec<GroupDiff>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GroupDiff {
+    pub committed: bool,
+    #[serde(flatten)]
+    pub diff: Diff,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,36 +175,76 @@ pub fn changes(root: &Root, scope: &Path, query: &ChangesQuery) -> HostResult<Ch
         Some(base) => Some(base),
         None => default_branch(git),
     };
+    // The base is resolved once per read, and every committed diff of it,
+    // the selected one and each View display's, compares against that ref.
     let (base, committed) = match base {
         Some(base) => match read_committed(git, &base)? {
-            Some(committed) => (Some(base), Some(scope_entries(committed, scope))),
+            Some((base_ref, committed)) => (
+                Some(base),
+                Some((base_ref, scope_entries(committed, scope))),
+            ),
             None => (None, None),
         },
         None => (None, None),
     };
 
-    let group = if query.committed {
-        committed.as_deref().unwrap_or_default()
-    } else {
-        &entries
+    let diff_of = |path: &str, in_committed: bool| {
+        if in_committed {
+            let (base_ref, group) = committed.as_ref()?;
+            group
+                .iter()
+                .find(|entry| entry.path == path)
+                .map(|entry| committed_diff(git, scope, entry, base_ref))
+        } else {
+            entries
+                .iter()
+                .find(|entry| entry.path == path)
+                .map(|entry| working_diff(git, root, scope, entry))
+        }
     };
-    let diff = query
-        .selected
-        .as_ref()
-        .and_then(|selected| group.iter().find(|entry| &entry.path == selected))
-        .map(|entry| {
-            if query.committed {
-                committed_diff(git, scope, entry, base.as_deref())
-            } else {
-                working_diff(git, root, scope, entry)
-            }
-        });
+    let answered: Vec<(&DiffTarget, Option<Diff>)> = query
+        .diffs
+        .iter()
+        .take(MAX_DIFFS)
+        .map(|target| (target, diff_of(&target.path, target.committed)))
+        .collect();
+    // The selected file is often one a View display shows too; its diff is
+    // taken once.
+    let diff = query.selected.as_ref().and_then(|selected| {
+        answered
+            .iter()
+            .find(|(target, _)| &target.path == selected && target.committed == query.committed)
+            .map(|(_, diff)| diff.clone())
+            .unwrap_or_else(|| diff_of(selected, query.committed))
+    });
+    let has_base = committed.is_some();
+    let diffs = answered
+        .into_iter()
+        .map(|(target, diff)| GroupDiff {
+            committed: target.committed,
+            diff: diff.unwrap_or_else(|| Diff {
+                path: target.path.clone(),
+                text: String::new(),
+                notice: Some(absent_notice(target.committed, has_base)),
+            }),
+        })
+        .collect();
     Ok(Changes {
         entries,
-        committed,
+        committed: committed.map(|(_, group)| group),
         base,
         diff,
+        diffs,
     })
+}
+
+/// Why a View display's file has no diff in its group now.
+fn absent_notice(in_committed: bool, has_base: bool) -> String {
+    match (in_committed, has_base) {
+        (true, false) => "This checkout has no base branch to compare with".to_owned(),
+        (true, true) => "This file has no changes on this branch".to_owned(),
+        (false, _) => "This file has no uncommitted changes".to_owned(),
+    }
 }
 
 /// A scope is a folder of the checkout named without a link anywhere along
@@ -320,9 +388,13 @@ fn resolvable_base(git: GitDirectory<'_>, base: &str) -> Option<String> {
         })
 }
 
-/// The files this branch's commits changed since `base`. An unresolved base
-/// omits the group; a failed read is an error.
-fn read_committed(git: GitDirectory<'_>, base: &str) -> HostResult<Option<Vec<ChangedFile>>> {
+/// The files this branch's commits changed since `base`, with the ref the
+/// base resolved to. An unresolved base omits the group; a failed read is an
+/// error.
+fn read_committed(
+    git: GitDirectory<'_>,
+    base: &str,
+) -> HostResult<Option<(String, Vec<ChangedFile>)>> {
     let Some(base_ref) = resolvable_base(git, base) else {
         return Ok(None);
     };
@@ -335,7 +407,7 @@ fn read_committed(git: GitDirectory<'_>, base: &str) -> HostResult<Option<Vec<Ch
     if let Ok(numstat) = git_text(git, &["diff", "--numstat", "-z", &range]) {
         apply_line_counts(&mut entries, &numstat);
     }
-    Ok(Some(entries))
+    Ok(Some((base_ref, entries)))
 }
 
 /// Keeps the entries under `scope`, relative to it. Git's rename source can
@@ -575,23 +647,23 @@ fn name_untracked(text: String, path: &str) -> String {
 
 /// A committed file's diff is against the base, not the index: the group is
 /// "what this branch changed", so its diff must be the same comparison.
+/// `base_ref` is the ref the read resolved the base to.
 fn committed_diff(
     git: GitDirectory<'_>,
     scope: &Path,
     entry: &ChangedFile,
-    base: Option<&str>,
+    base_ref: &str,
 ) -> Diff {
-    let Some(base) = base.and_then(|base| resolvable_base(git, base)) else {
-        return Diff {
-            path: entry.path.clone(),
-            text: String::new(),
-            notice: Some("The base branch could not be resolved in this checkout.".to_owned()),
-        };
-    };
     let (previous, current) = pathspecs(scope, entry);
     let text = git_diff_text(
         git,
-        &["diff", &format!("{base}...HEAD"), "--", &previous, &current],
+        &[
+            "diff",
+            &format!("{base_ref}...HEAD"),
+            "--",
+            &previous,
+            &current,
+        ],
         false,
         None,
     );

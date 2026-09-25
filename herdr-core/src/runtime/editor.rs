@@ -62,12 +62,17 @@ impl Runtime {
             // A restored tab whose file could not be read has no document;
             // showing it shows why (B20).
             EditorTabKind::File if tab.unavailable_reason.is_some() => None,
-            EditorTabKind::File => Some(
-                self.editor_documents
+            EditorTabKind::File => {
+                let document = self
+                    .editor_documents
                     .get(tab_id)
-                    .cloned()
-                    .ok_or_else(|| format!("File tab {tab_id} has no document state"))?,
-            ),
+                    .ok_or_else(|| format!("File tab {tab_id} has no document state"))?;
+                // With View areas the documents ride their own snapshot
+                // section, one per visible display (PRD S7 A4), so a
+                // keystroke re-sends one document, not the editor, and
+                // the editor carries no copy.
+                (!self.separate_view_areas()).then(|| EditorDocumentSnapshot::clone(document))
+            }
             EditorTabKind::Diff => {
                 if tab.diff_committed.is_none() {
                     return Err(format!("Diff tab {tab_id} has no comparison scope"));
@@ -94,10 +99,11 @@ impl Runtime {
                 if self.snapshot.changes.selected_path.as_deref() != Some(tab.path.as_str())
                     || self.snapshot.changes.selected_committed != committed
                 {
-                    self.snapshot.changes.diff = None;
+                    let changes = self.snapshot.changes.edit();
+                    changes.diff = None;
+                    changes.selected_path = Some(tab.path);
+                    changes.selected_committed = committed;
                 }
-                self.snapshot.changes.selected_path = Some(tab.path);
-                self.snapshot.changes.selected_committed = committed;
                 self.snapshot.editor.document = None;
                 self.snapshot.ui_state.selected_path = None;
             }
@@ -118,7 +124,9 @@ impl Runtime {
     }
 
     pub(super) fn sync_active_editor_document(&mut self) {
-        self.snapshot.editor.document =
+        self.snapshot.editor.document = if self.separate_view_areas() {
+            None
+        } else {
             self.snapshot
                 .editor
                 .active_tab_id
@@ -130,9 +138,10 @@ impl Runtime {
                             .tabs
                             .iter()
                             .find(|tab| tab.id == tab_id && tab.kind == EditorTabKind::File)
-                            .map(|_| document.clone())
+                            .map(|_| EditorDocumentSnapshot::clone(document))
                     })
-                });
+                })
+        };
         self.snapshot.editor.archive_detail = self
             .snapshot
             .editor
@@ -209,6 +218,10 @@ impl Runtime {
         path: &str,
         preview: bool,
     ) {
+        if self.separate_view_areas() {
+            self.show_file_in_view(prepared, workspace_id, checkout_id, path, preview, false);
+            return;
+        }
         let tab_id = match prepared {
             PreparedFileTab::Open(tab_id) => {
                 if !preview {
@@ -227,7 +240,8 @@ impl Runtime {
                         preview,
                         reload: false,
                         reveal: None,
-                        restore: None,
+                        restore: false,
+                        placement: None,
                     },
                 );
                 self.snapshot.ui_state.selected_path = Some(path.to_owned());
@@ -265,7 +279,8 @@ impl Runtime {
         else {
             return None;
         };
-        self.editor_documents.insert(tab_id.clone(), *document);
+        self.editor_documents
+            .insert(tab_id.clone(), Edited::new(*document));
         self.document_places.insert(tab_id.clone(), place);
         let tab = EditorTabSnapshot {
             id: tab_id.clone(),
@@ -299,7 +314,16 @@ impl Runtime {
     /// are dropped without a Recent Closed entry (D-04). A dirty preview tab
     /// is never replaced: it is promoted where it sits and the new preview
     /// opens beside it (D-05). File and diff tabs share the one slot (D-02).
+    ///
+    /// With View areas the preview slots are the areas' (one preview display
+    /// each, PRD S7 D-02), so a new tab only joins the editor, and the area
+    /// retires the document its preview display showed (`view_areas.rs`).
     pub(super) fn place_editor_tab(&mut self, tab: EditorTabSnapshot) {
+        if self.separate_view_areas() {
+            self.snapshot.editor.tabs.push(tab);
+            self.rebuild_tab_strips();
+            return;
+        }
         let replaced = tab.preview.then(|| {
             self.snapshot
                 .editor
@@ -357,7 +381,7 @@ impl Runtime {
     /// diff, the Changes selection it was showing. The caller decides what
     /// the removal means: a close records it for reopening, a preview
     /// replacement does not.
-    fn retire_editor_tab(&mut self, index: usize) -> EditorTabSnapshot {
+    pub(super) fn retire_editor_tab(&mut self, index: usize) -> EditorTabSnapshot {
         let tab = self.snapshot.editor.tabs.remove(index);
         let was_active = self.snapshot.editor.active_tab_id.as_deref() == Some(tab.id.as_str());
         self.editor_documents.remove(&tab.id);
@@ -369,8 +393,9 @@ impl Runtime {
             self.snapshot.editor.document = None;
             self.snapshot.editor.archive_detail = None;
             if tab.kind == EditorTabKind::Diff {
-                self.snapshot.changes.selected_path = None;
-                self.snapshot.changes.diff = None;
+                let changes = self.snapshot.changes.edit();
+                changes.selected_path = None;
+                changes.diff = None;
             }
         }
         tab
@@ -398,8 +423,21 @@ impl Runtime {
 
     /// Makes a preview tab an ordinary tab in the same slot. Returns whether
     /// anything changed: promoting a tab that is already ordinary is a
-    /// no-op, and a tab that is not open is refused with a reason.
+    /// no-op, and a tab that is not open is refused with a reason. With View
+    /// areas every preview display of the document is kept open instead,
+    /// and the tab's flag follows them.
     pub(super) fn promote_editor_tab(&mut self, tab_id: &str) -> bool {
+        if !self.snapshot.editor.tabs.iter().any(|tab| tab.id == tab_id) {
+            self.set_error(
+                "editor.keep_open_unknown_tab",
+                format!("Editor tab {tab_id} is not open"),
+                false,
+            );
+            return true;
+        }
+        if self.separate_view_areas() {
+            return self.promote_view_displays(tab_id);
+        }
         let Some(tab) = self
             .snapshot
             .editor
@@ -407,12 +445,7 @@ impl Runtime {
             .iter_mut()
             .find(|tab| tab.id == tab_id)
         else {
-            self.set_error(
-                "editor.keep_open_unknown_tab",
-                format!("Editor tab {tab_id} is not open"),
-                false,
-            );
-            return true;
+            return false;
         };
         if !tab.preview {
             return false;
@@ -520,22 +553,12 @@ impl Runtime {
             }
             return tab_id;
         }
-        let name = Path::new(path)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .filter(|name| !name.is_empty())
-            .unwrap_or(path);
-        let scope = if committed {
-            "branch diff"
-        } else {
-            "working diff"
-        };
         self.place_editor_tab(EditorTabSnapshot {
             id: tab_id.clone(),
             workspace_id: workspace_id.to_owned(),
             checkout_id: checkout_id.to_owned(),
             path: path.to_owned(),
-            label: format!("{name} ({scope})"),
+            label: diff_label(path, committed),
             kind: EditorTabKind::Diff,
             diff_committed: Some(committed),
             markdown_live: true,
@@ -732,7 +755,9 @@ impl Runtime {
             });
         }
         self.rebuild_tab_strips();
-        if was_active {
+        // With View areas the area the closed display was in shows its next
+        // display (`view_areas.rs`); the focus history is the one canvas's.
+        if was_active && !self.separate_view_areas() {
             while let Some(previous_id) = self.editor_tab_history.pop() {
                 if self
                     .snapshot
@@ -2131,6 +2156,27 @@ impl Runtime {
             ),
             ClosedItem::File { .. } => (true, true, None),
         };
+        // With View areas the reopened file takes a display, so a Workspace
+        // at its display cap refuses it here and the item stays.
+        if self.separate_view_areas()
+            && let ClosedItem::File {
+                workspace_id,
+                checkout_id,
+                path,
+                ..
+            } = &item
+            && let Some(workspace) = self.workspace_key(workspace_id, checkout_id)
+            && !self.admit_view_open(
+                &workspace,
+                path,
+                crate::view_layout::DisplayKind::File,
+                None,
+                false,
+                false,
+            )
+        {
+            return true;
+        }
         let key = item.key().to_owned();
         self.reopen_in_flight = Some(key.clone());
         self.set_reopen_notices(vec![live::ReopenNotice {
@@ -2223,6 +2269,25 @@ impl Runtime {
                                 place,
                             };
                             self.show_file_tab(prepared, workspace_id, checkout_id, path, false);
+                            // With View areas the open can still be refused as
+                            // it lands, when the Workspace filled its views
+                            // meanwhile: the item stays and says why.
+                            if !self.snapshot.editor.tabs.iter().any(|tab| tab.id == tab_id) {
+                                let reason = self
+                                    .snapshot
+                                    .status
+                                    .last_error
+                                    .as_ref()
+                                    .map_or_else(String::new, |error| error.message.clone());
+                                self.set_reopen_notices(vec![live::ReopenNotice {
+                                    pane_id: None,
+                                    message: format!(
+                                        "The file could not be reopened; retry is available: {reason}"
+                                    ),
+                                }]);
+                                self.sync_recent_closed_snapshot();
+                                return true;
+                            }
                             if let Err(message) = self.focus_editor_tab_context(&tab_id) {
                                 self.set_reopen_notices(vec![live::ReopenNotice {
                                 pane_id: None,
@@ -2268,4 +2333,14 @@ impl Runtime {
         self.sync_recent_closed_snapshot();
         true
     }
+}
+
+/// A diff tab's name: the file and the comparison it shows.
+pub(super) fn diff_label(path: &str, committed: bool) -> String {
+    let scope = if committed {
+        "branch diff"
+    } else {
+        "working diff"
+    };
+    format!("{} ({scope})", super::workspace_view::file_label(path))
 }

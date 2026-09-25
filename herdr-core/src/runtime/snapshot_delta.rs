@@ -14,8 +14,12 @@ pub fn serialize_snapshot_delta(
 }
 
 /// Revision bookkeeping for the delta snapshot wire. Revisions are stamped
-/// lazily at read time by comparing live sections against the last stamped
-/// copy, so mutation sites carry no dirty-tracking obligations.
+/// lazily at read time. The rest and editor sections are compared against
+/// the last stamped copy; the changes section and each View document carry
+/// an edit number ([`crate::model::Edited`]) taken wherever they may change,
+/// so a read compares two numbers instead of several diffs or a whole file.
+/// A change between reads always leaves a number the stamp does not hold,
+/// so it is never swallowed.
 #[derive(Default)]
 pub(super) struct DeltaState {
     revision: u64,
@@ -30,9 +34,24 @@ pub(super) struct DeltaState {
     last_rest: Option<Arc<crate::model::RestSections>>,
     last_editor: Option<Arc<crate::model::EditorSnapshot>>,
     last_changes: Option<Arc<crate::model::ChangesSnapshot>>,
+    /// The edit number `last_changes` was copied at.
+    last_changes_edit: u64,
+    /// The View documents on screen, each stamped with its own revision
+    /// (PRD S7 contract 3.1), so a keystroke re-sends only its document.
+    /// Empty in a shell without View areas.
+    documents: HashMap<String, StampedDocument>,
+    documents_visible: Vec<String>,
+    documents_visible_revision: u64,
     /// `None` until a shell names a Project; a named Project is never
     /// unnamed, so the section never has to be sent as cleared.
     last_project_sessions: Option<Arc<crate::model::ProjectSessionsSnapshot>>,
+}
+
+struct StampedDocument {
+    revision: u64,
+    /// The edit number `document` was copied at.
+    edit: u64,
+    document: Arc<EditorDocumentSnapshot>,
 }
 
 impl Runtime {
@@ -73,10 +92,18 @@ impl Runtime {
             self.delta.editor_revision = self.delta.revision;
             self.delta.last_editor = Some(Arc::new(self.snapshot.editor.clone()));
         }
-        if self.delta.last_changes.as_deref() != Some(&self.snapshot.changes) {
+        let changes_edit = self.snapshot.changes.edit_number();
+        if self.delta.last_changes.is_none() || self.delta.last_changes_edit != changes_edit {
             self.delta.revision += 1;
             self.delta.changes_revision = self.delta.revision;
-            self.delta.last_changes = Some(Arc::new(self.snapshot.changes.clone()));
+            self.delta.last_changes = Some(Arc::new(crate::model::ChangesSnapshot::clone(
+                &self.snapshot.changes,
+            )));
+            self.delta.last_changes_edit = changes_edit;
+        }
+        let views = self.separate_view_areas();
+        if views {
+            self.stamp_view_documents();
         }
         if let Some(project_sessions) = &self.snapshot.project_sessions
             && self.delta.last_project_sessions.as_deref() != Some(project_sessions)
@@ -140,6 +167,9 @@ impl Runtime {
                         .expect("the changes section is stamped before a delta is taken"),
                 )
             }),
+            documents: views
+                .then(|| self.view_documents_delta(have_revision))
+                .flatten(),
             // Absent until a shell names a Project: an unnamed section has no
             // revision and nothing to send.
             project_sessions: self
@@ -154,5 +184,68 @@ impl Runtime {
             chunks,
             chunks_dropped,
         }
+    }
+
+    /// Stamps each visible View document edited since its last stamped
+    /// copy, and the visible set when it changed. Per visible document a
+    /// read costs two map lookups and one number comparison; a document is
+    /// copied only when it was edited.
+    fn stamp_view_documents(&mut self) {
+        let visible = self.visible_view_documents();
+        for tab_id in &visible {
+            let Some(document) = self.editor_documents.get(tab_id) else {
+                continue;
+            };
+            let edit = document.edit_number();
+            if self
+                .delta
+                .documents
+                .get(tab_id)
+                .is_some_and(|stamped| stamped.edit == edit)
+            {
+                continue;
+            }
+            self.delta.revision += 1;
+            self.delta.documents.insert(
+                tab_id.clone(),
+                StampedDocument {
+                    revision: self.delta.revision,
+                    edit,
+                    document: Arc::new(EditorDocumentSnapshot::clone(document)),
+                },
+            );
+        }
+        // A document off screen is dropped, so it is sent again, whole, when
+        // it comes back: the shell drops it too.
+        self.delta
+            .documents
+            .retain(|tab_id, _| visible.contains(tab_id));
+        if visible != self.delta.documents_visible {
+            self.delta.revision += 1;
+            self.delta.documents_visible_revision = self.delta.revision;
+            self.delta.documents_visible = visible;
+        }
+    }
+
+    /// The `documents` section for a reader at `have_revision`: absent when
+    /// nothing in it changed past that revision, complete for a fresh reader.
+    fn view_documents_delta(&self, have_revision: u64) -> Option<crate::model::DocumentsDelta> {
+        let changed: Vec<_> = self
+            .delta
+            .documents_visible
+            .iter()
+            .filter_map(|tab_id| {
+                let stamped = self.delta.documents.get(tab_id)?;
+                (stamped.revision > have_revision)
+                    .then(|| (tab_id.clone(), Arc::clone(&stamped.document)))
+            })
+            .collect();
+        (have_revision == 0
+            || self.delta.documents_visible_revision > have_revision
+            || !changed.is_empty())
+        .then(|| crate::model::DocumentsDelta {
+            visible: self.delta.documents_visible.clone(),
+            changed,
+        })
     }
 }

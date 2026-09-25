@@ -109,17 +109,29 @@ export function ConfirmTrash({ actions }: { actions: Actions }) {
   );
 }
 
-/** A one-line notice the operator can act on; the refreshable one offers `refresh_status`. */
+/**
+ * A one-line notice the operator can act on: the refreshable one offers
+ * `refresh_status`, and a view whose unsaved work this page cannot save
+ * offers Don't save, the only close that drops it (S7 B5).
+ */
 export function NoticeBar({ actions }: { actions: Actions }) {
   const notice = useUiStore((s) => s.notice);
   const setNotice = useUiStore((s) => s.setNotice);
   if (!notice) return null;
+  const dontSave = notice.dontSave;
   return (
     <div role="status" data-notice="true" className="flex items-center gap-md border-b border-divider bg-panel px-md py-xs text-caption text-secondary">
-      <span className="min-w-0 flex-1 truncate">{notice.text}</span>
+      <span className="min-w-0 flex-1 truncate" title={notice.text}>
+        {notice.text}
+      </span>
       {notice.refreshable ? (
         <button type="button" className="text-primary underline" onClick={() => actions.refreshStatus()}>
           Check status
+        </button>
+      ) : null}
+      {dontSave ? (
+        <button type="button" className="text-danger underline" data-notice-dont-save={dontSave.displayId} onClick={() => actions.closeViewWithoutSaving(dontSave)}>
+          Don&apos;t save
         </button>
       ) : null}
       <button type="button" className="text-muted" aria-label="Dismiss" onClick={() => setNotice(null)}>
