@@ -121,6 +121,53 @@ test("the theme and accent switch at once, keep the terminal, and survive a rest
   }
 });
 
+test("an editor open during a theme switch is drawn like one opened after it", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    const repoDir = path.join(herdr.root, "demo");
+    fs.mkdirSync(repoDir, { recursive: true });
+    fs.writeFileSync(path.join(repoDir, "open.ts"), "export const open = 1;\n");
+    fs.writeFileSync(path.join(repoDir, "later.ts"), "export const later = 2;\n");
+    const repo = fs.realpathSync(repoDir);
+    herdr.run(["workspace", "create", "--cwd", repoDir, "--label", "demo", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]);
+    daemon = await startHided(herdr, "editor-theme");
+    await open(page, daemon);
+    await enterWorkspace(page, "demo");
+
+    // CodeMirror scopes its dark and light base styles by a class on the
+    // editor. The switch swaps that class on the open editor, and what it
+    // swaps in, and out, has to match an editor opened after the switch.
+    const editor = (text: string) => page.locator("[data-editor-codemirror] .cm-editor", { hasText: text });
+    const classes = async (text: string) => new Set((await editor(text).getAttribute("class"))?.split(/\s+/) ?? []);
+    await page.locator(`[data-explorer-row="${repo}/open.ts"]`).dblclick();
+    await expect(editor("open = 1")).toBeVisible();
+    const dark = await classes("open = 1");
+
+    await openAppearance(page);
+    await page.locator('[data-theme-option="light"]').click();
+    await expect(page.locator("html")).toHaveClass(/(^|\s)light(\s|$)/);
+    await page.keyboard.press("Escape");
+    await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
+    await expect.poll(async () => [...(await classes("open = 1"))].filter((name) => !dark.has(name)).length).toBeGreaterThan(0);
+    const switched = await classes("open = 1");
+
+    await page.locator(`[data-explorer-row="${repo}/later.ts"]`).dblclick();
+    await expect(editor("later = 2")).toBeVisible();
+    const fresh = await classes("later = 2");
+
+    const added = [...switched].filter((name) => !dark.has(name));
+    const removed = [...dark].filter((name) => !switched.has(name));
+    expect(removed.length).toBeGreaterThan(0);
+    expect(added.filter((name) => !fresh.has(name))).toEqual([]);
+    expect(removed.filter((name) => fresh.has(name))).toEqual([]);
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});
+
 test("the production build hided serves has no gallery", async ({ page }) => {
   // The gallery is a dev-only module (B14): no built asset carries it...
   const assets = path.resolve("dist", "assets");
