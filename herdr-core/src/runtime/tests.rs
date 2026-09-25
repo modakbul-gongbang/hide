@@ -23,6 +23,8 @@ mod issues;
 mod lineage;
 #[path = "tests/memory.rs"]
 mod memory;
+#[path = "tests/project_sessions.rs"]
+mod project_sessions;
 #[path = "tests/projects.rs"]
 mod projects;
 #[path = "tests/session_navigation.rs"]

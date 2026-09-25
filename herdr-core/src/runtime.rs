@@ -15,6 +15,7 @@ mod hosts;
 mod issues;
 mod memory;
 mod operations;
+mod project_sessions;
 mod projects;
 mod session;
 mod snapshot_delta;
@@ -989,6 +990,8 @@ pub struct Runtime {
     memory_sessions_load_pending: bool,
     memory_sessions_load_generation: u64,
     archive_detail_load_generation: u64,
+    /// The reads behind `snapshot.project_sessions`.
+    project_sessions_work: project_sessions::ProjectSessionsWork,
     memory_operation_in_flight: bool,
     memory_operation_generation: u64,
     memory_operation_checkout_path: Option<String>,
@@ -1320,6 +1323,7 @@ impl Runtime {
             memory_sessions_load_pending: false,
             memory_sessions_load_generation: 0,
             archive_detail_load_generation: 0,
+            project_sessions_work: project_sessions::ProjectSessionsWork::default(),
             memory_operation_in_flight: false,
             memory_operation_generation: 0,
             memory_operation_checkout_path: None,

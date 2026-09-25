@@ -566,12 +566,28 @@ pub(super) struct SessionsFilterPayload {
     pub(super) query: String,
 }
 
+/// Without a `workspace_id` the refresh reads the focused checkout's Project
+/// for the Swift right panel, as it always has. With one it names that
+/// catalog Project for a screen's Sessions (`project_sessions.rs`), whatever
+/// is focused, and reads its history again.
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct SessionsRefreshPayload {
+    #[serde(default)]
+    pub(super) workspace_id: Option<String>,
+    #[serde(default)]
+    pub(super) device_id: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct ArchiveOpenPayload {
     pub(super) kind: String,
     pub(super) id: String,
     #[serde(default = "default_true")]
     pub(super) preview: bool,
+    /// The named Project whose Sessions the item opens beside; absent, it
+    /// opens as an editor tab in the focused checkout.
+    #[serde(default)]
+    pub(super) workspace_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -882,7 +898,7 @@ pub(super) enum Event {
     PathMove(PathMovePayload),
     PathTrash(PathTrashPayload),
     UiStateUpdate(Box<UiStateUpdatePayload>),
-    SessionsRefresh,
+    SessionsRefresh(SessionsRefreshPayload),
     SessionsSetMode(SessionsModePayload),
     SessionsSetFilter(SessionsFilterPayload),
     ArchiveOpen(ArchiveOpenPayload),
@@ -1042,7 +1058,10 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "ui_state_update" => serde_json::from_value::<Box<UiStateUpdatePayload>>(payload)
             .map(Event::UiStateUpdate)
             .map_err(|_| invalid_payload(&kind)),
-        "sessions_refresh" => Ok(Event::SessionsRefresh),
+        // The Swift shell sends `{}`; a payload that is absent reads the same.
+        "sessions_refresh" => serde_json::from_value::<Option<SessionsRefreshPayload>>(payload)
+            .map(|payload| Event::SessionsRefresh(payload.unwrap_or_default()))
+            .map_err(|_| invalid_payload(&kind)),
         "sessions_set_mode" => decode!(SessionsModePayload, SessionsSetMode),
         "sessions_set_filter" => decode!(SessionsFilterPayload, SessionsSetFilter),
         "archive_open" => decode!(ArchiveOpenPayload, ArchiveOpen),
@@ -1097,14 +1116,22 @@ impl Runtime {
         match event {
             Event::WorkspaceView(payload) => self.apply_workspace_view(payload),
             Event::ViewLayout(payload) => self.apply_view_layout(payload),
-            Event::SessionsRefresh => self.request_sessions_refresh(),
+            Event::SessionsRefresh(payload) => match payload.workspace_id {
+                Some(workspace_id) => {
+                    self.refresh_project_sessions(payload.device_id.as_deref(), &workspace_id)
+                }
+                None => self.request_sessions_refresh(),
+            },
             Event::SessionsSetMode(payload) => self.set_sessions_mode(&payload.mode),
             Event::SessionsSetFilter(payload) => {
                 self.set_sessions_filter(&payload.provider, payload.query)
             }
-            Event::ArchiveOpen(payload) => {
-                self.open_archive_detail(&payload.kind, &payload.id, payload.preview)
-            }
+            Event::ArchiveOpen(payload) => match payload.workspace_id {
+                Some(workspace_id) => {
+                    self.open_project_session(&workspace_id, &payload.kind, &payload.id)
+                }
+                None => self.open_archive_detail(&payload.kind, &payload.id, payload.preview),
+            },
             Event::MemoryOpenForTurn(payload) => self.open_memory_for_turn(payload.item_ids),
             Event::MemoryAction(payload) => self.apply_memory_action(payload),
             Event::Attachment(payload) => self.begin_attachment(payload),

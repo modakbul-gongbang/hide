@@ -22,6 +22,7 @@ import { WorkspaceDialogs, WorkspaceNotices } from "./WorkspaceDialogs";
 import { attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
 import { useUiStore } from "./ui";
 import { viewRefusal } from "./viewLayout";
+import { SessionsScreen } from "./SessionsScreen";
 import { WorkspaceScreen } from "./WorkspaceScreen";
 import { connectShell, type DispatchFn } from "./ws";
 
@@ -255,6 +256,7 @@ function CenterScreen({ actions }: { actions: Actions }) {
     );
   }
   if (screen.kind === "overview") return <OverviewScreen projectId={screen.projectId} actions={actions} />;
+  if (screen.kind === "sessions") return <SessionsScreen projectId={screen.projectId} actions={actions} />;
   if (screen.kind === "workspace" && front && hasView) return <WorkspaceScreen actions={actions} />;
   return <MainScreen actions={actions} />;
 }

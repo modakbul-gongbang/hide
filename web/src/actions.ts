@@ -812,6 +812,20 @@ export function createActions(dispatch: DispatchFn) {
       ui().setOpening(null);
     },
 
+    /**
+     * Names a Project for its Sessions screen and reads its history, or reads
+     * it again, with the open session after it: the screen's every Retry
+     * (PRD S8 D-03, B4, B5). The Project is named whatever is focused.
+     */
+    refreshProjectSessions(workspaceId: string, deviceId: string) {
+      dispatch({ schema_version: 2, kind: "sessions_refresh", payload: { workspace_id: workspaceId, ...deviceField(deviceId) } });
+    },
+
+    /** Opens one session read-only beside the named Project's history; never in a Workspace (B3). */
+    openProjectSession(workspaceId: string, sessionId: string) {
+      dispatch({ schema_version: 2, kind: "archive_open", payload: { kind: "session", id: sessionId, workspace_id: workspaceId } });
+    },
+
     /** An agent chosen on an Overview or in the Agents list: its Workspace and pane (B12). */
     openAgent(paneId: string) {
       beginOpening({ paneId });

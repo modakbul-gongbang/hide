@@ -27,12 +27,13 @@ export type PendingClose = {
 
 /**
  * Where the center stands (PRD S6 D-02): Main lists every Project, Overview
- * one Project's Workspaces and agents, Workspace the front checkout. It is
- * this page's own navigation, like the sidebar's mode: every value it shows
- * is the core's, and the Workspace it shows is the core's front checkout.
+ * one Project's Workspaces and agents, Sessions that Project's session
+ * history (PRD S8), Workspace the front checkout. It is this page's own
+ * navigation, like the sidebar's mode: every value it shows is the core's,
+ * and the Workspace it shows is the core's front checkout.
  * `null` until the first snapshot decides where the page starts (D-11).
  */
-export type Screen = { kind: "main" } | { kind: "overview"; projectId: string } | { kind: "workspace" };
+export type Screen = { kind: "main" } | { kind: "overview"; projectId: string } | { kind: "sessions"; projectId: string } | { kind: "workspace" };
 
 /** `file_palette_beside` is ⌘P's list for "Open file to the side" (S7 B4): its pick opens beside the active View area. */
 export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_palette" | "file_palette_beside" | "search" | "settings";

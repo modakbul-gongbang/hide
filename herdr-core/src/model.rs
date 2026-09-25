@@ -71,6 +71,11 @@ pub struct Snapshot {
     /// keeps exactly its keys.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_view: Option<WorkspaceViewSnapshot>,
+    /// The Sessions of the Project a shell screen named, absent until one
+    /// does; the Swift shell never names one, so its snapshot keeps its keys.
+    /// It rides its own revisioned section of the delta wire.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_sessions: Option<ProjectSessionsSnapshot>,
 }
 
 /// A snapshot value that takes a new edit number whenever it may change, so
@@ -1431,7 +1436,7 @@ pub enum EditorTabKind {
     Memory,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ArchiveDetailSnapshot {
     pub id: String,
     pub kind: String,
@@ -1442,7 +1447,7 @@ pub struct ArchiveDetailSnapshot {
     pub memory: Option<MemoryDetailSnapshot>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ArchiveEventSnapshot {
     pub role: String,
     pub kind: String,
@@ -1452,7 +1457,7 @@ pub struct ArchiveEventSnapshot {
     pub memory_attached_item_ids: Vec<String>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct MemoryDetailSnapshot {
     pub id: String,
     pub body: String,
@@ -1534,6 +1539,60 @@ pub struct SessionRowSnapshot {
     pub updated_at_unix_ms: u64,
     pub title: Option<String>,
     pub unavailable_reason: Option<String>,
+}
+
+/// The Sessions of the Project a shell screen named with `sessions_refresh`
+/// and a `workspace_id` (the web shell's Project Sessions, PRD S8): the
+/// Project's session history and the one session read beside it.
+///
+/// It is kept apart from [`SessionsSnapshot`], which follows the focused
+/// checkout for the Swift right panel and carries Project Memory, so neither
+/// the operator's focus nor Memory analysis ever moves it, and naming a
+/// Project here changes nothing Memory reads or schedules. A Project stays
+/// named until a shell names another.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ProjectSessionsSnapshot {
+    pub device_id: String,
+    /// The catalog Project the screen named.
+    pub workspace_id: String,
+    /// Why this Project's sessions are not read here at all: it is on another
+    /// device, or it left the catalog. Nothing is read and retrying cannot
+    /// help, so no local session ever stands in for it.
+    pub unavailable_reason: Option<String>,
+    pub loading: bool,
+    /// Why reading the history failed; `sessions_refresh` reads it again.
+    pub failure: Option<String>,
+    /// Every session of every worktree of the Project, newest first, with
+    /// an unavailable row's reason in words. A shell narrows them itself.
+    pub rows: Vec<SessionRowSnapshot>,
+    pub detail: Option<ProjectSessionDetailSnapshot>,
+}
+
+/// One session opened beside a Project's Sessions with `archive_open` and a
+/// `workspace_id`: read-only, and never an editor tab or a Workspace's.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ProjectSessionDetailSnapshot {
+    pub session_id: String,
+    /// The provider file the session was listed from, empty when the history
+    /// no longer lists it.
+    pub locator: String,
+    pub loading: bool,
+    /// Why the session cannot be opened; `sessions_refresh` reads the history
+    /// and then this session again.
+    pub failure: Option<String>,
+    /// The conversation once read. It is shared rather than copied: a
+    /// transcript can run to megabytes and the delta compares this section
+    /// under the runtime lock on every read, which an unchanged `Arc` of an
+    /// `Eq` value answers by identity (`Arc`'s documented `PartialEq`).
+    #[serde(serialize_with = "serialize_shared_archive")]
+    pub archive: Option<Arc<ArchiveDetailSnapshot>>,
+}
+
+fn serialize_shared_archive<S: serde::Serializer>(
+    archive: &Option<Arc<ArchiveDetailSnapshot>>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    archive.as_deref().serialize(serializer)
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -2824,6 +2883,7 @@ impl Snapshot {
             pet: PetSnapshot::initial(),
             recent_closed: RecentClosedSnapshot::default(),
             workspace_view: None,
+            project_sessions: None,
         }
     }
 }
@@ -2961,6 +3021,7 @@ pub struct SnapshotDeltaPayload {
     /// The visible View documents (PRD S7 contract 3.1); always `None` in a
     /// shell without View areas.
     pub documents: Option<DocumentsDelta>,
+    pub project_sessions: Option<Arc<ProjectSessionsSnapshot>>,
     pub find: PaneFindSnapshot,
     pub input_generation: u64,
     pub terminal_sequence: u64,
@@ -2997,6 +3058,12 @@ pub struct SnapshotDeltaWire<'a> {
     /// exactly its keys.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub documents: Option<DocumentsWire<'a>>,
+    /// A named Project's session history and the transcript open beside it:
+    /// hundreds of rows and megabytes of conversation, so off `rest` like the
+    /// changes view. Omitted while no shell has named a Project, which keeps
+    /// the Swift shell's snapshot exactly its keys.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project_sessions: Option<&'a ProjectSessionsSnapshot>,
     /// Find state rides top-level rather than in `rest`, because it changes on
     /// every keystroke while a search is open. In `rest` each keystroke would
     /// restamp that revision and resend the whole navigator, ui state, and pet
@@ -3025,6 +3092,7 @@ impl<'a> SnapshotDeltaWire<'a> {
                     .map(|(tab_id, document)| ChangedDocumentWire { tab_id, document })
                     .collect(),
             }),
+            project_sessions: payload.project_sessions.as_deref(),
             find: &payload.find,
             input_generation: payload.input_generation,
             terminal_sequence: payload.terminal_sequence,

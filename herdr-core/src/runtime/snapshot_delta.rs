@@ -26,6 +26,7 @@ pub(super) struct DeltaState {
     rest_revision: u64,
     editor_revision: u64,
     changes_revision: u64,
+    project_sessions_revision: u64,
     /// Reference-counted so a delta can carry the section out of the lock
     /// without copying it. The runtime never mutates one in place: a changed
     /// section becomes a new `Arc`, which leaves any payload already handed
@@ -41,6 +42,9 @@ pub(super) struct DeltaState {
     documents: HashMap<String, StampedDocument>,
     documents_visible: Vec<String>,
     documents_visible_revision: u64,
+    /// `None` until a shell names a Project; a named Project is never
+    /// unnamed, so the section never has to be sent as cleared.
+    last_project_sessions: Option<Arc<crate::model::ProjectSessionsSnapshot>>,
 }
 
 struct StampedDocument {
@@ -101,6 +105,13 @@ impl Runtime {
         if views {
             self.stamp_view_documents();
         }
+        if let Some(project_sessions) = &self.snapshot.project_sessions
+            && self.delta.last_project_sessions.as_deref() != Some(project_sessions)
+        {
+            self.delta.revision += 1;
+            self.delta.project_sessions_revision = self.delta.revision;
+            self.delta.last_project_sessions = Some(Arc::new(project_sessions.clone()));
+        }
         // A cursor from the future has no valid meaning in-process; treat it
         // as a fresh reader so the response converges on full state.
         let have_revision = if have_revision > self.delta.revision {
@@ -159,6 +170,14 @@ impl Runtime {
             documents: views
                 .then(|| self.view_documents_delta(have_revision))
                 .flatten(),
+            // Absent until a shell names a Project: an unnamed section has no
+            // revision and nothing to send.
+            project_sessions: self
+                .delta
+                .last_project_sessions
+                .as_ref()
+                .filter(|_| self.delta.project_sessions_revision > have_revision)
+                .map(Arc::clone),
             find: self.snapshot.find.clone(),
             input_generation: self.snapshot.input_generation,
             terminal_sequence: self.snapshot.terminal.sequence,

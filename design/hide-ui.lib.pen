@@ -13886,8 +13886,664 @@
     },
     {
       "type": "frame",
-      "id": "view-tab-sheet",
+      "id": "session-row-sheet",
       "x": 4440,
+      "y": 7264,
+      "name": "Component / Session row",
+      "width": 400,
+      "fill": "$--color-panel",
+      "cornerRadius": "$--radius-md",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-md",
+      "children": [
+        {
+          "type": "frame",
+          "id": "session-row-sheet-title",
+          "name": "Title block",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "session-row-sheet-title-name",
+              "name": "Title",
+              "fill": "$--color-primary",
+              "content": "Session row (web Project Sessions)",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-title",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "session-row-sheet-title-spec",
+              "name": "Spec",
+              "fill": "$--color-secondary",
+              "content": "One row per session in a Project's Sessions list, newest first: the provider mark and name, the time, the first request or title (two lines at most, full text in the tooltip), and the checkout it ran in. Nothing is invented: a session with no request or title reads Untitled session, muted, and a time the session never carried is left out. The open session's row sits on --color-elevated and is aria-current. An unreadable session dims only its own row, marks it ! unavailable and keeps its reason, Retry and Copy source location under it. The row reads aloud as provider, first request, checkout, time and availability. The list place states are single marks: loading, none yet, no match with Clear filters, a failed read with Retry, and a device reason.",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "session-row-sheet-master",
+          "name": "Master",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "session-row-sheet-master-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Master - an available Claude Code row; every state below is a ref",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "session-row",
+              "name": "Component / Session row",
+              "reusable": true,
+              "width": 360,
+              "cornerRadius": "$--radius-sm",
+              "layout": "vertical",
+              "gap": "$--spacing-xxs",
+              "padding": [
+                "$--spacing-xs",
+                "$--spacing-sm"
+              ],
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "session-row-meta",
+                  "name": "Provider, time and availability",
+                  "width": "fill_container",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "session-row-provider-mark",
+                      "name": "Provider mark",
+                      "width": 14,
+                      "height": 14,
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    {
+                      "type": "text",
+                      "id": "session-row-provider",
+                      "name": "Provider",
+                      "fill": "$--color-secondary",
+                      "content": "Claude Code",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "session-row-time",
+                      "name": "Time",
+                      "fill": "$--color-muted",
+                      "content": "Sep 21, 10:02 AM",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    },
+                    {
+                      "type": "text",
+                      "id": "session-row-availability",
+                      "name": "Availability",
+                      "fill": "$--color-warning",
+                      "content": "! unavailable",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "normal",
+                      "enabled": false
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "session-row-title",
+                  "name": "First request or title",
+                  "fill": "$--color-primary",
+                  "content": "배포 스크립트 정리하고 release note 초안까지 작성해줘",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-body",
+                  "fontWeight": "normal",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
+                },
+                {
+                  "type": "text",
+                  "id": "session-row-checkout",
+                  "name": "Checkout",
+                  "fill": "$--color-secondary",
+                  "content": "fixture",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "session-row-state-codex",
+          "name": "State / Codex, English title",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "session-row-state-codex-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Codex, English title",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "session-row-codex",
+              "type": "ref",
+              "ref": "session-row",
+              "name": "Codex",
+              "descendants": {
+                "session-row-provider-mark": {
+                  "fill": {
+                    "type": "image",
+                    "enabled": true,
+                    "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                    "mode": "fit"
+                  }
+                },
+                "session-row-provider": {
+                  "content": "Codex"
+                },
+                "session-row-time": {
+                  "content": "Sep 22, 6:00 PM"
+                },
+                "session-row-title": {
+                  "content": "Fix the flaky login test in the auth module"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "session-row-state-selected",
+          "name": "State / Open session, aria-current",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "session-row-state-selected-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Open session, aria-current",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "session-row-selected",
+              "type": "ref",
+              "ref": "session-row",
+              "name": "Selected",
+              "fill": "$--color-elevated"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "session-row-state-untitled",
+          "name": "State / No request or title",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "session-row-state-untitled-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "No request or title",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "session-row-untitled",
+              "type": "ref",
+              "ref": "session-row",
+              "name": "Untitled",
+              "descendants": {
+                "session-row-title": {
+                  "content": "Untitled session",
+                  "fill": "$--color-muted"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "session-row-state-unavailable",
+          "name": "State / Unavailable with reason, Retry and Copy source location",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "session-row-state-unavailable-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Unavailable with reason, Retry and Copy source location",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "session-row-unavailable",
+              "name": "Unavailable row",
+              "width": 360,
+              "layout": "vertical",
+              "gap": "$--spacing-xxs",
+              "children": [
+                {
+                  "id": "session-row-unavailable-row",
+                  "type": "ref",
+                  "ref": "session-row",
+                  "name": "Dimmed row",
+                  "descendants": {
+                    "session-row-provider": {
+                      "fill": "$--color-muted"
+                    },
+                    "session-row-time": {
+                      "content": "Sep 25, 4:15 PM"
+                    },
+                    "session-row-availability": {
+                      "enabled": true
+                    },
+                    "session-row-title": {
+                      "content": "Untitled session",
+                      "fill": "$--color-muted"
+                    },
+                    "session-row-checkout": {
+                      "fill": "$--color-muted"
+                    }
+                  }
+                },
+                {
+                  "type": "frame",
+                  "id": "session-row-unavailable-detail",
+                  "name": "Reason and actions",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "padding": [
+                    "$--spacing-none",
+                    "$--spacing-sm",
+                    "$--spacing-xs",
+                    "$--spacing-sm"
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "session-row-unavailable-reason",
+                      "name": "Reason",
+                      "fill": "$--color-warning",
+                      "content": "The session file could not be parsed.",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "session-row-unavailable-actions",
+                      "name": "Actions",
+                      "gap": "$--spacing-md",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "session-row-unavailable-retry",
+                          "name": "Retry",
+                          "fill": "$--color-secondary",
+                          "content": "Retry",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "session-row-unavailable-copy",
+                          "name": "Copy source location",
+                          "fill": "$--color-secondary",
+                          "content": "Copy source location",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "600"
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "session-row-state-narrow",
+          "name": "State / Narrow list at 320, mixed Korean and English",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "session-row-state-narrow-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "Narrow list at 320, mixed Korean and English",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "session-row-narrow",
+              "type": "ref",
+              "ref": "session-row",
+              "name": "Narrow 320",
+              "descendants": {
+                "session-row-title": {
+                  "content": "배포 스크립트 정리하고 release note 초안까지 작성해줘. 그리고 CI에서 flaky한 e2e 테스트가 왜 실패하는지 정리해줘"
+                }
+              },
+              "width": 320
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "session-row-state-list",
+          "name": "State / List place: loading, none yet, no match, failed, device",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "session-row-state-list-name",
+              "name": "State name",
+              "fill": "$--color-muted",
+              "content": "List place: loading, none yet, no match, failed, device",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "session-row-list-states",
+              "name": "List place marks",
+              "width": 360,
+              "layout": "vertical",
+              "gap": "$--spacing-sm",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "session-row-list-loading",
+                  "name": "Loading sessions…",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "session-row-list-loading-symbol",
+                      "name": "Mark",
+                      "fill": "$--color-muted",
+                      "content": "…",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "session-row-list-loading-label",
+                      "name": "Label",
+                      "fill": "$--color-muted",
+                      "content": "Loading sessions…",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "session-row-list-empty",
+                  "name": "No sessions yet",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "session-row-list-empty-symbol",
+                      "name": "Mark",
+                      "fill": "$--color-muted",
+                      "content": "·",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "text",
+                      "id": "session-row-list-empty-label",
+                      "name": "Label",
+                      "fill": "$--color-muted",
+                      "content": "No sessions yet",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "session-row-list-no-match",
+                  "name": "No match",
+                  "gap": "$--spacing-md",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "session-row-list-no-match-mark",
+                      "name": "No matching sessions",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "session-row-list-no-match-mark-symbol",
+                          "name": "Mark",
+                          "fill": "$--color-muted",
+                          "content": "·",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "session-row-list-no-match-mark-label",
+                          "name": "Label",
+                          "fill": "$--color-muted",
+                          "content": "No matching sessions",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "session-row-list-clear",
+                      "name": "Clear filters",
+                      "fill": "$--color-secondary",
+                      "content": "Clear filters",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "session-row-list-failed",
+                  "name": "Failed read",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "session-row-list-failed-mark",
+                      "name": "Sessions could not be read",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "session-row-list-failed-mark-symbol",
+                          "name": "Mark",
+                          "fill": "$--color-danger",
+                          "content": "✕",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "session-row-list-failed-mark-label",
+                          "name": "Label",
+                          "fill": "$--color-danger",
+                          "content": "Sessions could not be read",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "session-row-list-failed-reason",
+                      "name": "Reason",
+                      "fill": "$--color-secondary",
+                      "content": "The session folder ~/.claude/projects could not be read: Permission denied (os error 13)",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    },
+                    {
+                      "type": "text",
+                      "id": "session-row-list-retry",
+                      "name": "Retry",
+                      "fill": "$--color-secondary",
+                      "content": "Retry",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "session-row-list-device",
+                  "name": "Device reason",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "session-row-list-device-mark",
+                      "name": "Sessions unavailable",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "session-row-list-device-mark-symbol",
+                          "name": "Mark",
+                          "fill": "$--color-warning",
+                          "content": "!",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "session-row-list-device-mark-label",
+                          "name": "Label",
+                          "fill": "$--color-warning",
+                          "content": "Sessions unavailable",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "session-row-list-device-reason",
+                      "name": "Reason",
+                      "fill": "$--color-secondary",
+                      "content": "Sessions on mini are not available here. Hide reads Codex and Claude Code sessions only on This Mac.",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal",
+                      "textGrowth": "fixed-width",
+                      "width": "fill_container"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "view-tab-sheet",
+      "x": 4920,
       "y": 7264,
       "name": "Component / View tab",
       "width": 440,
@@ -14376,7 +15032,7 @@
     {
       "type": "frame",
       "id": "view-placement-sheet",
-      "x": 4960,
+      "x": 5440,
       "y": 7264,
       "name": "Component / View placement",
       "width": 560,
@@ -15081,7 +15737,7 @@
     {
       "type": "frame",
       "id": "view-tab-menu-sheet",
-      "x": 5600,
+      "x": 6080,
       "y": 7264,
       "name": "Component / View tab menu",
       "width": 320,
@@ -15666,7 +16322,7 @@
     {
       "type": "frame",
       "id": "view-area-states-sheet",
-      "x": 6000,
+      "x": 6480,
       "y": 7264,
       "name": "Component / View area states",
       "width": 560,
