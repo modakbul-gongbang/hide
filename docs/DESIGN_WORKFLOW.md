@@ -120,7 +120,7 @@ Its web files are `web/src/entry-menu.tsx` and `web/src/DevicePicker.tsx`.
 1. Add the entry to `design/tokens.json`, with both a Dark (`value`) and a Light (`light`) value for a color token, or use `type: "alias"` to point at another token.
 2. Run `node scripts/gen-tokens.mjs` to regenerate `web/src/tokens.css` and `web/src/generated/accents.ts`.
 3. Run `node scripts/gen-pen.mjs` to carry the same value into the Pen library's `Mode` variables and Foundations sheet.
-4. Reference the token from Tailwind classes or CSS custom properties in `web/src` (`check-web-tokens.mjs` refuses a literal hex, an arbitrary Tailwind `px` value, and Tailwind's own default spacing/text scales, since those are also unchosen literals).
+4. Reference the token from Tailwind classes or CSS custom properties in `web/src` (`check-web-tokens.mjs` refuses a literal hex, `rgb()`/`hsl()` or `px` value anywhere in a source, including a CodeMirror theme object or another stylesheet, and Tailwind's own default spacing/text scales, since those are also unchosen literals).
 5. A visual case the token system does not cover is a proposed addition, reviewed and approved before use, never settled with a one-off value.
 
 ## How to add a System part
@@ -149,7 +149,7 @@ A `Component /` sheet is a hide composite assembled from `System /` masters (nev
 - `check-pen.mjs` - refuses a Pen library that is not what the token generator would produce: a stale token value, a stale Foundations sheet, a top-level sheet whose name carries neither the `System /` nor the `Component /` prefix, or an id that names more than one node.
   A node written whole inside a ref's `descendants` counts: its key already addresses the node, so an `id` of its own makes Pen's loader report duplicate ids.
 - `check-pen-gallery.mjs` - refuses a `System /` sheet and `web/src/gallery/manifest.ts` that name different parts, or a state drawn on one side and not listed on the other, for either theme frame.
-- `check-web-tokens.mjs` - refuses a web source file that reaches a color, size, or radius through a literal instead of a token: a hex color, an inline color style, a Tailwind arbitrary `[...]` value, or one of Tailwind's own default spacing/text scale classes.
+- `check-web-tokens.mjs` - refuses a web source file that reaches a color, size, or radius through a literal instead of a token: a hex, `rgb()`/`hsl()` or `px` literal anywhere in the file, an inline color style, a Tailwind arbitrary `[...]` value, or one of Tailwind's own default spacing/text scale classes.
 - `check-hide-screens.mjs` - refuses a `design/hide-screens.pen` top-level node not named `Screen / `, an id that names more than one node, a `Screen /` sheet missing a `Light` or a `Dark` frame, a local `$--variable` the file does not define, a ref or descendant-override key whose import alias or target id does not resolve against the imported library, a cross-library ref that leaves one of the imported master's own colors un-restated locally, or a local variable block that differs from what `design/tokens.json` generates.
 
 `--staged` reads the exact staged content of the design inputs and checker files into a temporary directory and checks that, without touching the index or working tree; the tracked `.githooks/pre-commit` runs it and is opt-in (`git -c core.hooksPath=.githooks commit`).

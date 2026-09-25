@@ -48,7 +48,12 @@ for (const file of files) {
   if (/\[#[0-9A-Fa-f]{3,8}\]/.test(source)) failures.push(`${rel}: Tailwind arbitrary color`);
   if (/\[[0-9.]+px\]/.test(source)) failures.push(`${rel}: Tailwind arbitrary px`);
   if (/style=\{\{[^}]*?(?:background|color|border)/.test(source)) failures.push(`${rel}: inline color style`);
-  if (path.extname(file) !== '.css' && /#[0-9A-Fa-f]{3,8}\b/.test(source)) failures.push(`${rel}: hex color literal`);
+  // A literal outside a class reaches the page too: a CodeMirror theme object,
+  // a style string, or another stylesheet. tokens.css is not walked.
+  if (/#[0-9A-Fa-f]{3,8}\b/.test(source)) failures.push(`${rel}: hex color literal`);
+  if (/\b(?:rgb|hsl)a?\(/.test(source)) failures.push(`${rel}: rgb/hsl color literal`);
+  const px = /\b[0-9]+(?:\.[0-9]+)?px\b/.exec(source);
+  if (px) failures.push(`${rel}: px literal \`${px[0]}\`; use a --size-* or --spacing-* token`);
   const scale = DEFAULT_SCALE.exec(source);
   if (scale) failures.push(`${rel}: Tailwind default scale \`${scale[0]}\`; use a --spacing-* or --size-* token`);
   const text = DEFAULT_TEXT.exec(source);
