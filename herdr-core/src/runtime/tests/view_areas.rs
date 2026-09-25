@@ -856,6 +856,62 @@ fn closing_one_of_two_displays_keeps_the_document_and_its_draft() {
     assert_eq!(runtime.snapshot.status.last_error, None);
 }
 
+/// Contract 4.1, B5: a web frame that still shows a dirty document in two
+/// views sends each close as if another view remained. The first is not
+/// the last, so the save it carries is not needed; the second reaches the
+/// last view without a save and is refused, naming the document, with
+/// nothing changed. Don't Save then closes it without saving.
+#[test]
+fn a_close_that_reaches_the_last_view_of_unsaved_text_without_a_save_is_refused() {
+    let (mut runtime, checkout_id, directory) = views_runtime("view-close-unsaved");
+    let path = directory.join("notes.md");
+    open(&mut runtime, &checkout_id, &path, false, false);
+    open(&mut runtime, &checkout_id, &path, false, true);
+    let tab_id = tab_of(&runtime, "notes.md");
+    draft(&mut runtime, &tab_id, "draft\n");
+    let (first, second) = (
+        display(&mut runtime, 0, "notes.md"),
+        display(&mut runtime, 1, "notes.md"),
+    );
+    let kept = |runtime: &Runtime| {
+        runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .any(|tab| tab.id == tab_id && tab.dirty)
+            && runtime.editor_documents[&tab_id].save.is_none()
+    };
+
+    assert!(act(
+        &mut runtime,
+        serde_json::json!({
+            "action": "close", "display_id": first,
+            "pending_save": {"tab_id": tab_id, "path": path, "contents_utf8": "draft\n"},
+        }),
+    ));
+    assert_eq!(labels(&mut runtime), vec![vec!["notes.md"]]);
+    assert!(kept(&runtime), "a close that is not the last saves nothing");
+
+    assert!(act(
+        &mut runtime,
+        serde_json::json!({"action": "close", "display_id": second}),
+    ));
+    let refused = runtime.snapshot.status.last_error.clone().expect("refused");
+    assert_eq!(refused.kind, "view_layout.unsaved");
+    assert!(refused.message.contains("notes.md"), "{}", refused.message);
+    assert_eq!(labels(&mut runtime), vec![vec!["notes.md"]]);
+    assert!(kept(&runtime), "the draft stays in the core");
+
+    assert!(act(
+        &mut runtime,
+        serde_json::json!({"action": "close", "display_id": second, "discard": true}),
+    ));
+    assert_eq!(tree(&mut runtime).display_count, 0);
+    assert!(runtime.snapshot.editor.tabs.is_empty());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "notes\n");
+}
+
 /// B10, S5.5 save-then-close: closing a dirty document's last display saves
 /// it first; a refused save keeps the display and the draft, and a save that
 /// lands closes both.

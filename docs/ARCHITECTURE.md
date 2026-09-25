@@ -332,7 +332,8 @@ Any other version, a file that does not parse and a migration that fails all tak
 
 A display never holds a document.
 It binds at runtime to the S5.5 editor tab, the one buffer per device, checkout and document (the tab id, `editor_documents` and the save pipeline), and any number of displays may bind the same tab, so two views of a file share one text, one dirty state and one save queue rather than copies that could diverge (S7 D-03).
-Closing a display that is not its document's last removes the display alone; closing the last one runs the existing `file_close` path, save-then-close with the carried `pending_save` and the conflict protection, so a document leaves only once its buffer is safe.
+Closing a display that is not its document's last removes the display alone, and a `pending_save` sent with it is not needed; closing the last one runs the existing `file_close` path, save-then-close with the carried `pending_save` and the conflict protection, so a document leaves only once its buffer is safe.
+The web's frame may still show another view of a document the core already holds in one, so a close of the last view of a dirty, saving or failed document that carries neither `pending_save` nor `discard: true` (the operator's Don't Save) is refused as `view_layout.unsaved`, naming the document, and nothing changes.
 A document that becomes dirty, is saving or has a save state promotes every display of it in the same event, because a preview is replaced by the next click and such a document must never be.
 In web mode the per-checkout preview slot of `place_editor_tab` gives way to one preview display per area: a preview open retargets the active area's preview display in place, and its old document is retired when no other display shows it, like the preview replacement before it, with no Recent Closed entry; the Swift shell keeps the per-checkout slot.
 

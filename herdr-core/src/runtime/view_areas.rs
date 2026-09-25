@@ -84,11 +84,15 @@ enum ViewLayoutAction {
         split_id: String,
         ratio: f32,
     },
-    /// The save a dirty document's last display waits on before it closes.
+    /// The save a dirty document's last display waits on before it closes,
+    /// or `discard`, the operator's Don't Save; a last display of unsaved
+    /// work with neither is refused.
     Close {
         display_id: String,
         #[serde(default)]
         pending_save: Option<FileSavePayload>,
+        #[serde(default)]
+        discard: bool,
     },
     KeepOpen {
         display_id: String,
@@ -962,7 +966,8 @@ impl Runtime {
             ViewLayoutAction::Close {
                 display_id,
                 pending_save,
-            } => return self.close_view_display(&key, &display_id, pending_save),
+                discard,
+            } => return self.close_view_display(&key, &display_id, pending_save, discard),
             ViewLayoutAction::Retry { display_id } => {
                 return self.retry_view_display(&key, &display_id);
             }
@@ -996,15 +1001,20 @@ impl Runtime {
     }
 
     /// Close View (B10): a display another display's document also shows,
-    /// or one whose file was never read, goes alone. The last display of a
-    /// document closes the document the way its file tab closes, after the
-    /// save it waits on when there is one; the display goes when the
-    /// document does, so a refused save keeps both.
+    /// or one whose file was never read, goes alone, and a save sent with it
+    /// is not needed. The last display of a document closes the document the
+    /// way its file tab closes, after the save it waits on when there is
+    /// one, or without saving on the operator's Don't Save (`discard`); the
+    /// display goes when the document does, so a refused save keeps both.
+    /// With neither, a last display of unsaved work is refused and nothing
+    /// changes (contract 4.1): the web's frame may still have shown another
+    /// view of it, so a close it sent bare can never drop the text.
     fn close_view_display(
         &mut self,
         key: &WorkspaceKey,
         display_id: &str,
         pending_save: Option<FileSavePayload>,
+        discard: bool,
     ) -> bool {
         let Some(layout) = self.view_layout_of(key) else {
             return self.close_absent_display(key, display_id);
@@ -1024,10 +1034,24 @@ impl Runtime {
         if let Some(tab_id) = tab.as_ref()
             && !shared
         {
-            return match pending_save {
-                Some(save) => self.start_file_save_then_close(tab_id.clone(), save),
-                None => self.close_file_tab_now(tab_id),
-            };
+            if let Some(save) = pending_save {
+                return self.start_file_save_then_close(tab_id.clone(), save);
+            }
+            if !discard && self.document_kept(tab_id) {
+                let label = self
+                    .snapshot
+                    .editor
+                    .tabs
+                    .iter()
+                    .find(|held| &held.id == tab_id)
+                    .map_or(path.as_str(), |held| held.label.as_str());
+                let message = format!(
+                    "{label} has changes that are not saved, so its last view stays open; close it with Save or Don't Save"
+                );
+                self.set_error("view_layout.unsaved", message, false);
+                return true;
+            }
+            return self.close_file_tab_now(tab_id);
         }
         let _ = self.change_view_layout(key, |layout, _| {
             let removed = layout.remove(display_id).is_some();
