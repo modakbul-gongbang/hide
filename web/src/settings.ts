@@ -9,7 +9,7 @@ export type SettingsTab = "general" | "appearance" | "agents" | "devices" | "sho
 
 export const SETTINGS_TABS: readonly { id: SettingsTab; title: string; subtitle: string }[] = [
   { id: "general", title: "General", subtitle: "This daemon, the Herdr runtime behind it, and where its state lives." },
-  { id: "appearance", title: "Appearance", subtitle: "Accent and interface density. Dark is the only theme in this release." },
+  { id: "appearance", title: "Appearance", subtitle: "Theme, accent and interface density." },
   { id: "agents", title: "Agents", subtitle: "The agent CLIs the daemon's machine can launch, Background AI, and hooks." },
   { id: "devices", title: "Devices", subtitle: "SSH targets. Authentication stays in the daemon machine's SSH environment." },
   { id: "shortcuts", title: "Shortcuts", subtitle: "Pane chords for this browser host. Every other chord is on the ⌘/ sheet." },
