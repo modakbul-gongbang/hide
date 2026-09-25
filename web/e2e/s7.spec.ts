@@ -1049,6 +1049,22 @@ test("a narrow window floats the tools, shows one region and one area with a way
     await expect(page.locator("[data-tools-overlay]")).toHaveCount(0);
     expect(stack.events.filter((event) => event.kind === "workspace_view").length).toBe(sentBefore);
     await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toEqual(stored);
+
+    // In one region that shows only Views, the close chord closes the active
+    // view wherever the keyboard is (here on the region switch it was just
+    // clicked with), never a tab of the Agent area that is not drawn (B13).
+    await page.setViewportSize({ width: Math.round(sidebar + 420), height: 1080 });
+    await page.locator('[data-region-choice="views"]').click();
+    await expect(page.locator("[data-agent-area]")).toHaveCount(0);
+    await expect(page.locator('[data-region-choice="views"]')).toBeFocused();
+    const herdrBefore = herdrIds(stack.herdr);
+    const closes = () => viewEvents(stack).filter((event) => event.payload.action === "close").length;
+    const closesBefore = closes();
+    await page.keyboard.press("Alt+KeyW");
+    await expect.poll(closes).toBe(closesBefore + 1);
+    await expect.poll(() => shape(page)).toBe("@(>a.txt)");
+    expect(stack.events.filter((event) => event.kind === "close_tab" || event.kind === "close_pane")).toHaveLength(0);
+    expect(herdrIds(stack.herdr)).toEqual(herdrBefore);
     expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {
     stopStack(stack);

@@ -918,6 +918,11 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     closeTab(tabId?: string) {
+      // The close chord closes the active display when the View area holds
+      // the keyboard or is all that shows, on this machine or a device, and
+      // the Agent tab otherwise.
+      const display = tabId ? null : activeDisplayNow();
+      if (display && viewAreaInUse(rest())) return closeView(display.display.id);
       if (remoteContext(rest())) {
         const host = remoteHost("Close tab");
         if (!host) return;
@@ -926,10 +931,6 @@ export function createActions(dispatch: DispatchFn) {
         requestClose("tab", tab.id, tab.panes, host.targetId, host.agents);
         return;
       }
-      // The close chord closes the active display when the View area holds
-      // the keyboard or is all that shows, and the Agent tab otherwise.
-      const display = tabId ? null : activeDisplayNow();
-      if (display && viewAreaInUse(rest())) return closeView(display.display.id);
       const here = current();
       const id = tabId ?? here?.tab?.id;
       if (!here || !id) return diagnostic("close_tab: no visible tab");

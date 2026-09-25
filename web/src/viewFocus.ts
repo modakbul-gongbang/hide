@@ -14,7 +14,11 @@ export function viewAreaInUse(rest: SnapshotRest | null): boolean {
   if (!view) return false;
   if (view.mode === "views") return true;
   if (view.mode === "agents") return false;
-  const active = typeof document === "undefined" ? null : document.activeElement;
+  if (typeof document === "undefined") return false;
+  // A narrow Together draws one working region (B13); while it is the View
+  // areas, they are all that shows, wherever the keyboard is.
+  if (drawnViews() !== null && document.querySelector("[data-agent-area]") === null) return true;
+  const active = document.activeElement;
   return active instanceof Element && active.closest("[data-view-area]") !== null;
 }
 
