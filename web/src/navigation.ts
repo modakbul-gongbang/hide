@@ -230,8 +230,6 @@ export function mainSections(rest: SnapshotRest | null, localAgents: AgentRow[])
 
 export type OverviewProject = {
   workspace: Workspace;
-  /** The Project's agents, or null while its device cannot say which are current. */
-  agents: AgentRow[] | null;
   /**
    * Every agent its device last reported, current or not: the Overview board
    * keeps the last rows while a device is unreachable, and a descendant may
@@ -244,9 +242,9 @@ export type OverviewProject = {
 
 /**
  * The Project an Overview shows, on whichever device it lives, with the
- * agents of that device. Like Main, it counts nothing its device cannot
- * answer for right now: an unreachable Herdr has no agents to list, and a
- * stale device's last report is not current (B3, B21).
+ * agents that device last reported and how far it can be trusted now. The
+ * board keeps those rows while the device is unreachable, and the device's
+ * availability is the only thing that says so (web-project-overview D-06).
  */
 export function overviewProject(rest: SnapshotRest | null, localAgents: AgentRow[], projectId: string): OverviewProject | null {
   const local = rest?.navigator?.workspaces?.find((row) => row.id === projectId);
@@ -254,7 +252,6 @@ export function overviewProject(rest: SnapshotRest | null, localAgents: AgentRow
     const availability = localAvailability(rest);
     return {
       workspace: local,
-      agents: availability.state === "ready" ? projectAgents(local, localAgents) : null,
       deviceAgents: localAgents,
       device: rest?.navigator?.devices?.find((row) => row.kind !== "remote") ?? null,
       availability,
@@ -267,7 +264,6 @@ export function overviewProject(rest: SnapshotRest | null, localAgents: AgentRow
       const availability = device ? deviceAvailability(device, status) : { state: "loading" as const, text: "Connecting…" };
       return {
         workspace,
-        agents: availability.state === "ready" ? projectAgents(workspace, status.session?.agents ?? []) : null,
         deviceAgents: status.session?.agents ?? [],
         device,
         availability,

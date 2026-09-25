@@ -324,7 +324,7 @@ function CheckoutCard({
     >
       {agentsView ? null : (
         <div className="flex min-w-0 items-center gap-xs">
-          <Hint label={`${name} · ${checkout?.path ?? ""}`}>
+          <Hint label={`${name} · ${checkout?.path ?? ""}${checkout && !checkout.exists ? " · missing" : ""}`}>
             <button
               type="button"
               onClick={onHeader}

@@ -206,6 +206,12 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await expect(overview).toHaveAttribute("data-overview-state", "board");
     await page.locator("[data-overview-new-agent]").click();
     await expect(page.locator("[data-new-worktree]")).toBeVisible();
+    // Escape in the dialog closes only the dialog; the Overview stays (B1, B3).
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-new-worktree]")).toHaveCount(0);
+    await expect(overview).toBeVisible();
+    await page.locator("[data-overview-new-agent]").click();
+    await expect(page.locator("[data-new-worktree]")).toBeVisible();
     await page.getByRole("button", { name: "Cancel" }).click();
     await expect(page.locator("[data-new-worktree]")).toHaveCount(0);
     await expect(overview).toBeVisible();

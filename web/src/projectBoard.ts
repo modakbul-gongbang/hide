@@ -164,7 +164,7 @@ function card(
     title: issue?.issue.title ?? checkout?.purpose?.text ?? null,
     delivery: fact,
     mismatch,
-    mismatchHelp: mismatch && stage ? `Project: ${mismatch} · git: ${fact?.label || STAGE_LABEL[stage]}` : null,
+    mismatchHelp: mismatch && stage ? `Project: ${mismatch} · git: ${stage === "ready" || !fact?.label ? STAGE_LABEL[stage] : fact.label}${stage === "review" ? " 열림" : ""}` : null,
     issueHelp: issueHelp(issue, checkout?.github ?? github, now),
   };
 }

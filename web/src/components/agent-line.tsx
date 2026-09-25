@@ -1,4 +1,5 @@
 import { GitBranchIcon } from "lucide-react";
+import { memo } from "react";
 import { AgentMark } from "../AgentMark";
 import { chipTone } from "../lineage";
 import { showsDetail, waitingOnDescendants } from "../projectBoard";
@@ -12,8 +13,10 @@ import { Hint } from "./ui/tooltip";
 // the agent waits on the operator (warning), changed since it was seen, or
 // is the selected pane; a branch chip only for a descendant working in
 // another checkout. The whole row is the button that opens the pane.
+// Memoized like the sidebar's rows: the store shares an unchanged agent's
+// row object across snapshots, so one agent's elapsed tick redraws only it.
 
-export function AgentLine({
+export const AgentLine = memo(function AgentLine({
   agent,
   depth,
   foreignBranch,
@@ -78,4 +81,4 @@ export function AgentLine({
       </button>
     </Hint>
   );
-}
+});
