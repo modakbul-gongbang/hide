@@ -25,7 +25,7 @@ import {
   type FailureReason,
 } from "./cli";
 import type { DesktopEnv } from "./env";
-import type { HostLog } from "./log";
+import { loadFailureFields, type HostLog } from "./log";
 import { ChildRunner, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
 
@@ -166,7 +166,8 @@ export class DesktopHost {
   }
 
   private runCli(file: string, args: readonly string[], timeoutMs: number): Promise<ChildResult> {
-    const run = this.cliChain.then(() => this.runner.run(file, args, timeoutMs));
+    // A call queued behind the one quit killed never starts.
+    const run = this.cliChain.then(() => (this.quitting ? Promise.reject(new Error("host is quitting")) : this.runner.run(file, args, timeoutMs)));
     this.cliChain = run.catch(() => undefined);
     return run;
   }
@@ -266,7 +267,7 @@ export class DesktopHost {
     pending.catch((error: unknown) => {
       // A load a newer one replaced is not a failure.
       if ((error as { code?: string }).code === "ERR_ABORTED") return;
-      this.log.event("window.load_failed", { state, detail: String(error) });
+      this.log.event("window.load_failed", { state, ...loadFailureFields(error) });
     });
   }
 

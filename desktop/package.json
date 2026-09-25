@@ -25,5 +25,8 @@
     "typescript-eslint": "^8.29.0",
     "vitest": "^3.1.1"
   },
-  "productName": "hide"
+  "productName": "hide",
+  "engines": {
+    "node": ">=22.12.0"
+  }
 }

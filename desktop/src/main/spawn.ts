@@ -19,7 +19,7 @@ export type ChildResult = {
   stdout: string;
   stderr: string;
   timedOut: boolean;
-  /** The spawn itself failed (ENOENT, EACCES); the child never ran. */
+  /** The spawn itself failed (ENOENT, EACCES); the child never ran. A later stream error is not this. */
   spawnError: string | null;
 };
 
@@ -56,8 +56,9 @@ export class ChildRunner {
       }, timeoutMs);
       // A spawn that never started reports only `error`; one that ran ends in `close`.
       child.once("error", (error) => {
+        if (child.pid !== undefined) return;
         spawnError = error.message;
-        if (child.pid === undefined) settle(null, null);
+        settle(null, null);
       });
       child.once("close", settle);
     });

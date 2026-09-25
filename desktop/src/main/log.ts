@@ -33,3 +33,13 @@ export class HostLog {
     }
   }
 }
+
+/**
+ * The fields a failed page load may log. Electron's rejection message quotes
+ * the URL it tried, and the daemon URL carries the token, so only the error
+ * code is kept.
+ */
+export function loadFailureFields(error: unknown): { code: string } {
+  const code = (error as { code?: unknown } | null)?.code;
+  return { code: typeof code === "string" ? code : "unknown" };
+}
