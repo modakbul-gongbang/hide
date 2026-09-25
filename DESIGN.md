@@ -913,6 +913,24 @@ The pane menu, from its `⋯` or a right-click on the header, lists the parent, 
 The Agents explorer groups every current agent, this machine's and each connected device's, under Needs You, Done, Working and Seen and leaves an empty group out; a device's row names its device before the agent kind, and a device that is not connected lists nothing it only last reported.
 A delegated row is indented and muted, and a row with live descendants carries a `↳N` badge whose tooltip counts them by state.
 
+## Web Project Sessions
+
+A Project's Sessions is a web screen of its own (PRD S8): the Overview's header offers `Sessions`, and the path back reads `Main / Project / Sessions` with the device named as the Overview names it.
+It lists the history of every Workspace the Project has, works for a Project with no Workspace, and never runs an agent or sends a session to a Workspace.
+The list sits on the sidebar surface at `--size-panel-ideal`, never narrower than `--size-panel-min`, and the open session reads beside it, never narrower than `--size-workspace-area-min`, so both fit the supported 1024-wide window.
+Above the list are the `All / Codex / Claude Code` choice, the search and the count, `N sessions` or `N of M sessions` while a filter narrows it; a read in flight adds `Reading…` beside the count and keeps the rows.
+Each row is `Component / Session row` in `design/hide-ui.lib.pen`: the provider mark and name, the time, the first request or title in two lines at most with the full text in its tooltip, and the checkout it ran in, named as the Overview names it.
+A session with neither request nor title reads `Untitled session`, muted, and a time it never carried is left out.
+A row's accessible name reads provider, first request, checkout, time and availability, in that order.
+The open session's row sits on `{colors.elevated}`, is `aria-current`, and is the list's one Tab stop; the arrows, Home and End move between rows, ArrowDown from the search lands on that row, and Escape in the search clears it.
+The provider choice is one Tab stop whose arrows choose the neighbouring provider.
+An unreadable session dims only its own row, marks it `! unavailable`, and keeps its reason, Retry and Copy source location under it; the copied value is the provider file's own path.
+The list place shows one small mark per state: `Loading sessions…`, `No sessions yet`, `No matching sessions` with Clear filters, `Sessions could not be read` with the reason and Retry, and on a device Project `Sessions unavailable` with the device's reason and no Retry.
+The open session shows its row's provider, checkout and time with Copy source location, its request as the title, then each request and answer in order as plain text, Korean wrapping at word boundaries; injected context, where Project Memory travels, is not shown.
+A session that cannot be opened shows the same reason in the detail place with Retry, which reads the history again, and says so when the session is no longer in it.
+When another window names another Project, this one says so and offers `Show this project's sessions`, which names this Project again only when chosen, so two windows never take it from each other.
+The web shell has no Project Memory entry point, disabled control or placeholder until the Memory stage (PRD S8 D-17); Memory is managed in the macOS app.
+
 ## Terminal image attachment boundary
 
 Dropping local file URLs into a visible terminal focuses that receiving pane and starts one attachment intent through the existing ordered writer.

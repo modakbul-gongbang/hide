@@ -502,6 +502,13 @@ One incremental transcript poll reads at most 1 MiB, one retained JSONL line is 
 One Project/session/content-hash intent is idempotent, and background input is capped at 64 KiB, one inflight request, thirty requests per minute, and 10,000 active items per Project.
 Crossing a cap is an actionable state rather than an enlarged queue or automatic deletion.
 
+The web shell's Project Sessions (PRD S8) adds no work until a Project is named: the `project_sessions` delta section is one absent check per publication.
+Naming a Project, arriving at its screen, reconnecting or pressing Retry is one bounded catalog read on a worker; a request that arrives during a read coalesces into one more read, so pending work is at most one read, and opening a session is one bounded detail read the same way.
+While a Project is named, each publication compares the section by value under the lock, O(rows) with the open transcript behind a shared pointer compared in O(1), and resends it only when it changed.
+Provider filtering and search run in the page over the retained rows and send nothing.
+Neither read schedules Memory work or touches the due-work poll.
+Regression owners are `runtime::tests::project_sessions`, `web/src/sessions.test.ts` and `web/e2e/s8.spec.ts`.
+
 `UserPromptSubmit` is a separate high-frequency boundary.
 It accepts at most 256 KiB of hook input, opens the app database read-only, checks schema and active-projection integrity, requests at most sixty local FTS candidates, and returns at most three whole items and 600 estimated tokens.
 It has a 100 ms hard deadline and starts no model, embedding, transcript scan, child process, network request, or database write.
