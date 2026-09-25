@@ -38,6 +38,9 @@ enum Answer {
 #[derive(Default)]
 struct Gate {
     held: bool,
+    /// Files whose reads wait, by their path under the root, so a test can
+    /// land two reads in the order a burst can.
+    held_reads: HashSet<String>,
     waiting: usize,
 }
 
@@ -75,6 +78,19 @@ impl FakeDevice {
         self.released.notify_all();
     }
 
+    fn hold_read(&self, relative: &str) {
+        self.gate
+            .lock()
+            .unwrap()
+            .held_reads
+            .insert(relative.to_owned());
+    }
+
+    fn release_read(&self, relative: &str) {
+        self.gate.lock().unwrap().held_reads.remove(relative);
+        self.released.notify_all();
+    }
+
     fn waiting(&self) -> usize {
         self.gate.lock().unwrap().waiting
     }
@@ -95,9 +111,13 @@ impl HostChannel for FakeDevice {
 
     fn call(&self, call: Call, timeout: Duration) -> Result<HostAnswer, HostCallError> {
         {
+            let read = match &call {
+                Call::OpenDocument { path, .. } => Some(path.as_str()),
+                _ => None,
+            };
             let mut gate = self.gate.lock().unwrap();
             gate.waiting += 1;
-            while gate.held {
+            while gate.held || read.is_some_and(|read| gate.held_reads.contains(read)) {
                 gate = self.released.wait(gate).unwrap();
             }
             gate.waiting -= 1;
@@ -1494,4 +1514,67 @@ fn a_quit_mid_restore_keeps_the_stored_layout_byte_for_byte() {
     f.device.release();
     f.wait_for_document("a.txt", "the restored file in use", |_| true);
     f.wait_for_document("b.txt", "the restored preview", |_| true);
+}
+
+/// S7 contract 4.2, D-04: reads land on workers, so two can land before
+/// anything reconciles the Views between them. A single click whose read
+/// lands just after the restore read of the preview it replaces takes that
+/// preview's place, and the restored document goes as a replaced preview
+/// does, rather than coming back pinned beside the new one.
+#[test]
+fn a_preview_open_landing_right_after_its_restore_read_replaces_that_preview() {
+    let f = Fixture::new();
+    std::fs::write(f.root.join("b.txt"), "b\n").unwrap();
+    let views_dir = tempfile::tempdir().unwrap();
+    let file = views_dir.path().join("workspace-views.json");
+    let mut views = crate::workspace_views::WorkspaceViews::default();
+    let layout = &mut views.entry(DEVICE, &f.root.to_string_lossy()).layout;
+    let restored = layout.new_display(&f.path("b.txt"), DisplayKind::File, None, true);
+    layout.insert("a1", restored, 1).unwrap();
+    crate::workspace_views::save(&file, &views).unwrap();
+    f.device.hold_read("b.txt");
+    f.device.hold_read("a.txt");
+    {
+        let mut runtime = f.shared.lock().unwrap();
+        studio_connecting(&mut runtime);
+        runtime.workspace_views = Some(WorkspaceViewStore::open(file, Default::default()).0);
+        helper_ready(&mut runtime, &f.device);
+        assert_eq!(
+            view_displays(&mut runtime),
+            vec![(DisplayKind::File, ViewDisplayState::Opening, None)]
+        );
+    }
+    f.dispatch(
+        "file_open",
+        serde_json::json!({
+            "path": f.path("a.txt"), "workspace_id": WORKSPACE, "checkout_id": CHECKOUT,
+            "preview": true,
+        }),
+    );
+
+    f.device.release_read("b.txt");
+    f.wait_for_document("b.txt", "the restore read", |_| true);
+    f.device.release_read("a.txt");
+    f.wait_for_document("a.txt", "the single click's read", |_| true);
+
+    let mut runtime = f.shared.lock().unwrap();
+    runtime.sync_workspace_view();
+    let view = runtime.snapshot.workspace_view.clone().unwrap();
+    let ViewNodeSnapshot::Area(area) = view.layout.root else {
+        panic!("one area");
+    };
+    let shown: Vec<_> = area
+        .displays
+        .iter()
+        .map(|display| (display.label.as_str(), display.preview))
+        .collect();
+    assert_eq!(shown, vec![("a.txt", true)]);
+    let tabs: Vec<_> = runtime
+        .snapshot
+        .editor
+        .tabs
+        .iter()
+        .map(|tab| tab.label.as_str())
+        .collect();
+    assert_eq!(tabs, vec!["a.txt"], "the replaced preview's document goes");
 }

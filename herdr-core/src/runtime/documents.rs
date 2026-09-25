@@ -519,8 +519,11 @@ impl Runtime {
             return true;
         }
         // With View areas the document lands where it was asked for, in its
-        // own Workspace, whichever Workspace is in front now (B1, B34).
+        // own Workspace, whichever Workspace is in front now (B1, B34). A
+        // read that landed just before this one left its display unbound,
+        // so the displays are reconciled before this one is placed.
         if let Some(placement) = request.placement {
+            self.reconcile_view_displays();
             if let Some(tab_id) = self.insert_file_tab(
                 prepared,
                 &request.workspace_id,

@@ -416,6 +416,7 @@ impl Runtime {
         preview: bool,
         beside: bool,
     ) {
+        self.reconcile_view_displays();
         let Some(key) = self.workspace_key(workspace_id, checkout_id) else {
             self.set_error(
                 "file.invalid_context",
@@ -483,6 +484,7 @@ impl Runtime {
         preview: bool,
         beside: bool,
     ) -> bool {
+        self.reconcile_view_displays();
         let Some(key) = self.workspace_key(workspace_id, checkout_id) else {
             self.set_error(
                 "diff.invalid_context",
@@ -546,6 +548,11 @@ impl Runtime {
     /// anything else is a new display at the end. `beside` puts it in the
     /// area next to that one, or a new area to its right. Returns whether the
     /// layout changed.
+    ///
+    /// It decides by the displays' bindings, so every caller reconciles them
+    /// before it adds the tab it places: reads land on workers, and one that
+    /// landed since the last reconcile leaves a display unbound to the
+    /// document it shows.
     pub(super) fn place_document(
         &mut self,
         key: &WorkspaceKey,
