@@ -406,7 +406,7 @@ fn a_reveal_shows_the_explorer_and_unfolds_the_folders_in_one_event() {
 }
 
 /// The daemon's second checkout, registered beside the strip checkout.
-fn second_checkout(runtime: &mut Runtime, directory: &Path) -> (PathBuf, String) {
+pub(super) fn second_checkout(runtime: &mut Runtime, directory: &Path) -> (PathBuf, String) {
     let other = directory.with_file_name(format!(
         "{}-second",
         directory.file_name().unwrap().to_string_lossy()

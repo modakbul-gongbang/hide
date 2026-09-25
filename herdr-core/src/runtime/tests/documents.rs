@@ -1305,7 +1305,11 @@ fn a_device_workspaces_displays_wait_for_its_helper_after_a_restart() {
         let retry = serde_json::json!({
             "schema_version": SCHEMA_VERSION,
             "kind": "view_layout",
-            "payload": {"action": "retry", "display_id": file_display},
+            "payload": {
+                "workspace": {"device_id": DEVICE, "path": root},
+                "action": "retry",
+                "display_id": file_display,
+            },
         });
         runtime.dispatch_json(&serde_json::to_vec(&retry).unwrap());
         let refused = runtime.snapshot.status.last_error.clone().unwrap();

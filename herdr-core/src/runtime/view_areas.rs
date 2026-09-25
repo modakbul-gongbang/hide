@@ -38,12 +38,29 @@ const BESIDE_ORDER: [Edge; 4] = [Edge::Right, Edge::Left, Edge::Down, Edge::Up];
 // Every View diff is taken in the one Changes read, one per area at most.
 const _: () = assert!(MAX_VIEW_AREAS <= hide_host::git::MAX_DIFFS);
 
-/// The payload of `view_layout`: one operator action on the front
-/// Workspace's View areas. Each is one event and one frame; a refusal says
-/// why and changes nothing.
+/// The payload of `view_layout`: one operator action on the View areas of
+/// the Workspace the operator saw. Each is one event and one frame; a
+/// refusal says why and changes nothing.
+#[derive(Debug, Deserialize)]
+pub(super) struct ViewLayoutPayload {
+    /// The Workspace of the frame the action was taken on, as that frame's
+    /// `workspace_view` named it. Display, area and split ids repeat across
+    /// Workspaces and the front can move between that frame and this event,
+    /// so an action is applied only while its Workspace is still in front.
+    workspace: ViewWorkspace,
+    #[serde(flatten)]
+    action: ViewLayoutAction,
+}
+
+#[derive(Debug, Deserialize)]
+struct ViewWorkspace {
+    device_id: String,
+    path: String,
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(tag = "action", rename_all = "snake_case")]
-pub(super) enum ViewLayoutPayload {
+enum ViewLayoutAction {
     Focus {
         display_id: String,
     },
@@ -79,6 +96,21 @@ pub(super) enum ViewLayoutPayload {
     Retry {
         display_id: String,
     },
+}
+
+impl ViewLayoutAction {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Focus { .. } => "focus",
+            Self::FocusArea { .. } => "focus_area",
+            Self::Move { .. } => "move",
+            Self::Split { .. } => "split",
+            Self::Resize { .. } => "resize",
+            Self::Close { .. } => "close",
+            Self::KeepOpen { .. } => "keep_open",
+            Self::Retry { .. } => "retry",
+        }
+    }
 }
 
 /// Where a document being read shows once it lands: the Workspace and the
@@ -788,33 +820,46 @@ impl Runtime {
             );
             return true;
         }
-        let Some(key) = self.front_workspace_key() else {
-            self.set_error(
-                "view_layout.no_workspace",
-                "No Workspace is open, so there is no View area to change",
-                false,
+        let ViewLayoutPayload { workspace, action } = payload;
+        let key = (workspace.device_id, workspace.path);
+        let front = self.front_workspace_key();
+        if front.as_ref() != Some(&key) {
+            // The screen already shows another Workspace, so there is nothing
+            // on it to explain; the log keeps both (design principle 13).
+            let front = front.map_or_else(
+                || "no Workspace".to_owned(),
+                |(device, path)| format!("{path} on {device}"),
+            );
+            self.push_diagnostic(
+                "view_layout.stale_workspace",
+                format!(
+                    "A {} for {} on {} arrived while {front} is in front; nothing changed",
+                    action.name(),
+                    key.1,
+                    key.0
+                ),
             );
             return true;
-        };
+        }
         // The action names displays by what the last frame showed; bring
         // their bindings up to date first.
         self.reconcile_view_displays();
-        let outcome = match payload {
-            ViewLayoutPayload::Focus { display_id } => {
+        let outcome = match action {
+            ViewLayoutAction::Focus { display_id } => {
                 self.change_view_layout(&key, |layout, stamp| {
                     layout
                         .focus(&display_id, stamp)
                         .map(|changed| (changed, changed))
                 })
             }
-            ViewLayoutPayload::FocusArea { area_id } => {
+            ViewLayoutAction::FocusArea { area_id } => {
                 self.change_view_layout(&key, |layout, stamp| {
                     layout
                         .focus_area(&area_id, stamp)
                         .map(|changed| (changed, changed))
                 })
             }
-            ViewLayoutPayload::Move {
+            ViewLayoutAction::Move {
                 display_id,
                 area_id,
                 index,
@@ -823,7 +868,7 @@ impl Runtime {
                     .move_display(&display_id, &area_id, index, stamp)
                     .map(|changed| (changed, changed))
             }),
-            ViewLayoutPayload::Split {
+            ViewLayoutAction::Split {
                 display_id,
                 area_id,
                 edge,
@@ -842,14 +887,14 @@ impl Runtime {
                 }
                 split
             }
-            ViewLayoutPayload::Resize { split_id, ratio } => {
+            ViewLayoutAction::Resize { split_id, ratio } => {
                 self.change_view_layout(&key, |layout, _| {
                     layout
                         .resize(&split_id, ratio)
                         .map(|changed| (changed, changed))
                 })
             }
-            ViewLayoutPayload::KeepOpen { display_id } => {
+            ViewLayoutAction::KeepOpen { display_id } => {
                 self.change_view_layout(&key, |layout, _| {
                     let display = layout
                         .display_mut(&display_id)
@@ -858,11 +903,11 @@ impl Runtime {
                     Ok((changed, changed))
                 })
             }
-            ViewLayoutPayload::Close {
+            ViewLayoutAction::Close {
                 display_id,
                 pending_save,
             } => return self.close_view_display(&key, &display_id, pending_save),
-            ViewLayoutPayload::Retry { display_id } => {
+            ViewLayoutAction::Retry { display_id } => {
                 return self.retry_view_display(&key, &display_id);
             }
         };

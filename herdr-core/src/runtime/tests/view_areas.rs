@@ -1,4 +1,4 @@
-use super::workspace_view::{active_label, layout, views_path, with_views};
+use super::workspace_view::{active_label, layout, second_checkout, views_path, with_views};
 use super::*;
 use crate::model::{ViewDisplaySnapshot, ViewDisplayState, ViewLayoutSnapshot, ViewNodeSnapshot};
 
@@ -21,7 +21,25 @@ fn open(runtime: &mut Runtime, checkout_id: &str, path: &Path, preview: bool, be
     assert_eq!(runtime.snapshot.status.last_error, None);
 }
 
+/// Sends a `view_layout` action as the web does, named for the Workspace of
+/// the frame it was taken on.
 fn act(runtime: &mut Runtime, payload: serde_json::Value) -> bool {
+    runtime.sync_workspace_view();
+    let view = runtime
+        .snapshot
+        .workspace_view
+        .as_ref()
+        .expect("a front Workspace");
+    let workspace = serde_json::json!({"device_id": view.device_id, "path": view.path});
+    act_on(runtime, workspace, payload)
+}
+
+fn act_on(
+    runtime: &mut Runtime,
+    workspace: serde_json::Value,
+    mut payload: serde_json::Value,
+) -> bool {
+    payload["workspace"] = workspace;
     runtime.dispatch_json(&explorer_event("view_layout", payload))
 }
 
@@ -486,6 +504,113 @@ fn moving_an_areas_last_display_away_collapses_the_area() {
     assert!(matches!(layout.root, ViewNodeSnapshot::Area(_)));
     assert_eq!(labels(&mut runtime), vec![vec!["b.md", "a.md"]]);
     assert_eq!(active_label(&runtime).as_deref(), Some("b.md"));
+}
+
+/// Contract 4.1, review F1: an action names the Workspace of the frame it
+/// was taken on. Ids like `d2` repeat across Workspaces, so a close or move
+/// that arrives after the front moved on changes neither tree and closes no
+/// document, least of all the other Workspace's dirty one; the same action
+/// for the Workspace in front applies.
+#[test]
+fn an_action_for_a_workspace_no_longer_in_front_changes_nothing() {
+    let (mut runtime, checkout_id, directory) = strip_checkout("view-stale-workspace");
+    let (other, other_checkout) = second_checkout(&mut runtime, &directory);
+    let mut runtime = with_views(runtime, &views_path("view-stale-workspace"));
+    files(&other, &["b.md", "c.md"]);
+    let identity = |runtime: &mut Runtime| {
+        runtime.sync_workspace_view();
+        let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+        serde_json::json!({"device_id": view.device_id, "path": view.path})
+    };
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("notes.md"),
+        false,
+        false,
+    );
+    let notes = tab_of(&runtime, "notes.md");
+    draft(&mut runtime, &notes, "draft\n");
+    let (first, dirty_display) = (identity(&mut runtime), display(&mut runtime, 0, "notes.md"));
+    runtime.dispatch_json(&explorer_event(
+        "focus_checkout",
+        serde_json::json!({"workspace_id": "workspace:other", "checkout_id": other_checkout}),
+    ));
+    for name in ["b.md", "c.md"] {
+        runtime.dispatch_json(&explorer_event(
+            "file_open",
+            serde_json::json!({
+                "path": other.join(name).to_string_lossy(),
+                "workspace_id": "workspace:other",
+                "checkout_id": other_checkout,
+                "preview": false,
+            }),
+        ));
+    }
+    let front = identity(&mut runtime);
+    let shown = display(&mut runtime, 0, "b.md");
+    assert_eq!(shown, dirty_display, "both Workspaces hold the same id");
+    let area = area_id(&mut runtime, 0);
+    let open_tabs = |runtime: &Runtime| {
+        let mut tabs: Vec<_> = runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .map(|tab| (tab.label.clone(), tab.dirty))
+            .collect();
+        tabs.sort();
+        tabs
+    };
+    let before = open_tabs(&runtime);
+
+    let moved =
+        serde_json::json!({"action": "move", "display_id": shown, "area_id": area, "index": 1});
+    let closed = serde_json::json!({"action": "close", "display_id": shown});
+    for action in [&moved, &closed] {
+        assert!(act_on(&mut runtime, first.clone(), action.clone()));
+        assert_eq!(runtime.snapshot.status.last_error, None);
+        assert_eq!(labels(&mut runtime), vec![vec!["b.md", "c.md"]]);
+        assert_eq!(open_tabs(&runtime), before);
+        let logged = runtime.snapshot.status.diagnostics.last().unwrap();
+        assert_eq!(logged.kind, "view_layout.stale_workspace");
+        assert!(
+            logged
+                .message
+                .contains(&directory.to_string_lossy().into_owned())
+                && logged
+                    .message
+                    .contains(&other.to_string_lossy().into_owned()),
+            "{}",
+            logged.message
+        );
+    }
+    assert_eq!(
+        before,
+        vec![
+            ("b.md".to_owned(), false),
+            ("c.md".to_owned(), false),
+            ("notes.md".to_owned(), true)
+        ]
+    );
+
+    act_on(&mut runtime, front.clone(), moved);
+    assert_eq!(labels(&mut runtime), vec![vec!["c.md", "b.md"]]);
+    act_on(&mut runtime, front, closed);
+    assert_eq!(labels(&mut runtime), vec![vec!["c.md"]]);
+    runtime.dispatch_json(&explorer_event(
+        "focus_checkout",
+        serde_json::json!({"workspace_id": "workspace:order", "checkout_id": checkout_id}),
+    ));
+    assert_eq!(labels(&mut runtime), vec![vec!["notes.md"]]);
+    assert!(
+        runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .any(|tab| tab.id == notes && tab.dirty)
+    );
 }
 
 /// B10: closing one of two displays of a document closes only that display;
