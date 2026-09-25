@@ -1,0 +1,50 @@
+/* The host's own screen while no web shell is loaded (B1, B3). Every value is
+   a token from the generated tokens.css copied beside this file. */
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: var(--color-background);
+  color: var(--color-primary);
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  font-size: var(--text-title);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+main {
+  display: flex;
+  height: 100%;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+#connecting {
+  color: var(--color-muted);
+}
+
+h1 {
+  margin: 0 0 var(--spacing-xs);
+  font-size: var(--text-headline);
+  font-weight: 600;
+}
+
+#reason {
+  margin: 0 0 var(--spacing-lg);
+  color: var(--color-secondary);
+}
+
+button {
+  height: var(--size-control-compact);
+  padding: 0 var(--spacing-md);
+  border: var(--size-hairline) solid var(--color-divider);
+  border-radius: var(--radius-sm);
+  background: var(--color-elevated);
+  color: var(--color-primary);
+  font: inherit;
+}
+
+button:hover {
+  background: var(--color-balloon);
+}

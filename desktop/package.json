@@ -1,0 +1,29 @@
+{
+  "name": "hide-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "description": "The hide desktop host: the web shell hided serves, in its own macOS window.",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "dev": "node scripts/build.mjs && electron .",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p e2e",
+    "lint": "eslint src e2e scripts static",
+    "test": "vitest run",
+    "e2e": "node scripts/build.mjs && playwright test",
+    "package": "node scripts/build.mjs && node scripts/package.mjs"
+  },
+  "devDependencies": {
+    "@electron/packager": "^20.3.0",
+    "@eslint/js": "^9.24.0",
+    "@playwright/test": "^1.51.0",
+    "@types/node": "^22.14.0",
+    "electron": "^44.4.5",
+    "esbuild": "^0.25.12",
+    "eslint": "^9.24.0",
+    "typescript": "^5.8.0",
+    "typescript-eslint": "^8.29.0",
+    "vitest": "^3.1.1"
+  },
+  "productName": "hide"
+}

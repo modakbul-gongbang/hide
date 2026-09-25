@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'" />
+    <title>hide</title>
+    <link rel="stylesheet" href="tokens.css" />
+    <link rel="stylesheet" href="status.css" />
+  </head>
+  <body>
+    <main>
+      <p id="connecting" data-status="connecting">Connecting to hided…</p>
+      <section id="failed" data-status="failed" hidden>
+        <h1>Can't connect to hided</h1>
+        <p id="reason" data-reason=""></p>
+        <button id="retry" type="button">Retry</button>
+      </section>
+    </main>
+    <script src="status.js"></script>
+  </body>
+</html>
