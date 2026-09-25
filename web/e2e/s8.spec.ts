@@ -22,6 +22,14 @@ async function open(page: Page, daemon: Daemon): Promise<void> {
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
 }
 
+/** The daemon spells its HOME as it was given (`/var/...`), the fixture by its real path (`/private/var/...`). */
+function samePath(left: string, right: string): boolean {
+  const plain = (value: string) => value.replace(/^\/private(?=\/)/, "");
+  return plain(left) === plain(right);
+}
+
+const GONE = "The session file can no longer be found. It may have been moved or deleted.";
+
 const LONG_REQUEST =
   "배포 스크립트 정리하고 release note 초안까지 작성해줘. 그리고 CI에서 flaky한 e2e 테스트가 왜 실패하는지 원인을 찾아서 한 문단으로 정리해줘";
 const PATH_REQUEST = "Investigate why /opt/builds/very-long-directory-name-without-any-breaks-to-test-wrapping/output/artifact.tar.gz is empty";
@@ -195,17 +203,26 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await expect(page.locator("[data-sessions-provider]")).toHaveAttribute("data-sessions-provider", "all");
 
     // A session whose file went away after the list was read fails where it
-    // opens; Retry reads the history again and says it is gone (B5).
+    // opens; Retry reads the history again, and the session stays listed as
+    // unavailable with its last location instead of vanishing (B5, D-04).
     fs.rmSync(files["codex-login"]);
     await page.locator('[data-session-row="codex-login"]').click();
     await expect(page.locator('[data-session-failure="codex-login"]')).toContainText("The session file could not be read: No such file or directory (os error 2)", {
       timeout: 15_000,
     });
-    await expect(page.locator('[data-session-header="codex-login"]')).not.toContainText("Copied");
+    // The copy note belongs to the session that was copied, not to this one.
+    await expect(page.locator('[data-session-header="codex-login"]')).not.toContainText("Copied", { timeout: 0 });
     await screenshot(page, "s8-detail-failed");
     await page.locator("[data-session-detail-retry]").click();
-    await expect(page.locator('[data-session-failure="codex-login"]')).toContainText("This session is no longer in the Project's history.", { timeout: 15_000 });
-    await expect(rows).toHaveCount(3);
+    await expect(page.locator('[data-session-failure="codex-login"]')).toContainText(GONE, { timeout: 15_000 });
+    await expect(rows).toHaveCount(4);
+    const moved = page.locator('[data-session="codex-login"]');
+    await expect(moved).toHaveAttribute("data-session-available", "false");
+    await expect(page.locator('[data-session-reason="codex-login"]')).toHaveText(GONE);
+    await expect(moved).toContainText("Fix the flaky login test");
+    await page.locator('[data-session-copy="codex-login"]').click();
+    await expect(moved).toContainText("Copied");
+    expect(samePath(await page.evaluate(() => navigator.clipboard.readText()), files["codex-login"])).toBe(true);
     await screenshot(page, "s8-detail-gone");
 
     // A history that cannot be read says why, in the list, with Retry (B4).
@@ -221,7 +238,8 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
       fs.chmodSync(claudeProjects, 0o755);
     }
     await page.locator('[data-sessions-retry="list"]').click();
-    await expect(rows).toHaveCount(3, { timeout: 15_000 });
+    await expect(rows).toHaveCount(4, { timeout: 15_000 });
+    await expect(page.locator('[data-session="codex-login"]')).toHaveAttribute("data-session-available", "false");
 
     // Another window moves the agent focus: this window keeps its Project and
     // its list (B6). Then it names another Project: this window says so and
@@ -235,7 +253,10 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await other.locator(`[data-overview-agent="${second}"]`).click();
     await expect(other.locator("[data-workspace-screen]")).toBeVisible();
     await expect(other.locator(`[data-pane-view="${second}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
-    await expect(rows).toHaveCount(3);
+    // This window has seen the focus move, and its Project and list stayed.
+    await expect(page.locator(`[data-agent-list] [data-pane="${second}"]`)).toHaveClass(/bg-elevated/, { timeout: 15_000 });
+    await expect(page.locator("[data-sessions-screen]")).toHaveAttribute("data-sessions-screen", request?.workspace_id as string);
+    await expect(rows).toHaveCount(4);
     await expect(page.locator("[data-session-detail]")).toHaveAttribute("data-session-detail", "failed");
 
     await other.keyboard.press("Alt+Shift+KeyN");
@@ -259,7 +280,9 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await screenshot(page, "s8-replaced");
     const beforeShowHere = sent.get("sessions_refresh") ?? 0;
     await page.locator("[data-sessions-show-here]").click();
-    await expect(rows).toHaveCount(3, { timeout: 15_000 });
+    await expect(rows).toHaveCount(4, { timeout: 15_000 });
+    // Naming it again keeps the session whose file went away listed.
+    await expect(page.locator('[data-session="codex-login"]')).toHaveAttribute("data-session-available", "false");
     expect(sent.get("sessions_refresh")).toBe(beforeShowHere + 1);
     await expect(other.locator("[data-sessions-state]")).toHaveAttribute("data-sessions-state", "replaced", { timeout: 15_000 });
     await other.close();

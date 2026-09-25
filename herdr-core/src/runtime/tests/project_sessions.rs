@@ -325,22 +325,157 @@ fn opening_a_session_reads_it_beside_the_history_and_a_retry_rereads_it() {
     // No editor tab: the session never lands in a Workspace (B3).
     assert!(shared.lock().unwrap().snapshot.editor.tabs.is_empty());
 
-    // Its file goes away; Retry reads the history, then this session, and the
-    // detail says so in place (B5, A6).
-    fs::remove_file(&detail.locator).unwrap();
+    // Reading it again unchanged keeps the shared conversation, so the delta
+    // keeps comparing it by pointer.
+    dispatch(
+        &shared,
+        "archive_open",
+        serde_json::json!({"kind": "session", "id": "claude-alpha", "workspace_id": alpha}),
+    );
+    let again = settled(&shared)
+        .detail
+        .and_then(|detail| detail.archive)
+        .expect("still read");
+    assert!(Arc::ptr_eq(&archive, &again));
+
+    // Its file goes away; Retry reads the history, then this session. The row
+    // stays, unavailable with its last location, and the detail says the same
+    // in place (B5, A6).
+    let locator = detail.locator.clone();
+    fs::remove_file(&locator).unwrap();
     dispatch(
         &shared,
         "sessions_refresh",
         serde_json::json!({"workspace_id": alpha}),
     );
-    let detail = settled(&shared).detail.expect("still open");
-    assert_eq!(detail.archive, None);
+    let sessions = settled(&shared);
+    let gone = "The session file can no longer be found. It may have been moved or deleted.";
+    let row = sessions
+        .rows
+        .iter()
+        .find(|row| row.id == "claude-alpha")
+        .expect("a listed session stays listed after its file went away");
+    assert_eq!(row.unavailable_reason.as_deref(), Some(gone));
+    assert_eq!(row.locator, locator);
     assert_eq!(
-        detail.failure.as_deref(),
-        Some(
-            "This session is no longer in the Project's history. Its file may have been moved or deleted."
-        )
+        row.first_human_request.as_deref(),
+        Some("배포 스크립트 정리 request")
     );
+    let detail = sessions.detail.expect("still open");
+    assert_eq!(detail.archive, None);
+    assert_eq!(detail.locator, locator);
+    assert_eq!(detail.failure.as_deref(), Some(gone));
+}
+
+#[test]
+fn naming_another_project_closes_the_open_session() {
+    let fixture = fixture();
+    let shared = shared(&fixture);
+    let alpha = workspace_id(&fixture.alpha);
+    dispatch(
+        &shared,
+        "sessions_refresh",
+        serde_json::json!({"workspace_id": alpha}),
+    );
+    settled(&shared);
+    dispatch(
+        &shared,
+        "archive_open",
+        serde_json::json!({"kind": "session", "id": "claude-alpha", "workspace_id": alpha}),
+    );
+    assert!(settled(&shared).detail.is_some());
+
+    dispatch(
+        &shared,
+        "sessions_refresh",
+        serde_json::json!({"workspace_id": workspace_id(&fixture.zeta)}),
+    );
+    let sessions = settled(&shared);
+    assert_eq!(sessions.workspace_id, workspace_id(&fixture.zeta));
+    assert_eq!(sessions.detail, None);
+    let ids = sessions
+        .rows
+        .iter()
+        .map(|row| row.id.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, ["claude-zeta"]);
+}
+
+#[test]
+fn refreshes_during_a_history_read_coalesce_into_one_more_read() {
+    let fixture = fixture();
+    let shared = shared(&fixture);
+    let alpha = workspace_id(&fixture.alpha);
+    let mut runtime = shared.lock().unwrap();
+    // A read is running: the two requests behind it wait as one.
+    runtime.project_sessions_work.list_in_flight = true;
+    runtime.refresh_project_sessions(None, &alpha);
+    runtime.refresh_project_sessions(None, &alpha);
+    assert!(runtime.project_sessions_work.list_waiting);
+    let running = runtime.project_sessions_work.list_generation - 2;
+
+    // The running read answers for an older request: it does not land, and
+    // exactly one more read starts for the newest.
+    let load = crate::runtime::memory::SessionsLoad {
+        project_id: "older".to_owned(),
+        checkout_path: String::new(),
+        rows: Vec::new(),
+        memories: Vec::new(),
+        state: None,
+    };
+    runtime.ingest_project_sessions(running, Ok(load));
+    assert!(!runtime.project_sessions_work.list_waiting);
+    assert!(runtime.project_sessions_work.list_in_flight);
+    assert!(runtime.snapshot.project_sessions.as_ref().unwrap().loading);
+    drop(runtime);
+
+    let ids = settled(&shared)
+        .rows
+        .iter()
+        .map(|row| row.id.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(ids, ["claude-broken", "codex-alpha", "claude-alpha"]);
+}
+
+#[test]
+fn a_history_read_that_fails_settles_the_session_waiting_to_be_read_again() {
+    let fixture = fixture();
+    let shared = shared(&fixture);
+    let alpha = workspace_id(&fixture.alpha);
+    dispatch(
+        &shared,
+        "sessions_refresh",
+        serde_json::json!({"workspace_id": alpha}),
+    );
+    settled(&shared);
+
+    let mut runtime = shared.lock().unwrap();
+    // The session opens behind a read of it still running, and a history
+    // read is waiting behind another.
+    runtime.project_sessions_work.detail_in_flight = true;
+    runtime.open_project_session(&alpha, "session", "claude-alpha");
+    assert!(runtime.project_sessions_work.detail_waiting);
+    runtime.project_sessions_work.list_in_flight = true;
+    runtime.refresh_project_sessions(None, &alpha);
+    let generation = runtime.project_sessions_work.list_generation;
+
+    // That history read fails: the session is not left reading forever.
+    let changed = runtime.ingest_project_sessions(
+        generation,
+        Err(
+            "session_catalog_read_directory:/h/.claude/projects:Permission denied (os error 13)"
+                .to_owned(),
+        ),
+    );
+    assert!(changed);
+    assert!(!runtime.project_sessions_work.detail_waiting);
+    let sessions = runtime.snapshot.project_sessions.clone().unwrap();
+    let reason =
+        "The session folder /h/.claude/projects could not be read: Permission denied (os error 13)";
+    assert_eq!(sessions.failure.as_deref(), Some(reason));
+    let detail = sessions.detail.expect("still open");
+    assert!(!detail.loading);
+    assert_eq!(detail.failure.as_deref(), Some(reason));
 }
 
 #[test]

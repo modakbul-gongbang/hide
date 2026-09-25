@@ -925,9 +925,10 @@ A row's accessible name reads provider, first request, checkout, time and availa
 The open session's row sits on `{colors.elevated}`, is `aria-current`, and is the list's one Tab stop; the arrows, Home and End move between rows, ArrowDown from the search lands on that row, and Escape in the search clears it.
 The provider choice is one Tab stop whose arrows choose the neighbouring provider.
 An unreadable session dims only its own row, marks it `! unavailable`, and keeps its reason, Retry and Copy source location under it; the copied value is the provider file's own path.
+A session whose file is no longer found after the history listed it stays listed the same way, with `The session file can no longer be found. It may have been moved or deleted.` and its last location to copy.
 The list place shows one small mark per state: `Loading sessions…`, `No sessions yet`, `No matching sessions` with Clear filters, `Sessions could not be read` with the reason and Retry, and on a device Project `Sessions unavailable` with the device's reason and no Retry.
 The open session shows its row's provider, checkout and time with Copy source location, its request as the title, then each request and answer in order as plain text, Korean wrapping at word boundaries; injected context, where Project Memory travels, is not shown.
-A session that cannot be opened shows the same reason in the detail place with Retry, which reads the history again, and says so when the session is no longer in it.
+A session that cannot be opened shows the same reason in the detail place with Retry, which reads the history again and then the session.
 When another window names another Project, this one says so and offers `Show this project's sessions`, which names this Project again only when chosen, so two windows never take it from each other.
 The web shell has no Project Memory entry point, disabled control or placeholder until the Memory stage (PRD S8 D-17); Memory is managed in the macOS app.
 

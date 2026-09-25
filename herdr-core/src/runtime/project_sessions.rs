@@ -10,13 +10,26 @@
 //! generation per read, one read in flight and at most one waiting - but
 //! nothing here reads the focus, and nothing here touches Memory state.
 
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use serde_json::json;
 
 use super::memory::{load_session_detail, load_sessions};
 use super::*;
-use crate::model::{ProjectSessionDetailSnapshot, ProjectSessionsSnapshot};
+use crate::model::{
+    ArchiveDetailSnapshot, ProjectSessionDetailSnapshot, ProjectSessionsSnapshot,
+    SessionRowSnapshot,
+};
+
+/// The reason a session the history listed before carries once its file is
+/// no longer found (B5, D-04).
+const SESSION_GONE: &str =
+    "The session file can no longer be found. It may have been moved or deleted.";
+
+/// The reason an open session gives when the history holds no row for it.
+const SESSION_NOT_LISTED: &str =
+    "This session is no longer in the Project's history. Its file may have been moved or deleted.";
 
 /// The reads behind the named Project, beside its snapshot.
 #[derive(Default)]
@@ -33,6 +46,13 @@ pub(super) struct ProjectSessionsWork {
     pub(super) detail_generation: u64,
     pub(super) detail_in_flight: bool,
     pub(super) detail_waiting: bool,
+    /// Every session each Project's history has listed since the daemon
+    /// started, by Project. One whose file is no longer found keeps its row,
+    /// unavailable, instead of vanishing as if it never existed; only the
+    /// Memory store remembers such a session across a restart, and the web
+    /// shell's store has no record of any. A session belongs to one Project,
+    /// so this holds at most what the catalog can list.
+    pub(super) known: HashMap<String, Vec<SessionRowSnapshot>>,
 }
 
 impl Runtime {
@@ -216,13 +236,27 @@ impl Runtime {
                     "generation": generation,
                     "message": message,
                 }));
-                sessions.failure = Some(history_failure(&message));
+                let failure = history_failure(&message);
                 sessions.rows.clear();
+                // The open session would be read against rows this read did
+                // not produce: a read of it still waiting is dropped, and one
+                // that never showed its conversation says why (B5).
+                if let Some(detail) = sessions.detail.as_mut() {
+                    self.project_sessions_work.detail_generation += 1;
+                    self.project_sessions_work.detail_waiting = false;
+                    if detail.loading {
+                        detail.loading = false;
+                        if detail.archive.is_none() {
+                            detail.failure = Some(failure.clone());
+                        }
+                    }
+                }
+                sessions.failure = Some(failure);
                 true
             }
             Ok(load) => {
                 sessions.failure = None;
-                sessions.rows = load
+                let mut rows = load
                     .rows
                     .into_iter()
                     .map(|mut row| {
@@ -230,7 +264,38 @@ impl Runtime {
                             row.unavailable_reason.as_deref().map(session_reason);
                         row
                     })
-                    .collect();
+                    .collect::<Vec<_>>();
+                // A session listed before and not found now stays listed as
+                // unavailable with its last location, so a moved or deleted
+                // file reads differently from one that never existed (B5).
+                let listed = rows
+                    .iter()
+                    .map(|row| (row.provider.clone(), row.id.clone()))
+                    .collect::<HashSet<_>>();
+                let known = self
+                    .project_sessions_work
+                    .known
+                    .entry(sessions.workspace_id.clone())
+                    .or_default();
+                let gone = known
+                    .iter()
+                    .filter(|row| !listed.contains(&(row.provider.clone(), row.id.clone())))
+                    .map(|row| SessionRowSnapshot {
+                        unavailable_reason: Some(SESSION_GONE.to_owned()),
+                        ..row.clone()
+                    })
+                    .collect::<Vec<_>>();
+                if !gone.is_empty() {
+                    rows.extend(gone);
+                    rows.sort_by(|left, right| {
+                        right
+                            .updated_at_unix_ms
+                            .cmp(&left.updated_at_unix_ms)
+                            .then_with(|| left.id.cmp(&right.id))
+                    });
+                }
+                *known = rows.clone();
+                sessions.rows = rows;
                 self.project_sessions_work.project_id = Some(load.project_id);
                 // A Retry reads the history and then the open session against
                 // its fresh row, so a source that came back opens and one that
@@ -294,10 +359,7 @@ impl Runtime {
                 detail.loading = false;
                 detail.locator.clear();
                 detail.archive = None;
-                detail.failure = Some(
-                    "This session is no longer in the Project's history. Its file may have been moved or deleted."
-                        .to_owned(),
-                );
+                detail.failure = Some(SESSION_NOT_LISTED.to_owned());
             }
             Some(row) => {
                 detail.locator = row.locator.clone();
@@ -320,14 +382,30 @@ impl Runtime {
         let Some(sessions) = self.snapshot.project_sessions.as_ref() else {
             return false;
         };
-        let Some(row) = sessions.detail.as_ref().and_then(|detail| {
-            sessions
-                .rows
-                .iter()
-                .find(|row| row.id == detail.session_id)
-                .cloned()
-        }) else {
+        let Some(detail) = sessions.detail.as_ref() else {
             return false;
+        };
+        // The conversation on screen goes with the read, so an unchanged one
+        // keeps its shared copy and the delta keeps comparing it by pointer;
+        // the comparison runs on the worker, not under the lock.
+        let shown = detail.archive.clone();
+        let Some(row) = sessions
+            .rows
+            .iter()
+            .find(|row| row.id == detail.session_id)
+            .cloned()
+        else {
+            if let Some(detail) = self
+                .snapshot
+                .project_sessions
+                .as_mut()
+                .and_then(|sessions| sessions.detail.as_mut())
+            {
+                detail.loading = false;
+                detail.archive = None;
+                detail.failure = Some(SESSION_NOT_LISTED.to_owned());
+            }
+            return true;
         };
         let started = match (self.worker_context.clone(), project_id) {
             (Some(context), Some(project_id)) => {
@@ -335,7 +413,13 @@ impl Runtime {
                 thread::Builder::new()
                     .name("hide-project-session-read".to_owned())
                     .spawn(move || {
-                        let result = load_session_detail(&database, &project_id, row);
+                        let result =
+                            load_session_detail(&database, &project_id, row).map(|archive| {
+                                match shown {
+                                    Some(shown) if *shown == archive => shown,
+                                    _ => Arc::new(archive),
+                                }
+                            });
                         let Some(runtime) = context.runtime.upgrade() else {
                             return;
                         };
@@ -377,7 +461,7 @@ impl Runtime {
     fn ingest_project_session(
         &mut self,
         generation: u64,
-        result: Result<crate::model::ArchiveDetailSnapshot, String>,
+        result: Result<Arc<ArchiveDetailSnapshot>, String>,
     ) -> bool {
         self.project_sessions_work.detail_in_flight = false;
         if generation != self.project_sessions_work.detail_generation {
@@ -404,7 +488,7 @@ impl Runtime {
                 }
                 None => {
                     detail.failure = None;
-                    detail.archive = Some(Arc::new(archive));
+                    detail.archive = Some(archive);
                 }
             },
             Err(message) => {
@@ -461,8 +545,25 @@ fn too_large() -> String {
     format!("The session file is larger than {limit_mib} MiB.")
 }
 
-/// Why a Project's history could not be read, in words.
+/// Why a Project's history could not be read, in words: the catalog's and
+/// the Project resolver's codes (`hide_project::ResolveError`) are not shown.
 fn history_failure(message: &str) -> String {
+    if let Some(path) = message.strip_prefix("project_path_missing:") {
+        return format!("The Project folder {path} is missing.");
+    }
+    if let Some((path, error)) = message
+        .strip_prefix("project_path_unreadable:")
+        .and_then(|rest| rest.rsplit_once(':'))
+    {
+        return format!("The Project folder {path} could not be read: {error}");
+    }
+    // The link's reason is a resolver code, which the diagnostic keeps.
+    if let Some((path, _)) = message
+        .strip_prefix("project_git_link_invalid:")
+        .and_then(|rest| rest.split_once(':'))
+    {
+        return format!("The Project's Git link at {path} is not valid.");
+    }
     if let Some(limit) = message.strip_prefix("session_catalog_capacity:") {
         return format!(
             "The session folders hold more than {limit} entries, so Hide stopped reading them."
@@ -480,7 +581,31 @@ fn history_failure(message: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::session_reason;
+    use super::{history_failure, session_reason};
+
+    #[test]
+    fn project_folder_failures_read_as_words_without_their_codes() {
+        assert_eq!(
+            history_failure("project_path_missing:/Volumes/ext/app"),
+            "The Project folder /Volumes/ext/app is missing."
+        );
+        assert_eq!(
+            history_failure("project_path_unreadable:/p/app:Permission denied (os error 13)"),
+            "The Project folder /p/app could not be read: Permission denied (os error 13)"
+        );
+        assert_eq!(
+            history_failure(
+                "project_git_link_invalid:/p/app/.git:git_directory:No such file or directory (os error 2)"
+            ),
+            "The Project's Git link at /p/app/.git is not valid."
+        );
+        assert_eq!(
+            history_failure(
+                "session_catalog_read_directory:/h/.claude/projects:Permission denied (os error 13)"
+            ),
+            "The session folder /h/.claude/projects could not be read: Permission denied (os error 13)"
+        );
+    }
 
     #[test]
     fn session_reader_errors_read_as_words_without_their_codes() {

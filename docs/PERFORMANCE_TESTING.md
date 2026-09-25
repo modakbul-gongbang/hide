@@ -504,7 +504,8 @@ Crossing a cap is an actionable state rather than an enlarged queue or automatic
 
 The web shell's Project Sessions (PRD S8) adds no work until a Project is named: the `project_sessions` delta section is one absent check per publication.
 Naming a Project, arriving at its screen, reconnecting or pressing Retry is one bounded catalog read on a worker; a request that arrives during a read coalesces into one more read, so pending work is at most one read, and opening a session is one bounded detail read the same way.
-While a Project is named, each publication compares the section by value under the lock, O(rows) with the open transcript behind a shared pointer compared in O(1), and resends it only when it changed.
+While a Project is named, each publication compares the section by value under the lock, O(rows) with the open transcript behind a shared pointer compared in O(1), and resends it only when it changed; a re-read that finds the same conversation keeps that pointer, and the worker, not the lock, compares the two.
+The core keeps the rows each Project's history listed, so a session whose file went away stays listed; a session belongs to one Project, so that is bounded by what the catalog can list.
 Provider filtering and search run in the page over the retained rows and send nothing.
 Neither read schedules Memory work or touches the due-work poll.
 Regression owners are `runtime::tests::project_sessions`, `web/src/sessions.test.ts` and `web/e2e/s8.spec.ts`.
