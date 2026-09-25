@@ -129,9 +129,14 @@ test("Main, Overview and a Workspace with its layouts, tools and delegated child
     await menuButton.click();
     const openChild = page.locator(`[data-menu-item="open:${child}"]`);
     await expect(openChild).toBeVisible();
+    await page.mouse.move(0, 0);
     await page.keyboard.press("Escape");
     await expect(openChild).toHaveCount(0);
     expect(sent.get("focus_pane") ?? 0).toBe(focusCount);
+    // The focus the closed menu hands back to its button does not bring the
+    // button's hint up after it; the hint waits for the pointer to come back.
+    await page.waitForTimeout(800);
+    await expect(page.locator('[data-slot="tooltip-content"]')).toHaveCount(0);
 
     // A restart brings the Workspace back with its layout and View tabs; the
     // file that went away stays as an unavailable tab (B19, B20).

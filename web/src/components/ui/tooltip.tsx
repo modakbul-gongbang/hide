@@ -35,6 +35,9 @@ function TooltipContent({ className, sideOffset = 4, children, ...props }: Compo
   );
 }
 
+/** What a press on a hinted trigger opens: a menu, a popover, or a dialog. */
+const LAYER = '[data-radix-popper-content-wrapper], [role="dialog"], [role="alertdialog"]';
+
 /**
  * The shell's one way to give a control a hint: the trigger keeps its own
  * element (asChild) and gets `label` as its accessible name unless it already
@@ -57,8 +60,10 @@ function Hint({
 }) {
   // A press on the trigger (a click that opens a menu or a dialog, or a
   // right-click that opens a context menu) ends the hint until the pointer
-  // leaves: the hover delay that started before the press would otherwise
-  // open it over whatever the press opened.
+  // comes back to the trigger or the keyboard leaves it for somewhere else. The
+  // hover delay that started before the press, and the focus a closing menu
+  // hands back to its trigger, would otherwise open it over or after whatever
+  // the press opened; Tab to the trigger later still shows it.
   const [open, setOpen] = useState(false);
   const pressed = useRef(false);
   const press = () => {
@@ -72,8 +77,12 @@ function Hint({
         aria-label={reveals ? undefined : label}
         onPointerDown={press}
         onContextMenu={press}
-        onPointerLeave={() => {
+        onPointerEnter={() => {
           pressed.current = false;
+        }}
+        onBlur={(event) => {
+          const next = event.relatedTarget;
+          if (!(next instanceof Element && next.closest(LAYER))) pressed.current = false;
         }}
       >
         {children}
