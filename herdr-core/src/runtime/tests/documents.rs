@@ -1119,6 +1119,7 @@ fn a_device_checkouts_history_comes_from_its_helper_and_stays_with_its_device() 
     assert_eq!(request.root.device_id, DEVICE);
     let device_answer = || crate::changes::ChangesAnswer {
         key: Some(request.key()),
+        selection: request.selection(),
         changes: crate::changes::read(&request),
     };
     let listed = device_answer();

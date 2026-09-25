@@ -1782,3 +1782,109 @@ fn a_view_moved_onto_its_documents_twin_replaces_it() {
             .any(|tab| tab.label == "a.md")
     );
 }
+
+/// The Changes pump's order when each read takes less than one tick
+/// (`BackgroundRead::poll`): a wake builds its request, then takes the answer
+/// to the read the last wake started, and starts a read of its own request
+/// unless that is the one just read. `started` is the History row each read
+/// started asks for.
+#[derive(Default)]
+struct HistoryPump {
+    inflight: Option<crate::changes::ChangesRequest>,
+    settled: Option<crate::changes::ChangesRequest>,
+    started: Vec<Option<String>>,
+}
+
+impl HistoryPump {
+    fn wake(&mut self, runtime: &mut Runtime) {
+        let request = runtime.changes_request().expect("History is read");
+        let landed = self.inflight.take().map(|asked| {
+            let changes = crate::changes::read(&asked);
+            let answer = crate::changes::ChangesAnswer {
+                key: Some(asked.key()),
+                selection: asked.selection(),
+                changes,
+            };
+            self.settled = Some(asked);
+            answer
+        });
+        if self.settled.as_ref() != Some(&request) {
+            self.started.push(request.selected_path.clone());
+            self.inflight = Some(request);
+        }
+        if let Some(answer) = landed {
+            runtime.ingest_changes(answer);
+        }
+        // The frame the answer announces reads the snapshot.
+        runtime.sync_workspace_view();
+    }
+}
+
+/// A5, B19: every Changes answer lands one wake after its request, so a read
+/// started for a History row the operator has left since must not bring
+/// that row back. It would be asked for again, the answer after it would
+/// bring the newer row back, and the two would chase each other with a Git
+/// read and a frame on every tick while nothing is driven.
+#[test]
+fn a_late_history_answer_does_not_bring_back_the_row_the_operator_left() {
+    let (mut runtime, checkout_id, directory) = views_runtime("view-history-late");
+    files(&directory, &["a.ts", "e.rs", "f.go"]);
+    for arguments in [
+        &["add", "."][..],
+        &[
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "user.name=fixture",
+            "-c",
+            "user.email=fixture@example.invalid",
+            "commit",
+            "-qm",
+            "base",
+        ],
+    ] {
+        assert!(
+            std::process::Command::new("git")
+                .args(arguments)
+                .current_dir(&directory)
+                .status()
+                .expect("git runs")
+                .success()
+        );
+    }
+    for name in ["e.rs", "f.go"] {
+        std::fs::write(directory.join(name), format!("{name} changed\n")).expect("an edit");
+    }
+    let select = |runtime: &mut Runtime, name: &str| {
+        assert!(runtime.dispatch_json(&explorer_event(
+            "changes_select",
+            serde_json::json!({"path": directory.join(name), "committed": false, "preview": false}),
+        )));
+        assert_eq!(runtime.snapshot.status.last_error, None);
+    };
+    let row = |name: &str| Some(directory.join(name).to_string_lossy().into_owned());
+    let mut pump = HistoryPump::default();
+    // The first read lists the two changed files.
+    pump.wake(&mut runtime);
+    pump.wake(&mut runtime);
+
+    select(&mut runtime, "f.go");
+    pump.wake(&mut runtime);
+    select(&mut runtime, "e.rs");
+    // A file takes the area, so no diff is in front: the request names the
+    // row History has selected.
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("a.ts"),
+        false,
+        false,
+    );
+    pump.started.clear();
+    for _ in 0..4 {
+        pump.wake(&mut runtime);
+    }
+
+    assert_eq!(pump.started, vec![row("e.rs")]);
+    assert_eq!(runtime.snapshot.changes.selected_path, row("e.rs"));
+}

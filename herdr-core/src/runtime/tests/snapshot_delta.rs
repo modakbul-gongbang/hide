@@ -183,6 +183,7 @@ fn a_changes_read_resends_the_section_only_when_it_differs() {
         let root = "/private/tmp/hide-changes-edit";
         crate::changes::ChangesAnswer {
             key: runtime.changes_key(),
+            selection: (None, false),
             changes: crate::model::ChangesSnapshot {
                 root_path: Some(root.to_owned()),
                 entries: files

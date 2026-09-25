@@ -112,6 +112,7 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
     );
     assert!(runtime.ingest_changes(crate::changes::ChangesAnswer {
         key: Some(key),
+        selection: request.selection(),
         changes: listed,
     }));
 
@@ -125,6 +126,7 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
     };
     assert!(runtime.ingest_changes(crate::changes::ChangesAnswer {
         key: runtime.changes_key(),
+        selection: (None, false),
         changes: failed,
     }));
     assert_eq!(runtime.snapshot.changes.entries, confirmed.entries);
@@ -135,6 +137,7 @@ fn registered_subfolder_history_stays_scoped_through_runtime_selection() {
     );
     assert!(runtime.ingest_changes(crate::changes::ChangesAnswer {
         key: runtime.changes_key(),
+        selection: (None, false),
         changes: confirmed.clone(),
     }));
     assert_eq!(runtime.snapshot.changes.stale_reason, None);

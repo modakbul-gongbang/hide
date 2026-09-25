@@ -99,6 +99,11 @@ impl ChangesRequest {
             root_path: self.root_path.to_string_lossy().into_owned(),
         }
     }
+
+    /// The History row whose diff this request takes, and its group.
+    pub fn selection(&self) -> (Option<String>, bool) {
+        (self.selected_path.clone(), self.selected_committed)
+    }
 }
 
 /// Which device's folder an answer describes. The same path on two devices
@@ -112,6 +117,10 @@ pub struct ChangesKey {
 pub struct ChangesAnswer {
     /// `None` for the closed view's empty projection.
     pub key: Option<ChangesKey>,
+    /// The row its request asked for (`ChangesRequest::selection`). An
+    /// answer lands one wake after its request, so the operator may have
+    /// chosen another row since.
+    pub selection: (Option<String>, bool),
     pub changes: ChangesSnapshot,
 }
 
@@ -129,6 +138,7 @@ impl ChangesReader {
                     match request {
                         Some(request) => ChangesAnswer {
                             key: Some(request.key()),
+                            selection: request.selection(),
                             changes: read(request),
                         },
                         // The view is closed, so there is nothing to describe. An
@@ -136,6 +146,7 @@ impl ChangesReader {
                         // the wire.
                         None => ChangesAnswer {
                             key: None,
+                            selection: (None, false),
                             changes: ChangesSnapshot::default(),
                         },
                     }
