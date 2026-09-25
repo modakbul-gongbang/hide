@@ -48,6 +48,7 @@ import {
   menuEdge,
   neighbourArea,
   resizeTarget,
+  shownTools,
   viewCommands,
   viewLayoutPayload,
   workspaceKey,
@@ -252,14 +253,33 @@ export function createActions(dispatch: DispatchFn) {
     dispatch({ schema_version: 2, kind: "workspace_view", payload: patch });
   };
 
-  const showExplorerPanel = () => setWorkspaceView({ explorer: true });
+  /**
+   * Shows one tool (B10). The operator asked for it, so a narrow window's
+   * overlay opens (S7 B12); nothing is sent when the core already stores it
+   * shown, since the overlay closing never stored it hidden.
+   */
+  const showTool = (tool: "explorer" | "changes") => {
+    const view = workspaceViewOf(rest());
+    if (!view) return diagnostic("workspace_view: no Workspace in front");
+    ui().openTools();
+    if (!(tool === "explorer" ? view.explorer : view.changes)) setWorkspaceView(tool === "explorer" ? { explorer: true } : { changes: true });
+  };
 
-  /** ⌘⇧B: hides the Workspace tools when any shows, else shows the Explorer. */
+  const showExplorerPanel = () => showTool("explorer");
+
+  /**
+   * ⌘⇧B: hides the Workspace tools when any shows, else shows them. Tools a
+   * narrow window's closed overlay keeps out of sight are not showing, so the
+   * key opens the overlay on the tools the core stores rather than storing
+   * them hidden (S7 B12, B13).
+   */
   const toggleRightPanel = () => {
     const view = workspaceViewOf(rest());
     if (!view) return diagnostic("toggle tools: no Workspace in front");
-    if (view.explorer || view.changes) setWorkspaceView({ explorer: false, changes: false });
-    else setWorkspaceView({ explorer: true });
+    const shown = shownTools(view, ui().toolsPlacement);
+    if (shown.explorer || shown.changes) return setWorkspaceView({ explorer: false, changes: false });
+    if (view.explorer || view.changes) return ui().openTools();
+    showTool("explorer");
   };
 
   /**
@@ -457,7 +477,8 @@ export function createActions(dispatch: DispatchFn) {
 
   /**
    * `changes_select` for a History row of the checkout in front (S4, S7
-   * contract 4.2): the core places a diff by the rules a file open follows.
+   * contract 4.2): the core places a diff by the rules a file open follows,
+   * so a window too narrow for Agents and Views together shows the Views.
    */
   const selectChangeIn = (path: string, committed: boolean, preview: boolean, beside: boolean) => {
     const here = explorerContext(rest()).checkout;
@@ -468,6 +489,7 @@ export function createActions(dispatch: DispatchFn) {
     }
     const group = committed ? changes.committed : changes.entries;
     if (!group.some((entry) => entry.path === path)) return diagnostic("changes_select: row is no longer available");
+    ui().setWorkingRegion("views");
     dispatch({ schema_version: 2, kind: "changes_select", payload: { path, committed, preview, ...(beside ? { beside: true } : {}) } });
   };
 
@@ -605,6 +627,7 @@ export function createActions(dispatch: DispatchFn) {
 
   /** Shows the Explorer with a file's row unfolded and selected; nothing is opened. */
   const revealInExplorer = (path: string) => {
+    ui().openTools();
     setWorkspaceView({ explorer: true, reveal: path });
     ui().setExplorerSelection(path);
   };
@@ -1050,14 +1073,12 @@ export function createActions(dispatch: DispatchFn) {
 
     /**
      * Explorer and Changes open and close independently (B10). Showing a tool
-     * the operator dismissed from over a narrow window shows it again without
-     * an event: the core still holds it shown (S7 B12, B13).
+     * a narrow window's overlay kept out of sight opens the overlay without
+     * an event when the core already stores it shown (S7 B12, B13).
      */
     setTool(tool: "explorer" | "changes", visible: boolean) {
-      if (visible) ui().setToolsDismissed(false);
-      const view = workspaceViewOf(rest());
-      if (view && visible && (tool === "explorer" ? view.explorer : view.changes)) return;
-      setWorkspaceView(tool === "explorer" ? { explorer: visible } : { changes: visible });
+      if (visible) return showTool(tool);
+      setWorkspaceView(tool === "explorer" ? { explorer: false } : { changes: false });
     },
 
     /** A History row's diff in the active View area's preview (a single click) or pinned (a double click). */

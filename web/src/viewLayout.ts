@@ -660,6 +660,34 @@ export function narrowWorkspace(input: {
   };
 }
 
+/**
+ * How the Workspace tools stand (B12, D-08): the `column` beside the working
+ * regions while the window has room for it; in a narrower window an overlay
+ * that is `closed` until the operator asks for a tool and `open` until they
+ * dismiss it, so it never opens by itself.
+ */
+export type ToolsPlacement = "column" | "closed" | "open";
+
+/**
+ * Where the tools stand once the window is narrow or not: the column comes
+ * back whenever there is room for it, and a window turning narrow closes it
+ * into an overlay rather than floating the tools over the work by itself.
+ */
+export function placementForWidth(current: ToolsPlacement, narrow: boolean): ToolsPlacement {
+  if (!narrow) return "column";
+  return current === "column" ? "closed" : current;
+}
+
+/**
+ * The tools a Workspace shows now: the ones the core stores, except that a
+ * narrow window's overlay shows them only while the operator has it open.
+ * The stored tools never change for it, so widening brings the column back.
+ */
+export function shownTools(stored: { explorer: boolean; changes: boolean }, placement: ToolsPlacement): { explorer: boolean; changes: boolean } {
+  const shown = placement !== "closed";
+  return { explorer: stored.explorer && shown, changes: stored.changes && shown };
+}
+
 function count(n: number, noun: string): string {
   return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }

@@ -25,6 +25,7 @@ import {
   ratioAtOffset,
   sameTarget,
   shownDisplays,
+  shownTools,
   singleAreaGeometry,
   steppedRatio,
   viewGeometry,
@@ -94,14 +95,14 @@ function useTree(): Tree {
 export function ViewAreas({ checkout, actions }: { checkout: Checkout; actions: Actions }) {
   const view = useShellStore((s) => workspaceViewOf(s.rest));
   const opening = useShellStore((s) => (s.editor?.opening ?? []).some((row) => row.checkout_id === checkout.id));
-  const toolsDismissed = useUiStore((s) => s.toolsDismissed);
+  const placement = useUiStore((s) => s.toolsPlacement);
   if (!view) return null;
   const layout = view.layout;
   if (!layout) {
     return <AreaEmpty state="view-layout-missing" text="This Hide core publishes no View areas, so no file or diff can be shown here." />;
   }
   if (areasOf(layout.root).every((area) => area.displays.length === 0)) {
-    return <ViewsEmpty opening={opening} explorerShown={view.explorer && !toolsDismissed} actions={actions} />;
+    return <ViewsEmpty opening={opening} explorerShown={shownTools(view, placement).explorer} actions={actions} />;
   }
   return <ViewTree layout={layout} deviceId={view.device_id} path={view.path} actions={actions} />;
 }

@@ -5,9 +5,9 @@
 import { create } from "zustand";
 import type { Relation } from "./lineage";
 import type { Opening } from "./navigation";
-import type { ViewFocusRequest, ViewWorkspace } from "./viewLayout";
+import { placementForWidth, type ToolsPlacement, type ViewFocusRequest, type ViewWorkspace } from "./viewLayout";
 
-export type { ViewFocusRequest } from "./viewLayout";
+export type { ToolsPlacement, ViewFocusRequest } from "./viewLayout";
 
 export type SidebarMode = "agents" | "projects";
 
@@ -111,12 +111,12 @@ type UiStore = {
    */
   workingRegion: WorkingRegion;
   /**
-   * Whether the operator dismissed the Workspace tools drawn over a narrow
-   * window (S7 B12). Only that overlay reads it, and it resets once the
-   * window is wide enough for the tool column; the stored tools stay as they
-   * are, so widening brings the column back.
+   * How the Workspace tools stand (S7 B12, D-08): the column while the window
+   * has room for it, else an overlay that stays closed until the operator
+   * asks for a tool. The Workspace screen keeps it in step with the window's
+   * width; the tools the core stores are never changed by it.
    */
-  toolsDismissed: boolean;
+  toolsPlacement: ToolsPlacement;
   /** The Explorer's inline name field, or null. */
   explorerDraft: ExplorerDraft | null;
   /** The trash confirmation the Explorer is showing, or null. */
@@ -155,7 +155,12 @@ type UiStore = {
   requestEditorFind: (displayId: string | null) => void;
   setViewFocusRequest: (request: ViewFocusRequest | null) => void;
   setWorkingRegion: (region: WorkingRegion) => void;
-  setToolsDismissed: (dismissed: boolean) => void;
+  /** Follows the window: `column` when wide, a closed overlay when it turns narrow. */
+  setToolsNarrow: (narrow: boolean) => void;
+  /** The operator asked for a tool: a narrow window's overlay opens. */
+  openTools: () => void;
+  /** Escape or a click outside closes a narrow window's overlay. */
+  closeTools: () => void;
   setExplorerDraft: (draft: ExplorerDraft | null) => void;
   setPendingTrash: (trash: PendingTrash | null) => void;
   openOverlay: (overlay: Overlay) => void;
@@ -182,7 +187,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   editorFindDisplay: null,
   viewFocusRequest: null,
   workingRegion: "agents",
-  toolsDismissed: false,
+  toolsPlacement: "column",
   explorerDraft: null,
   pendingTrash: null,
   overlay: "none",
@@ -211,8 +216,16 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setWorkingRegion: (workingRegion) => {
     if (get().workingRegion !== workingRegion) set({ workingRegion });
   },
-  setToolsDismissed: (toolsDismissed) => {
-    if (get().toolsDismissed !== toolsDismissed) set({ toolsDismissed });
+  setToolsNarrow: (narrow) => {
+    const current = get().toolsPlacement;
+    const next = placementForWidth(current, narrow);
+    if (next !== current) set({ toolsPlacement: next });
+  },
+  openTools: () => {
+    if (get().toolsPlacement === "closed") set({ toolsPlacement: "open" });
+  },
+  closeTools: () => {
+    if (get().toolsPlacement === "open") set({ toolsPlacement: "closed" });
   },
   setExplorerDraft: (explorerDraft) => set({ explorerDraft }),
   setPendingTrash: (pendingTrash) => set({ pendingTrash }),

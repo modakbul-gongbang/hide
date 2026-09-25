@@ -208,7 +208,8 @@ function SearchPalette({ actions }: { actions: Actions }) {
   const rest = useShellStore((s) => s.rest);
   const [query, setQuery] = useState("");
   const workspaceOnScreen = useUiStore((s) => s.screen?.kind === "workspace");
-  const entries = filterEntries(searchEntries(rest, workspaceOnScreen, drawnViews()), query);
+  const placement = useUiStore((s) => s.toolsPlacement);
+  const entries = filterEntries(searchEntries(rest, workspaceOnScreen ? { drawn: drawnViews(), placement } : null), query);
   const navigation = usePaletteNavigation(entries.length, (index) => activate(entries[index]));
 
   const activate = (entry: SearchEntry | undefined) => {

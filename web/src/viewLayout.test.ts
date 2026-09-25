@@ -9,8 +9,10 @@ import {
   narrowWorkspace,
   neighbourArea,
   placeKey,
+  placementForWidth,
   ratioForFirst,
   resizeTarget,
+  shownTools,
   splitEligibility,
   steppedRatio,
   viewCommands,
@@ -326,6 +328,17 @@ describe("narrow windows", () => {
 
   it("decides nothing before the body is measured", () => {
     expect(narrow(0, "together")).toEqual({ toolsOverlay: false, singleRegion: false });
+  });
+
+  it("never floats the tools over the work by itself: a narrowing window closes them until asked for", () => {
+    expect(placementForWidth("column", true)).toBe("closed");
+    expect(placementForWidth("open", true)).toBe("open");
+    expect(placementForWidth("closed", true)).toBe("closed");
+    expect(placementForWidth("open", false)).toBe("column");
+    const stored = { explorer: true, changes: false };
+    expect(shownTools(stored, "column")).toEqual(stored);
+    expect(shownTools(stored, "open")).toEqual(stored);
+    expect(shownTools(stored, "closed")).toEqual({ explorer: false, changes: false });
   });
 });
 

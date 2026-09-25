@@ -15,7 +15,7 @@ import { AgentTabBar } from "./TabBar";
 import { Tools } from "./Tools";
 import { useUiStore, type WorkingRegion } from "./ui";
 import { ViewAreas } from "./ViewAreas";
-import { narrowWorkspace } from "./viewLayout";
+import { narrowWorkspace, shownTools } from "./viewLayout";
 import { LAYOUTS, agentEntries, agentWidth, layoutLabel, shareAt, workspaceViewOf, type ViewMode } from "./workspace";
 
 // A Workspace (PRD S6 D-01..D-05, B4-B11; S7 B12, B13): one checkout's Agent
@@ -26,29 +26,41 @@ import { LAYOUTS, agentEntries, agentWidth, layoutLabel, shareAt, workspaceViewO
 // closed: its terminals park and stay fed, and its tabs stay in the core.
 //
 // A window too narrow for what the core stored is drawn narrower without
-// changing it: the tools float over the work area and can be dismissed, and
-// Together shows one working region at a time with a switch to the other.
-// None of that is sent or stored, so widening shows the stored layout again.
+// changing it: the tools float over the work area once the operator asks for
+// one, and Together shows one working region at a time with a switch to the
+// other. None of that is sent or stored, so widening shows the stored layout
+// again.
 
 const WIDE = { toolsOverlay: false, singleRegion: false };
 
 export function WorkspaceScreen({ actions }: { actions: Actions }) {
   const checkout = useShellStore((s) => frontCheckout(s.rest));
   const view = useShellStore((s) => workspaceViewOf(s.rest));
-  const dismissed = useUiStore((s) => s.toolsDismissed);
+  const stored = useUiStore((s) => s.toolsPlacement);
   const [body, setBody] = useState<HTMLDivElement | null>(null);
   const width = useWidth(body);
   const sizes = useMemo(() => ({ areaMin: tokenPx("--size-workspace-area-min"), panelMin: tokenPx("--size-panel-min"), divider: tokenPx("--size-resize-handle") }), []);
   const narrow = view ? narrowWorkspace({ bodyWidth: width, mode: view.mode, ...sizes }) : WIDE;
-  // The tools the operator dismissed from over a narrow window come back as
-  // the column once there is room for it.
+  // The column while there is room for it; past that, an overlay that stays
+  // closed until the operator asks for a tool (S7 B12).
   useEffect(() => {
-    if (!narrow.toolsOverlay && dismissed) useUiStore.getState().setToolsDismissed(false);
-  }, [narrow.toolsOverlay, dismissed]);
+    useUiStore.getState().setToolsNarrow(narrow.toolsOverlay);
+  }, [narrow.toolsOverlay]);
+  // An overlay opened in one Workspace is not left open over the next one,
+  // nor over this screen when the operator comes back to it; one left with
+  // no tool to show closes too, so a tool shown later does not float over
+  // the work by itself.
+  const checkoutId = checkout?.id ?? null;
+  useEffect(() => () => useUiStore.getState().closeTools(), [checkoutId]);
+  const toolless = view ? !view.explorer && !view.changes : true;
+  useEffect(() => {
+    if (toolless) useUiStore.getState().closeTools();
+  }, [toolless]);
   if (!checkout || !view) return null;
-  const hidden = narrow.toolsOverlay && dismissed;
-  const explorer = view.explorer && !hidden;
-  const changes = view.changes && !hidden;
+  // Until the effect above has run, a window that just turned narrow is
+  // drawn with the overlay closed.
+  const placement = narrow.toolsOverlay ? (stored === "open" ? "open" : "closed") : "column";
+  const { explorer, changes } = shownTools(view, placement);
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={`Workspace ${checkout.branch ?? checkout.label}`} data-workspace-screen={checkout.id} data-layout={view.mode}>
       <WorkspaceToolbar checkout={checkout} mode={view.mode} explorer={explorer} changes={changes} singleRegion={narrow.singleRegion} actions={actions} />
