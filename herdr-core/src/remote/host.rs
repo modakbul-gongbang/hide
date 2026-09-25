@@ -616,12 +616,15 @@ pub fn establish(
 /// Why a started helper is not used: one that answers another protocol reads
 /// this build's requests with other shapes (a helper on protocol 8 ignores
 /// the View diffs a `changes` read carries and answers none, PRD S7 A5).
-/// The refusal is the device's unavailable reason; the next connection
-/// installs this build's helper, because a helper is keyed by its bytes.
+/// The refusal is the device's unavailable reason. A device always runs the
+/// helper this Hide carries, installed by the digest of its bytes, so only a
+/// rebuilt or reinstalled Hide clears it: a development `hided` carries the
+/// `hide-host-helper` beside its own executable (`host_helper_dir`), and a
+/// stale build there is installed and refused again on every connection.
 fn helper_protocol_refusal(hello: &Hello) -> Option<String> {
     (hello.protocol != PROTOCOL_VERSION).then(|| {
         format!(
-            "The device helper speaks protocol {}, this Hide needs {PROTOCOL_VERSION}",
+            "The device helper speaks protocol {}, this Hide needs {PROTOCOL_VERSION}; the helper this Hide carries does not match it, so rebuild or reinstall Hide",
             hello.protocol
         )
     })
@@ -1308,7 +1311,7 @@ mod tests {
         assert_eq!(
             refusal,
             format!(
-                "The device helper speaks protocol {}, this Hide needs {PROTOCOL_VERSION}",
+                "The device helper speaks protocol {}, this Hide needs {PROTOCOL_VERSION}; the helper this Hide carries does not match it, so rebuild or reinstall Hide",
                 PROTOCOL_VERSION - 1
             )
         );

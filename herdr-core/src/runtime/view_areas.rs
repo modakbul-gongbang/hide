@@ -1340,7 +1340,9 @@ impl Runtime {
     /// A device's files are read through its helper, and its Workspace also
     /// waits for its catalog, which moves the device's checkouts into their
     /// Projects; this machine's wait for the daemon to open the checkout's
-    /// root.
+    /// root. A helper that cannot be used gives the device's own reason, the
+    /// one History and Settings show, and its displays still wait, so they
+    /// open once the device is fixed.
     pub(super) fn view_root_wait(&self, key: &WorkspaceKey) -> Option<String> {
         if key.0 != workspace::LOCAL_DEVICE_ID {
             let label = self
@@ -1350,12 +1352,18 @@ impl Runtime {
                 .iter()
                 .find(|device| device.id == key.0)
                 .map_or(key.0.as_str(), |device| device.label.as_str());
-            let helper_ready = matches!(
-                self.device_hosts.get(&key.0).map(|host| &host.phase),
-                Some(hosts::HostPhase::Ready { host, .. }) if host.closed_reason().is_none()
-            );
-            if !helper_ready {
-                return Some(format!("Waiting for {label} to connect"));
+            match self.device_hosts.get(&key.0).map(|host| &host.phase) {
+                None | Some(hosts::HostPhase::Connecting) => {
+                    return Some(format!("Waiting for {label} to connect"));
+                }
+                Some(hosts::HostPhase::Ready { host, .. }) if host.closed_reason().is_none() => {}
+                Some(_) => {
+                    return Some(
+                        self.host_snapshot(&key.0)
+                            .message
+                            .unwrap_or_else(|| format!("Waiting for {label} to connect")),
+                    );
+                }
             }
             let catalog_ready = self
                 .snapshot

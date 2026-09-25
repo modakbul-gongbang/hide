@@ -1223,9 +1223,10 @@ fn view_displays(runtime: &mut Runtime) -> Vec<(DisplayKind, ViewDisplayState, O
     shown
 }
 
-/// The device as a restart finds it: registered as "studio", its catalog
-/// listed, its helper still connecting.
+/// The device as a restart finds it: registered as "studio" with its helper
+/// allowed, its catalog listed, its helper still connecting.
 fn studio_connecting(runtime: &mut Runtime) {
+    let host_consent = Some(runtime.new_host_consent());
     runtime
         .snapshot
         .ui_state
@@ -1233,6 +1234,7 @@ fn studio_connecting(runtime: &mut Runtime) {
         .push(crate::model::DeviceRegistration {
             id: DEVICE.to_owned(),
             label: "studio".to_owned(),
+            host_consent,
             ..Default::default()
         });
     runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
@@ -1258,11 +1260,13 @@ fn helper_ready(runtime: &mut Runtime, device: &Arc<FakeDevice>) {
     };
 }
 
-/// S6 B20, B21, S7 contract 5: after a restart a device Workspace's displays
-/// wait for its helper and then its catalog, saying which, rather than coming
-/// back unavailable while it connects, and Retry on one says what it waits
-/// for; once its files can be read each display binds to its document.
-/// Removing the device removes its displays with its tabs.
+/// S6 B20, B21, S7 contract 5, B16: after a restart a device Workspace's
+/// displays wait for its helper and then its catalog, saying which, rather
+/// than coming back unavailable while it connects; a helper that cannot be
+/// used gives the device's own reason and its displays keep waiting, and
+/// Retry on one says what it waits for; once its files can be read each
+/// display binds to its document. Removing the device removes its displays
+/// with its tabs.
 #[test]
 fn a_device_workspaces_displays_wait_for_its_helper_after_a_restart() {
     let f = Fixture::new();
@@ -1317,6 +1321,36 @@ fn a_device_workspaces_displays_wait_for_its_helper_after_a_restart() {
             (refused.kind.as_str(), Some(refused.message)),
             ("view_layout.waiting", connecting)
         );
+
+        let stale_helper = Some(
+            "The device helper speaks protocol 8, this Hide needs 9; the helper this Hide carries does not match it, so rebuild or reinstall Hide"
+                .to_owned(),
+        );
+        runtime.device_hosts.get_mut(DEVICE).unwrap().phase =
+            hosts::HostPhase::Unavailable(stale_helper.clone().unwrap());
+        assert_eq!(
+            view_displays(&mut runtime),
+            vec![
+                (
+                    DisplayKind::Diff,
+                    ViewDisplayState::Waiting,
+                    stale_helper.clone()
+                ),
+                (
+                    DisplayKind::File,
+                    ViewDisplayState::Waiting,
+                    stale_helper.clone()
+                ),
+            ],
+            "a refused helper is the device's own reason, and the displays wait for it"
+        );
+        runtime.dispatch_json(&serde_json::to_vec(&retry).unwrap());
+        let refused = runtime.snapshot.status.last_error.clone().unwrap();
+        assert_eq!(
+            (refused.kind.as_str(), Some(refused.message)),
+            ("view_layout.waiting", stale_helper)
+        );
+        assert!(runtime.snapshot.editor.tabs.is_empty());
 
         helper_ready(&mut runtime, &f.device);
         runtime.snapshot.status.remote[0].catalog.state = "resolving".to_owned();
