@@ -101,3 +101,104 @@ export function pullRequestBadge(pr: PullRequest): { label: string; color: strin
       }
   }
 }
+
+/** The checkout row's leading glyph: a pull request's lifecycle, else what kind of checkout it is. */
+export type CheckoutKind = "pr_open" | "pr_draft" | "pr_merged" | "pr_closed" | "folder" | "primary" | "detached" | "branch";
+
+/** One checkout row of the Projects tab, mirrored from `SidebarCheckoutPresentation`. */
+export type CheckoutPresentation = {
+  kind: CheckoutKind;
+  /** The glyph's color class: danger for a missing folder, muted for stale GitHub data, else the lifecycle color. */
+  kindTone: string;
+  /** The last commit's age; absent for a missing folder and until Git has been read. */
+  age: string | null;
+  /** Live agents here, each counted once. */
+  agentCount: number;
+  /** Line two waits for Git to be read, so a row does not grow and shrink as the facts arrive. */
+  secondLineReady: boolean;
+  /** A merged or closed pull request's row is drawn dimmed. */
+  settled: boolean;
+  /** The tooltip: the pull request, the agents by state, and the branch and path. */
+  detail: string;
+};
+
+const LIFECYCLE_TONE: Record<Extract<CheckoutKind, `pr_${string}`>, string> = {
+  pr_open: "text-pr-open",
+  pr_draft: "text-pr-draft",
+  pr_merged: "text-pr-merged",
+  pr_closed: "text-pr-closed",
+};
+
+export function checkoutPresentation(workspace: Workspace, checkout: Checkout, nowMs: number): CheckoutPresentation {
+  const pr = checkout.pull_request;
+  const github = checkout.github;
+  // A stale refresh keeps the last known pull request and mutes its glyph; an
+  // unavailable answer that is not stale falls back to the branch glyph.
+  const showsPr = pr !== null && (!github || github.available || github.stale || github.unavailable_reason === null);
+  const primary = !checkout.is_worktree && checkout.path === workspace.path;
+  const detached = checkout.worktree ? checkout.worktree.branch === null : false;
+  const kind: CheckoutKind =
+    pr && showsPr
+      ? pr.badge === "merged"
+        ? "pr_merged"
+        : pr.badge === "closed"
+          ? "pr_closed"
+          : pr.is_draft
+            ? "pr_draft"
+            : "pr_open"
+      : !workspace.is_git
+        ? "folder"
+        : primary
+          ? "primary"
+          : detached
+            ? "detached"
+            : "branch";
+  const kindTone = !checkout.exists
+    ? "text-destructive"
+    : kind.startsWith("pr_")
+      ? github?.stale
+        ? "text-muted-foreground"
+        : LIFECYCLE_TONE[kind as keyof typeof LIFECYCLE_TONE]
+      : "text-subtle-foreground";
+  const gitLoading = !!workspace.is_git && !checkout.worktree;
+  const commitSeconds = checkout.worktree?.last_commit_unix_seconds;
+  const age = checkout.exists && !gitLoading && commitSeconds != null ? relativeActivity(commitSeconds * 1000, nowMs) : null;
+  const summary = checkout.agent_summary;
+  const agentCount = summary ? summary.needs_you + summary.done + summary.working + summary.seen : 0;
+
+  const lines: string[] = [];
+  if (pr && showsPr) {
+    let first = `#${pr.number} · ${pullRequestBadge(pr).label}`;
+    if (pr.title) first += ` · ${pr.title}`;
+    if (github?.stale && github.last_success_at_unix_ms != null) first += ` · Last known ${relativeActivity(github.last_success_at_unix_ms, nowMs)}`;
+    lines.push(first);
+  }
+  if (github?.unavailable_reason) lines.push(github.unavailable_reason);
+  if (summary && agentCount > 0) {
+    const counts = (
+      [
+        ["Needs You", summary.needs_you],
+        ["Done", summary.done],
+        ["Working", summary.working],
+        ["Seen", summary.seen],
+      ] as const
+    )
+      .filter(([, count]) => count > 0)
+      .map(([name, count]) => `${name}: ${count}`)
+      .join(" · ");
+    lines.push(summary.unknown > 0 ? `${counts} (${summary.unknown} Unknown)` : counts);
+  }
+  if (detached) lines.push(`Detached HEAD${checkout.worktree?.head_sha ? ` at ${checkout.worktree.head_sha}` : ""}`);
+  else if (checkout.branch) lines.push(checkout.branch);
+  lines.push(checkout.path);
+
+  return {
+    kind,
+    kindTone,
+    age,
+    agentCount,
+    secondLineReady: !gitLoading,
+    settled: pr?.badge === "merged" || pr?.badge === "closed",
+    detail: lines.join("\n"),
+  };
+}

@@ -115,6 +115,10 @@ Menus and Overlays is `Screen / Menus and Overlays`.
 It draws the sidebar row menu, the Explorer context menu, the device picker, and the Explorer git-status notice, each anchored in its real screen context.
 Its web files are `web/src/entry-menu.tsx` and `web/src/DevicePicker.tsx`.
 
+Projects Sidebar is `Screen / Projects Sidebar`.
+It draws the sidebar's Projects tab: pinned and activity-ordered projects, checkout rows with their kind glyph, age and agent line, an opened checkout's agent rows, and both inactive folds.
+Its web files are `web/src/sidebar.tsx` and `web/src/projects.ts`.
+
 ## How to add a token
 
 1. Add the entry to `design/tokens.json`, with both a Dark (`value`) and a Light (`light`) value for a color token, or use `type: "alias"` to point at another token.
