@@ -953,6 +953,8 @@ pub(super) enum Event {
 
 /// The web shell rebinds a handful of pane commands; the bound keeps a
 /// malformed client from growing the persisted state without limit.
+// The desktop host checks a reported set against the same caps
+// (desktop/src/main/menu.ts); change them together.
 const BINDINGS_CAP: usize = 16;
 const BINDING_TEXT_CAP: usize = 64;
 

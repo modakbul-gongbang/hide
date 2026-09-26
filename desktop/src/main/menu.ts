@@ -81,6 +81,8 @@ function commandItem(command: Command, send: (id: CommandId) => void): MenuItemC
 }
 
 // A reported set is a few pane commands; anything past these caps is not one.
+// The core refuses a stored set past the same caps (`BINDINGS_CAP` and
+// `BINDING_TEXT_CAP` in herdr-core/src/runtime/events.rs); change them together.
 const BINDINGS_CAP = 16;
 const BINDING_TEXT_CAP = 64;
 
