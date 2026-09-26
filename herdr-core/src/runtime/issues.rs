@@ -172,6 +172,45 @@ impl Runtime {
 }
 
 impl Runtime {
+    /// Projects each local Git project's issues into the source-neutral task
+    /// list the web reads, and names each checkout's task by its key. It runs
+    /// after `sync_issues`, so a checkout's task is the issue it links to.
+    pub(super) fn sync_tasks(&mut self) -> bool {
+        let mut changed = false;
+        for workspace in &mut self.snapshot.navigator.workspaces {
+            let local_git = workspace.remote_target_id.is_none() && workspace.is_git;
+            let status = workspace
+                .checkouts
+                .first()
+                .map(|checkout| checkout.github.clone())
+                .unwrap_or_default();
+            let tasks = crate::tasks::github_tasks(local_git, &workspace.home_issues, &status);
+            if workspace.tasks != tasks {
+                workspace.tasks = tasks;
+                changed = true;
+            }
+            for checkout in &mut workspace.checkouts {
+                let key = checkout
+                    .issue
+                    .as_ref()
+                    .map(|link| crate::tasks::github_key(&link.issue.reference));
+                let closes: Vec<String> = checkout
+                    .pull_request
+                    .iter()
+                    .flat_map(|pr| pr.closing_issues.iter().map(crate::tasks::github_key))
+                    .filter(|closed| Some(closed) != key.as_ref())
+                    .filter(|closed| workspace.tasks.tasks.iter().any(|task| &task.key == closed))
+                    .collect();
+                if checkout.task_key != key || checkout.closes_task_keys != closes {
+                    checkout.task_key = key;
+                    checkout.closes_task_keys = closes;
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+
     pub(super) fn set_checkout_issue(&mut self, payload: SetCheckoutPurposePayload) -> bool {
         let target = self
             .snapshot

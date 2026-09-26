@@ -693,6 +693,9 @@ pub struct SidebarAgentSnapshot {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WorkspaceSnapshot {
     pub home_issues: crate::issues::ProjectIssuesSnapshot,
+    /// The project's tasks in the source-neutral shape the web reads
+    /// (`tasks.rs`); `home_issues` stays as the Swift shell reads it.
+    pub tasks: crate::tasks::ProjectTasksSnapshot,
     pub id: String,
     pub label: String,
     pub path: String,
@@ -819,6 +822,11 @@ pub struct CheckoutPurposeSnapshot {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct CheckoutSnapshot {
     pub issue: Option<crate::issues::IssueLinkSnapshot>,
+    /// The key of the task in its project's `tasks` this checkout works on.
+    pub task_key: Option<String>,
+    /// The other tasks of its project's `tasks` this checkout's pull request
+    /// closes, so each of them shows the same pull request (D-07).
+    pub closes_task_keys: Vec<String>,
     #[serde(skip_serializing)]
     pub branch_issue: Option<String>,
     pub github: GithubStatusSnapshot,

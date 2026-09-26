@@ -1624,6 +1624,7 @@ mod tests {
         };
         let workspace = |checkout| WorkspaceSnapshot {
             home_issues: Default::default(),
+            tasks: Default::default(),
             id: "project".into(),
             label: "Project".into(),
             path: "/fixture/project".into(),
@@ -1724,6 +1725,7 @@ mod tests {
         };
         let mut workspaces = vec![WorkspaceSnapshot {
             home_issues: Default::default(),
+            tasks: Default::default(),
             checkouts: vec![
                 checkout(
                     "main",

@@ -855,6 +855,20 @@ export function createActions(dispatch: DispatchFn) {
      * Names a local Git Project an Overview shows for measuring its disk, and
      * measures it again; the core refuses anything else to the log.
      */
+    /**
+     * Asks the core to read a local Git project's pull requests and issues,
+     * the tasks its Tasks and Agents views draw; the core reads a project
+     * once and keeps the answer, so asking again costs nothing (D-14).
+     */
+    readProjectTasks(workspaceId: string) {
+      dispatch({ schema_version: 2, kind: "github_request", payload: { workspace_id: workspaceId, refresh: false } });
+    },
+
+    /** A new tab in the checkout with the provider started in it (D-05); `terminal` is the tab alone. */
+    startAgent(checkoutPath: string, provider: "claude" | "codex" | "terminal") {
+      dispatch({ schema_version: 2, kind: "agent_start_in_checkout", payload: { checkout_path: checkoutPath, provider } });
+    },
+
     measureProjectDisk(workspaceId: string) {
       dispatch({ schema_version: 2, kind: "card_measure_disk", payload: { workspace_id: workspaceId } });
     },

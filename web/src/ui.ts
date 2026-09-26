@@ -37,11 +37,18 @@ export type PendingClose = {
 export type Screen = { kind: "main" } | { kind: "overview"; projectId: string } | { kind: "workspace" };
 
 /**
- * How a Project's scope is looked at: its Tasks board, its Agents board, or
- * its session history (PRD S8). It belongs to the page, not to one Project,
- * so choosing another Project keeps the view the operator was using.
+ * How a scope is looked at: its Tasks board, its Agents board, a Project's
+ * session history (PRD S8), or All projects' list of Projects. It belongs to
+ * the page, not to one scope, so choosing another Project keeps the view the
+ * operator was using, and a scope without it shows its first view (PRD
+ * task-agents-views D-01).
  */
-export type ProjectView = "tasks" | "agents" | "sessions";
+export type ProjectView = "tasks" | "agents" | "sessions" | "projects";
+
+/** The view a scope draws: the page's own when the scope has it, else the scope's first. */
+export function scopeView(view: ProjectView, views: readonly ProjectView[]): ProjectView {
+  return views.includes(view) ? view : (views[0] ?? view);
+}
 
 /** `file_palette_beside` is ⌘P's list for "Open file to the side" (S7 B4): its pick opens beside the active View area. */
 export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_palette" | "file_palette_beside" | "search" | "settings";

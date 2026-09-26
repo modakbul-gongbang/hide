@@ -84,12 +84,12 @@ Each sheet carries a `Light` and a `Dark` frame and uses realistic content, incl
 `scripts/check-hide-screens.mjs` enforces the shape (`Screen / ` naming, both theme frames, every reference resolving against the library, every cross-library color restated locally, and local variables matching `design/tokens.json`) and `scripts/gen-screens.mjs` regenerates the file from `scripts/pen-screens.mjs`.
 
 All projects is `Screen / Main`, named after its web file and screen kind.
-It draws the agent and project sidebar beside All projects: its title with Add project, its facts line, and the project list grouped by device, with no view tabs while it has one view.
-Its web files are `web/src/App.tsx`, `web/src/sidebar.tsx`, and `web/src/MainScreen.tsx`.
+It draws the agent and project sidebar beside All projects: its title with Add project, its facts line, the `Tasks · Agents · Projects` tabs, every project's tasks on one board, and a project with agents and no task source gathered under it.
+Its web files are `web/src/App.tsx`, `web/src/sidebar.tsx`, `web/src/MainScreen.tsx`, and `web/src/TaskBoards.tsx`.
 
 Project Overview is `Screen / Project Overview`.
-It draws a project's Tasks board under its header: the title row with the path back and New agent, the facts line, the Tasks, Agents and Sessions tabs, the ad hoc strip, the four Git columns with Merged folded, and a needs-you card in the warning halo.
-Its web files are `web/src/ProjectOverview.tsx` and `web/src/projectBoard.ts`; its agent rows are `web/src/components/agent-row.tsx`.
+It draws a project's Tasks board under its header: the title row with the path back and New agent, the facts line, the Tasks, Agents and Sessions tabs, the five columns with Done folded, task cards (id and title, delivery facts, at most two agents, an untracked checkout with no task, Start agent on a ready card), and a needs-you card in the warning halo; beside it, the Agents board with each agent's checkout, task chip and device.
+Its web files are `web/src/ProjectOverview.tsx`, `web/src/TaskBoards.tsx` and `web/src/projectBoard.ts`; its agent rows are `web/src/components/agent-row.tsx`.
 
 Workspace is `Screen / Workspace`.
 It draws the tab strip, the layout switch, and the split content of a terminal beside the Explorer.

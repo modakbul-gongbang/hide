@@ -216,3 +216,58 @@ fn issue_uncertain_write_is_suppressed_even_when_metadata_arrives_later() {
     assert_eq!(linked_number(&runtime), 1);
     assert!(runtime.unconfirmed_issue_tokens.is_empty());
 }
+
+#[test]
+fn a_linked_checkout_names_its_task_in_the_projects_task_list() {
+    let mut runtime = issue_runtime();
+    runtime.snapshot.navigator.workspaces[0].checkouts[0]
+        .github
+        .last_success_at_unix_ms = Some(1);
+    runtime.snapshot.navigator.workspaces[0].checkouts[0]
+        .github
+        .available = true;
+    let reference = |number| IssueReference {
+        repository: "acme/project".into(),
+        number,
+    };
+    // One pull request closing the linked issue and another one.
+    runtime.snapshot.navigator.workspaces[0].checkouts[0].pull_request =
+        Some(crate::model::PullRequestSnapshot {
+            closing_issues: vec![reference(2), reference(3), reference(99)],
+            title: "Fix".into(),
+            checks: crate::model::PullRequestChecks::Unknown,
+            number: 7,
+            head_branch: "4-task".into(),
+            base_branch: "main".into(),
+            url: "https://example.invalid/pull/7".into(),
+            badge: crate::model::PullRequestBadge::Open,
+            review: None,
+            is_draft: false,
+            merged_at_unix_ms: None,
+            updated_at_unix_ms: None,
+        });
+    runtime.sync_issues();
+    assert!(runtime.sync_tasks());
+    let workspace = &runtime.snapshot.navigator.workspaces[0];
+    // The linked task is not repeated and an issue outside the list is left out.
+    assert_eq!(
+        workspace.checkouts[0].closes_task_keys,
+        vec!["github:acme/project#3".to_owned()]
+    );
+    assert_eq!(workspace.tasks.tasks.len(), 4);
+    assert_eq!(
+        workspace.checkouts[0].task_key.as_deref(),
+        Some("github:acme/project#2")
+    );
+    assert!(
+        workspace
+            .tasks
+            .tasks
+            .iter()
+            .any(|task| task.key == "github:acme/project#2")
+    );
+    assert!(
+        !runtime.sync_tasks(),
+        "an unchanged projection publishes nothing"
+    );
+}
