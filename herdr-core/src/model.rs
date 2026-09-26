@@ -186,6 +186,9 @@ pub struct WorkspaceViewSnapshot {
     pub changes: bool,
     /// The open panel's width, as a share of the Workspace body's.
     pub views_over_share: f32,
+    /// The shell reported drawing this panel over the whole body (a narrow
+    /// window), so an agent chosen from elsewhere closes it even when pinned.
+    pub covered: bool,
     /// Whether this is the Workspace the operator last chose, now or before a
     /// restart, which the shell opens on; any other front starts on Main
     /// (D-11).

@@ -64,6 +64,27 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
   // the work by itself.
   const checkoutId = checkout?.id ?? null;
   useEffect(() => () => useUiStore.getState().closeTools(), [checkoutId]);
+  // Only the page sees the window, so it tells the core whether this
+  // Workspace's panel covers the whole body, once per change and never per
+  // resize, so an agent chosen from elsewhere uncovers it even when pinned
+  // (issue 170). Nothing is reported before the body is measured.
+  const covers = frame.narrow;
+  const measured = width > 0;
+  const coreCovers = view?.covered === true;
+  const deviceId = view?.device_id ?? null;
+  const viewPath = view?.path ?? null;
+  const reported = useRef<string | null>(null);
+  useEffect(() => {
+    if (!measured || deviceId === null || viewPath === null) return;
+    if (covers === coreCovers) {
+      reported.current = null;
+      return;
+    }
+    const report = `${deviceId}\u0000${viewPath}\u0000${covers}`;
+    if (reported.current === report) return;
+    reported.current = report;
+    actions.reportPanelCovers({ device_id: deviceId, path: viewPath }, covers);
+  }, [actions, measured, deviceId, viewPath, covers, coreCovers]);
   const toolless = view ? !view.explorer && !view.changes : true;
   useEffect(() => {
     if (toolless) useUiStore.getState().closeTools();

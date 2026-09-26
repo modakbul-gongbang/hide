@@ -1161,16 +1161,16 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     expect(stack.events.filter((event) => event.kind === "close_tab" || event.kind === "close_pane")).toHaveLength(0);
     expect(herdrIds(stack.herdr)).toEqual(herdrBefore);
 
-    // Floating here, the panel is still pinned: an agent chosen from the
-    // sidebar leaves it up, and the toggle closes it (issue 170).
+    // Drawn over the whole body, the pinned panel covers the agents, so an
+    // agent chosen from the sidebar uncovers them: the panel closes and
+    // stays pinned (issue 170).
+    await expect.poll(() => stack.events.filter((event) => event.kind === "panel_covers").at(-1)?.payload).toMatchObject({ workspace: { device_id: "local", path: stack.root }, covers: true });
     const agent = page.locator("[data-agent-open]").first();
     const pane = await agent.getAttribute("data-agent-open");
     await agent.click();
-    await expect(page.locator(`[data-pane-view="${pane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
-    await expect(workspace).toHaveAttribute("data-panel", "expanded");
-    expect(storedWorkspace(stack.daemon, stack.root)).toMatchObject({ panel: "open", pinned: true });
-    await page.locator('[data-panel-toggle="on"]').click();
     await expect(workspace).toHaveAttribute("data-panel", "closed");
+    await expect(page.locator(`[data-pane-view="${pane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
+    await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toMatchObject({ panel: "closed", pinned: true });
     // One press of a tool toggle opens the panel with that tool, even where
     // the tools fold into an overlay (B12).
     await toggle.click();
@@ -1184,6 +1184,76 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     await expect(workspace).toHaveAttribute("data-panel", "expanded");
     await expect(page.locator('[data-tools-overlay="true"] [data-tool="explorer"]')).toBeVisible();
     expectFrontWorkspaceOnEveryViewEvent(stack);
+  } finally {
+    stopStack(stack);
+  }
+});
+
+// Issue 170: the report that a narrow window draws the panel over the agents
+// names its Workspace, so an agent choice uncovers that Workspace alone.
+test("a pinned panel over a narrow window uncovers the agent chosen from the sidebar and leaves another Workspace's panel as it was", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  const stack = await startStack(page, "s7-covers", { "a.txt": "a\n" }, {
+    prepare: (checkout, herdr) => {
+      const beta = path.join(path.dirname(checkout), "beta");
+      fs.mkdirSync(beta, { recursive: true });
+      fs.writeFileSync(path.join(beta, "b1.txt"), "b1\n");
+      herdr.run(["workspace", "create", "--cwd", beta, "--label", "beta", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]);
+    },
+  });
+  try {
+    const betaRoot = path.join(path.dirname(stack.root), "beta");
+    const workspace = page.locator("[data-workspace-screen]");
+    const choose = async (project: string) => {
+      await page.locator('[data-sidebar-mode="projects"]').click();
+      await page.locator("[data-project]", { hasText: project }).locator("[data-checkout]").first().click();
+    };
+    // Beta: a file in a pinned panel beside its agents.
+    await choose("beta");
+    await expect(workspace).toHaveAttribute("data-panel", "closed");
+    await showExplorer(page);
+    await page.locator(`[data-explorer-row="${path.join(betaRoot, "b1.txt")}"]`).dblclick();
+    await page.locator('[data-panel-pin="off"]').click();
+    await expect(workspace).toHaveAttribute("data-panel-docked", "true");
+    await expect.poll(() => storedWorkspace(stack.daemon, betaRoot)).toMatchObject({ panel: "open", pinned: true });
+    const beta = storedWorkspace(stack.daemon, betaRoot);
+
+    // The fixture: pinned too, then a window too narrow for the agents beside it.
+    await choose("fixture");
+    await explorerRow(page, stack, "a.txt").dblclick();
+    await page.locator('[data-panel-pin="off"]').click();
+    await expect(workspace).toHaveAttribute("data-panel-docked", "true");
+    const sidebar = (await boxOf(page.locator("[data-workspace-body]"))).x;
+    const reports = () => stack.events.filter((event) => event.kind === "panel_covers");
+    const before = reports().length;
+    await page.setViewportSize({ width: Math.round(sidebar + 700), height: 1080 });
+    await expect(workspace).toHaveAttribute("data-panel", "expanded");
+    await expect(workspace).toHaveAttribute("data-panel-docked", "false");
+    // One report for the crossing, naming this Workspace, and none per resize.
+    await expect.poll(() => reports().length).toBe(before + 1);
+    expect(reports().at(-1)?.payload).toEqual({ workspace: { device_id: "local", path: stack.root }, covers: true });
+    for (const width of [690, 680, 670]) await page.setViewportSize({ width: Math.round(sidebar + width), height: 1080 });
+    await page.waitForTimeout(300);
+    expect(reports().length).toBe(before + 1);
+    await screenshot(page, "s7-covers-narrow-pinned");
+
+    // An agent chosen from the sidebar is uncovered: the panel closes, still pinned.
+    await page.locator('[data-sidebar-mode="agents"]').click();
+    const agent = page.locator("[data-agent-open]").first();
+    const pane = await agent.getAttribute("data-agent-open");
+    await agent.click();
+    await expect(workspace).toHaveAttribute("data-panel", "closed");
+    await expect(page.locator(`[data-pane-view="${pane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
+    await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toMatchObject({ panel: "closed", pinned: true });
+    await expect.poll(() => reports().at(-1)?.payload).toEqual({ workspace: { device_id: "local", path: stack.root }, covers: false });
+
+    // Beta's panel is as it was, stored and drawn once the window is wide again.
+    expect(storedWorkspace(stack.daemon, betaRoot)).toEqual(beta);
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await choose("beta");
+    await expect(workspace).toHaveAttribute("data-panel", "open");
+    await expect(workspace).toHaveAttribute("data-panel-docked", "true");
+    expect(storedWorkspace(stack.daemon, betaRoot)).toEqual(beta);
   } finally {
     stopStack(stack);
   }

@@ -36,6 +36,11 @@ pub(super) struct WorkspaceViewStore {
     pub(super) live: HashSet<WorkspaceKey>,
     /// The Workspace the last sync saw in front.
     pub(super) front: Option<WorkspaceKey>,
+    /// The front Workspace whose side panel the shell reports drawing over
+    /// the whole body, because its window is too narrow for the agents beside
+    /// it (`panel_covers`, issue 170). A viewport fact, not the operator's
+    /// choice: runtime only, never saved, and dropped when the front moves.
+    pub(super) covered: Option<WorkspaceKey>,
     /// Counts the layout changes made outside the reconcile, so an unchanged
     /// state costs the reconcile one comparison.
     pub(super) generation: u64,
@@ -98,6 +103,15 @@ impl AreaIntent {
             _ => None,
         }
     }
+}
+
+/// The payload of `panel_covers`: the Workspace the shell draws, as its
+/// `workspace_view` named it, and whether its side panel covers the whole
+/// body. The shell sends it only when that changes, never per resize.
+#[derive(Debug, Deserialize)]
+pub(super) struct PanelCoversPayload {
+    pub(super) workspace: super::view_areas::ViewWorkspace,
+    pub(super) covers: bool,
 }
 
 /// The payload of `workspace_view`: any subset of the front Workspace's
@@ -199,6 +213,7 @@ impl WorkspaceViewStore {
                 views,
                 live: HashSet::new(),
                 front: None,
+                covered: None,
                 generation: 0,
                 reconciled: None,
                 derived_active: None,
@@ -311,6 +326,9 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_mut() else {
             return;
         };
+        // A pinned panel the shell draws over the whole body covers the
+        // agents like one that floats.
+        let covered = store.covered.as_ref() == Some(key);
         let entry = store.views.entry(&key.0, &key.1);
         let before = (entry.panel, entry.explorer);
         match intent {
@@ -323,9 +341,9 @@ impl Runtime {
                 }
             }
             // A pinned panel sits beside the agents, so only its expansion
-            // covers them.
+            // covers them, unless the window is too narrow for both.
             AreaIntent::Agents => {
-                entry.panel = match (entry.panel, entry.pinned) {
+                entry.panel = match (entry.panel, entry.pinned && !covered) {
                     (PanelState::Expanded, true) => PanelState::Open,
                     (_, true) => entry.panel,
                     (_, false) => PanelState::Closed,
@@ -335,6 +353,34 @@ impl Runtime {
         if before != (entry.panel, entry.explorer) {
             self.persist_workspace_views();
         }
+    }
+
+    /// `panel_covers`: whether the shell draws the named Workspace's side
+    /// panel over the whole body. It is taken only for the Workspace in
+    /// front, the one the shell draws, so a report that crossed a move of the
+    /// front changes nothing, and it never touches another Workspace.
+    pub(super) fn apply_panel_covers(&mut self, payload: PanelCoversPayload) -> bool {
+        if !self.separate_view_areas() {
+            self.set_error(
+                "workspace_view.unsupported",
+                "This shell does not draw separate Agent and View areas",
+                false,
+            );
+            return true;
+        }
+        let key = (payload.workspace.device_id, payload.workspace.path);
+        if self.front_workspace_key().as_ref() != Some(&key) {
+            return false;
+        }
+        let Some(store) = self.workspace_views.as_mut() else {
+            return false;
+        };
+        let covered = payload.covers.then_some(key);
+        if store.covered == covered {
+            return false;
+        }
+        store.covered = covered;
+        true
     }
 
     pub(super) fn apply_workspace_view(&mut self, payload: WorkspaceViewPayload) -> bool {
@@ -459,7 +505,13 @@ impl Runtime {
         };
         let front = self.front_workspace_key();
         if front != store.front {
-            self.workspace_views.as_mut().expect("checked above").front = front.clone();
+            let store = self.workspace_views.as_mut().expect("checked above");
+            store.front = front.clone();
+            // The report described the Workspace that was drawn; the next
+            // one is reported when the shell draws it.
+            if store.covered.is_some() && store.covered != front {
+                store.covered = None;
+            }
         }
         if let Some(key) = front.as_ref()
             && self
@@ -566,6 +618,7 @@ impl Runtime {
             explorer: view.explorer,
             changes: view.changes,
             views_over_share: view.views_over_share,
+            covered: Some(key) == store.covered.as_ref(),
             resumed: Some(key) == store.resumable.as_ref(),
             layout: self.view_layout_snapshot(key, &view.layout),
         });

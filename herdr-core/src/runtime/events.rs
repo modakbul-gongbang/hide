@@ -869,6 +869,7 @@ pub(super) struct TerminalResizePayload {
 
 pub(super) enum Event {
     WorkspaceView(WorkspaceViewPayload),
+    PanelCovers(PanelCoversPayload),
     ViewLayout(ViewLayoutPayload),
     BrowserOpen(BrowserOpenPayload),
     BrowserState(BrowserStatePayload),
@@ -1137,6 +1138,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pet_activity" => Ok(Event::PetActivity),
         "pet_shortcut_update" => decode!(PetShortcutPayload, PetShortcutUpdate),
         "workspace_view" => decode!(WorkspaceViewPayload, WorkspaceView),
+        "panel_covers" => decode!(PanelCoversPayload, PanelCovers),
         "view_layout" => decode!(ViewLayoutPayload, ViewLayout),
         "browser_open" => decode!(BrowserOpenPayload, BrowserOpen),
         "browser_state" => decode!(BrowserStatePayload, BrowserState),
@@ -1151,6 +1153,7 @@ impl Runtime {
     pub(super) fn apply(&mut self, event: Event) -> bool {
         match event {
             Event::WorkspaceView(payload) => self.apply_workspace_view(payload),
+            Event::PanelCovers(payload) => self.apply_panel_covers(payload),
             Event::ViewLayout(payload) => self.apply_view_layout(payload),
             Event::BrowserOpen(payload) => self.open_browser(payload),
             Event::BrowserState(payload) => self.record_browser_state(payload),

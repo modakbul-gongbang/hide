@@ -20,6 +20,8 @@ export type WorkspaceView = {
   changes: boolean;
   /** The open panel's width, as a share of the Workspace body's. */
   views_over_share: number;
+  /** The page reported drawing this panel over the whole body (a narrow window); absent from an older core. */
+  covered?: boolean;
   /** The Workspace the operator last chose, now or before a restart, so the page opens on it (D-11). */
   resumed?: boolean;
   /** The View areas (S7); absent only from a core that predates them. */

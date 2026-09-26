@@ -167,6 +167,57 @@ fn explicit_opens_bring_the_hidden_area_back_and_status_changes_do_not() {
     assert_eq!(panel(&runtime), (PanelState::Closed, false));
 }
 
+/// Issue 170: a pinned panel the shell draws over the whole body (a narrow
+/// window) closes on an agent chosen from elsewhere, like one that floats.
+/// The report is taken only for the Workspace in front and is never saved.
+#[test]
+fn a_pinned_panel_drawn_over_the_agents_closes_on_an_agent_choice() {
+    let (runtime, checkout_id, directory) = strip_checkout("panel-covers");
+    let state = views_path("panel-covers");
+    let mut runtime = with_views(runtime, &state);
+    with_tabs(&mut runtime, &directory);
+    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+    layout(&mut runtime, serde_json::json!({"pinned": true}));
+    let path = directory.to_string_lossy().into_owned();
+    let covers = |runtime: &mut Runtime, path: &str, covers: bool| {
+        runtime.dispatch_json(&explorer_event(
+            "panel_covers",
+            serde_json::json!({"workspace": {"device_id": "local", "path": path}, "covers": covers}),
+        ));
+        assert_eq!(runtime.snapshot.status.last_error, None);
+    };
+
+    // A report naming a Workspace that is not in front changes nothing.
+    covers(&mut runtime, "/elsewhere", true);
+    runtime.sync_workspace_view();
+    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().covered);
+    runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2"));
+    assert_eq!(
+        panel(&runtime),
+        (PanelState::Open, true),
+        "a pinned panel beside the agents stays"
+    );
+
+    covers(&mut runtime, &path, true);
+    runtime.sync_workspace_view();
+    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().covered);
+    runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2"));
+    assert_eq!(
+        panel(&runtime),
+        (PanelState::Closed, true),
+        "the chosen agent is uncovered"
+    );
+    let written = std::fs::read_to_string(&state).expect("saved");
+    assert!(
+        !written.contains("covered"),
+        "a viewport fact is never saved"
+    );
+
+    covers(&mut runtime, &path, false);
+    runtime.sync_workspace_view();
+    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().covered);
+}
+
 /// Issue 170: the side panel closes on an agent chosen from elsewhere and
 /// opens again on request, closing no view; a choice among the agents beside
 /// it leaves it up; a pinned panel sits beside the agents, so an agent choice

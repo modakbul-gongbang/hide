@@ -1335,6 +1335,11 @@ export function createActions(dispatch: DispatchFn) {
       if (frame) viewLayout(frame, { action: "navigate", display_id: displayId, url });
     },
 
+    /** Whether the page draws this Workspace's side panel over the whole body; sent only when that changes (issue 170). */
+    reportPanelCovers(workspace: ViewWorkspace, covers: boolean) {
+      dispatch({ schema_version: 2, kind: "panel_covers", payload: { workspace: { device_id: workspace.device_id, path: workspace.path }, covers } });
+    },
+
     /** What a page says (its address and title), recorded so the tab and a relaunch show it. */
     reportBrowserState(workspace: ViewWorkspace, displayId: string, url: string, title: string, load: number, loading: boolean, failure: string | null, present: boolean) {
       dispatch({

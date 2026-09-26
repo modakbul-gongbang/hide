@@ -65,8 +65,8 @@ pub(super) struct ViewLayoutPayload {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ViewWorkspace {
-    device_id: String,
-    path: String,
+    pub(super) device_id: String,
+    pub(super) path: String,
 }
 
 /// The payload of `browser_open` (issue 155): show `url` as a page in a View
