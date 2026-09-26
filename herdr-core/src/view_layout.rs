@@ -1644,7 +1644,7 @@ mod tests {
         for url in [
             "https://a.test/x?y#z",
             "http://localhost:3000",
-            "file:///Users/me/a.html",
+            "file:///Users/example/a.html",
             "about:blank",
         ] {
             assert!(browser_address(url), "{url}");

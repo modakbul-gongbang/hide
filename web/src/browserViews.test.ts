@@ -9,7 +9,7 @@ describe("the address field", () => {
   it("keeps a scheme, opens a path as a file, and picks http only for a loopback host", () => {
     expect(addressUrl("https://example.com/a?b#c")).toBe("https://example.com/a?b#c");
     expect(addressUrl("about:blank")).toBe("about:blank");
-    expect(addressUrl("/Users/me/문서/a b.html")).toBe("file:///Users/me/%EB%AC%B8%EC%84%9C/a%20b.html");
+    expect(addressUrl("/Users/example/문서/a b.html")).toBe("file:///Users/example/%EB%AC%B8%EC%84%9C/a%20b.html");
     expect(addressUrl("localhost:5173")).toBe("http://localhost:5173");
     expect(addressUrl("127.0.0.1:8080/docs")).toBe("http://127.0.0.1:8080/docs");
     expect(addressUrl("  example.com ")).toBe("https://example.com");
@@ -20,7 +20,7 @@ describe("the address field", () => {
   it("shows a web address without its scheme and anything else whole", () => {
     expect(addressShown("http://127.0.0.1:3000/a.html")).toBe("127.0.0.1:3000/a.html");
     expect(addressShown("https://example.com/")).toBe("example.com/");
-    expect(addressShown("file:///Users/me/a.html")).toBe("file:///Users/me/a.html");
+    expect(addressShown("file:///Users/example/a.html")).toBe("file:///Users/example/a.html");
     // What is shown loads the same page again.
     expect(addressUrl(addressShown("http://localhost:5173/x"))).toBe("http://localhost:5173/x");
   });
@@ -73,7 +73,7 @@ describe("placing pages", () => {
   });
 
   it("reads back the Workspace a host key names", () => {
-    const workspace = { device_id: "local", path: "/Users/me/project" };
+    const workspace = { device_id: "local", path: "/Users/example/project" };
     expect(parseWorkspaceKey(workspaceKey(workspace))).toEqual(workspace);
     expect(parseWorkspaceKey("no separator")).toBeNull();
   });

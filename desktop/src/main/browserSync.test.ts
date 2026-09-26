@@ -38,7 +38,7 @@ describe("what the shell may ask of the browser views (issue 155)", () => {
   });
 
   it("loads only the web, a local file, or a blank page", () => {
-    for (const url of ["https://a.test/", "http://localhost:3000/", "file:///Users/me/a.html", "about:blank"]) expect(loadable(url), url).toBe(true);
+    for (const url of ["https://a.test/", "http://localhost:3000/", "file:///Users/example/a.html", "about:blank"]) expect(loadable(url), url).toBe(true);
     for (const url of ["javascript:alert(1)", "data:text/html,x", "chrome://settings", "about:config", "not a url"]) expect(loadable(url), url).toBe(false);
   });
 });
