@@ -15,7 +15,7 @@ import { pathToFileURL } from "node:url";
 import { app, BrowserWindow, ipcMain, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import type { CommandId } from "../../../web/src/shortcuts";
 import { BINDINGS_CHANNEL, COMMAND_CHANNEL } from "../channel";
-import { BrowserViews } from "./browser";
+import { BrowserViews, type ResolvedPage } from "./browser";
 import {
   loginPathCommand,
   parseConnect,
@@ -38,7 +38,7 @@ import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowS
 
 declare const __HIDE_BACKGROUND__: string;
 
-const CONNECT_TIMEOUT_MS = 15_000;
+const CONNECT_TIMEOUT_MS = 25_000;
 const STATUS_TIMEOUT_MS = 5_000;
 /** VS Code's default for the same question (`application.shellEnvironmentResolutionTimeout`); a warm rc takes seconds. */
 const LOGIN_PATH_TIMEOUT_MS = 10_000;
@@ -99,7 +99,12 @@ export class DesktopHost {
 
   start(): void {
     this.guardSession();
-    this.browsers = new BrowserViews(this.log, (event) => this.fromShell(event));
+    this.browsers = new BrowserViews(
+      this.log,
+      (event) => this.fromShell(event),
+      (workspace, id, load) => this.resolveBrowserRoute(workspace, id, load),
+      (workspace, id, load) => this.releaseBrowserRoute(workspace, id, load),
+    );
     this.openWindow();
     void this.discover("launch");
   }
@@ -381,6 +386,45 @@ export class DesktopHost {
 
   private daemonOrigin(): string | null {
     return this.state.kind === "attached" || this.state.kind === "lost" ? this.state.origin : null;
+  }
+
+  private browserRouteRequest(workspace: string, id: string, load: number): { current: Attached; token: string; body: string } {
+    const at = workspace.indexOf("\u0000");
+    if (at <= 0 || at === workspace.length - 1 || !id || !Number.isSafeInteger(load)) throw new Error("Invalid Browser Workspace");
+    const current = this.state;
+    if (current.kind !== "attached") throw new Error("Hide is disconnected");
+    const token = new URLSearchParams(new URL(current.url).hash.slice(1)).get("token");
+    if (!token) throw new Error("Hide credential is unavailable");
+    return { current, token, body: JSON.stringify({ device_id: workspace.slice(0, at), checkout_path: workspace.slice(at + 1), id, load, owner_pid: process.pid }) };
+  }
+
+  private async resolveBrowserRoute(workspace: string, id: string, load: number): Promise<ResolvedPage> {
+    const { current, token, body } = this.browserRouteRequest(workspace, id, load);
+    const answer = await fetch(`${current.origin}/browser-route`, {
+      method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body, signal: AbortSignal.timeout(20_000),
+    });
+    const result: unknown = await answer.json();
+    if (!answer.ok) {
+      const reason = result && typeof result === "object" && "reason" in result ? String(result.reason) : `HTTP ${answer.status}`;
+      throw new Error(reason);
+    }
+    if (!result || typeof result !== "object" || !("url" in result) || !("source_url" in result) || !("load" in result)
+      || typeof result.url !== "string" || typeof result.source_url !== "string" || result.load !== load) throw new Error("Invalid Browser route answer");
+    return result as ResolvedPage;
+  }
+
+  private releaseBrowserRoute(workspace: string, id: string, load: number): void {
+    let request: ReturnType<DesktopHost["browserRouteRequest"]>;
+    try { request = this.browserRouteRequest(workspace, id, load); }
+    catch { return; }
+    const { current, token, body } = request;
+    void fetch(`${current.origin}/browser-route`, {
+      method: "DELETE", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body, signal: AbortSignal.timeout(3_000),
+    }).then((answer) => {
+      if (!answer.ok) this.log.event("browser.route_release_failed", { status: answer.status });
+    }).catch((error: unknown) => this.log.event("browser.route_release_failed", { detail: String(error) }));
   }
 
   /** An IPC message from the shell the daemon serves in this window's own frame; the status page and every browser page are refused. */

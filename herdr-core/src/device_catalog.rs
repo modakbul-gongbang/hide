@@ -366,6 +366,7 @@ pub(crate) fn apply_registrations(
         let branch = known.and_then(|facts| facts.branch.clone());
         session.workspaces.push(WorkspaceSnapshot {
             home_issues: Default::default(),
+            tasks: Default::default(),
             id: registration.id.clone(),
             label: registration.label.clone(),
             path: registration.path.clone(),

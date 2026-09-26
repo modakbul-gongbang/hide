@@ -130,6 +130,12 @@ pub(super) struct FocusCheckoutPayload {
     /// accepted, as `FocusPaneRequestPayload::focus_device` does.
     #[serde(default)]
     pub(super) focus_device: bool,
+    /// The checkout comes forward on this View display rather than on its
+    /// Agent tab: its Workspace's View area shows and the display takes it,
+    /// in the same event (Recent navigation). A display the Workspace no
+    /// longer holds refuses the whole event, so nothing moves.
+    #[serde(default)]
+    pub(super) display_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,6 +143,10 @@ pub(super) struct FocusTabPayload {
     pub(super) workspace_id: String,
     pub(super) checkout_id: String,
     pub(super) tab_id: String,
+    /// Also makes this machine the device in front when the tab is accepted,
+    /// as `FocusCheckoutPayload::focus_device` does.
+    #[serde(default)]
+    pub(super) focus_device: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1448,7 +1458,30 @@ impl Runtime {
                 true
             }
             Event::FocusCheckout(payload) => {
-                let changed = self.focus_checkout(&payload.workspace_id, &payload.checkout_id);
+                if let Some(display_id) = payload.display_id.as_deref()
+                    && let Err(error) = self.view_display_known(
+                        &payload.workspace_id,
+                        &payload.checkout_id,
+                        display_id,
+                    )
+                {
+                    self.set_error(error.kind(), error.message(), false);
+                    return true;
+                }
+                let mut changed = self.focus_checkout(&payload.workspace_id, &payload.checkout_id);
+                // The display follows whenever the checkout came forward: a
+                // later failure inside the checkout focus (a pane projection
+                // worker) must not leave the checkout moved without it.
+                if let Some(display_id) = payload.display_id.as_deref()
+                    && self.snapshot.navigator.focused_checkout_id.as_deref()
+                        == Some(payload.checkout_id.as_str())
+                {
+                    changed |= self.focus_view_display_of(
+                        &payload.workspace_id,
+                        &payload.checkout_id,
+                        display_id,
+                    );
+                }
                 if payload.focus_device
                     && self.snapshot.status.last_error.is_none()
                     && !self.device_in_front(workspace::LOCAL_DEVICE_ID)
@@ -1534,6 +1567,9 @@ impl Runtime {
                 self.refresh_pane_read_state();
                 self.yield_surface_to_terminal();
                 self.persist_current_ui_state();
+                if payload.focus_device && !self.device_in_front(workspace::LOCAL_DEVICE_ID) {
+                    self.bring_device_forward(workspace::LOCAL_DEVICE_ID.to_owned());
+                }
                 // A first visit attaches the tab's panes now. Waiting for the
                 // next session update to do it left the canvas empty until
                 // Herdr happened to emit something, up to the catalog window.

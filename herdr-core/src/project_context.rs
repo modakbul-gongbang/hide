@@ -297,6 +297,7 @@ mod tests {
     ) -> WorkspaceSnapshot {
         WorkspaceSnapshot {
             home_issues: Default::default(),
+            tasks: Default::default(),
             id: id.to_owned(),
             label: id.to_owned(),
             path: format!("/fixture/{id}"),

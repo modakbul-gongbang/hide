@@ -42,6 +42,10 @@ cargo build --release --locked -p herdr-core
 # The hook helper is what an installed hook runs, so it ships beside the app's
 # own executable; a bundle without it can report hook state but not install one.
 cargo build --release --locked -p hide-agent-hooks --bin hide-agent-hooks
+# The installed SessionStart hook needs the same CLI it verifies, beside the
+# helper in the bundle. Release hided embeds the web shell it may serve.
+pnpm --dir web build
+cargo build --release --locked -p hided --bin hide
 # The device helper is what Hide installs on a device the operator allowed,
 # so the app carries the build for this Mac's platform (PRD S5.5 D-20).
 cargo build --release --locked -p hide-host --bin hide-host-helper
@@ -64,6 +68,9 @@ install -m 755 \
 install -m 755 \
   "$project_root/target/release/hide-agent-hooks" \
   "$temporary_bundle/Contents/MacOS/hide-agent-hooks"
+install -m 755 \
+  "$project_root/target/release/hide" \
+  "$temporary_bundle/Contents/MacOS/hide"
 # The helper is built for this machine's own target, so its package is named
 # for that architecture; a device of another architecture then finds no
 # package for it rather than one built for the wrong processor.

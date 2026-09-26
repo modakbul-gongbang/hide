@@ -11,6 +11,7 @@ measure_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 worktree_root="$(cd "$measure_dir/../.." && pwd)"
 run_dir="${HIDE_MEASURE_RUN_DIR:?set HIDE_MEASURE_RUN_DIR to a directory under agents/runs/<slug>/}"
 mkdir -p "$run_dir" "$run_dir/logs" "$run_dir/fixture" "$run_dir/chrome-profile"
+run_dir="$(cd "$run_dir" && pwd)"
 
 operator_socket="${HOME}/.config/herdr/herdr.sock"
 manifest="$worktree_root/macos/Sources/HerdrMacOS/Resources/herdr-bundle.json"
@@ -26,7 +27,6 @@ if [[ "$herdr_version" != "$pin_version" ]]; then
   exit 2
 fi
 
-socket_path="/tmp/h-m-$(printf %s "$run_dir" | shasum | cut -c1-10).sock"
 private="$run_dir/isolated"
 mkdir -p "$private/xdg-config" "$private/xdg-state" "$private/home" "$private/hide-state"
 printf "PS1='fixture %%# '\n" > "$private/home/.zshrc"
@@ -39,7 +39,6 @@ unset HERDR_PANE_ID HERDR_TAB_ID HERDR_WORKSPACE_ID HERDR_ENV
 export SHELL=/bin/zsh
 export HERDR_SESSION="hide-web-measure"
 export HERDR_DISABLE_SOUND=1
-export HERDR_SOCKET_PATH="$socket_path"
 export HERDR_CONFIG_PATH="$config_path"
 export XDG_CONFIG_HOME="$private/xdg-config"
 export XDG_STATE_HOME="$private/xdg-state"
@@ -49,9 +48,8 @@ export MEASURE_WORKTREE="$worktree_root"
 export MEASURE_OPERATOR_SOCKET="$operator_socket"
 export MEASURE_FIXTURE="$run_dir/fixture"
 export MEASURE_PRIVATE="$private"
-export MEASURE_CDP_PORT="${MEASURE_CDP_PORT:-9333}"
-
-if [[ "$HERDR_SOCKET_PATH" == "$operator_socket" ]]; then
-  printf 'isolated-env: refusing to reuse the operator socket\n' >&2
-  exit 2
-fi
+# Keep the socket name short for Unix-domain limits and private to this run.
+# Creation is last so preflight failures do not leave a socket directory.
+socket_dir="$(mktemp -d /tmp/hm.XXXXXXXX)"
+export MEASURE_SOCKET_DIR="$socket_dir"
+export HERDR_SOCKET_PATH="$socket_dir/herdr.sock"

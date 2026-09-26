@@ -22,6 +22,9 @@ use hide_agent_hooks::diagnosis::Diagnosis;
 use hide_agent_hooks::report;
 use hide_agent_hooks::runtime::{AgentRuntime, HookEvent, hook_stdout};
 
+#[path = "../workspace_context.rs"]
+mod workspace_context;
+
 fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     match arguments.first().map(String::as_str) {
@@ -65,16 +68,24 @@ fn run_hook(arguments: &[String]) {
         argument_value("--runtime", arguments).and_then(|value| AgentRuntime::parse(&value));
     let Some(home) = home_directory() else { return };
     let deadline = Instant::now() + Duration::from_millis(hide_memory::HOOK_PROCESS_BUDGET_MS);
-    if let Some(runtime) = runtime.filter(|_| {
+    let mut output = if let Some(runtime) = runtime.filter(|_| {
         arguments
             .iter()
             .any(|argument| argument == "--memory-injection")
     }) {
-        if let Some(output) = memory_output_before_deadline(runtime, event, home.clone(), deadline)
-        {
-            println!("{output}");
-        }
-    } else if let Some(output) = runtime.and_then(|runtime| hook_stdout(runtime, event)) {
+        memory_output_before_deadline(runtime, event, home.clone(), deadline)
+    } else {
+        runtime.and_then(|runtime| hook_stdout(runtime, event))
+    };
+    if event == HookEvent::SessionStart
+        && std::env::var("HERDR_PANE_ID").is_ok_and(|pane| !pane.is_empty())
+        && let Some(context) = workspace_context::live_context()
+    {
+        output = output.map(|value| {
+            hide_agent_hooks::runtime::append_session_context(&value, &context).unwrap_or(value)
+        });
+    }
+    if let Some(output) = output {
         println!("{output}");
     }
     if event == HookEvent::UserPromptSubmit {

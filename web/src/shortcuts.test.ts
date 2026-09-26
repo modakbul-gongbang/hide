@@ -27,7 +27,7 @@ describe("shortcut registry", () => {
   it("marks exactly the eight moved chords", () => {
     const moved = REGISTRY.filter((command) => command.moved).map((command) => command.id).sort();
     expect(moved).toEqual(
-      ["close_pane", "close_tab", "new_tab", "new_workspace", "previous_recent_tab", "recent_tab", "reopen_closed_tab", "settings"].sort(),
+      ["close_pane", "close_tab", "new_tab", "new_workspace", "previous_recent_panel", "recent_panel", "reopen_closed_tab", "settings"].sort(),
     );
   });
 
@@ -38,8 +38,8 @@ describe("shortcut registry", () => {
       new_tab: "⌘T",
       close_tab: "⌘W",
       reopen_closed_tab: "⇧⌘T",
-      recent_tab: "⌃⇥",
-      previous_recent_tab: "⌃⇧⇥",
+      recent_panel: "⌃⇥",
+      previous_recent_panel: "⌃⇧⇥",
       new_workspace: "⇧⌘N",
       recent_project: "⌥⇥",
       previous_recent_project: "⌥⇧⇥",
@@ -82,7 +82,7 @@ describe("shortcut registry", () => {
     expect(matchHost(press("KeyT", { meta: true }), REGISTRY, "electron")?.id).toBe("new_tab");
     expect(matchHost(press("KeyW", { meta: true }), REGISTRY, "electron")?.id).toBe("close_tab");
     expect(matchHost(press("KeyT", { meta: true, shift: true }), REGISTRY, "electron")?.id).toBe("reopen_closed_tab");
-    expect(matchHost(press("Tab", { ctrl: true }), REGISTRY, "electron")?.id).toBe("recent_tab");
+    expect(matchHost(press("Tab", { ctrl: true }), REGISTRY, "electron")?.id).toBe("recent_panel");
     expect(matchHost(press("KeyT", { alt: true }), REGISTRY, "electron")).toBeNull();
     expect(matchHost(press("Backspace", { meta: true }), REGISTRY, "electron")).toBeNull();
     // B12: the browser host still runs its own column.
@@ -116,7 +116,7 @@ describe("shortcut registry", () => {
     expect(matchHost({ code: "KeyT", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, REGISTRY, "browser")?.id).toBe("new_tab");
     expect(matchHost({ code: "KeyT", metaKey: false, altKey: true, shiftKey: true, ctrlKey: false }, REGISTRY, "browser")?.id).toBe("reopen_closed_tab");
     expect(matchHost({ code: "KeyT", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false }, REGISTRY, "browser")).toBeNull();
-    expect(matchHost({ code: "Backquote", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, REGISTRY, "browser")?.id).toBe("recent_tab");
+    expect(matchHost({ code: "Backquote", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, REGISTRY, "browser")?.id).toBe("recent_panel");
     expect(matchHost({ code: "Slash", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false }, REGISTRY, "browser")?.id).toBe("shortcuts");
     expect(matchHost({ code: "Backspace", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false }, REGISTRY, "browser")).toBeNull();
     expect(chordEquals({ code: "KeyA" }, { code: "KeyA", meta: false })).toBe(true);

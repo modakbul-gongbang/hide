@@ -32,12 +32,14 @@ mod runtime;
 pub mod schema;
 mod session_sync;
 mod sidebar;
+pub mod tasks;
 mod terminal_attachments;
 mod terminal_recovery;
 mod usage;
 mod view_layout;
 mod wire;
 pub mod workspace;
+pub mod workspace_control;
 pub mod workspace_views;
 mod worktrees;
 mod zoneinfo;
@@ -47,4 +49,5 @@ pub use ffi::{
     herdr_core_free_bytes, herdr_core_on_change, herdr_core_snapshot,
 };
 pub use model::{CoreOptions, SCHEMA_VERSION, Snapshot, SnapshotDeltaPayload};
+pub use runtime::WorkspaceRemoteRoute;
 pub use runtime::serialize_snapshot_delta;

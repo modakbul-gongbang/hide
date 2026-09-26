@@ -98,6 +98,7 @@
   --home-collapsed-width: 148px;
   --home-halo-radius: 6px;
   --home-child-indent: 12px;
+  --home-dependency-gap: 96px;
   --size-sidebar-hierarchy-grandchild: 36px;
   --size-sidebar-hierarchy-great-grandchild: 48px;
   --text-display: 30px;

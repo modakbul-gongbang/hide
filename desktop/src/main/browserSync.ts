@@ -7,6 +7,7 @@ import type { BrowserCommand, BrowserPlacement, BrowserRect, BrowserSync } from 
 
 /** A Workspace holds at most this many displays (`MAX_VIEW_DISPLAYS`). */
 export const MAX_SYNCED_DISPLAYS = 64;
+export const MAX_RETAINED_DISPLAYS = 16_384;
 /** Live pages at once; a hidden one past this is closed and loads again when shown. */
 export const MAX_LIVE_VIEWS = 12;
 const MAX_TEXT = 8192;
@@ -31,9 +32,21 @@ function rect(value: unknown): BrowserRect | null | undefined {
 /** A sync message, or null when any part of it is out of shape. */
 export function parseSync(value: unknown): BrowserSync | null {
   if (typeof value !== "object" || value === null) return null;
-  const { workspace, displays } = value as Record<string, unknown>;
+  const { workspace, displays, retained } = value as Record<string, unknown>;
   if (workspace !== null && !text(workspace)) return null;
   if (!Array.isArray(displays) || displays.length > MAX_SYNCED_DISPLAYS) return null;
+  if (!Array.isArray(retained) || retained.length > MAX_RETAINED_DISPLAYS) return null;
+  const owned: BrowserSync["retained"] = [];
+  const ownedKeys = new Set<string>();
+  for (const entry of retained as unknown[]) {
+    if (typeof entry !== "object" || entry === null) return null;
+    const { workspace: owner, id } = entry as Record<string, unknown>;
+    if (!text(owner) || !text(id)) return null;
+    const key = viewKey(owner, id);
+    if (ownedKeys.has(key)) return null;
+    ownedKeys.add(key);
+    owned.push({ workspace: owner, id });
+  }
   const parsed: BrowserPlacement[] = [];
   const ids = new Set<string>();
   for (const entry of displays as unknown[]) {
@@ -46,7 +59,8 @@ export function parseSync(value: unknown): BrowserSync | null {
     parsed.push({ id, url, load, rect: placed, visible });
   }
   if (workspace === null && parsed.length > 0) return null;
-  return { workspace: workspace as string | null, displays: parsed };
+  if (workspace && parsed.some((display) => !ownedKeys.has(viewKey(workspace, display.id)))) return null;
+  return { workspace: workspace as string | null, displays: parsed, retained: owned };
 }
 
 /** A display named by the shell for a still or a command. */
@@ -67,6 +81,33 @@ export function loadable(url: string): boolean {
     return LOADABLE_PROTOCOLS.has(new URL(url).protocol);
   } catch {
     return false;
+  }
+}
+
+/** Route a remote page's absolute loopback requests through its owned View.
+ * An unsupported local address is refused instead of reaching this Mac. */
+export function remoteRequest(route: { url: string; source_url: string }, raw: string): { redirectURL?: string; cancel?: boolean } {
+  try {
+    const address = new URL(raw);
+    const local = new URL(route.url);
+    const source = new URL(route.source_url);
+    if (source.protocol === "file:") return address.origin === local.origin && address.protocol === local.protocol ? {} : { cancel: true };
+    const host = address.hostname.toLowerCase().replace(/\.$/, "");
+    const mapped = /^\[::(?:(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4}))\]$/.exec(host);
+    const embeddedLoopback = mapped ? Number.parseInt(mapped[1]!, 16) >> 8 === 127 : false;
+    const loopback = host === "localhost" || host === "0.0.0.0" || host === "[::1]" || /^127\./.test(host) || embeddedLoopback;
+    if (route.url === route.source_url) return loopback ? { cancel: true } : {};
+    if (address.origin === local.origin || (address.protocol === "ws:" && local.protocol === "http:" && address.host === local.host) || (address.protocol === "wss:" && local.protocol === "https:" && address.host === local.host)) return {};
+    if (!loopback) return {};
+    const sourcePort = source.port || (source.protocol === "https:" ? "443" : "80");
+    const addressPort = address.port || ((address.protocol === "https:" || address.protocol === "wss:") ? "443" : "80");
+    const matchingScheme = address.protocol === source.protocol || (address.protocol === "ws:" && source.protocol === "http:") || (address.protocol === "wss:" && source.protocol === "https:");
+    if (!matchingScheme || addressPort !== sourcePort) return { cancel: true };
+    address.host = local.host;
+    if (address.protocol === "http:" || address.protocol === "https:") address.protocol = local.protocol;
+    return { redirectURL: address.href };
+  } catch {
+    return { cancel: true };
   }
 }
 

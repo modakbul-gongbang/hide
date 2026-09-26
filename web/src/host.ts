@@ -28,7 +28,12 @@ export type BrowserPlacement = {
  * that Workspace the list no longer names, hides the pages of any other,
  * and creates a page only once its display is on screen.
  */
-export type BrowserSync = { workspace: string | null; displays: BrowserPlacement[] };
+export type BrowserSync = {
+  workspace: string | null;
+  displays: BrowserPlacement[];
+  /** Core-owned inventory; a hidden native page absent here is closed. */
+  retained: { workspace: string; id: string }[];
+};
 
 export type BrowserCommand = "back" | "forward" | "reload" | "stop";
 
@@ -44,7 +49,8 @@ export type BrowserPageState = {
 };
 
 export type BrowserHostEvent =
-  | { kind: "state"; workspace: string; id: string; state: BrowserPageState }
+  | { kind: "state"; workspace: string; id: string; load: number; state: BrowserPageState }
+  | { kind: "gone"; workspace: string; id: string; load: number; url: string }
   /** The page asked for a new window: it becomes another browser display. */
   | { kind: "open"; workspace: string; id: string; url: string }
   /** The operator clicked or tabbed into the page. */

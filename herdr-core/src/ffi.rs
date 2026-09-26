@@ -351,6 +351,93 @@ impl HerdrCore {
         result
     }
 
+    /// Daemon-only read of consented, connected SSH routes. Opening a route
+    /// happens after this call has released the runtime lock.
+    pub fn workspace_remote_routes(&self) -> Vec<crate::WorkspaceRemoteRoute> {
+        if !check_owner_thread(self, "workspace_remote_routes") {
+            return Vec::new();
+        }
+        lock_recover(&self.runtime).workspace_remote_routes()
+    }
+
+    pub fn browser_route_source(
+        &self,
+        device_id: &str,
+        checkout_path: &str,
+        view_id: &str,
+        load: u64,
+    ) -> Option<crate::workspace_control::BrowserRouteSource> {
+        if !check_owner_thread(self, "browser_route_source") {
+            return None;
+        }
+        lock_recover(&self.runtime).browser_route_source(device_id, checkout_path, view_id, load)
+    }
+
+    /// Daemon-only pane query. The daemon validates the process that asked;
+    /// the core then resolves current pane membership at the point of use.
+    /// Only owned result data leaves the runtime lock.
+    pub fn workspace_control_query(
+        &self,
+        device_id: &str,
+        pane_id: &str,
+        query: crate::workspace_control::Query,
+    ) -> Result<crate::workspace_control::QueryResult, crate::workspace_control::Refusal> {
+        if !check_owner_thread(self, "workspace_control_query") {
+            return Err(crate::workspace_control::Refusal {
+                reason: "core_unavailable",
+                next_action: "Reconnect Hide and retry",
+            });
+        }
+        lock_recover(&self.runtime).workspace_control_query(device_id, pane_id, query)
+    }
+
+    /// A pane-scoped View action runs as one core transition. The daemon
+    /// attests the caller, and the core rechecks current membership.
+    pub fn workspace_control_prepare_action(
+        &self,
+        device_id: &str,
+        pane_id: &str,
+        expected: &crate::workspace_control::Context,
+        request_id: &str,
+        action: &crate::workspace_control::Action,
+    ) -> Result<crate::workspace_control::ActionPreparation, crate::workspace_control::Refusal>
+    {
+        if !check_owner_thread(self, "workspace_control_prepare_action") {
+            return Err(crate::workspace_control::Refusal {
+                reason: "core_unavailable",
+                next_action: "Reconnect Hide and retry",
+            });
+        }
+        lock_recover(&self.runtime)
+            .workspace_control_prepare_action(device_id, pane_id, expected, request_id, action)
+    }
+
+    pub fn workspace_control_action(
+        &self,
+        device_id: &str,
+        pane_id: &str,
+        expected: &crate::workspace_control::Context,
+        request_id: &str,
+        action: crate::workspace_control::Action,
+        material: Result<
+            Option<crate::workspace_control::ActionMaterial>,
+            crate::workspace_control::Refusal,
+        >,
+    ) -> Result<crate::workspace_control::ActionResult, crate::workspace_control::Refusal> {
+        if !check_owner_thread(self, "workspace_control_action") {
+            return Err(crate::workspace_control::Refusal {
+                reason: "core_unavailable",
+                next_action: "Reconnect Hide and retry",
+            });
+        }
+        let result = lock_recover(&self.runtime)
+            .workspace_control_action(device_id, pane_id, expected, request_id, action, material);
+        if result.as_ref().is_ok_and(|result| result.changed) {
+            notify_change(self);
+        }
+        result
+    }
+
     pub fn snapshot_delta(&self, have_revision: u64, have_terminal_sequence: u64) -> Vec<u8> {
         if !check_owner_thread(self, "snapshot") {
             notify_change(self);

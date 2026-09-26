@@ -165,6 +165,20 @@ fn local_relative(root: &str, absolute: &str) -> Result<String, String> {
     })
 }
 
+/// The host's existing checkout-relative path rule, including macOS root
+/// aliases such as `/var` and `/private/var` for local reads.
+pub fn relative_in_root(
+    channel: &dyn HostChannel,
+    root: &str,
+    absolute: &str,
+) -> Result<String, String> {
+    if channel.in_process() {
+        local_relative(root, absolute)
+    } else {
+        relative_under(root, absolute)
+    }
+}
+
 /// Opens the document at `absolute` in `root`, as a snapshot and the place
 /// its saves go to. Blocks on the channel.
 pub fn open_document(
@@ -172,12 +186,7 @@ pub fn open_document(
     root: &DocumentRoot,
     absolute: &str,
 ) -> Result<(EditorDocumentSnapshot, DocumentPlace), OpenFailure> {
-    let relative = if channel.in_process() {
-        local_relative(&root.path, absolute)
-    } else {
-        relative_under(&root.path, absolute)
-    }
-    .map_err(OpenFailure::Failed)?;
+    let relative = relative_in_root(channel, &root.path, absolute).map_err(OpenFailure::Failed)?;
     let place = DocumentPlace {
         device_id: root.device_id.clone(),
         root: root_ref(channel, root).map_err(open_failure)?,

@@ -20,6 +20,18 @@ use crate::remote::host::{
     self, EstablishError, Established, HOST_CONSENT_CONTRACT, HelperPackages,
 };
 
+/// The daemon may open a pane-scoped return route only while the same
+/// consented helper and SSH device connection are live. All fields are owned
+/// handles, so no network work is done under the runtime lock.
+#[derive(Clone)]
+pub struct WorkspaceRemoteRoute {
+    pub device_id: String,
+    pub generation: u64,
+    pub helper_path: String,
+    pub client: Arc<crate::remote::RusshRemoteClient>,
+    pub channel: Arc<dyn HostChannel>,
+}
+
 pub(super) enum HostPhase {
     NotAllowed,
     Connecting,
@@ -43,6 +55,39 @@ pub(super) struct DeviceHost {
 }
 
 impl Runtime {
+    pub fn workspace_remote_routes(&self) -> Vec<WorkspaceRemoteRoute> {
+        self.device_hosts
+            .iter()
+            .filter_map(|(device_id, host)| {
+                let HostPhase::Ready {
+                    host: channel,
+                    helper_path,
+                    ..
+                } = &host.phase
+                else {
+                    return None;
+                };
+                if channel.closed_reason().is_some()
+                    || !self
+                        .snapshot
+                        .status
+                        .remote
+                        .iter()
+                        .any(|status| status.target_id == *device_id && status.state == "connected")
+                {
+                    return None;
+                }
+                let client = self.remote_connections.get(device_id)?.client.clone();
+                Some(WorkspaceRemoteRoute {
+                    device_id: device_id.clone(),
+                    generation: host.generation,
+                    helper_path: helper_path.clone(),
+                    client,
+                    channel: Arc::clone(channel),
+                })
+            })
+            .collect()
+    }
     pub(super) fn host_helper_root(&self) -> String {
         self.host_helper_root.clone()
     }

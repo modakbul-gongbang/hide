@@ -78,6 +78,12 @@ pub struct Snapshot {
     /// keeps exactly its keys.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_view: Option<WorkspaceViewSnapshot>,
+    /// Browser displays across retained Workspaces. The native host uses this
+    /// inventory to close a hidden page when a pane closes its View remotely.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub browser_views: Vec<BrowserViewInventoryRow>,
+    #[serde(skip)]
+    pub browser_views_revision: Option<u64>,
     /// The Sessions of the Project a shell screen named, absent until one
     /// does; the Swift shell never names one, so its snapshot keeps its keys.
     /// It rides its own revisioned section of the delta wire.
@@ -181,6 +187,13 @@ pub struct WorkspaceViewSnapshot {
     /// (D-11).
     pub resumed: bool,
     pub layout: ViewLayoutSnapshot,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct BrowserViewInventoryRow {
+    pub device_id: String,
+    pub path: String,
+    pub view_id: String,
 }
 
 /// The front Workspace's View areas (PRD S7): the tree the shell draws, the
@@ -693,6 +706,9 @@ pub struct SidebarAgentSnapshot {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WorkspaceSnapshot {
     pub home_issues: crate::issues::ProjectIssuesSnapshot,
+    /// The project's tasks in the source-neutral shape the web reads
+    /// (`tasks.rs`); `home_issues` stays as the Swift shell reads it.
+    pub tasks: crate::tasks::ProjectTasksSnapshot,
     pub id: String,
     pub label: String,
     pub path: String,
@@ -819,6 +835,11 @@ pub struct CheckoutPurposeSnapshot {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct CheckoutSnapshot {
     pub issue: Option<crate::issues::IssueLinkSnapshot>,
+    /// The key of the task in its project's `tasks` this checkout works on.
+    pub task_key: Option<String>,
+    /// The other tasks of its project's `tasks` this checkout's pull request
+    /// closes, so each of them shows the same pull request (D-07).
+    pub closes_task_keys: Vec<String>,
     #[serde(skip_serializing)]
     pub branch_issue: Option<String>,
     pub github: GithubStatusSnapshot,
@@ -2987,6 +3008,8 @@ impl Snapshot {
             pet: PetSnapshot::initial(),
             recent_closed: RecentClosedSnapshot::default(),
             workspace_view: None,
+            browser_views: Vec::new(),
+            browser_views_revision: None,
             project_sessions: None,
         }
     }
@@ -3044,6 +3067,8 @@ pub struct RestSections {
     pub pet: PetSnapshot,
     pub recent_closed: RecentClosedSnapshot,
     pub workspace_view: Option<WorkspaceViewSnapshot>,
+    pub browser_views: Vec<BrowserViewInventoryRow>,
+    browser_views_revision: Option<u64>,
 }
 
 impl RestSections {
@@ -3074,6 +3099,8 @@ impl RestSections {
             pet: snapshot.pet.clone(),
             recent_closed: snapshot.recent_closed.clone(),
             workspace_view: snapshot.workspace_view.clone(),
+            browser_views: snapshot.browser_views.clone(),
+            browser_views_revision: snapshot.browser_views_revision,
         }
     }
 
@@ -3105,6 +3132,7 @@ impl RestSections {
             && self.pet == snapshot.pet
             && self.recent_closed == snapshot.recent_closed
             && self.workspace_view == snapshot.workspace_view
+            && self.browser_views_revision == snapshot.browser_views_revision
     }
 }
 
@@ -3243,6 +3271,7 @@ pub struct RestWire<'a> {
     pub recent_closed: &'a RecentClosedSnapshot,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_view: &'a Option<WorkspaceViewSnapshot>,
+    pub browser_views: &'a [BrowserViewInventoryRow],
 }
 
 impl<'a> RestWire<'a> {
@@ -3275,6 +3304,7 @@ impl<'a> RestWire<'a> {
             pet: &rest.pet,
             recent_closed: &rest.recent_closed,
             workspace_view: &rest.workspace_view,
+            browser_views: &rest.browser_views,
         }
     }
 }

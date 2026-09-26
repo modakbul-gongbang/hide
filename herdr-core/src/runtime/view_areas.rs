@@ -21,7 +21,7 @@
 use serde::Deserialize;
 
 use super::documents::OpenRequestFields;
-use super::workspace_view::{WorkspaceKey, file_label};
+use super::workspace_view::{AreaIntent, WorkspaceKey, file_label};
 use super::*;
 use crate::model::{
     BrowserOpenReceiptSnapshot, ViewAreaSnapshot, ViewDisplaySnapshot, ViewDisplayState,
@@ -39,9 +39,9 @@ const SPLIT_REQUESTS_KEPT: usize = 32;
 /// `browser_open` receipts kept for the requests that named themselves; a
 /// CLI waiting on one reads it within a frame or two of its event.
 const BROWSER_OPEN_RECEIPTS_KEPT: usize = 8;
+const BROWSER_PAGE_REPORTS_KEPT: usize = 128;
 
 const UNLOADABLE_ADDRESS: &str = "A page opens from an http, https or file address, or about:blank";
-const FILE_ELSEWHERE: &str = "A file on this Mac cannot open in a Workspace on another device";
 
 /// Where Open to the side looks for an area next to the one in use.
 const BESIDE_ORDER: [Edge; 4] = [Edge::Right, Edge::Left, Edge::Down, Edge::Up];
@@ -96,6 +96,14 @@ pub(super) struct BrowserStatePayload {
     url: String,
     #[serde(default)]
     title: String,
+    #[serde(default)]
+    load: Option<u64>,
+    #[serde(default)]
+    loading: bool,
+    #[serde(default)]
+    failure: Option<String>,
+    #[serde(default)]
+    present: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -344,7 +352,7 @@ fn reconcile_layout<'t>(
 }
 
 impl Runtime {
-    fn view_layout_of(&self, key: &WorkspaceKey) -> Option<&Layout> {
+    pub(super) fn view_layout_of(&self, key: &WorkspaceKey) -> Option<&Layout> {
         self.workspace_views
             .as_ref()?
             .views
@@ -352,9 +360,53 @@ impl Runtime {
             .map(|view| &view.layout)
     }
 
+    /// Whether the Workspace of a checkout holds `display_id`, before a
+    /// `focus_checkout` that names it moves anything.
+    pub(super) fn view_display_known(
+        &self,
+        workspace_id: &str,
+        checkout_id: &str,
+        display_id: &str,
+    ) -> Result<(), LayoutError> {
+        if !self.separate_view_areas() {
+            return Err(LayoutError::UnknownDisplay(display_id.to_owned()));
+        }
+        self.workspace_key(workspace_id, checkout_id)
+            .and_then(|key| self.view_layout_of(&key))
+            .and_then(|layout| layout.display(display_id))
+            .map(|_| ())
+            .ok_or_else(|| LayoutError::UnknownDisplay(display_id.to_owned()))
+    }
+
+    /// A display of the checkout just brought forward takes its View area,
+    /// shown with the Agent area if only Agents showed (D-08). Returns
+    /// whether the layout changed.
+    pub(super) fn focus_view_display_of(
+        &mut self,
+        workspace_id: &str,
+        checkout_id: &str,
+        display_id: &str,
+    ) -> bool {
+        let Some(key) = self.workspace_key(workspace_id, checkout_id) else {
+            return false;
+        };
+        self.apply_area_intent_to(&key, AreaIntent::Views);
+        match self.change_view_layout(&key, |layout, stamp| {
+            layout
+                .focus(display_id, stamp)
+                .map(|changed| (changed, changed))
+        }) {
+            Ok(changed) => changed,
+            Err(error) => {
+                self.set_error(error.kind(), error.message(), false);
+                true
+            }
+        }
+    }
+
     /// Applies one change to a Workspace's layout, created when the file has
     /// none for it, and saves it when it changed something.
-    fn change_view_layout<T>(
+    pub(super) fn change_view_layout<T>(
         &mut self,
         key: &WorkspaceKey,
         change: impl FnOnce(&mut Layout, u64) -> Result<(T, bool), LayoutError>,
@@ -881,7 +933,7 @@ impl Runtime {
 
     /// Whether a document holds work a preview would lose: a draft, a save
     /// running, or a save's outcome the operator has not seen settle.
-    fn document_kept(&self, tab_id: &str) -> bool {
+    pub(super) fn document_kept(&self, tab_id: &str) -> bool {
         self.snapshot
             .editor
             .tabs
@@ -1136,9 +1188,6 @@ impl Runtime {
                 .front_workspace_key()
                 .ok_or_else(|| "No Workspace is in front to open the page in".to_owned())?,
         };
-        if is_file_address(url) && key.0 != workspace::LOCAL_DEVICE_ID {
-            return Err(FILE_ELSEWHERE.to_owned());
-        }
         let load = self.next_browser_load();
         let display_id = self
             .change_view_layout(&key, |layout, stamp| {
@@ -1173,10 +1222,6 @@ impl Runtime {
             self.set_error("browser.navigate_refused", UNLOADABLE_ADDRESS, false);
             return true;
         }
-        if is_file_address(&url) && key.0 != workspace::LOCAL_DEVICE_ID {
-            self.set_error("browser.navigate_refused", FILE_ELSEWHERE, false);
-            return true;
-        }
         let load = self.next_browser_load();
         let outcome = self.change_view_layout(key, |layout, _| {
             let display = layout
@@ -1206,10 +1251,13 @@ impl Runtime {
             display_id,
             url,
             title,
+            load,
+            loading,
+            failure,
+            present,
         } = payload;
         let key = (workspace.device_id, workspace.path);
-        let file_elsewhere = is_file_address(&url) && key.0 != workspace::LOCAL_DEVICE_ID;
-        if !browser_address(&url) || file_elsewhere {
+        if !browser_address(&url) {
             // A page that moved somewhere a display does not hold keeps the
             // last address it may; the log names only the scheme.
             let scheme: String = url
@@ -1243,7 +1291,63 @@ impl Runtime {
             }));
             return false;
         };
-        if display.url.as_deref() == Some(url.as_str()) && display.title == title {
+        let same_address_and_title =
+            display.url.as_deref() == Some(url.as_str()) && display.title == title;
+        let current_load = display.load;
+        if let Some(load) = load {
+            if load != current_load {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "view_areas",
+                    "kind": "browser.state_load_stale",
+                    "device": key.0,
+                    "display": display_id,
+                }));
+                return false;
+            }
+            if self.browser_pages.len() >= BROWSER_PAGE_REPORTS_KEPT
+                && !self.browser_pages.contains_key(&(
+                    key.0.clone(),
+                    key.1.clone(),
+                    display_id.clone(),
+                ))
+            {
+                let active: std::collections::HashSet<_> = self
+                    .workspace_views
+                    .as_ref()
+                    .into_iter()
+                    .flat_map(|store| &store.views.workspaces)
+                    .flat_map(|view| {
+                        view.layout
+                            .displays()
+                            .filter(|display| display.kind == DisplayKind::Browser)
+                            .map(|display| {
+                                (
+                                    view.device_id.clone(),
+                                    view.path.clone(),
+                                    display.id.clone(),
+                                )
+                            })
+                    })
+                    .collect();
+                self.browser_pages.retain(|key, _| active.contains(key));
+                if self.browser_pages.len() >= BROWSER_PAGE_REPORTS_KEPT {
+                    crate::diagnostic!(
+                        serde_json::json!({"component":"view_areas","kind":"browser.state_capacity","limit":BROWSER_PAGE_REPORTS_KEPT})
+                    );
+                    return false;
+                }
+            }
+            self.browser_pages.insert(
+                (key.0.clone(), key.1.clone(), display_id.clone()),
+                super::workspace_control::ReportedBrowserPage {
+                    load,
+                    present: present != Some(false),
+                    loading,
+                    failure: failure.map(|reason| reason.chars().take(300).collect()),
+                },
+            );
+        }
+        if same_address_and_title {
             return false;
         }
         self.change_view_layout(&key, |layout, _| {
@@ -1260,7 +1364,7 @@ impl Runtime {
     /// A load stamp later than every one given in this process, and than the
     /// clock, so a host that outlived a daemon restart still sees a new one
     /// as newer than any it loaded.
-    fn next_browser_load(&mut self) -> u64 {
+    pub(super) fn next_browser_load(&mut self) -> u64 {
         let now = unix_milliseconds();
         let Some(store) = self.workspace_views.as_mut() else {
             return now;

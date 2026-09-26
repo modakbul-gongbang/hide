@@ -3,6 +3,7 @@ import { connectionAfterHealthFails, nextBackoff } from "./connection";
 import { clearPending, receiveBytes, receiveBytesError, receiveBytesRefusal } from "./fileBytes";
 import { noteArrival, probeEnabled } from "./probe";
 import { useShellStore, type TerminalChunk } from "./store";
+import { hostKind } from "./host";
 
 export type DispatchFn = (event: {
   schema_version: number;
@@ -78,6 +79,7 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
         JSON.stringify({
           token,
           schema_version: 2,
+          client_kind: hostKind() === "electron" ? "desktop" : "web",
           have_revision: revision,
           have_terminal_sequence: terminalSequence,
         }),

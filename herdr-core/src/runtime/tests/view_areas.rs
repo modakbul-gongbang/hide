@@ -1,6 +1,7 @@
 use super::workspace_view::{active_label, layout, second_checkout, views_path, with_views};
 use super::*;
 use crate::model::{ViewDisplaySnapshot, ViewDisplayState, ViewLayoutSnapshot, ViewNodeSnapshot};
+use crate::workspace_control::Action;
 
 // PRD S7: a Workspace's View areas hold displays of documents; where an open
 // lands, what the operator's layout actions do, how a display follows its
@@ -952,6 +953,79 @@ fn closing_one_of_two_displays_keeps_the_document_and_its_draft() {
         serde_json::json!({"action": "close", "display_id": beside}),
     ));
     assert_eq!(runtime.snapshot.status.last_error, None);
+}
+
+/// A pane command has no Save or Don't Save permission. The second close
+/// must leave the draft and its remaining View in place.
+#[test]
+fn pane_close_preserves_a_dirty_last_view_after_closing_its_twin() {
+    let (mut runtime, checkout_id, directory) = views_runtime("pane-close-unsaved");
+    let path = directory.join("notes.md");
+    open(&mut runtime, &checkout_id, &path, false, false);
+    open(&mut runtime, &checkout_id, &path, false, true);
+    let tab_id = tab_of(&runtime, "notes.md");
+    draft(&mut runtime, &tab_id, "unsaved draft\n");
+    runtime.snapshot.status.herdr.state = "connected".to_owned();
+    let pane_id = "pane-cli";
+    let checkout = runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter_mut()
+        .flat_map(|workspace| &mut workspace.checkouts)
+        .find(|checkout| checkout.id == checkout_id)
+        .unwrap();
+    checkout.tabs.push(tab(
+        "workspace:order",
+        &checkout_id,
+        Some(pane(pane_id, &directory.to_string_lossy())),
+    ));
+    let first = display(&mut runtime, 0, "notes.md");
+    let second = display(&mut runtime, 1, "notes.md");
+    let expected = runtime
+        .workspace_control_query("local", pane_id, crate::workspace_control::Query::Info)
+        .unwrap()
+        .context;
+    let first_id = format!("{}-first", unix_milliseconds());
+    assert!(
+        runtime
+            .workspace_control_action(
+                "local",
+                pane_id,
+                &expected,
+                &first_id,
+                Action::Close { view_id: first },
+                Ok(None),
+            )
+            .unwrap()
+            .changed
+    );
+    let second_id = format!("{}-second", unix_milliseconds());
+    assert_eq!(
+        runtime
+            .workspace_control_action(
+                "local",
+                pane_id,
+                &expected,
+                &second_id,
+                Action::Close {
+                    view_id: second.clone()
+                },
+                Ok(None),
+            )
+            .unwrap_err()
+            .reason,
+        "unsaved_document"
+    );
+    assert_eq!(display(&mut runtime, 0, "notes.md"), second);
+    assert!(
+        runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .any(|tab| tab.id == tab_id && tab.dirty)
+    );
 }
 
 /// Contract 4.1, B5: a web frame that still shows a dirty document in two
@@ -2194,4 +2268,82 @@ fn a_page_survives_a_restart_and_closes_like_any_view() {
     ));
     assert!(browser_displays(&mut restarted).is_empty());
     assert_eq!(labels(&mut restarted), vec![vec!["a.md"]]);
+}
+
+/// Recent navigation: a `focus_checkout` naming a display of another
+/// Workspace brings that checkout forward on the display in one event, the
+/// View area shown even when only Agents showed there; a display the
+/// Workspace does not hold refuses the event and nothing moves.
+#[test]
+fn a_checkout_focus_naming_a_display_brings_it_forward_on_that_display() {
+    let (runtime, checkout_id, directory) = strip_checkout("view-focus-display");
+    let mut runtime = runtime;
+    let (other, other_checkout) = second_checkout(&mut runtime, &directory);
+    let mut runtime = with_views(runtime, &views_path("view-focus-display"));
+    files(&directory, &["a.md", "b.md"]);
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("a.md"),
+        false,
+        false,
+    );
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("b.md"),
+        false,
+        false,
+    );
+    let a = display(&mut runtime, 0, "a.md");
+    layout(&mut runtime, serde_json::json!({"mode": "agents"}));
+    runtime.dispatch_json(&explorer_event(
+        "focus_checkout",
+        serde_json::json!({"workspace_id": "workspace:other", "checkout_id": other_checkout}),
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+
+    runtime.dispatch_json(&explorer_event(
+        "focus_checkout",
+        serde_json::json!({"workspace_id": "workspace:order", "checkout_id": checkout_id, "display_id": "d-missing"}),
+    ));
+    assert_eq!(
+        runtime
+            .snapshot
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("view_layout.unknown_display")
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.focused_checkout_id.as_deref(),
+        Some(other_checkout.as_str()),
+        "a refused display moves no checkout"
+    );
+
+    runtime.dispatch_json(&explorer_event(
+        "focus_checkout",
+        serde_json::json!({"workspace_id": "workspace:order", "checkout_id": checkout_id, "display_id": a}),
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(
+        runtime.snapshot.navigator.focused_checkout_id.as_deref(),
+        Some(checkout_id.as_str())
+    );
+    runtime.sync_workspace_view();
+    let view = runtime
+        .snapshot
+        .workspace_view
+        .clone()
+        .expect("a front Workspace");
+    assert_eq!(view.path, directory.to_string_lossy());
+    assert_eq!(
+        view.mode,
+        crate::workspace_views::ViewMode::Together,
+        "the View area shows again"
+    );
+    let (_, active, _) = areas(&view.layout).remove(0);
+    assert_eq!(active.as_deref(), Some(a.as_str()));
+    drop(other);
 }

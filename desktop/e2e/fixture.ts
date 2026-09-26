@@ -94,9 +94,9 @@ export async function launch(
  * (checked by reading the window through the main process when Playwright's
  * page did not). The main process sees the window as the operator does.
  */
-export async function relaunch(env: Record<string, string>, { appDir = DESKTOP_DIR }: { appDir?: string } = {}): Promise<ElectronApplication> {
+export async function relaunch(env: Record<string, string>, { appDir = DESKTOP_DIR, switches = [] }: { appDir?: string; switches?: string[] } = {}): Promise<ElectronApplication> {
   assertIsolated(env);
-  const app = await electron.launch({ args: [appDir], cwd: appDir, env });
+  const app = await electron.launch({ args: [appDir, ...switches], cwd: appDir, env });
   await expect
     .poll(
       () =>

@@ -68,8 +68,8 @@ export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pa
 };
 
 export const KEYBOARD_ONLY: readonly CommandId[] = [
-  "recent_tab",
-  "previous_recent_tab",
+  "recent_panel",
+  "previous_recent_panel",
   "recent_project",
   "previous_recent_project",
   "move_to_trash",

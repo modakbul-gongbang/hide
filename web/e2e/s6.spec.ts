@@ -39,11 +39,12 @@ test("Main, Overview and a Workspace with its layouts, tools and delegated child
     const sent = countSent(page, last);
     await open(page, daemon);
 
-    // A first run starts on Main (D-11), which lists this machine's Project
-    // with real counts (B1).
+    // A first run starts on Main (D-11), whose Projects view lists this
+    // machine's Project with real counts (B1).
     const workspace = page.locator("[data-workspace-screen]");
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
     await expect(workspace).toHaveCount(0);
+    await page.locator('[data-main-tab="projects"]').click();
     const project = page.locator("[data-main-project]", { hasText: "fixture" });
     await expect(project).toBeVisible();
     await expect(project.locator("[data-workspace-count]")).toHaveText(/1 workspace/);

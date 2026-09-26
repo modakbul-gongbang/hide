@@ -17,6 +17,7 @@ export type Daemon = {
   origin: string;
   token: string;
   home: string;
+  stateDir: string;
   hostId: string;
   stop: () => void;
   /** `beforeStart` runs on the daemon's state directory while it is down. */
@@ -25,7 +26,9 @@ export type Daemon = {
 
 /** `extraEnv` is laid over the daemon's environment; an undefined value leaves that variable unset. */
 export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride?: string, extraEnv: NodeJS.ProcessEnv = {}): Promise<Daemon> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `hide-e2e-${label}-`));
+  // The daemon places pane-bootstrap.sock below this directory. Keep the
+  // fixture root short enough for macOS's Unix socket path limit.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hde-"));
   const home = homeOverride ?? path.join(dir, "home");
   fs.mkdirSync(path.join(home, "projects", "alpha"), { recursive: true });
   fs.mkdirSync(path.join(home, "projects", ".hidden"), { recursive: true });
@@ -93,7 +96,7 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
             beforeStart?.(path.join(dir, "hide"));
             return launch(herdr, label, dir, home, String(state.port), extraEnv);
           };
-          return { origin, token: state.token, home: fs.realpathSync(home), hostId, stop, restart };
+          return { origin, token: state.token, home: fs.realpathSync(home), stateDir: path.join(dir, "hide"), hostId, stop, restart };
         }
       } catch {
         /* still starting */

@@ -22,6 +22,7 @@ import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./setting
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import type { OpenTarget } from "./navigation";
+import { expectSurface, type Surface } from "./recent";
 import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
 import {
   catalogWorkspaces,
@@ -855,6 +856,20 @@ export function createActions(dispatch: DispatchFn) {
      * Names a local Git Project an Overview shows for measuring its disk, and
      * measures it again; the core refuses anything else to the log.
      */
+    /**
+     * Asks the core to read a local Git project's pull requests and issues,
+     * the tasks its Tasks and Agents views draw; the core reads a project
+     * once and keeps the answer, so asking again costs nothing (D-14).
+     */
+    readProjectTasks(workspaceId: string) {
+      dispatch({ schema_version: 2, kind: "github_request", payload: { workspace_id: workspaceId, refresh: false } });
+    },
+
+    /** A new tab in the checkout with the provider started in it (D-05); `terminal` is the tab alone. */
+    startAgent(checkoutPath: string, provider: "claude" | "codex" | "terminal") {
+      dispatch({ schema_version: 2, kind: "agent_start_in_checkout", payload: { checkout_path: checkoutPath, provider } });
+    },
+
     measureProjectDisk(workspaceId: string) {
       dispatch({ schema_version: 2, kind: "card_measure_disk", payload: { workspace_id: workspaceId } });
     },
@@ -942,6 +957,28 @@ export function createActions(dispatch: DispatchFn) {
         kind: "focus_tab",
         payload: { workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, tab_id: tabId },
       });
+    },
+
+    /**
+     * A Recent Panels or Recent Projects commit: the surface comes forward in
+     * its own checkout, bringing this machine and that Workspace to the front
+     * when they are not, as one event. A Herdr tab is a `focus_tab`; a display
+     * is the checkout's `focus_checkout` naming it, and the keyboard follows
+     * into the display once the core shows it.
+     */
+    openSurface(surface: Surface) {
+      const checkout = rest()?.navigator?.workspaces?.flatMap((row) => row.checkouts).find((row) => row.id === surface.checkoutId);
+      if (!checkout) return diagnostic(`recent: ${surface.checkoutId} is no longer open`);
+      const focusDevice = (rest()?.navigator?.focused_device_id ?? "local") !== "local" ? { focus_device: true } : {};
+      const ids = { workspace_id: surface.workspaceId, checkout_id: surface.checkoutId };
+      expectSurface(surface.key);
+      beginOpening({ checkoutId: checkout.id, deviceId: "local", path: checkout.path });
+      if (surface.kind === "herdr") {
+        dispatch({ schema_version: 2, kind: "focus_tab", payload: { ...ids, tab_id: surface.id, ...focusDevice } });
+        return;
+      }
+      ui().setViewFocusRequest({ workspace: workspaceKey({ device_id: "local", path: checkout.path }), displayId: surface.id, from: null });
+      dispatch({ schema_version: 2, kind: "focus_checkout", payload: { ...ids, display_id: surface.id, ...focusDevice } });
     },
 
     reorderTab(stripId: string, toIndex: number) {
@@ -1298,11 +1335,11 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     /** What a page says (its address and title), recorded so the tab and a relaunch show it. */
-    reportBrowserState(workspace: ViewWorkspace, displayId: string, url: string, title: string) {
+    reportBrowserState(workspace: ViewWorkspace, displayId: string, url: string, title: string, load: number, loading: boolean, failure: string | null, present: boolean) {
       dispatch({
         schema_version: 2,
         kind: "browser_state",
-        payload: { workspace: { device_id: workspace.device_id, path: workspace.path }, display_id: displayId, url, title },
+        payload: { workspace: { device_id: workspace.device_id, path: workspace.path }, display_id: displayId, url, title, load, loading, failure, present },
       });
     },
 

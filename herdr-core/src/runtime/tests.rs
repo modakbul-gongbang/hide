@@ -39,6 +39,8 @@ mod snapshot_delta;
 mod terminal;
 #[path = "tests/view_areas.rs"]
 mod view_areas;
+#[path = "tests/workspace_control.rs"]
+mod workspace_control;
 #[path = "tests/workspace_view.rs"]
 mod workspace_view;
 
@@ -515,6 +517,7 @@ fn workspace(
 ) -> WorkspaceSnapshot {
     WorkspaceSnapshot {
         home_issues: Default::default(),
+        tasks: Default::default(),
         id: id.to_owned(),
         label: label.to_owned(),
         path: path.to_owned(),

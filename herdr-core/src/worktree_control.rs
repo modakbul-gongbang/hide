@@ -1606,6 +1606,7 @@ mod tests {
         let (mut mirror, receiver) = PurposeMirror::recording();
         let mut project = WorkspaceSnapshot {
             home_issues: Default::default(),
+            tasks: Default::default(),
             id: "project".to_owned(),
             label: "Fixture".to_owned(),
             path: "/fixture/repo".to_owned(),
@@ -1819,6 +1820,7 @@ mod tests {
         };
         let checkout = WorkspaceSnapshot {
             home_issues: Default::default(),
+            tasks: Default::default(),
             id: "project".to_owned(),
             label: "Fixture".to_owned(),
             path: "/fixture/repo".to_owned(),
@@ -1935,6 +1937,7 @@ mod tests {
         ];
         let project = WorkspaceSnapshot {
             home_issues: Default::default(),
+            tasks: Default::default(),
             id: "outer".to_owned(),
             label: "Outer".to_owned(),
             path: "/fixture/repo".to_owned(),
@@ -1992,6 +1995,7 @@ mod tests {
         };
         let mut project = WorkspaceSnapshot {
             home_issues: Default::default(),
+            tasks: Default::default(),
             id: "project".to_owned(),
             label: "Fixture".to_owned(),
             path: "/fixture/repo".to_owned(),
