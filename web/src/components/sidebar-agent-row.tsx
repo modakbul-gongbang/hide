@@ -27,7 +27,9 @@ export const REVEALED_CONTROL =
  * badge while folded, the elapsed time, and the lineage chevron on a row that
  * has children. A request or news takes one line of its own from the moment it
  * exists; a quiet sentence is only in the tooltip. `place` is the Agents
- * list's context line; Projects passes none because the rows above say it.
+ * list's context line; Projects passes none because the rows above say it,
+ * and for the same reason a Projects root drawn in its own checkout carries
+ * no branch chip, while a child drawn under a parent elsewhere keeps it.
  *
  * Nothing here grows or moves on hover, focus, selection or an open menu:
  * those change a fill, a ring and the chevron's opacity only.
@@ -43,6 +45,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   onOpen,
   onToggleTree,
   inset,
+  branchShown = true,
 }: {
   agent: AgentRow;
   device: string | null;
@@ -59,10 +62,12 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   onToggleTree: ((paneId: string) => void) | null;
   /** Where a root's first column starts. */
   inset: string;
+  /** False where the row above already names the row's checkout. */
+  branchShown?: boolean;
 }) {
   const main = useRef<HTMLButtonElement>(null);
   const line = sidebarLine(agent);
-  const branch = branchChip(agent);
+  const branch = branchShown ? branchChip(agent) : null;
   const folded = agent.lineage_collapsed !== false;
   const foldable = onToggleTree !== null && childRows.length > 0;
   const attention = agent.group === "needs_you" || agent.unread;
@@ -98,7 +103,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="flex h-(--size-control-sm) min-w-0 items-center gap-xs">
           {/* The row button's name already reads all of this out. */}
-          <span aria-hidden="true" className={cn("pointer-events-none min-w-0 flex-1 truncate", titleTone, (attention || selected) && "font-medium")} data-agent-title="true">
+          <span aria-hidden="true" className={cn("pointer-events-none min-w-0 flex-auto truncate", titleTone, (attention || selected) && "font-medium")} data-agent-title="true">
             {agent.identity_label}
           </span>
           {branch ? (

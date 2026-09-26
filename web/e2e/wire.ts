@@ -2,7 +2,7 @@
 // the screenshot that writes only when a run directory was named, and the
 // way into a Workspace from the Main a first run opens on.
 
-import { expect, type Page, type WebSocket } from "@playwright/test";
+import { expect, type Locator, type Page, type WebSocket } from "@playwright/test";
 import path from "node:path";
 
 /**
@@ -87,4 +87,63 @@ export async function screenshot(page: Page, name: string): Promise<unknown> {
   if (!dir) return;
   await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
   return page.screenshot({ path: path.join(dir, `${name}.png`) });
+}
+
+/**
+ * What must not move when a row changes state (PRD sidebar-readability B2,
+ * B4): the row's height, where the row after it starts, and the left edge of
+ * each named part (the title, the time). Rounded to the device pixel, since a
+ * sub-pixel difference is not a visible move.
+ */
+export async function rowGeometry(row: Locator, next: Locator, parts: Locator[]): Promise<number[]> {
+  const box = await row.boundingBox();
+  const after = await next.boundingBox();
+  if (!box || !after) throw new Error("a measured row is not on screen");
+  const xs: number[] = [];
+  for (const part of parts) {
+    const partBox = await part.boundingBox();
+    if (!partBox) throw new Error("a measured part is not on screen");
+    xs.push(Math.round(partBox.x));
+  }
+  return [Math.round(box.height), Math.round(after.y), ...xs];
+}
+
+/** Puts the pointer on the canvas and drops keyboard focus, so no row is hovered or focused. */
+export async function rest(page: Page): Promise<void> {
+  await page.mouse.move(900, 600);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+}
+
+/**
+ * Keyboard focus on a control, the way Tab puts it there: a key press first,
+ * so the browser draws `:focus-visible` rather than treating it as a click's focus.
+ */
+export async function keyboardFocus(page: Page, control: Locator): Promise<void> {
+  await page.keyboard.press("Shift");
+  await control.focus();
+  expect(await control.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
+}
+
+/**
+ * The sidebar at a given width, and whether anything in it overflows
+ * sideways: the list scrolling horizontally, or a row's time or control
+ * running past the row's right edge (PRD sidebar-readability B25).
+ */
+export async function sidebarOverflow(page: Page, width: string): Promise<string[]> {
+  return page.evaluate((value) => {
+    const nav = document.querySelector<HTMLElement>("nav[data-sidebar]");
+    if (!nav) return ["no sidebar"];
+    nav.style.width = value;
+    const problems: string[] = [];
+    for (const list of document.querySelectorAll<HTMLElement>("[data-agent-list], [data-project-list]")) {
+      if (list.scrollWidth > list.clientWidth) problems.push(`list scrolls sideways ${list.scrollWidth} > ${list.clientWidth}`);
+    }
+    for (const row of document.querySelectorAll<HTMLElement>("[data-pane], [data-checkout-row] > *, [data-project] > *")) {
+      const right = row.getBoundingClientRect().right;
+      for (const part of row.querySelectorAll<HTMLElement>("[data-agent-elapsed], [data-checkout-age], [data-project-activity], button")) {
+        if (part.getBoundingClientRect().right > right + 0.5) problems.push(`${part.textContent ?? part.tagName} passes its row`);
+      }
+    }
+    return problems;
+  }, width);
 }

@@ -839,6 +839,7 @@ function OpenAgentRows({ checkoutId, agentRows, inset, context }: { checkoutId: 
           onOpen={context.actions.openAgent}
           onToggleTree={context.disclosure ? context.actions.toggleAgentTree : null}
           inset={inset}
+          branchShown={row.depth > 0}
         />
       ))}
     </ul>
