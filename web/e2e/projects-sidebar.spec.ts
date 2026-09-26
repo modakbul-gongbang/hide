@@ -1,6 +1,7 @@
 // The sidebar's Projects tab on an isolated pinned Herdr and hided: a Git
 // project with an agent in its primary checkout and one in a worktree, and a
-// plain folder with one agent. The rows name their kind and last-commit age;
+// plain folder with one agent. The primary checkout leads its project, and
+// the rows name their kind and last-commit age;
 // a checkout's agent rows start closed, where its second line names them, and
 // open on its chevron; a plain folder is one row that opens its checkout; a
 // project folds its checkouts; both folds are the core's ui state, so they
@@ -94,6 +95,8 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     const feature = project.locator("[data-checkout-row]", { hasText: "feature/sidebar-rows" });
     await expect(primary.locator("[data-checkout]")).toHaveAttribute("data-checkout-kind", "primary");
     await expect(feature.locator("[data-checkout]")).toHaveAttribute("data-checkout-kind", "branch");
+    // The primary checkout leads its project although the worktree moved later.
+    await expect(project.locator("[data-checkout]").first()).toHaveAttribute("data-checkout-kind", "primary");
     // The worktree's commit was just made: its age is the first minute.
     await expect(feature.locator("[data-checkout-age]")).toHaveText("now");
 
