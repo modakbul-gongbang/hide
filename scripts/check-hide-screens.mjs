@@ -111,8 +111,13 @@ function collectAliasedRefs(document, into = []) {
   return into;
 }
 
-/** True if `value` is a local (non-aliased) override: any non-empty string that is not `$alias:token`. */
+/**
+ * True if `value` is a local (non-aliased) override: any non-empty string that
+ * is not `$alias:token`, or an image paint, which replaces the master's color
+ * with artwork that looks the same in either theme (a provider mark).
+ */
 function isLocalOverride(value) {
+  if (value && typeof value === 'object' && value.type === 'image' && typeof value.url === 'string' && value.url.length > 0) return true;
   return typeof value === 'string' && value.length > 0 && !ALIASED.test(value);
 }
 
