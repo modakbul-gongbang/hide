@@ -105,6 +105,13 @@ async function slotBounds(page: Page, displayId: string): Promise<View["bounds"]
   return { x, y, width: Math.round(box.x + box.width) - x, height: Math.round(box.y + box.height) - y };
 }
 
+/**
+ * The test window sits behind whatever the operator is using, and Chromium
+ * stops painting an occluded window, so a capture by window id would show a
+ * stale frame. The window is never focused for a capture; it keeps painting.
+ */
+const PAINT_WHILE_OCCLUDED = ["--disable-backgrounding-occluded-windows"];
+
 /** The window as macOS draws it, page views included, captured by window id without focusing it. */
 async function windowShot(name: string): Promise<void> {
   const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
@@ -126,7 +133,12 @@ async function displayIdOf(page: Page, text: string): Promise<string> {
 test("browser: a page opens from an agent's pane, follows its area, moves without loading again, freezes under the palette and ends with its display", async () => {
   const report = path.join(herdr.root, "fixture", "리포트 1.html");
   fs.writeFileSync(report, '<!doctype html><meta charset="utf-8"><title>Local report</title><h1>리포트</h1>');
-  ({ app } = await launch(run.env));
+  ({ app } = await launch(run.env, PAINT_WHILE_OCCLUDED));
+  // Two View areas side by side need room beside the Agents area.
+  await app.evaluate(({ BrowserWindow, screen }) => {
+    const area = screen.getPrimaryDisplay().workArea;
+    BrowserWindow.getAllWindows()[0]!.setBounds({ x: area.x, y: area.y, width: Math.min(1800, area.width), height: Math.min(1000, area.height) });
+  });
   const page = await app.firstWindow();
   await enterWorkspace(page, "fixture");
   const checkout = path.join(fs.realpathSync(herdr.root), "fixture");
@@ -158,7 +170,9 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
 
   // Split right moves B into a new area: both pages show, neither loaded again.
   await tab(page, "Page B").click({ button: "right" });
-  await page.locator('[role="menu"] [data-menu-item="split_right"]').click();
+  const splitRight = page.locator('[role="menu"] [data-menu-item="split_right"]');
+  await expect(splitRight, (await splitRight.textContent()) ?? "").not.toHaveAttribute("aria-disabled", "true");
+  await splitRight.click();
   await expect(page.locator("[data-view-area-id]")).toHaveCount(2);
   await tab(page, "Page A").click();
   await expect.poll(async () => (await views()).filter((view) => view.visible).length).toBe(2);
@@ -220,7 +234,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
 
   // Closing B's display ends its renderer process.
   await tab(page, "Page B").click({ button: "right" });
-  await page.locator('[role="menu"] [data-menu-item="close"]').click();
+  await page.locator('[role="menu"] [data-menu-item="close_view"]').click();
   await expect(tab(page, "Page B")).toHaveCount(0);
   await expect
     .poll(() => {
@@ -236,7 +250,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
 
   // A relaunch brings the pages back at the addresses they last showed.
   await app.close();
-  ({ app } = await launch(run.env));
+  ({ app } = await launch(run.env, PAINT_WHILE_OCCLUDED));
   const again = await app.firstWindow();
   await enterWorkspace(again, "fixture");
   await expect(tab(again, "Page A")).toBeVisible({ timeout: 20_000 });

@@ -66,6 +66,11 @@ export function addressUrl(input: string): string | null {
   return `${LOOPBACK.test(text) ? "http" : "https"}://${text}`;
 }
 
+/** An address as the toolbar shows it at rest: a web address without its scheme, anything else whole. */
+export function addressShown(url: string): string {
+  return url.replace(/^https?:\/\//i, "");
+}
+
 /**
  * The page state the core should record for a display, or null when it
  * already holds it: the address the page moved to, and its title once it

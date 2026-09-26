@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addressUrl, browserDisplays, fileUrl, isHtmlFile, parseWorkspaceKey, placements, stateReport } from "./browserViews";
+import { addressShown, addressUrl, browserDisplays, fileUrl, isHtmlFile, parseWorkspaceKey, placements, stateReport } from "./browserViews";
 import type { ViewLayoutSnapshot } from "./snapshot";
 import { workspaceKey } from "./viewLayout";
 
@@ -15,6 +15,14 @@ describe("the address field", () => {
     expect(addressUrl("  example.com ")).toBe("https://example.com");
     expect(addressUrl("two words")).toBeNull();
     expect(addressUrl("   ")).toBeNull();
+  });
+
+  it("shows a web address without its scheme and anything else whole", () => {
+    expect(addressShown("http://127.0.0.1:3000/a.html")).toBe("127.0.0.1:3000/a.html");
+    expect(addressShown("https://example.com/")).toBe("example.com/");
+    expect(addressShown("file:///Users/me/a.html")).toBe("file:///Users/me/a.html");
+    // What is shown loads the same page again.
+    expect(addressUrl(addressShown("http://localhost:5173/x"))).toBe("http://localhost:5173/x");
   });
 
   it("writes a file URL the way the daemon writes the checked path back", () => {

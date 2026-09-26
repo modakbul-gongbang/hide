@@ -70,9 +70,10 @@ function assertIsolated(env: Record<string, string>): void {
   }
 }
 
-export async function launch(env: Record<string, string>): Promise<{ app: ElectronApplication; page: Page }> {
+/** `switches` are Chromium command-line switches for this launch only. */
+export async function launch(env: Record<string, string>, switches: string[] = []): Promise<{ app: ElectronApplication; page: Page }> {
   assertIsolated(env);
-  const app = await electron.launch({ args: [DESKTOP_DIR], cwd: DESKTOP_DIR, env });
+  const app = await electron.launch({ args: [DESKTOP_DIR, ...switches], cwd: DESKTOP_DIR, env });
   const page = await app.firstWindow();
   return { app, page };
 }

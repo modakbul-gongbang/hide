@@ -2,7 +2,7 @@ import { ArrowLeftIcon, ArrowRightIcon, RotateCwIcon, XIcon } from "lucide-react
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AreaEmpty } from "./AreaEmpty";
-import { addressUrl, hostKey, notePageState, parseWorkspaceKey, registerBrowserSlot, stateReport, syncBrowserFront, useBrowserStore } from "./browserViews";
+import { addressShown, addressUrl, hostKey, notePageState, parseWorkspaceKey, registerBrowserSlot, stateReport, syncBrowserFront, useBrowserStore } from "./browserViews";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Hint } from "./components/ui/tooltip";
@@ -88,7 +88,11 @@ function HostedPage({ display, workspace, actions }: { display: ViewDisplaySnaps
   );
 }
 
-/** The page's address; editing it and pressing Return loads what was typed, Escape puts the page's address back. */
+/**
+ * The page's address, shown without a web scheme until it is edited so a
+ * narrow area still shows the host; focusing it shows the whole address
+ * selected. Return loads what was typed, Escape puts the page's address back.
+ */
 function AddressField({ address, onSubmit }: { address: string; onSubmit: (url: string) => void }) {
   const [draft, setDraft] = useState<string | null>(null);
   return (
@@ -98,9 +102,13 @@ function AddressField({ address, onSubmit }: { address: string; onSubmit: (url: 
       aria-label="Page address"
       spellCheck={false}
       autoComplete="off"
-      value={draft ?? address}
+      value={draft ?? addressShown(address)}
       data-browser-address="true"
-      onFocus={(event) => event.currentTarget.select()}
+      onFocus={(event) => {
+        const field = event.currentTarget;
+        setDraft(address);
+        requestAnimationFrame(() => field.select());
+      }}
       onChange={(event) => setDraft(event.currentTarget.value)}
       onBlur={() => setDraft(null)}
       onKeyDown={(event) => {
@@ -111,10 +119,10 @@ function AddressField({ address, onSubmit }: { address: string; onSubmit: (url: 
           setDraft(null);
           if (url) onSubmit(url);
           event.currentTarget.blur();
-        } else if (event.key === "Escape" && draft !== null) {
+        } else if (event.key === "Escape" && draft !== null && draft !== address) {
           event.preventDefault();
           event.stopPropagation();
-          setDraft(null);
+          setDraft(address);
         }
       }}
     />
