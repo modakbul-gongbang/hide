@@ -7012,7 +7012,7 @@
               "fill": "$--muted-foreground",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "InactiveFoldRow · hierarchy level supplied by project tree · token-based inset",
+              "content": "FoldRow in sidebar.tsx: the Inactive and Inactive projects folds. The label reads at the level’s glyph column and the chevron stands in the rows’ fold slot on the right, with the menu’s lane kept, so it lines up with the project and checkout rows.",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-subhead",
               "fontWeight": "normal"
@@ -7047,20 +7047,12 @@
               "gap": "$--spacing-sm",
               "padding": [
                 0,
-                "$--spacing-md"
+                "$--spacing-xs",
+                0,
+                "$--spacing-sm"
               ],
               "alignItems": "center",
               "children": [
-                {
-                  "type": "icon",
-                  "id": "inactive-fold-chevron",
-                  "name": "Chevron",
-                  "width": 12,
-                  "height": 12,
-                  "icon": "chevron-right",
-                  "library": "lucide",
-                  "fill": "$--muted-foreground"
-                },
                 {
                   "type": "text",
                   "id": "inactive-fold-label",
@@ -7070,8 +7062,44 @@
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-caption",
                   "fontWeight": "500"
+                },
+                {
+                  "type": "frame",
+                  "id": "inactive-fold-spacer",
+                  "name": "Flexible spacer",
+                  "width": "fill_container",
+                  "height": 1
+                },
+                {
+                  "type": "frame",
+                  "id": "inactive-fold-slot",
+                  "name": "Fold slot",
+                  "width": 16,
+                  "height": 24,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "inactive-fold-chevron",
+                      "name": "Chevron",
+                      "width": 12,
+                      "height": 12,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "inactive-fold-menu-lane",
+                  "name": "Menu lane",
+                  "width": 24,
+                  "height": 24
                 }
-              ]
+              ],
+              "cornerRadius": "$--radius-sm"
             }
           ]
         },
@@ -12211,7 +12239,7 @@
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "WorkspaceRowItem: project disclosure, identity and activity; retained in active and inactive project groups.",
+          "content": "sidebar.tsx WorkspaceRows: the project glyph, name and activity read on the left; the fold and the ⋯ menu sit on the right in slots kept at rest, so the name and the activity never move. A folded chevron is always shown; an unfolded one, like the menu, shows under the pointer, with keyboard focus in the row, while its menu is open, and always on an input with no hover. The name opens the Overview.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -12223,123 +12251,347 @@
           "reusable": true,
           "width": 292,
           "height": 36,
+          "cornerRadius": "$--radius-sm",
+          "gap": "$--spacing-sm",
           "padding": [
             0,
-            "$--spacing-md"
+            "$--spacing-xs",
+            0,
+            "$--spacing-sm"
           ],
-          "justifyContent": "space_between",
           "alignItems": "center",
           "children": [
             {
               "type": "frame",
-              "id": "j4noBf",
-              "name": "Identity",
-              "gap": "$--spacing-sm",
+              "id": "hrH3e",
+              "name": "Project icon slot",
+              "width": 14,
+              "justifyContent": "center",
               "alignItems": "center",
               "children": [
                 {
-                  "type": "frame",
-                  "id": "wgtfo",
-                  "name": "Chevron slot",
-                  "width": 16,
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "icon",
-                      "id": "iBYjj",
-                      "name": "Chevron",
-                      "width": 9,
-                      "height": 9,
-                      "icon": "chevron-right",
-                      "library": "lucide",
-                      "fill": "$--muted-foreground"
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "hrH3e",
-                  "name": "Project icon slot",
+                  "type": "icon",
+                  "id": "mIzlX",
+                  "name": "Project",
                   "width": 14,
-                  "justifyContent": "center",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "icon",
-                      "id": "mIzlX",
-                      "name": "Project",
-                      "width": 14,
-                      "height": 14,
-                      "icon": "folder-git-2",
-                      "library": "lucide",
-                      "fill": "$--subtle-foreground"
-                    }
-                  ]
-                },
-                {
-                  "type": "text",
-                  "id": "JkPyX",
-                  "name": "Name",
-                  "fill": "$--foreground",
-                  "content": "sasu",
-                  "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-title",
-                  "fontWeight": "600"
+                  "height": 14,
+                  "icon": "folder-git-2",
+                  "library": "lucide",
+                  "fill": "$--subtle-foreground"
                 }
               ]
             },
             {
+              "type": "text",
+              "id": "JkPyX",
+              "name": "Name",
+              "fill": "$--foreground",
+              "content": "sasu",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-title",
+              "fontWeight": "600"
+            },
+            {
               "type": "frame",
-              "id": "L1Q8a",
-              "name": "Trailing",
-              "gap": "$--spacing-sm",
+              "id": "j4noBf",
+              "name": "Flexible spacer",
+              "width": "fill_container",
+              "height": 1
+            },
+            {
+              "type": "text",
+              "id": "nZkan",
+              "name": "Agent count and activity",
+              "fill": "$--muted-foreground",
+              "content": "3 agents · 50m",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "wgtfo",
+              "name": "Fold slot",
+              "width": 16,
+              "height": 24,
+              "justifyContent": "center",
               "alignItems": "center",
               "children": [
                 {
-                  "type": "text",
-                  "id": "nZkan",
-                  "name": "Agent count",
-                  "fill": "$--muted-foreground",
-                  "content": "3 agents",
-                  "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-body",
-                  "fontWeight": "normal"
-                },
-                {
-                  "id": "hm1SG",
-                  "type": "ref",
-                  "ref": "Nyvom",
-                  "name": "Overflow menu",
-                  "descendants": {
-                    "ZIZFR": {
-                      "icon": "ellipsis",
-                      "fill": "$--muted-foreground"
-                    }
-                  }
+                  "type": "icon",
+                  "id": "iBYjj",
+                  "name": "Chevron",
+                  "width": 12,
+                  "height": 12,
+                  "icon": "chevron-right",
+                  "library": "lucide",
+                  "fill": "$--muted-foreground"
                 }
               ]
+            },
+            {
+              "id": "hm1SG",
+              "type": "ref",
+              "ref": "Nyvom",
+              "name": "Overflow menu",
+              "width": 24,
+              "height": 24,
+              "opacity": 0,
+              "descendants": {
+                "ZIZFR": {
+                  "icon": "ellipsis",
+                  "fill": "$--muted-foreground",
+                  "width": 14,
+                  "height": 14
+                }
+              }
             }
           ]
         },
         {
-          "id": "project-row-collapsed",
-          "type": "ref",
-          "ref": "qdhY0",
+          "type": "frame",
+          "id": "project-row-state-collapsed",
+          "name": "State / Collapsed",
           "width": "fill_container",
-          "name": "State / Collapsed"
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "project-row-state-collapsed-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Collapsed",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "project-row-collapsed",
+              "type": "ref",
+              "ref": "qdhY0",
+              "width": "fill_container",
+              "name": "Row / Collapsed",
+              "descendants": {}
+            }
+          ]
         },
         {
-          "id": "project-row-expanded",
-          "type": "ref",
-          "ref": "qdhY0",
+          "type": "frame",
+          "id": "project-row-state-expanded",
+          "name": "State / Expanded at rest",
           "width": "fill_container",
-          "name": "State / Expanded",
-          "descendants": {
-            "iBYjj": {
-              "icon": "chevron-down"
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "project-row-state-expanded-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Expanded at rest",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "project-row-expanded",
+              "type": "ref",
+              "ref": "qdhY0",
+              "width": "fill_container",
+              "name": "Row / Expanded at rest",
+              "descendants": {
+                "wgtfo": {
+                  "opacity": 0
+                },
+                "iBYjj": {
+                  "icon": "chevron-down"
+                }
+              }
             }
-          }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "project-row-state-hover",
+          "name": "State / Expanded under the pointer",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "project-row-state-hover-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Expanded under the pointer",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "project-row-hover",
+              "type": "ref",
+              "ref": "qdhY0",
+              "width": "fill_container",
+              "name": "Row / Hover",
+              "fill": "$--accent",
+              "descendants": {
+                "iBYjj": {
+                  "icon": "chevron-down"
+                },
+                "hm1SG": {
+                  "opacity": 1
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "project-row-state-focus",
+          "name": "State / Keyboard focus",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "project-row-state-focus-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Keyboard focus",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "project-row-focus",
+              "type": "ref",
+              "ref": "qdhY0",
+              "width": "fill_container",
+              "name": "Row / Focus",
+              "stroke": "$--ring",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "descendants": {
+                "iBYjj": {
+                  "icon": "chevron-down"
+                },
+                "hm1SG": {
+                  "opacity": 1
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "project-row-state-menu",
+          "name": "State / Menu open",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "project-row-state-menu-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Menu open",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "project-row-menu",
+              "type": "ref",
+              "ref": "qdhY0",
+              "width": "fill_container",
+              "name": "Row / Menu open",
+              "fill": "$--accent",
+              "descendants": {
+                "iBYjj": {
+                  "icon": "chevron-down"
+                },
+                "hm1SG": {
+                  "opacity": 1,
+                  "fill": "$--secondary"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "project-row-state-selected",
+          "name": "State / Selected: its Overview in front",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "project-row-state-selected-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Selected: its Overview in front",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "project-row-selected",
+              "type": "ref",
+              "ref": "qdhY0",
+              "width": "fill_container",
+              "name": "Row / Selected",
+              "fill": "$--secondary",
+              "descendants": {
+                "wgtfo": {
+                  "opacity": 0
+                },
+                "iBYjj": {
+                  "icon": "chevron-down"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "project-row-state-narrow",
+          "name": "State / 240 px with a long name",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "project-row-state-narrow-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "240 px with a long name",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "project-row-narrow",
+              "type": "ref",
+              "ref": "qdhY0",
+              "width": 240,
+              "name": "Row / Narrow",
+              "descendants": {
+                "JkPyX": {
+                  "content": "herdr-ide-sidebar-rea…"
+                },
+                "nZkan": {
+                  "content": "9 agents · 3h"
+                }
+              }
+            }
+          ]
         }
       ]
     },
@@ -13490,7 +13742,7 @@
               "fill": "$--subtle-foreground",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "36pt one-line row; 44pt only while collapsed with agent summary or purpose. Kind, title, commit age, and the reserved chevron slot never move.",
+              "content": "sidebar.tsx CheckoutRowView: the kind glyph, the name and the last-commit age read on the left of fixed slots for the fold and the ⋯ menu, so the age stays beside an open menu and nothing moves on hover. The fold is drawn only while agents run there, folded always shown and unfolded under the pointer; line two names the agents and the purpose while they are folded. An opened checkout and its agent rows share one small group fill.",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "normal"
@@ -13597,7 +13849,7 @@
                     {
                       "type": "frame",
                       "id": "IXwZI",
-                      "name": "Chevron slot",
+                      "name": "Fold slot",
                       "justifyContent": "center",
                       "alignItems": "center",
                       "children": [
@@ -13605,13 +13857,32 @@
                           "type": "icon",
                           "id": "CgZj3",
                           "name": "Chevron",
-                          "width": 9,
-                          "height": 9,
+                          "width": 12,
+                          "height": 12,
                           "icon": "chevron-right",
                           "library": "lucide",
-                          "fill": "$--subtle-foreground"
+                          "fill": "$--muted-foreground"
                         }
-                      ]
+                      ],
+                      "width": 16,
+                      "height": 24
+                    },
+                    {
+                      "id": "checkout-row-menu",
+                      "type": "ref",
+                      "ref": "Nyvom",
+                      "name": "Overflow menu",
+                      "width": 24,
+                      "height": 24,
+                      "opacity": 0,
+                      "descendants": {
+                        "ZIZFR": {
+                          "icon": "ellipsis",
+                          "fill": "$--muted-foreground",
+                          "width": 14,
+                          "height": 14
+                        }
+                      }
                     }
                   ]
                 },
@@ -13735,7 +14006,8 @@
                     }
                   ]
                 }
-              ]
+              ],
+              "cornerRadius": "$--radius-sm"
             }
           ]
         },
@@ -13889,8 +14161,1312 @@
               }
             }
           ]
+        },
+        {
+          "type": "frame",
+          "id": "checkout-row-state-hover",
+          "name": "State / Under the pointer",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "checkout-row-state-hover-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Under the pointer",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "checkout-row-hover",
+              "type": "ref",
+              "ref": "DLP27",
+              "width": "fill_container",
+              "name": "Row / Hover",
+              "fill": "$--accent",
+              "height": 44,
+              "descendants": {
+                "checkout-row-menu": {
+                  "opacity": 1
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "checkout-row-state-focus",
+          "name": "State / Keyboard focus",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "checkout-row-state-focus-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Keyboard focus",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "checkout-row-focus",
+              "type": "ref",
+              "ref": "DLP27",
+              "width": "fill_container",
+              "name": "Row / Focus",
+              "stroke": "$--ring",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "height": 44,
+              "descendants": {
+                "checkout-row-menu": {
+                  "opacity": 1
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "checkout-row-state-menu",
+          "name": "State / Menu open: the age stays",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "checkout-row-state-menu-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Menu open: the age stays",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "checkout-row-menu-open",
+              "type": "ref",
+              "ref": "DLP27",
+              "width": "fill_container",
+              "name": "Row / Menu open",
+              "fill": "$--accent",
+              "height": 44,
+              "descendants": {
+                "checkout-row-menu": {
+                  "opacity": 1,
+                  "fill": "$--secondary"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "checkout-row-state-selected",
+          "name": "State / Selected: its Workspace in front",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "checkout-row-state-selected-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Selected: its Workspace in front",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "checkout-row-selected",
+              "type": "ref",
+              "ref": "DLP27",
+              "width": "fill_container",
+              "name": "Row / Selected",
+              "fill": "$--secondary",
+              "height": 36,
+              "descendants": {
+                "o6XLUj": {
+                  "enabled": false
+                },
+                "q91d7": {
+                  "content": "main",
+                  "fontWeight": "600"
+                },
+                "VtSRn": {
+                  "icon": "house",
+                  "fill": "$--subtle-foreground"
+                },
+                "TuosT": {
+                  "content": "12m"
+                },
+                "CgZj3": {
+                  "icon": "chevron-down"
+                },
+                "IXwZI": {
+                  "opacity": 0
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "checkout-row-state-group",
+          "name": "State / Opened with its agents: one group fill",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "checkout-row-state-group-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Opened with its agents: one group fill",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "checkout-row-group",
+              "name": "Group",
+              "width": "fill_container",
+              "layout": "vertical",
+              "fill": "$--muted",
+              "cornerRadius": "$--radius-sm",
+              "children": [
+                {
+                  "id": "checkout-row-group-row",
+                  "type": "ref",
+                  "ref": "DLP27",
+                  "width": "fill_container",
+                  "name": "Row / Opened",
+                  "height": 36,
+                  "descendants": {
+                    "o6XLUj": {
+                      "enabled": false
+                    },
+                    "q91d7": {
+                      "content": "main"
+                    },
+                    "VtSRn": {
+                      "icon": "house",
+                      "fill": "$--subtle-foreground"
+                    },
+                    "TuosT": {
+                      "content": "12m"
+                    },
+                    "CgZj3": {
+                      "icon": "chevron-down"
+                    },
+                    "IXwZI": {
+                      "opacity": 0
+                    }
+                  }
+                },
+                {
+                  "id": "checkout-row-group-agent",
+                  "type": "ref",
+                  "ref": "sidebar-agent-row",
+                  "width": "fill_container",
+                  "name": "Agent",
+                  "padding": [
+                    "$--spacing-xs",
+                    "$--spacing-xs",
+                    "$--spacing-xs",
+                    44
+                  ],
+                  "descendants": {
+                    "sar-title": {
+                      "content": "workspace 조작 개선"
+                    }
+                  }
+                }
+              ]
+            }
+          ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "sidebar-agent-row-sheet",
+      "name": "Component / Sidebar agent row",
+      "width": 316,
+      "layout": "vertical",
+      "gap": "$--spacing-md",
+      "padding": "$--spacing-md",
+      "children": [
+        {
+          "type": "text",
+          "id": "sidebar-agent-row-title",
+          "name": "Title",
+          "fill": "$--foreground",
+          "content": "Sidebar agent row",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "normal"
+        },
+        {
+          "type": "text",
+          "id": "sidebar-agent-row-spec",
+          "name": "Spec",
+          "fill": "$--subtle-foreground",
+          "content": "sidebar-agent-row.tsx SidebarAgentRow, in Agents and under a checkout in Projects: the status mark, the provider, the title, a branch chip only for a child whose checkout differs from its parent, the device chip, the descendant badge while folded, the elapsed time that is always shown, and the fold only on a parent. A request or news has its own line from the start, a quiet sentence is only in the tooltip, and Agents adds a fixed context line. Hover, focus and selection change a fill and a ring, never a height.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal",
+          "textGrowth": "fixed-width",
+          "width": "fill_container"
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row",
+          "name": "Component / Sidebar agent row",
+          "reusable": true,
+          "width": 268,
+          "cornerRadius": "$--radius-sm",
+          "gap": "$--spacing-xs",
+          "padding": [
+            "$--spacing-xs",
+            "$--spacing-xs"
+          ],
+          "alignItems": "start",
+          "children": [
+            {
+              "type": "frame",
+              "id": "sar-marks",
+              "name": "Marks",
+              "height": 24,
+              "gap": "$--spacing-xs",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "sar-mark",
+                  "name": "Status mark",
+                  "width": 12,
+                  "height": 16,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "ellipse",
+                      "id": "sar-dot",
+                      "name": "Dot",
+                      "enabled": false,
+                      "fill": "$--agent-working",
+                      "width": 7,
+                      "height": 7
+                    },
+                    {
+                      "type": "ellipse",
+                      "id": "sar-ring",
+                      "name": "Ring",
+                      "width": 7,
+                      "height": 7,
+                      "stroke": "$--muted-foreground",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner"
+                    },
+                    {
+                      "type": "text",
+                      "id": "sar-glyph",
+                      "name": "Glyph",
+                      "enabled": false,
+                      "fill": "$--warning",
+                      "textGrowth": "fixed-width",
+                      "width": 12,
+                      "content": "?",
+                      "textAlign": "center",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "sar-provider",
+                  "name": "Provider artwork",
+                  "width": 16,
+                  "height": 16,
+                  "cornerRadius": "$--radius-xs",
+                  "fill": {
+                    "type": "image",
+                    "enabled": true,
+                    "url": "../web/src/assets/agent-claude.png",
+                    "mode": "fit"
+                  }
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "sar-body",
+              "name": "Body",
+              "width": "fill_container",
+              "layout": "vertical",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "sar-line1",
+                  "name": "Line 1",
+                  "width": "fill_container",
+                  "height": 24,
+                  "gap": "$--spacing-xs",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "sar-title",
+                      "name": "Title",
+                      "fill": "$--subtle-foreground",
+                      "content": "CI 테스트 구성 및 성능 분석",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sar-branch",
+                      "name": "Branch chip",
+                      "enabled": false,
+                      "height": 16,
+                      "cornerRadius": "$--radius-sm",
+                      "padding": [
+                        0,
+                        "$--spacing-xs"
+                      ],
+                      "alignItems": "center",
+                      "fill": "$--secondary",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "sar-branch-label",
+                          "name": "Label",
+                          "fill": "$--subtle-foreground",
+                          "content": "feat/ui",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sar-device",
+                      "name": "Device chip",
+                      "enabled": false,
+                      "height": 16,
+                      "cornerRadius": "$--radius-sm",
+                      "padding": [
+                        0,
+                        "$--spacing-xs"
+                      ],
+                      "alignItems": "center",
+                      "stroke": "$--border",
+                      "strokeWidth": 1,
+                      "strokeAlignment": "inner",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "sar-device-label",
+                          "name": "Label",
+                          "fill": "$--subtle-foreground",
+                          "content": "Mac mini",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sar-spacer",
+                      "name": "Flexible spacer",
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sar-badge",
+                      "name": "Descendant badge",
+                      "enabled": false,
+                      "height": 16,
+                      "cornerRadius": "$--radius-sm",
+                      "padding": [
+                        0,
+                        "$--spacing-xs"
+                      ],
+                      "alignItems": "center",
+                      "fill": "$--secondary",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "sar-badge-label",
+                          "name": "Label",
+                          "fill": "$--subtle-foreground",
+                          "content": "↳2",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "normal"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "sar-elapsed",
+                      "name": "Elapsed",
+                      "fill": "$--muted-foreground",
+                      "content": "3m",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "sar-fold",
+                      "name": "Fold slot",
+                      "enabled": false,
+                      "width": 16,
+                      "height": 24,
+                      "justifyContent": "center",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "sar-chevron",
+                          "name": "Chevron",
+                          "width": 12,
+                          "height": 12,
+                          "icon": "chevron-right",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "sar-line",
+                  "name": "Request or news line",
+                  "fill": "$--warning",
+                  "content": "프로젝트 전체에 적용할까요?",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal",
+                  "enabled": false
+                },
+                {
+                  "type": "text",
+                  "id": "sar-place",
+                  "name": "Context line",
+                  "fill": "$--muted-foreground",
+                  "content": "herdr-ide › main",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal",
+                  "enabled": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-rest",
+          "name": "State / Seen at rest (32)",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-rest-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Seen at rest (32)",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-rest",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / rest",
+              "descendants": {}
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-hover",
+          "name": "State / Under the pointer: nothing moves",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-hover-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Under the pointer: nothing moves",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-hover",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / hover",
+              "fill": "$--accent",
+              "descendants": {}
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-selected",
+          "name": "State / Selected: its pane in front",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-selected-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Selected: its pane in front",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-selected",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / selected",
+              "fill": "$--secondary",
+              "descendants": {
+                "sar-title": {
+                  "fill": "$--foreground",
+                  "fontWeight": "500"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-focus",
+          "name": "State / Keyboard focus",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-focus-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Keyboard focus",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-focus",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / focus",
+              "stroke": "$--ring",
+              "strokeWidth": 1,
+              "strokeAlignment": "inner",
+              "descendants": {}
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-working",
+          "name": "State / Working",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-working-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Working",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-working",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / working",
+              "descendants": {
+                "sar-dot": {
+                  "enabled": true,
+                  "fill": "$--agent-working"
+                },
+                "sar-ring": {
+                  "enabled": false
+                },
+                "sar-glyph": {
+                  "enabled": false
+                },
+                "sar-title": {
+                  "content": "Overview 탭 UI/UX 설계",
+                  "fill": "$--foreground"
+                },
+                "sar-elapsed": {
+                  "content": "41m"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-done",
+          "name": "State / Done, unread: news on its own line (52)",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-done-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Done, unread: news on its own line (52)",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-done",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / done",
+              "descendants": {
+                "sar-dot": {
+                  "enabled": false
+                },
+                "sar-ring": {
+                  "enabled": false
+                },
+                "sar-glyph": {
+                  "enabled": true,
+                  "content": "✓",
+                  "fill": "$--success"
+                },
+                "sar-title": {
+                  "content": "Electron포팅지침이행",
+                  "fill": "$--foreground",
+                  "fontWeight": "500"
+                },
+                "sar-line": {
+                  "enabled": true,
+                  "content": "hide 앱을 다시 열었고 정상 실행 중",
+                  "fill": "$--foreground"
+                },
+                "sar-elapsed": {
+                  "content": "42s"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-question",
+          "name": "State / Question: the request from the start",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-question-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Question: the request from the start",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-question",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / question",
+              "descendants": {
+                "sar-dot": {
+                  "enabled": false
+                },
+                "sar-ring": {
+                  "enabled": false
+                },
+                "sar-glyph": {
+                  "enabled": true,
+                  "content": "?",
+                  "fill": "$--warning"
+                },
+                "sar-title": {
+                  "content": "구현 범위 확인",
+                  "fill": "$--foreground",
+                  "fontWeight": "500"
+                },
+                "sar-line": {
+                  "enabled": true
+                },
+                "sar-elapsed": {
+                  "content": "1m"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-read-question",
+          "name": "State / Read question: still in the warning colour",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-read-question-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Read question: still in the warning colour",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-read-question",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / read-question",
+              "descendants": {
+                "sar-dot": {
+                  "enabled": false
+                },
+                "sar-ring": {
+                  "enabled": false
+                },
+                "sar-glyph": {
+                  "enabled": true,
+                  "content": "?",
+                  "fill": "$--warning"
+                },
+                "sar-title": {
+                  "content": "읽은 질문"
+                },
+                "sar-line": {
+                  "enabled": true
+                },
+                "sar-elapsed": {
+                  "content": "4m"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-error",
+          "name": "State / Error",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-error-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Error",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-error",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / error",
+              "descendants": {
+                "sar-dot": {
+                  "enabled": false
+                },
+                "sar-ring": {
+                  "enabled": false
+                },
+                "sar-glyph": {
+                  "enabled": true,
+                  "content": "×",
+                  "fill": "$--destructive"
+                },
+                "sar-title": {
+                  "content": "테스트 실행 실패",
+                  "fill": "$--foreground",
+                  "fontWeight": "500"
+                },
+                "sar-line": {
+                  "enabled": true,
+                  "content": "실패한 테스트 결과를 확인해 주세요",
+                  "fill": "$--destructive"
+                },
+                "sar-elapsed": {
+                  "content": "18s"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-waiting",
+          "name": "State / Waiting on its children: ring in Working, badge, folded chevron",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-waiting-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Waiting on its children: ring in Working, badge, folded chevron",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-waiting",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / waiting",
+              "descendants": {
+                "sar-dot": {
+                  "enabled": false
+                },
+                "sar-ring": {
+                  "enabled": true,
+                  "stroke": "$--agent-working"
+                },
+                "sar-glyph": {
+                  "enabled": false
+                },
+                "sar-title": {
+                  "content": "사이드바 개선",
+                  "fill": "$--foreground"
+                },
+                "sar-badge": {
+                  "enabled": true
+                },
+                "sar-badge-label": {
+                  "content": "?1 ●1"
+                },
+                "sar-fold": {
+                  "enabled": true
+                },
+                "sar-elapsed": {
+                  "content": "2m"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-unfolded",
+          "name": "State / Unfolded parent at rest: the chevron waits in its slot",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-unfolded-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Unfolded parent at rest: the chevron waits in its slot",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-unfolded",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / unfolded",
+              "descendants": {
+                "sar-dot": {
+                  "enabled": false
+                },
+                "sar-ring": {
+                  "enabled": true,
+                  "stroke": "$--agent-working"
+                },
+                "sar-glyph": {
+                  "enabled": false
+                },
+                "sar-title": {
+                  "content": "사이드바 가독성 개선",
+                  "fill": "$--foreground"
+                },
+                "sar-fold": {
+                  "enabled": true,
+                  "opacity": 0
+                },
+                "sar-chevron": {
+                  "icon": "chevron-down"
+                },
+                "sar-elapsed": {
+                  "content": "1m"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-child",
+          "name": "State / A child in another checkout keeps its branch chip",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-child-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "A child in another checkout keeps its branch chip",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-child",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / child",
+              "padding": [
+                "$--spacing-xs",
+                "$--spacing-xs",
+                "$--spacing-xs",
+                22
+              ],
+              "descendants": {
+                "sar-dot": {
+                  "enabled": true,
+                  "fill": "$--agent-working"
+                },
+                "sar-ring": {
+                  "enabled": false
+                },
+                "sar-glyph": {
+                  "enabled": false
+                },
+                "sar-title": {
+                  "content": "컴포넌트 구조 검토"
+                },
+                "sar-branch": {
+                  "enabled": true
+                },
+                "sar-elapsed": {
+                  "content": "42s"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-unknown",
+          "name": "State / Unknown activity",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-unknown-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "Unknown activity",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-unknown",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / unknown",
+              "descendants": {
+                "sar-dot": {
+                  "enabled": false
+                },
+                "sar-ring": {
+                  "enabled": false
+                },
+                "sar-glyph": {
+                  "enabled": true,
+                  "content": "~",
+                  "fill": "$--muted-foreground"
+                },
+                "sar-title": {
+                  "content": "활동 상태 알 수 없음"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-agents",
+          "name": "State / In Agents: the context line (50)",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-agents-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "In Agents: the context line (50)",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-agents",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / agents",
+              "descendants": {
+                "sar-dot": {
+                  "enabled": false
+                },
+                "sar-ring": {
+                  "enabled": false
+                },
+                "sar-glyph": {
+                  "enabled": true,
+                  "content": "✓",
+                  "fill": "$--success"
+                },
+                "sar-title": {
+                  "content": "CI 테스트 구성 및 성능 분석"
+                },
+                "sar-place": {
+                  "enabled": true
+                },
+                "sar-elapsed": {
+                  "content": "3m"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-agents-request",
+          "name": "State / In Agents: request and context (68)",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-agents-request-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "In Agents: request and context (68)",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-agents-request",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / agents-request",
+              "descendants": {
+                "sar-dot": {
+                  "enabled": false
+                },
+                "sar-ring": {
+                  "enabled": false
+                },
+                "sar-glyph": {
+                  "enabled": true,
+                  "content": "!",
+                  "fill": "$--warning"
+                },
+                "sar-title": {
+                  "content": "배포 승인 요청",
+                  "fill": "$--foreground",
+                  "fontWeight": "500"
+                },
+                "sar-line": {
+                  "enabled": true,
+                  "content": "프로덕션 배포를 승인해 주세요"
+                },
+                "sar-place": {
+                  "enabled": true
+                },
+                "sar-elapsed": {
+                  "content": "30s"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-remote",
+          "name": "State / A device row names its device",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-remote-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "A device row names its device",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-remote",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": "fill_container",
+              "name": "Row / remote",
+              "descendants": {
+                "sar-dot": {
+                  "enabled": true,
+                  "fill": "$--agent-working"
+                },
+                "sar-ring": {
+                  "enabled": false
+                },
+                "sar-glyph": {
+                  "enabled": false
+                },
+                "sar-title": {
+                  "content": "원격 빌드 확인"
+                },
+                "sar-device": {
+                  "enabled": true
+                },
+                "sar-place": {
+                  "enabled": true,
+                  "content": "app › main"
+                },
+                "sar-elapsed": {
+                  "content": "5m"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "sidebar-agent-row-state-narrow",
+          "name": "State / 240 px, a long Korean and English title cut on one line",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "sidebar-agent-row-state-narrow-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "240 px, a long Korean and English title cut on one line",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "sidebar-agent-row-narrow",
+              "type": "ref",
+              "ref": "sidebar-agent-row",
+              "width": 240,
+              "name": "Row / narrow",
+              "descendants": {
+                "sar-dot": {
+                  "enabled": true,
+                  "fill": "$--agent-working"
+                },
+                "sar-ring": {
+                  "enabled": false
+                },
+                "sar-glyph": {
+                  "enabled": false
+                },
+                "sar-title": {
+                  "content": "한글·English 긴 작업 제목을 한 줄…"
+                },
+                "sar-elapsed": {
+                  "content": "3h"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "x": 7640,
+      "y": 6421
     },
     {
       "type": "frame",
@@ -30436,7 +32012,7 @@
     },
     "--size-checkout-metadata-inset": {
       "type": "number",
-      "value": 46
+      "value": 22
     },
     "--size-tab-icon-identity": {
       "type": "number",
