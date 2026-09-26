@@ -315,6 +315,9 @@ Two checkouts of one repository share a project cycle.
 Each checkout row shows a kind glyph, selected in priority order: the pull-request lifecycle icon when current GitHub data has a pull request, then branch, home for the primary checkout, commit for detached HEAD, or folder for a plain folder.
 Open, draft, merged, and closed pull requests keep their own lifecycle shapes and colors, stale GitHub data mutes only the icon, an unavailable GitHub lookup falls back to the branch glyph, and a missing folder colors its branch glyph as danger and omits the age.
 Workspaces with nested agent rows toggle disclosure across the whole row; workspaces without nested agent rows open on click.
+In the web shell a checkout row always opens its checkout: a trailing chevron, drawn only while agents run there, opens and closes their rows, and the row's `⋯` menu takes the last-commit age's place while the pointer is over the row.
+A web project row folds its checkouts from its leading chevron, and the rest of the row opens the project's Overview; both folds are this machine's, so a selected SSH device's tree is drawn with nothing folded.
+While a checkout's agent rows are closed, its second line names them, the representative agent's mark and provider and `+N` for the rest, before the purpose; a checkout with neither, or one whose Git facts have not been read yet, is one line.
 Workspace disclosure persists across launches and hides only the nested agent rows, preserving selection, running panes, and raised attention rows.
 An agent row's title is its identity label at both densities: the rolling task, or the workspace label when no task exists; a Herdr agent name remains a control identifier and never becomes display copy.
 A row whose descendants are folded, and every raised row, wears a descendant badge counting live descendants by state before the elapsed time; opening the fold removes the badge because the opened rows carry their own marks.

@@ -28,6 +28,7 @@ export const AgentRowItem = memo(function AgentRowItem({
   selected,
   onOpen,
   onToggleTree,
+  inset = "var(--spacing-xs)",
 }: {
   agent: AgentRow;
   device: string | null;
@@ -41,6 +42,8 @@ export const AgentRowItem = memo(function AgentRowItem({
   onOpen: (paneId: string) => void;
   /** Null for a list that draws every descendant and so has nothing to fold. */
   onToggleTree: ((paneId: string) => void) | null;
+  /** Where a root's first column starts; a list nested under another row passes that row's name column. */
+  inset?: string;
 }) {
   const main = useRef<HTMLButtonElement>(null);
   const line = rowLine(agent);
@@ -62,7 +65,7 @@ export const AgentRowItem = memo(function AgentRowItem({
       data-agent-device={device ?? "local"}
       data-depth={depth}
       className={`group/row relative flex items-start gap-xs py-xs pr-md text-body ${selected ? "bg-secondary" : "hover:bg-accent"} focus-within:bg-accent`}
-      style={{ paddingLeft: `calc(var(--spacing-xs) + ${depth} * var(--size-lineage-indent))` }}
+      style={{ paddingLeft: `calc(${inset} + ${depth} * var(--size-lineage-indent))` }}
     >
       <Hint label={hint} reveals>
         <button

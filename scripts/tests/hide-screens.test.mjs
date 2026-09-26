@@ -199,6 +199,30 @@ test('a ref that restates every themed color, at the ref site and at each descen
   assert.deepEqual(check(document, path.join(root, 'hide-screens.pen')), []);
 });
 
+test('an image paint in place of a master\'s themed fill counts as restated, since artwork has no theme', t => {
+  const root = fixture(t);
+  const libraryPath = writeColorLibrary(root);
+  const document = doc([screen('scr-1', 'Screen / Main', {
+    children: [themed('scr-1-l', 'Light', [{
+      id: 'a', type: 'ref', ref: 'hideui:btn-m', fill: {type: 'image', enabled: true, url: '../web/src/assets/agent-claude.png', mode: 'fit'},
+      descendants: {'hideui:btn-lb': {fill: '$--primary-foreground'}},
+    }]), themed('scr-1-d', 'Dark')],
+  })], {imports: {hideui: `./${libraryPath}`}, variables: {'--primary-foreground': {type: 'color', value: []}}});
+  assert.deepEqual(check(document, path.join(root, 'hide-screens.pen')), []);
+});
+
+test('an image paint with no url does not count as restating a themed fill', t => {
+  const root = fixture(t);
+  const libraryPath = writeColorLibrary(root);
+  const document = doc([screen('scr-1', 'Screen / Main', {
+    children: [themed('scr-1-l', 'Light', [{
+      id: 'a', type: 'ref', ref: 'hideui:btn-m', fill: {type: 'image', enabled: true},
+      descendants: {'hideui:btn-lb': {fill: '$--primary-foreground'}},
+    }]), themed('scr-1-d', 'Dark')],
+  })], {imports: {hideui: `./${libraryPath}`}, variables: {'--primary-foreground': {type: 'color', value: []}}});
+  assert.ok(check(document, path.join(root, 'hide-screens.pen')).some(f => f.includes('a (hideui:btn-m)') && f.includes('fill')));
+});
+
 test('a document whose local variables differ from what design/tokens.json generates is refused, naming the variable', () => {
   const file = path.join(repository, 'design/hide-screens.pen');
   const original = JSON.parse(fs.readFileSync(file, 'utf8'));

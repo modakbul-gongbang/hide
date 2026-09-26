@@ -117,6 +117,16 @@ export type ProjectIssues = { repository: string | null; issues: Issue[]; overfl
 
 export type Purpose = { text: string; origin: string };
 
+/** A checkout's agents by state; `unknown` is a subset of `seen`, not a fifth group. */
+export type CheckoutAgentSummary = {
+  representative_pane_id: string | null;
+  needs_you: number;
+  done: number;
+  working: number;
+  seen: number;
+  unknown: number;
+};
+
 export type PaneRow = {
   id: string;
   herdr_label: string | null;
@@ -162,6 +172,7 @@ export type WorktreeRow = {
   path: string;
   branch: string | null;
   head_sha: string | null;
+  last_commit_unix_seconds?: number | null;
   is_main: boolean;
   missing: boolean;
   dirty: boolean;
@@ -184,7 +195,11 @@ export type Checkout = {
   purpose: Purpose | null;
   is_worktree: boolean;
   exists: boolean;
+  /** A checkout Hide opened outside every registered project. */
+  temporary?: boolean;
   has_panes: boolean;
+  /** Who works here, counted by state, and the one agent that speaks for them (`CheckoutAgentSummary`). */
+  agent_summary?: CheckoutAgentSummary;
   /** The worktree row behind a Git checkout, or null for a plain folder. */
   worktree?: WorktreeRow | null;
   pull_request: PullRequest | null;
@@ -207,6 +222,8 @@ export type Workspace = {
   device_id: string;
   /** Set for a project on a registered SSH device; local projects carry null. */
   remote_target_id?: string | null;
+  /** False while the operator has this project's checkouts folded (`ui_state.collapsed_workspace_ids`). */
+  expanded?: boolean;
   is_git?: boolean;
   default_branch?: string | null;
   branches?: string[];
@@ -735,6 +752,10 @@ export type SnapshotRest = {
     expanded_paths?: string[];
     /** Each SSH device's expanded Explorer folders; this machine's are `expanded_paths`. */
     device_expanded_paths?: Record<string, string[]>;
+    /** Projects whose checkouts the sidebar folds. */
+    collapsed_workspace_ids?: string[];
+    /** Checkouts whose agent rows the sidebar folds; absence is open. */
+    collapsed_checkout_ids?: string[];
     selected_path?: string | null;
     selected_pane_id?: string | null;
     accent_hex?: string;

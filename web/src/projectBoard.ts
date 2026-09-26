@@ -187,21 +187,19 @@ function stats(workspace: Workspace): BoardStats {
 }
 
 /**
- * The board for one Project. `agents` is every agent of the Project's
- * device, since a descendant may work in another project's checkout; only
- * the Project's own panes decide which card an agent belongs to.
+ * Which checkout owns each pane, and a lineage walker over `agents`: a list
+ * of agents drawn with their whole lineage, root first, whatever the sidebar
+ * has folded, so its rows carry no descendant badge; a row's branch chip is
+ * the Agents list's rule (`branchChip`), a checkout that differs from its
+ * parent's.
  */
-export function buildBoard(workspace: Workspace, agents: AgentRow[], now: number): Board {
+function lineage(workspace: Workspace, agents: AgentRow[]) {
   const owners = new Map<string, Checkout>();
   for (const checkout of workspace.checkouts) {
     for (const tab of checkout.tabs) for (const pane of tab.panes) if (!owners.has(pane.id)) owners.set(pane.id, checkout);
   }
   const byPane = new Map<string, AgentRow>();
   for (const agent of agents) if (!byPane.has(agent.pane_id)) byPane.set(agent.pane_id, agent);
-
-  // A card draws its whole lineage whatever the sidebar has folded, so its
-  // rows carry no descendant badge; a row's branch chip is the Agents list's rule
-  // (`branchChip`), a checkout that differs from its parent's.
   const treeRows = (roots: AgentRow[]): BoardRow[] => {
     const rows: BoardRow[] = [];
     const seen = new Set<string>();
@@ -217,18 +215,43 @@ export function buildBoard(workspace: Workspace, agents: AgentRow[], now: number
     for (const root of roots) append(root, 0);
     return rows;
   };
+  // A checkout's rows: its agents, each lineage from the first ancestor that
+  // is not also working here.
+  const checkoutRows = (checkout: Checkout): BoardRow[] => {
+    const local = agents.filter((agent) => owners.get(agent.pane_id)?.id === checkout.id);
+    const localIds = new Set(local.map((agent) => agent.pane_id));
+    return treeRows(local.filter((agent) => !agent.lineage_parent_pane_id || !localIds.has(agent.lineage_parent_pane_id)));
+  };
+  return { owners, byPane, treeRows, checkoutRows };
+}
+
+/**
+ * Each checkout's agent rows by checkout id, the rows its Overview card lists
+ * and the rows the sidebar draws under an opened checkout. `agents` is every
+ * agent of the project's device.
+ */
+export function checkoutAgentRows(workspace: Workspace, agents: AgentRow[]): Map<string, BoardRow[]> {
+  const { checkoutRows } = lineage(workspace, agents);
+  return new Map(workspace.checkouts.map((checkout) => [checkout.id, checkoutRows(checkout)]));
+}
+
+/**
+ * The board for one Project. `agents` is every agent of the Project's
+ * device, since a descendant may work in another project's checkout; only
+ * the Project's own panes decide which card an agent belongs to.
+ */
+export function buildBoard(workspace: Workspace, agents: AgentRow[], now: number): Board {
+  const { owners, byPane, treeRows, checkoutRows } = lineage(workspace, agents);
 
   const git = workspace.is_git === true;
   const tasks: BoardCard[] = [];
   const adHoc: BoardCard[] = [];
   for (const checkout of workspace.checkouts) {
-    const local = agents.filter((agent) => owners.get(agent.pane_id)?.id === checkout.id);
-    const localIds = new Set(local.map((agent) => agent.pane_id));
-    const roots = local.filter((agent) => !agent.lineage_parent_pane_id || !localIds.has(agent.lineage_parent_pane_id));
+    const rows = checkoutRows(checkout);
     const onBoard = checkout.is_worktree && git;
-    const value = card(`task:${checkout.id}`, checkout, treeRows(roots), checkout.issue ?? null, onBoard ? stageOf(checkout) : null, false, null, now);
+    const value = card(`task:${checkout.id}`, checkout, rows, checkout.issue ?? null, onBoard ? stageOf(checkout) : null, false, null, now);
     if (onBoard) tasks.push(value);
-    else if (local.length > 0) adHoc.push(value);
+    else if (rows.length > 0) adHoc.push(value);
   }
   const linked = new Set(workspace.checkouts.flatMap((checkout) => (checkout.issue ? [issueId(checkout.issue)] : [])));
   const issues = workspace.home_issues;

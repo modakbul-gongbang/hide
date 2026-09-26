@@ -14115,6 +14115,2400 @@
       "width": "fit_content",
       "x": 1400,
       "y": 1800
+    },
+    {
+      "type": "frame",
+      "id": "screen-projects-sidebar",
+      "name": "Screen / Projects Sidebar",
+      "children": [
+        {
+          "type": "text",
+          "id": "screen-projects-sidebar-title",
+          "name": "Projects Sidebar",
+          "content": "Projects Sidebar",
+          "fill": "$--foreground",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "screen-projects-sidebar-spec",
+          "name": "sidebar.tsx, projects.ts: th",
+          "content": "sidebar.tsx, projects.ts: the Projects tab. A project row folds its checkouts from its chevron and opens the Overview from the rest of the row; a checkout row opens the checkout, and its trailing chevron, shown only when agents run there, opens their rows in place of line two. Line two is the agents (the representative’s mark and provider, +N) and the purpose. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.",
+          "fill": "$--muted-foreground",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "400",
+          "textGrowth": "fixed-width",
+          "width": 960
+        },
+        {
+          "type": "frame",
+          "id": "screen-projects-sidebar-light",
+          "name": "Light",
+          "children": [
+            {
+              "type": "frame",
+              "id": "psb-sidebar-l",
+              "name": "Sidebar",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "psb-hdr-l",
+                  "name": "Tabs",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "psb-agents-l",
+                      "name": "Agents",
+                      "content": "Agents",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "text",
+                      "id": "psb-projects-l",
+                      "name": "Projects",
+                      "content": "Projects",
+                      "fill": "$--foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-hgap-l",
+                      "name": "Spacer",
+                      "children": [],
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "psb-kbd-l",
+                      "name": "⌘E",
+                      "content": "⌘E",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "id": "psb-settings-l",
+                      "type": "ref",
+                      "ref": "hideui:Nyvom",
+                      "name": "Icon",
+                      "descendants": {
+                        "hideui:ZIZFR": {
+                          "fill": "$--muted-foreground",
+                          "icon": "settings"
+                        }
+                      }
+                    }
+                  ],
+                  "width": 292,
+                  "height": 32,
+                  "padding": [
+                    0,
+                    "$--spacing-md"
+                  ],
+                  "gap": "$--spacing-sm",
+                  "alignItems": "center"
+                },
+                {
+                  "type": "frame",
+                  "id": "psb-list-l",
+                  "name": "Projects list",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "psb-sec-pin-l",
+                      "name": "Section",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "psb-sec-pin-l-t",
+                          "name": "PINNED · 1",
+                          "content": "PINNED · 1",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "600"
+                        }
+                      ],
+                      "width": 292,
+                      "padding": [
+                        "$--spacing-sm",
+                        "$--spacing-md",
+                        "$--spacing-xxs",
+                        "$--spacing-md"
+                      ]
+                    },
+                    {
+                      "id": "psb-p-notes-l",
+                      "type": "ref",
+                      "ref": "hideui:qdhY0",
+                      "name": "team-notes",
+                      "width": 292,
+                      "height": 36,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "descendants": {
+                        "hideui:iBYjj": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-down"
+                        },
+                        "hideui:mIzlX": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "folder"
+                        },
+                        "hideui:JkPyX": {
+                          "fill": "$--foreground",
+                          "content": "team-notes"
+                        },
+                        "hideui:nZkan": {
+                          "fill": "$--muted-foreground",
+                          "content": "1 agent · 2h"
+                        },
+                        "hideui:hm1SG": {
+                          "width": 24,
+                          "height": 24,
+                          "opacity": 0
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-c-notes-l",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "team-notes",
+                      "width": 292,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        16
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "folder"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "team-notes",
+                          "fontWeight": "500"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "content": "",
+                          "enabled": true,
+                          "textGrowth": "fixed-width",
+                          "width": 24,
+                          "textAlign": "right"
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": true,
+                          "icon": "chevron-right"
+                        },
+                        "hideui:J5xdha": {
+                          "fill": "$--muted-foreground"
+                        },
+                        "hideui:N7YbJ": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "hideui:fklVZ": {
+                          "fill": "$--background",
+                          "enabled": false
+                        },
+                        "hideui:ExMsH": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": false
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "회의록 요약 정리",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 272
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "width": 16
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 272
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        },
+                        "hideui:FtZyp": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-sec-recent-l",
+                      "name": "Section",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "psb-sec-recent-l-t",
+                          "name": "PROJECTS · RECENT ACTIVITY ·",
+                          "content": "PROJECTS · RECENT ACTIVITY · 12",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "600"
+                        }
+                      ],
+                      "width": 292,
+                      "padding": [
+                        "$--spacing-sm",
+                        "$--spacing-md",
+                        "$--spacing-xxs",
+                        "$--spacing-md"
+                      ]
+                    },
+                    {
+                      "id": "psb-p-herdr-l",
+                      "type": "ref",
+                      "ref": "hideui:qdhY0",
+                      "name": "herdr-ide",
+                      "width": 292,
+                      "height": 36,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "fill": "$--accent",
+                      "descendants": {
+                        "hideui:iBYjj": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-down"
+                        },
+                        "hideui:mIzlX": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "folder-git-2"
+                        },
+                        "hideui:JkPyX": {
+                          "fill": "$--foreground",
+                          "content": "herdr-ide"
+                        },
+                        "hideui:nZkan": {
+                          "fill": "$--muted-foreground",
+                          "content": "11 agents · now"
+                        },
+                        "hideui:hm1SG": {
+                          "width": 24,
+                          "height": 24,
+                          "opacity": 1
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-c1-l",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "electron-shortcut-bindings",
+                      "width": 292,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        16
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--pr-open",
+                          "icon": "git-pull-request"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "electron-shortcut-bindings",
+                          "fontWeight": "500"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "content": "2h",
+                          "enabled": true,
+                          "textGrowth": "fixed-width",
+                          "width": 24,
+                          "textAlign": "right"
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": true,
+                          "icon": "chevron-right"
+                        },
+                        "hideui:J5xdha": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:N7YbJ": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "hideui:fklVZ": {
+                          "fill": "$--background",
+                          "enabled": false
+                        },
+                        "hideui:ExMsH": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": false
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "Electron desktop host for the we…",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 272
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "width": 16
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 272
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        },
+                        "hideui:FtZyp": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-c2-l",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "main",
+                      "width": 292,
+                      "height": 36,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        16
+                      ],
+                      "fill": "$--secondary",
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "house"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "main",
+                          "fontWeight": "600"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "content": "now",
+                          "enabled": true,
+                          "textGrowth": "fixed-width",
+                          "width": 24,
+                          "textAlign": "right"
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": true,
+                          "icon": "chevron-down"
+                        },
+                        "hideui:J5xdha": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:N7YbJ": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-codex.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "hideui:fklVZ": {
+                          "fill": "$--background",
+                          "enabled": false
+                        },
+                        "hideui:ExMsH": {
+                          "fill": "$--subtle-foreground",
+                          "content": "+1",
+                          "enabled": true
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:QetL0": {
+                          "width": 272
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "width": 16
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": false,
+                          "width": 272
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        },
+                        "hideui:FtZyp": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-a1-l",
+                      "name": "Agent row",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "psb-a1-l-mark",
+                          "name": "●",
+                          "content": "●",
+                          "fill": "$--agent-working",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "psb-a1-l-art",
+                          "name": "Provider",
+                          "children": [],
+                          "width": 16,
+                          "height": 16,
+                          "cornerRadius": "$--radius-xs",
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-codex.png",
+                            "mode": "fit"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "psb-a1-l-title",
+                          "name": "S5.5 PRD 초안 정리",
+                          "content": "S5.5 PRD 초안 정리",
+                          "fill": "$--subtle-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "psb-a1-l-gap",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "text",
+                          "id": "psb-a1-l-age",
+                          "name": "3m",
+                          "content": "3m",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": 292,
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-md",
+                        "$--spacing-xs",
+                        58
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-a2-l",
+                      "name": "Agent row",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "psb-a2-l-mark",
+                          "name": "○",
+                          "content": "○",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "psb-a2-l-art",
+                          "name": "Provider",
+                          "children": [],
+                          "width": 16,
+                          "height": 16,
+                          "cornerRadius": "$--radius-xs",
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "psb-a2-l-title",
+                          "name": "후속 UX 계획 인터뷰",
+                          "content": "후속 UX 계획 인터뷰",
+                          "fill": "$--subtle-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "psb-a2-l-gap",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "text",
+                          "id": "psb-a2-l-age",
+                          "name": "1h",
+                          "content": "1h",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": 292,
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-md",
+                        "$--spacing-xs",
+                        58
+                      ]
+                    },
+                    {
+                      "id": "psb-c3-l",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "quick/155-browser-display",
+                      "width": 292,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        16
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "git-branch"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "quick/155-browser-display",
+                          "fontWeight": "500"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "content": "40m",
+                          "enabled": true,
+                          "textGrowth": "fixed-width",
+                          "width": 24,
+                          "textAlign": "right"
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": true,
+                          "icon": "chevron-right"
+                        },
+                        "hideui:J5xdha": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:N7YbJ": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "hideui:fklVZ": {
+                          "fill": "$--background",
+                          "enabled": false
+                        },
+                        "hideui:ExMsH": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": false
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "#155 browser display (WebCon…",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 272
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "width": 16
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 272
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        },
+                        "hideui:FtZyp": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-c4-l",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "quick/154-search-palette",
+                      "width": 292,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        16
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--pr-draft",
+                          "icon": "git-pull-request-draft"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "quick/154-search-palette",
+                          "fontWeight": "500"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "content": "1h",
+                          "enabled": true,
+                          "textGrowth": "fixed-width",
+                          "width": 24,
+                          "textAlign": "right"
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": true,
+                          "icon": "chevron-right"
+                        },
+                        "hideui:J5xdha": {
+                          "fill": "$--success"
+                        },
+                        "hideui:N7YbJ": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "hideui:fklVZ": {
+                          "fill": "$--background",
+                          "enabled": false
+                        },
+                        "hideui:ExMsH": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": false
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "#154 ⌘K search palette UI",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 272
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "width": 16
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 272
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        },
+                        "hideui:FtZyp": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-c5-l",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "design/workspace-ux-prop…",
+                      "width": 292,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        16
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "git-branch"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "design/workspace-ux-prop…",
+                          "fontWeight": "500"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "content": "5h",
+                          "enabled": true,
+                          "textGrowth": "fixed-width",
+                          "width": 24,
+                          "textAlign": "right"
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": true,
+                          "opacity": 0
+                        },
+                        "hideui:J5xdha": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:N7YbJ": {
+                          "fill": "$--primary"
+                        },
+                        "hideui:fklVZ": {
+                          "fill": "$--background"
+                        },
+                        "hideui:ExMsH": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "Workspace UX 제안과 상태 소유…",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 272
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "width": 16
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 272
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        },
+                        "hideui:FtZyp": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-c6-l",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "fix/registered-projects-only",
+                      "width": 292,
+                      "height": 36,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        16
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "git-branch"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "fix/registered-projects-only",
+                          "fontWeight": "500"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "content": "1d",
+                          "enabled": true,
+                          "textGrowth": "fixed-width",
+                          "width": 24,
+                          "textAlign": "right"
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": true,
+                          "opacity": 0
+                        },
+                        "hideui:J5xdha": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:N7YbJ": {
+                          "fill": "$--primary"
+                        },
+                        "hideui:fklVZ": {
+                          "fill": "$--background"
+                        },
+                        "hideui:ExMsH": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:QetL0": {
+                          "width": 272
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "width": 16
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": false,
+                          "width": 272
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        },
+                        "hideui:FtZyp": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-c7-l",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "legacy-shell",
+                      "width": 292,
+                      "height": 36,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        16
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--destructive",
+                          "icon": "git-branch"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "legacy-shell",
+                          "fontWeight": "500"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "content": "",
+                          "enabled": true,
+                          "textGrowth": "fixed-width",
+                          "width": 24,
+                          "textAlign": "right"
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": true,
+                          "opacity": 0
+                        },
+                        "hideui:J5xdha": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:N7YbJ": {
+                          "fill": "$--primary"
+                        },
+                        "hideui:fklVZ": {
+                          "fill": "$--background"
+                        },
+                        "hideui:ExMsH": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:QetL0": {
+                          "width": 272
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": true
+                        },
+                        "hideui:IXwZI": {
+                          "width": 16
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": false,
+                          "width": 272
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        },
+                        "hideui:FtZyp": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-f-herdr-l",
+                      "type": "ref",
+                      "ref": "hideui:inactive-fold-row",
+                      "name": "Inactive 14",
+                      "width": 292,
+                      "padding": [
+                        0,
+                        0,
+                        0,
+                        38
+                      ],
+                      "descendants": {
+                        "hideui:inactive-fold-chevron": {
+                          "fill": "$--muted-foreground"
+                        },
+                        "hideui:inactive-fold-label": {
+                          "fill": "$--subtle-foreground",
+                          "content": "Inactive 14"
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-p-sasu-l",
+                      "type": "ref",
+                      "ref": "hideui:qdhY0",
+                      "name": "sasu",
+                      "width": 292,
+                      "height": 36,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "descendants": {
+                        "hideui:iBYjj": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
+                        },
+                        "hideui:mIzlX": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "folder-git-2"
+                        },
+                        "hideui:JkPyX": {
+                          "fill": "$--foreground",
+                          "content": "sasu"
+                        },
+                        "hideui:nZkan": {
+                          "fill": "$--muted-foreground",
+                          "content": "3 agents · 50m"
+                        },
+                        "hideui:hm1SG": {
+                          "width": 24,
+                          "height": 24,
+                          "opacity": 0
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-f-proj-l",
+                      "type": "ref",
+                      "ref": "hideui:inactive-fold-row",
+                      "name": "Inactive projects 3",
+                      "width": 292,
+                      "padding": [
+                        0,
+                        0,
+                        0,
+                        14
+                      ],
+                      "descendants": {
+                        "hideui:inactive-fold-chevron": {
+                          "fill": "$--muted-foreground"
+                        },
+                        "hideui:inactive-fold-label": {
+                          "fill": "$--subtle-foreground",
+                          "content": "Inactive projects 3"
+                        }
+                      }
+                    }
+                  ],
+                  "width": 292,
+                  "layout": "vertical"
+                },
+                {
+                  "type": "frame",
+                  "id": "psb-ftr-l",
+                  "name": "Footer",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "psb-rule1-l",
+                      "name": "Rule",
+                      "children": [],
+                      "width": 292,
+                      "height": 1,
+                      "fill": "$--border"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-new-l",
+                      "name": "New workspace",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "psb-newt-l",
+                          "name": "+ 새 워크스페이스",
+                          "content": "+ 새 워크스페이스",
+                          "fill": "$--subtle-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "text",
+                          "id": "psb-newk-l",
+                          "name": "⇧⌘N",
+                          "content": "⇧⌘N",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": 292,
+                      "padding": [
+                        "$--spacing-sm",
+                        "$--spacing-md"
+                      ],
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-rule2-l",
+                      "name": "Rule",
+                      "children": [],
+                      "width": 292,
+                      "height": 1,
+                      "fill": "$--border"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-dev-l",
+                      "name": "Device picker",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "psb-devi-l",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "laptop",
+                          "library": "lucide",
+                          "fill": "$--subtle-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "psb-devt-l",
+                          "name": "This Mac",
+                          "content": "This Mac",
+                          "fill": "$--subtle-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "psb-devc-l",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "chevrons-up-down",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        }
+                      ],
+                      "width": 292,
+                      "padding": [
+                        "$--spacing-sm",
+                        "$--spacing-md"
+                      ],
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center"
+                    }
+                  ],
+                  "width": 292,
+                  "layout": "vertical"
+                }
+              ],
+              "width": 292,
+              "layout": "vertical",
+              "fill": "$--sidebar",
+              "clip": true
+            }
+          ],
+          "theme": {
+            "Mode": "Light"
+          },
+          "layout": "horizontal",
+          "gap": "$--spacing-lg",
+          "alignItems": "start",
+          "padding": "$--spacing-lg",
+          "fill": "$--background",
+          "cornerRadius": "$--radius-md",
+          "width": "fit_content"
+        },
+        {
+          "type": "frame",
+          "id": "screen-projects-sidebar-dark",
+          "name": "Dark",
+          "children": [
+            {
+              "type": "frame",
+              "id": "psb-sidebar-d",
+              "name": "Sidebar",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "psb-hdr-d",
+                  "name": "Tabs",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "psb-agents-d",
+                      "name": "Agents",
+                      "content": "Agents",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "text",
+                      "id": "psb-projects-d",
+                      "name": "Projects",
+                      "content": "Projects",
+                      "fill": "$--foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-hgap-d",
+                      "name": "Spacer",
+                      "children": [],
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "psb-kbd-d",
+                      "name": "⌘E",
+                      "content": "⌘E",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "id": "psb-settings-d",
+                      "type": "ref",
+                      "ref": "hideui:Nyvom",
+                      "name": "Icon",
+                      "descendants": {
+                        "hideui:ZIZFR": {
+                          "fill": "$--muted-foreground",
+                          "icon": "settings"
+                        }
+                      }
+                    }
+                  ],
+                  "width": 292,
+                  "height": 32,
+                  "padding": [
+                    0,
+                    "$--spacing-md"
+                  ],
+                  "gap": "$--spacing-sm",
+                  "alignItems": "center"
+                },
+                {
+                  "type": "frame",
+                  "id": "psb-list-d",
+                  "name": "Projects list",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "psb-sec-pin-d",
+                      "name": "Section",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "psb-sec-pin-d-t",
+                          "name": "PINNED · 1",
+                          "content": "PINNED · 1",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "600"
+                        }
+                      ],
+                      "width": 292,
+                      "padding": [
+                        "$--spacing-sm",
+                        "$--spacing-md",
+                        "$--spacing-xxs",
+                        "$--spacing-md"
+                      ]
+                    },
+                    {
+                      "id": "psb-p-notes-d",
+                      "type": "ref",
+                      "ref": "hideui:qdhY0",
+                      "name": "team-notes",
+                      "width": 292,
+                      "height": 36,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "descendants": {
+                        "hideui:iBYjj": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-down"
+                        },
+                        "hideui:mIzlX": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "folder"
+                        },
+                        "hideui:JkPyX": {
+                          "fill": "$--foreground",
+                          "content": "team-notes"
+                        },
+                        "hideui:nZkan": {
+                          "fill": "$--muted-foreground",
+                          "content": "1 agent · 2h"
+                        },
+                        "hideui:hm1SG": {
+                          "width": 24,
+                          "height": 24,
+                          "opacity": 0
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-c-notes-d",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "team-notes",
+                      "width": 292,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        16
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "folder"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "team-notes",
+                          "fontWeight": "500"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "content": "",
+                          "enabled": true,
+                          "textGrowth": "fixed-width",
+                          "width": 24,
+                          "textAlign": "right"
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": true,
+                          "icon": "chevron-right"
+                        },
+                        "hideui:J5xdha": {
+                          "fill": "$--muted-foreground"
+                        },
+                        "hideui:N7YbJ": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "hideui:fklVZ": {
+                          "fill": "$--background",
+                          "enabled": false
+                        },
+                        "hideui:ExMsH": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": false
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "회의록 요약 정리",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 272
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "width": 16
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 272
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        },
+                        "hideui:FtZyp": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-sec-recent-d",
+                      "name": "Section",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "psb-sec-recent-d-t",
+                          "name": "PROJECTS · RECENT ACTIVITY ·",
+                          "content": "PROJECTS · RECENT ACTIVITY · 12",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "600"
+                        }
+                      ],
+                      "width": 292,
+                      "padding": [
+                        "$--spacing-sm",
+                        "$--spacing-md",
+                        "$--spacing-xxs",
+                        "$--spacing-md"
+                      ]
+                    },
+                    {
+                      "id": "psb-p-herdr-d",
+                      "type": "ref",
+                      "ref": "hideui:qdhY0",
+                      "name": "herdr-ide",
+                      "width": 292,
+                      "height": 36,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "fill": "$--accent",
+                      "descendants": {
+                        "hideui:iBYjj": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-down"
+                        },
+                        "hideui:mIzlX": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "folder-git-2"
+                        },
+                        "hideui:JkPyX": {
+                          "fill": "$--foreground",
+                          "content": "herdr-ide"
+                        },
+                        "hideui:nZkan": {
+                          "fill": "$--muted-foreground",
+                          "content": "11 agents · now"
+                        },
+                        "hideui:hm1SG": {
+                          "width": 24,
+                          "height": 24,
+                          "opacity": 1
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-c1-d",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "electron-shortcut-bindings",
+                      "width": 292,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        16
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--pr-open",
+                          "icon": "git-pull-request"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "electron-shortcut-bindings",
+                          "fontWeight": "500"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "content": "2h",
+                          "enabled": true,
+                          "textGrowth": "fixed-width",
+                          "width": 24,
+                          "textAlign": "right"
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": true,
+                          "icon": "chevron-right"
+                        },
+                        "hideui:J5xdha": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:N7YbJ": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "hideui:fklVZ": {
+                          "fill": "$--background",
+                          "enabled": false
+                        },
+                        "hideui:ExMsH": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": false
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "Electron desktop host for the we…",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 272
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "width": 16
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 272
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        },
+                        "hideui:FtZyp": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-c2-d",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "main",
+                      "width": 292,
+                      "height": 36,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        16
+                      ],
+                      "fill": "$--secondary",
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "house"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "main",
+                          "fontWeight": "600"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "content": "now",
+                          "enabled": true,
+                          "textGrowth": "fixed-width",
+                          "width": 24,
+                          "textAlign": "right"
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": true,
+                          "icon": "chevron-down"
+                        },
+                        "hideui:J5xdha": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:N7YbJ": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-codex.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "hideui:fklVZ": {
+                          "fill": "$--background",
+                          "enabled": false
+                        },
+                        "hideui:ExMsH": {
+                          "fill": "$--subtle-foreground",
+                          "content": "+1",
+                          "enabled": true
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:QetL0": {
+                          "width": 272
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "width": 16
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": false,
+                          "width": 272
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        },
+                        "hideui:FtZyp": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-a1-d",
+                      "name": "Agent row",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "psb-a1-d-mark",
+                          "name": "●",
+                          "content": "●",
+                          "fill": "$--agent-working",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "psb-a1-d-art",
+                          "name": "Provider",
+                          "children": [],
+                          "width": 16,
+                          "height": 16,
+                          "cornerRadius": "$--radius-xs",
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-codex.png",
+                            "mode": "fit"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "psb-a1-d-title",
+                          "name": "S5.5 PRD 초안 정리",
+                          "content": "S5.5 PRD 초안 정리",
+                          "fill": "$--subtle-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "psb-a1-d-gap",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "text",
+                          "id": "psb-a1-d-age",
+                          "name": "3m",
+                          "content": "3m",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": 292,
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-md",
+                        "$--spacing-xs",
+                        58
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-a2-d",
+                      "name": "Agent row",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "psb-a2-d-mark",
+                          "name": "○",
+                          "content": "○",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "psb-a2-d-art",
+                          "name": "Provider",
+                          "children": [],
+                          "width": 16,
+                          "height": 16,
+                          "cornerRadius": "$--radius-xs",
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "psb-a2-d-title",
+                          "name": "후속 UX 계획 인터뷰",
+                          "content": "후속 UX 계획 인터뷰",
+                          "fill": "$--subtle-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "psb-a2-d-gap",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "text",
+                          "id": "psb-a2-d-age",
+                          "name": "1h",
+                          "content": "1h",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": 292,
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-md",
+                        "$--spacing-xs",
+                        58
+                      ]
+                    },
+                    {
+                      "id": "psb-c3-d",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "quick/155-browser-display",
+                      "width": 292,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        16
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "git-branch"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "quick/155-browser-display",
+                          "fontWeight": "500"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "content": "40m",
+                          "enabled": true,
+                          "textGrowth": "fixed-width",
+                          "width": 24,
+                          "textAlign": "right"
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": true,
+                          "icon": "chevron-right"
+                        },
+                        "hideui:J5xdha": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:N7YbJ": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "hideui:fklVZ": {
+                          "fill": "$--background",
+                          "enabled": false
+                        },
+                        "hideui:ExMsH": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": false
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "#155 browser display (WebCon…",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 272
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "width": 16
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 272
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        },
+                        "hideui:FtZyp": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-c4-d",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "quick/154-search-palette",
+                      "width": 292,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        16
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--pr-draft",
+                          "icon": "git-pull-request-draft"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "quick/154-search-palette",
+                          "fontWeight": "500"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "content": "1h",
+                          "enabled": true,
+                          "textGrowth": "fixed-width",
+                          "width": 24,
+                          "textAlign": "right"
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": true,
+                          "icon": "chevron-right"
+                        },
+                        "hideui:J5xdha": {
+                          "fill": "$--success"
+                        },
+                        "hideui:N7YbJ": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "hideui:fklVZ": {
+                          "fill": "$--background",
+                          "enabled": false
+                        },
+                        "hideui:ExMsH": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": false
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "#154 ⌘K search palette UI",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 272
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "width": 16
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 272
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        },
+                        "hideui:FtZyp": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-c5-d",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "design/workspace-ux-prop…",
+                      "width": 292,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        16
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "git-branch"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "design/workspace-ux-prop…",
+                          "fontWeight": "500"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "content": "5h",
+                          "enabled": true,
+                          "textGrowth": "fixed-width",
+                          "width": 24,
+                          "textAlign": "right"
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": true,
+                          "opacity": 0
+                        },
+                        "hideui:J5xdha": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:N7YbJ": {
+                          "fill": "$--primary"
+                        },
+                        "hideui:fklVZ": {
+                          "fill": "$--background"
+                        },
+                        "hideui:ExMsH": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "Workspace UX 제안과 상태 소유…",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 272
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "width": 16
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 272
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        },
+                        "hideui:FtZyp": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-c6-d",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "fix/registered-projects-only",
+                      "width": 292,
+                      "height": 36,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        16
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "git-branch"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "fix/registered-projects-only",
+                          "fontWeight": "500"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "content": "1d",
+                          "enabled": true,
+                          "textGrowth": "fixed-width",
+                          "width": 24,
+                          "textAlign": "right"
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": true,
+                          "opacity": 0
+                        },
+                        "hideui:J5xdha": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:N7YbJ": {
+                          "fill": "$--primary"
+                        },
+                        "hideui:fklVZ": {
+                          "fill": "$--background"
+                        },
+                        "hideui:ExMsH": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:QetL0": {
+                          "width": 272
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "width": 16
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": false,
+                          "width": 272
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        },
+                        "hideui:FtZyp": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-c7-d",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "legacy-shell",
+                      "width": 292,
+                      "height": 36,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        16
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--destructive",
+                          "icon": "git-branch"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "legacy-shell",
+                          "fontWeight": "500"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "content": "",
+                          "enabled": true,
+                          "textGrowth": "fixed-width",
+                          "width": 24,
+                          "textAlign": "right"
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": true,
+                          "opacity": 0
+                        },
+                        "hideui:J5xdha": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:N7YbJ": {
+                          "fill": "$--primary"
+                        },
+                        "hideui:fklVZ": {
+                          "fill": "$--background"
+                        },
+                        "hideui:ExMsH": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:QetL0": {
+                          "width": 272
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": true
+                        },
+                        "hideui:IXwZI": {
+                          "width": 16
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": false,
+                          "width": 272
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        },
+                        "hideui:FtZyp": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-f-herdr-d",
+                      "type": "ref",
+                      "ref": "hideui:inactive-fold-row",
+                      "name": "Inactive 14",
+                      "width": 292,
+                      "padding": [
+                        0,
+                        0,
+                        0,
+                        38
+                      ],
+                      "descendants": {
+                        "hideui:inactive-fold-chevron": {
+                          "fill": "$--muted-foreground"
+                        },
+                        "hideui:inactive-fold-label": {
+                          "fill": "$--subtle-foreground",
+                          "content": "Inactive 14"
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-p-sasu-d",
+                      "type": "ref",
+                      "ref": "hideui:qdhY0",
+                      "name": "sasu",
+                      "width": 292,
+                      "height": 36,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "descendants": {
+                        "hideui:iBYjj": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
+                        },
+                        "hideui:mIzlX": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "folder-git-2"
+                        },
+                        "hideui:JkPyX": {
+                          "fill": "$--foreground",
+                          "content": "sasu"
+                        },
+                        "hideui:nZkan": {
+                          "fill": "$--muted-foreground",
+                          "content": "3 agents · 50m"
+                        },
+                        "hideui:hm1SG": {
+                          "width": 24,
+                          "height": 24,
+                          "opacity": 0
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-f-proj-d",
+                      "type": "ref",
+                      "ref": "hideui:inactive-fold-row",
+                      "name": "Inactive projects 3",
+                      "width": 292,
+                      "padding": [
+                        0,
+                        0,
+                        0,
+                        14
+                      ],
+                      "descendants": {
+                        "hideui:inactive-fold-chevron": {
+                          "fill": "$--muted-foreground"
+                        },
+                        "hideui:inactive-fold-label": {
+                          "fill": "$--subtle-foreground",
+                          "content": "Inactive projects 3"
+                        }
+                      }
+                    }
+                  ],
+                  "width": 292,
+                  "layout": "vertical"
+                },
+                {
+                  "type": "frame",
+                  "id": "psb-ftr-d",
+                  "name": "Footer",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "psb-rule1-d",
+                      "name": "Rule",
+                      "children": [],
+                      "width": 292,
+                      "height": 1,
+                      "fill": "$--border"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-new-d",
+                      "name": "New workspace",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "psb-newt-d",
+                          "name": "+ 새 워크스페이스",
+                          "content": "+ 새 워크스페이스",
+                          "fill": "$--subtle-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "text",
+                          "id": "psb-newk-d",
+                          "name": "⇧⌘N",
+                          "content": "⇧⌘N",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": 292,
+                      "padding": [
+                        "$--spacing-sm",
+                        "$--spacing-md"
+                      ],
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-rule2-d",
+                      "name": "Rule",
+                      "children": [],
+                      "width": 292,
+                      "height": 1,
+                      "fill": "$--border"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-dev-d",
+                      "name": "Device picker",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "psb-devi-d",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "laptop",
+                          "library": "lucide",
+                          "fill": "$--subtle-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "psb-devt-d",
+                          "name": "This Mac",
+                          "content": "This Mac",
+                          "fill": "$--subtle-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "psb-devc-d",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "chevrons-up-down",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        }
+                      ],
+                      "width": 292,
+                      "padding": [
+                        "$--spacing-sm",
+                        "$--spacing-md"
+                      ],
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center"
+                    }
+                  ],
+                  "width": 292,
+                  "layout": "vertical"
+                }
+              ],
+              "width": 292,
+              "layout": "vertical",
+              "fill": "$--sidebar",
+              "clip": true
+            }
+          ],
+          "theme": {
+            "Mode": "Dark"
+          },
+          "layout": "horizontal",
+          "gap": "$--spacing-lg",
+          "alignItems": "start",
+          "padding": "$--spacing-lg",
+          "fill": "$--background",
+          "cornerRadius": "$--radius-md",
+          "width": "fit_content"
+        }
+      ],
+      "layout": "vertical",
+      "gap": "$--spacing-xl",
+      "padding": "$--spacing-xl",
+      "fill": "#EDEDEE",
+      "width": "fit_content",
+      "x": 0,
+      "y": 0
     }
   ]
 }
