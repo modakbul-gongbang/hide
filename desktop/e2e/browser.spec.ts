@@ -146,7 +146,7 @@ async function displayIdOf(page: Page, text: string): Promise<string> {
 test("browser: a page opens from an agent's pane, follows its area, moves without loading again, freezes under the palette and ends with its display", async () => {
   const report = path.join(herdr.root, "fixture", "리포트 1.html");
   fs.writeFileSync(report, '<!doctype html><meta charset="utf-8"><title>Local report</title><h1>리포트</h1>');
-  ({ app } = await launch(run.env, PAINT_WHILE_OCCLUDED));
+  ({ app } = await launch(run.env, { switches: PAINT_WHILE_OCCLUDED }));
   // The window is the size this run needs, whatever the machine's screen:
   // a CI runner's screen is 1024 points wide.
   const bounds = await app.evaluate(({ BrowserWindow, screen }, size) => {
@@ -286,7 +286,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
 
   // A relaunch brings the pages back at the addresses they last showed.
   await app.close();
-  ({ app } = await launch(run.env, PAINT_WHILE_OCCLUDED));
+  ({ app } = await launch(run.env, { switches: PAINT_WHILE_OCCLUDED }));
   const again = await app.firstWindow();
   await enterWorkspace(again, "fixture");
   await expect(tab(again, "Page A")).toBeVisible({ timeout: 20_000 });

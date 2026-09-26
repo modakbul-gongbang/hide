@@ -27,6 +27,6 @@ describe("the environment registry", () => {
     expect(() => loadEnv({ HIDE_CLI_PATH: "relative/hide", HIDE_DESKTOP_USER_DATA_DIR: "also-relative" })).toThrow(
       "desktop environment is not usable: HIDE_CLI_PATH: not an absolute path; HIDE_DESKTOP_USER_DATA_DIR: not an absolute path",
     );
-    expect(loadEnv({ PATH: "/bin" })).toEqual({ cliPath: null, userDataDir: null, shell: "/bin/zsh", path: "/bin" });
+    expect(loadEnv({ PATH: "/bin", HOME: "/h" })).toEqual({ cliPath: null, userDataDir: null, shell: "/bin/zsh", home: "/h", path: "/bin" });
   });
 });

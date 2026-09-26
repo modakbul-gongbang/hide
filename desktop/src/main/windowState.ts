@@ -3,8 +3,8 @@
 // closes. A file that is missing, unreadable, from another schema, or places
 // the window off every display opens the default size centered instead.
 
-import fs from "node:fs";
 import path from "node:path";
+import { readJsonFile, writeJsonFile } from "./jsonFile";
 
 export const WINDOW_STATE_SCHEMA = 1;
 export const DEFAULT_SIZE = { width: 1440, height: 900 };
@@ -61,23 +61,9 @@ export function windowStatePath(userData: string): string {
 
 /** The stored JSON; null when no file exists; a marker the restore refuses when the file cannot be read. */
 export function readWindowState(file: string): unknown {
-  let text: string;
-  try {
-    text = fs.readFileSync(file, "utf8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
-    return { unreadable: String(error) };
-  }
-  try {
-    return JSON.parse(text);
-  } catch {
-    return { unreadable: "not JSON" };
-  }
+  return readJsonFile(file);
 }
 
-/** Written to a temporary file and renamed, so a crash mid-write leaves the last good state. */
 export function writeWindowState(file: string, bounds: Rect): void {
-  const staging = `${file}.${process.pid}.tmp`;
-  fs.writeFileSync(staging, JSON.stringify({ schema: WINDOW_STATE_SCHEMA, bounds }));
-  fs.renameSync(staging, file);
+  writeJsonFile(file, { schema: WINDOW_STATE_SCHEMA, bounds });
 }

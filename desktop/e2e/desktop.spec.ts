@@ -9,7 +9,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import "../../web/src/host";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
-import { DESKTOP_DIR, HIDE_CLI, hostLog, isolate, launch, screenshot, type Isolated } from "./fixture";
+import { detachedApp, DESKTOP_DIR, HIDE_CLI, hostLog, isolate, launch, relaunch, screenshot, type Isolated } from "./fixture";
 
 let herdr: HerdrFixture;
 let run: Isolated;
@@ -159,9 +159,7 @@ test("lifetime: a second launch focuses the first, closing the window keeps the 
   await app.close();
   app = null;
   expect(run.daemonPid()).toBe(pid);
-  ({ app } = await launch(run.env));
-  page = await app.firstWindow();
-  await shellShown(page);
+  app = await relaunch(run.env);
   expect(run.daemonPid()).toBe(pid);
   expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getBounds())).toEqual(bounds);
   // First launch, the reopened window (bounds written when the first closed), then the relaunch.
@@ -181,6 +179,31 @@ test("failure: a missing CLI shows its reason and Retry attaches once it exists"
   fs.symlinkSync(HIDE_CLI, cli);
   await page.getByRole("button", { name: "Retry" }).click();
   await shellShown(page);
+});
+
+test("discovery: with hide on no PATH, the app finds it where it is installed and remembers it for the next launch", async () => {
+  // launchd's bare PATH, no override, no worktree build beside it. Playwright runs the app
+  // unpackaged, so the login-shell step is skipped here; cli.test.ts covers its place in the order.
+  const bare = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+  const env: Record<string, string> = { ...run.env, PATH: bare.join(":") };
+  delete env.HIDE_CLI_PATH;
+  const appDir = detachedApp(run.root);
+  const installed = path.join(env.HOME!, ".local", "bin", "hide");
+  fs.mkdirSync(path.dirname(installed), { recursive: true });
+  fs.symlinkSync(HIDE_CLI, installed);
+  // The unpackaged host still looks beside its app folder for a worktree build; there is none.
+  const before = [...["debug", "release"].map((profile) => path.join(run.root, "target", profile, "hide")), ...bare.map((dir) => path.join(dir, "hide"))];
+  const resolved = () => hostLog(env).filter((line) => line.event === "cli.resolved");
+
+  ({ app } = await launch(env, { appDir }));
+  await shellShown(await app.firstWindow());
+  expect(resolved().at(-1)).toMatchObject({ source: "well-known", path: installed, tried: [...before, installed].join(":") });
+  const remembered = path.join(env.HIDE_DESKTOP_USER_DATA_DIR!, "cli-path.json");
+  expect(JSON.parse(fs.readFileSync(remembered, "utf8"))).toEqual({ schema: 1, path: installed });
+  await app.close();
+
+  app = await relaunch(env, { appDir });
+  expect(resolved().at(-1)).toMatchObject({ source: "remembered", path: installed, tried: [...before, installed].join(":") });
 });
 
 test("reattach: a daemon that dies shows the shell's disconnected state, and the app follows the next one", async () => {
