@@ -70,11 +70,24 @@ function assertIsolated(env: Record<string, string>): void {
   }
 }
 
-export async function launch(env: Record<string, string>): Promise<{ app: ElectronApplication; page: Page }> {
+export async function launch(env: Record<string, string>, appDir = DESKTOP_DIR): Promise<{ app: ElectronApplication; page: Page }> {
   assertIsolated(env);
-  const app = await electron.launch({ args: [DESKTOP_DIR], cwd: DESKTOP_DIR, env });
+  const app = await electron.launch({ args: [appDir], cwd: appDir, env });
   const page = await app.firstWindow();
   return { app, page };
+}
+
+/**
+ * The built app copied under this run's directory, so an unpackaged launch
+ * has no worktree `target/` beside it and searches for `hide` the way an
+ * installed app does.
+ */
+export function detachedApp(root: string): string {
+  const dir = path.join(root, "app");
+  fs.mkdirSync(dir);
+  fs.copyFileSync(path.join(DESKTOP_DIR, "package.json"), path.join(dir, "package.json"));
+  fs.cpSync(path.join(DESKTOP_DIR, "dist"), path.join(dir, "dist"), { recursive: true });
+  return dir;
 }
 
 /** The host's structured log lines for this run's profile. */

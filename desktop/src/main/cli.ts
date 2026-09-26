@@ -6,11 +6,11 @@
 import path from "node:path";
 import type { ChildResult } from "./spawn";
 
-export type CliSource = "env" | "worktree" | "path";
+export type CliSource = "env" | "worktree" | "path" | "remembered" | "login" | "well-known";
 
 export type ResolvedCli = {
   found: { path: string; source: CliSource } | null;
-  /** Every path looked at, in order, for the log (B2). */
+  /** Every path looked at, in order and once each, for the log (B2). */
   tried: string[];
 };
 
@@ -19,20 +19,50 @@ export type FileProbe = {
   mtimeMs(file: string): number | null;
 };
 
+export type CliSearch = {
+  override: string | null;
+  /** This worktree's root when run unpackaged; null when packaged. */
+  worktreeRoot: string | null;
+  /** This process's PATH: the terminal's for `pnpm dev`, launchd's bare one for an app opened from Finder. */
+  searchPath: string;
+  /** The last CLI that attached, read back from the profile. */
+  remembered: string | null;
+  /** Asks the login shell for its PATH; called only when every cheaper step missed, and null when unpackaged. */
+  loginPath: (() => Promise<string | null>) | null;
+  home: string;
+};
+
+/** Where the CLI is looked for last: the Swift app's own fallback list (`RuntimeEnvironment.swift`). */
+export function wellKnownDirs(home: string): string[] {
+  return [path.join(home, ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin"];
+}
+
+/** Finds worth remembering once they attach; an override or a worktree build is not the operator's installed CLI. */
+export const REMEMBERED_SOURCES: ReadonlySet<CliSource> = new Set(["path", "login", "well-known"]);
+
+function inDirs(searchPath: string): string[] {
+  return searchPath
+    .split(":")
+    .filter((dir) => dir && path.isAbsolute(dir))
+    .map((dir) => path.join(dir, "hide"));
+}
+
 /**
  * B2's order: the override, then (unpackaged) this worktree's newest build,
- * then PATH. An override that is set but unusable ends the search: it names
- * what the operator asked for, and quietly using another binary would hide
- * the mistake.
+ * then PATH, the CLI that last attached, the login shell's PATH, and the
+ * usual install directories. An app opened from Finder gets launchd's PATH,
+ * not the operator's, so everything after PATH exists for it; the login shell
+ * is the slow step, which the remembered path spares every launch after the
+ * first. An override that is set but unusable ends the search: it names what
+ * the operator asked for, and quietly using another binary would hide the
+ * mistake.
  */
-export function resolveCli(
-  input: { override: string | null; worktreeRoot: string | null; searchPath: string },
-  probe: FileProbe,
-): ResolvedCli {
+export async function resolveCli(input: CliSearch, probe: FileProbe): Promise<ResolvedCli> {
   const tried: string[] = [];
+  const done = (file: string | null, source: CliSource): ResolvedCli => ({ found: file ? { path: file, source } : null, tried });
   if (input.override) {
     tried.push(input.override);
-    return { found: probe.isExecutable(input.override) ? { path: input.override, source: "env" } : null, tried };
+    return done(probe.isExecutable(input.override) ? input.override : null, "env");
   }
   if (input.worktreeRoot) {
     const builds = ["debug", "release"].map((profile) => path.join(input.worktreeRoot as string, "target", profile, "hide"));
@@ -41,15 +71,46 @@ export function resolveCli(
       .filter((file) => probe.isExecutable(file))
       .map((file) => ({ file, mtime: probe.mtimeMs(file) ?? 0 }))
       .sort((a, b) => b.mtime - a.mtime)[0];
-    if (newest) return { found: { path: newest.file, source: "worktree" }, tried };
+    if (newest) return done(newest.file, "worktree");
   }
-  for (const dir of input.searchPath.split(":")) {
-    if (!dir || !path.isAbsolute(dir)) continue;
-    const file = path.join(dir, "hide");
-    tried.push(file);
-    if (probe.isExecutable(file)) return { found: { path: file, source: "path" }, tried };
+  const first = (files: string[]): string | null => {
+    for (const file of files) {
+      if (tried.includes(file)) continue;
+      tried.push(file);
+      if (probe.isExecutable(file)) return file;
+    }
+    return null;
+  };
+  const steps: [CliSource, () => Promise<string[]>][] = [
+    ["path", async () => inDirs(input.searchPath)],
+    ["remembered", async () => (input.remembered ? [input.remembered] : [])],
+    ["login", async () => (input.loginPath ? inDirs((await input.loginPath()) ?? "") : [])],
+    ["well-known", async () => wellKnownDirs(input.home).map((dir) => path.join(dir, "hide"))],
+  ];
+  for (const [source, files] of steps) {
+    const file = first(await files());
+    if (file) return done(file, source);
   }
   return { found: null, tried };
+}
+
+const REMEMBERED_SCHEMA = 1;
+
+export function rememberedCliPath(userData: string): string {
+  return path.join(userData, "cli-path.json");
+}
+
+/** The remembered CLI path; null when none is stored; `{ unreadable }` when the file is not one this host wrote. */
+export function parseRememberedCli(stored: unknown): string | null | { unreadable: string } {
+  if (stored === null) return null;
+  const value = typeof stored === "object" ? (stored as Record<string, unknown>) : null;
+  if (value && typeof value.unreadable === "string") return { unreadable: value.unreadable };
+  if (value?.schema !== REMEMBERED_SCHEMA || typeof value.path !== "string" || !path.isAbsolute(value.path)) return { unreadable: "unexpected shape" };
+  return value.path;
+}
+
+export function rememberedCliValue(file: string): unknown {
+  return { schema: REMEMBERED_SCHEMA, path: file };
 }
 
 export type FailureReason = "cli_missing" | "start_failed" | "no_response";
@@ -125,8 +186,25 @@ export function parseStatus(result: ChildResult): StatusAnswer | null {
 
 const PATH_MARK = "__HIDE_LOGIN_PATH__";
 
-/** The login shell's command line that prints its PATH between two marks, past any rc-file output. */
-export const LOGIN_PATH_ARGS = ["-ilc", `printf '\\n${PATH_MARK}%s${PATH_MARK}\\n' "$PATH"`];
+/**
+ * The login shell asked for its PATH, printed between two marks past any
+ * rc-file output. It runs through `env` to set what shell-env sets: Oh My
+ * Zsh's auto-update prompt and its tmux autostart can otherwise hold an
+ * interactive shell open until the timeout.
+ */
+export function loginPathCommand(shell: string): { file: string; args: string[] } {
+  return {
+    file: "/usr/bin/env",
+    args: [
+      "DISABLE_AUTO_UPDATE=true",
+      "ZSH_TMUX_AUTOSTARTED=true",
+      "ZSH_TMUX_AUTOSTART=false",
+      shell,
+      "-ilc",
+      `printf '\\n${PATH_MARK}%s${PATH_MARK}\\n' "$PATH"`,
+    ],
+  };
+}
 
 export function parseLoginPath(stdout: string): string | null {
   const match = new RegExp(`${PATH_MARK}(.*?)${PATH_MARK}`).exec(stdout);

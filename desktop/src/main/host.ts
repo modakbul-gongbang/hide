@@ -16,15 +16,21 @@ import { app, BrowserWindow, ipcMain, screen, session, shell, type IpcMainEvent 
 import type { CommandId } from "../../../web/src/shortcuts";
 import { BINDINGS_CHANNEL, COMMAND_CHANNEL } from "../channel";
 import {
-  LOGIN_PATH_ARGS,
+  loginPathCommand,
   parseConnect,
   parseLoginPath,
+  parseRememberedCli,
   parseStatus,
+  REMEMBERED_SOURCES,
+  rememberedCliPath,
+  rememberedCliValue,
   resolveCli,
   type Attached,
+  type CliSource,
   type FailureReason,
 } from "./cli";
 import type { DesktopEnv } from "./env";
+import { readJsonFile, writeJsonFile } from "./jsonFile";
 import { loadFailureFields, type HostLog } from "./log";
 import { ChildRunner, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
@@ -33,7 +39,8 @@ declare const __HIDE_BACKGROUND__: string;
 
 const CONNECT_TIMEOUT_MS = 15_000;
 const STATUS_TIMEOUT_MS = 5_000;
-const LOGIN_PATH_TIMEOUT_MS = 5_000;
+/** VS Code's default for the same question (`application.shellEnvironmentResolutionTimeout`); a warm rc takes seconds. */
+const LOGIN_PATH_TIMEOUT_MS = 10_000;
 const HEALTH_INTERVAL_MS = 2_000;
 const HEALTH_TIMEOUT_MS = 1_500;
 const LOST_AFTER_MISSES = 2;
@@ -74,8 +81,9 @@ export class DesktopHost {
   private cliChain: Promise<unknown> = Promise.resolve();
   private discovering: Promise<void> | null = null;
   private attempts = 0;
-  private cli: string | null = null;
-  private loginPath: string | null | undefined = undefined;
+  private cli: { path: string; source: CliSource } | null = null;
+  /** The login shell's PATH once it answered; a shell that failed or timed out is asked again on the next search. */
+  private loginPath: string | null = null;
   private watch: NodeJS.Timeout | null = null;
   private quitting = false;
 
@@ -149,26 +157,27 @@ export class DesktopHost {
     this.log.event("discovery.start", { attempt, trigger });
     const cli = await this.findCli(attempt);
     if (!cli) return this.fail(attempt, "cli_missing", "no executable hide CLI");
-    const answer = parseConnect(await this.runCli(cli, ["connect"], CONNECT_TIMEOUT_MS));
+    const answer = parseConnect(await this.runCli(cli.path, ["connect"], CONNECT_TIMEOUT_MS));
     if (this.quitting) return;
     if (answer.kind === "failed") return this.fail(attempt, answer.reason, answer.detail);
     this.log.event("discovery.attached", { attempt, port: answer.port, pid: answer.pid });
+    this.remember(cli);
     this.attach(answer);
   }
 
-  private async findCli(attempt: number): Promise<string | null> {
-    let searchPath = this.env.path;
-    if (app.isPackaged && !this.env.cliPath) {
-      // Finder starts an app with launchd's PATH, not the operator's.
-      if (this.loginPath === undefined) {
-        const result = await this.runCli(this.env.shell, LOGIN_PATH_ARGS, LOGIN_PATH_TIMEOUT_MS);
-        this.loginPath = parseLoginPath(result.stdout);
-        if (!this.loginPath) this.log.event("cli.login_path_unavailable", { attempt, code: result.code, timed_out: result.timedOut });
-      }
-      if (this.loginPath) searchPath = `${this.loginPath}:${searchPath}`;
-    }
-    const resolved = resolveCli(
-      { override: this.env.cliPath, worktreeRoot: app.isPackaged ? null : path.resolve(app.getAppPath(), ".."), searchPath },
+  private async findCli(attempt: number): Promise<{ path: string; source: CliSource } | null> {
+    const stored = parseRememberedCli(readJsonFile(rememberedCliPath(app.getPath("userData"))));
+    if (stored !== null && typeof stored === "object") this.log.event("cli.remembered_unreadable", { attempt, detail: stored.unreadable });
+    const resolved = await resolveCli(
+      {
+        override: this.env.cliPath,
+        worktreeRoot: app.isPackaged ? null : path.resolve(app.getAppPath(), ".."),
+        searchPath: this.env.path,
+        remembered: typeof stored === "string" ? stored : null,
+        // A packaged app opened from Finder has launchd's PATH, not the operator's.
+        loginPath: app.isPackaged ? () => this.readLoginPath(attempt) : null,
+        home: this.env.home,
+      },
       { isExecutable, mtimeMs },
     );
     this.log.event(resolved.found ? "cli.resolved" : "cli.missing", {
@@ -177,8 +186,35 @@ export class DesktopHost {
       path: resolved.found?.path,
       tried: resolved.tried.join(":"),
     });
-    this.cli = resolved.found?.path ?? null;
+    this.cli = resolved.found;
     return this.cli;
+  }
+
+  private async readLoginPath(attempt: number): Promise<string | null> {
+    if (this.loginPath) return this.loginPath;
+    const started = Date.now();
+    const command = loginPathCommand(this.env.shell);
+    const result = await this.runCli(command.file, command.args, LOGIN_PATH_TIMEOUT_MS);
+    this.loginPath = parseLoginPath(result.stdout);
+    this.log.event("cli.login_path", {
+      attempt,
+      ok: this.loginPath !== null,
+      code: result.code,
+      timed_out: result.timedOut,
+      elapsed_ms: Date.now() - started,
+    });
+    return this.loginPath;
+  }
+
+  /** The CLI that just attached, kept for the next launch so it need not ask the login shell again. */
+  private remember(cli: { path: string; source: CliSource }): void {
+    if (!REMEMBERED_SOURCES.has(cli.source)) return;
+    try {
+      writeJsonFile(rememberedCliPath(app.getPath("userData")), rememberedCliValue(cli.path));
+      this.log.event("cli.remembered", { source: cli.source, path: cli.path });
+    } catch (error) {
+      this.log.event("cli.remember_failed", { detail: String(error) });
+    }
   }
 
   private runCli(file: string, args: readonly string[], timeoutMs: number): Promise<ChildResult> {
@@ -241,7 +277,7 @@ export class DesktopHost {
     const tick = async () => {
       const lost = this.state;
       if (lost.kind !== "lost" || this.quitting || !this.cli) return;
-      const status = parseStatus(await this.runCli(this.cli, ["status", "--json"], STATUS_TIMEOUT_MS));
+      const status = parseStatus(await this.runCli(this.cli.path, ["status", "--json"], STATUS_TIMEOUT_MS));
       if (this.state !== lost) return;
       if (status?.running) {
         this.log.event("daemon.found", { port: status.port, pid: status.pid, same_url: status.url === lost.url });

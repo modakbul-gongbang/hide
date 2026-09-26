@@ -82,4 +82,4 @@ Electron downloads its runtime into `desktop/node_modules/electron/dist/` on the
 
 The app attaches to whatever daemon the environment names: without `HIDE_STATE_DIR` it is the operator's own at `~/.local/state/hide`.
 For QA, set `HIDE_STATE_DIR`, `HOME`, `HERDR_SOCKET_PATH` and `HIDE_DESKTOP_USER_DATA_DIR` to private paths, as `desktop/e2e/fixture.ts` does and refuses to launch without.
-A packaged app launched from Finder finds `hide` through `HIDE_CLI_PATH` or the login shell's PATH; macOS may refuse the unsigned app's first launch until it is opened once with Open from the context menu.
+A packaged app launched from Finder does not need `hide` on launchd's PATH: it asks the login shell, then looks in `~/.local/bin`, `/opt/homebrew/bin` and `/usr/local/bin`, and remembers the CLI that attached for the next launch (see `docs/ARCHITECTURE.md`, The desktop host); a symlink at `~/.local/bin/hide` to a checkout's `target/release/hide` is enough. macOS may refuse the unsigned app's first launch until it is opened once with Open from the context menu.
