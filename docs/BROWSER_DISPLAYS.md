@@ -68,6 +68,7 @@ Creating a route reserves its View and load briefly, then connects to SSH outsid
 Other Views can close while that connection is pending, and a canceled or superseded reservation cannot publish a late forward.
 The complete SSH connection and authentication attempt has a 15-second limit.
 Closing a pending View cancels its SSH connection, and at most four route builds may be in flight even when Views are repeatedly opened and closed.
+Cancellation during SSH key exchange also shuts down the TCP socket before a session handle exists, so the connection cannot outlive its build permit.
 
 A page the operator loaded can still follow its own links.
 A `file:` page that moves to a file outside the checkouts keeps showing it in its view, but its report is refused at the boundary, so the core keeps the last address it accepted and a relaunch opens that one.

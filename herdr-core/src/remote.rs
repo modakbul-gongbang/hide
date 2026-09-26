@@ -9,7 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, Read, Write};
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -45,6 +45,26 @@ pub mod host;
 pub use crate::herdr_contract::HERDR_PROTOCOL_REVISION as REMOTE_PROTOCOL_REVISION;
 const SSH_OPERATION_TIMEOUT: Duration = Duration::from_secs(15);
 type ReverseForwardParts = (Handle<KnownHostHandler>, u16, Arc<Mutex<Option<String>>>);
+
+// Russh spawns its session task after receiving the server's SSH banner but
+// before returning a Handle. If the caller cancels during key exchange, its
+// connect future drops without aborting that task. Shutdown of this duplicate
+// socket closes the task's stream even when no Handle was returned.
+struct ConnectingSocket(Option<std::net::TcpStream>);
+
+impl ConnectingSocket {
+    fn release(&mut self) {
+        self.0.take();
+    }
+}
+
+impl Drop for ConnectingSocket {
+    fn drop(&mut self) {
+        if let Some(socket) = self.0.take() {
+            let _ = socket.shutdown(Shutdown::Both);
+        }
+    }
+}
 /// The prefixes a host-key refusal starts with, so a caller can tell a
 /// changed key from a missing one without parsing the rest of the sentence.
 pub const HOST_KEY_CHANGED: &str = "host key changed";
@@ -2296,13 +2316,31 @@ impl RusshRemoteClient {
             ..client::Config::default()
         };
         tokio::time::timeout(SSH_OPERATION_TIMEOUT, async {
-            let mut session = client::connect(
-                Arc::new(config),
-                (self.host.hostname.as_str(), self.host.port),
-                handler,
-            )
-            .await
-            .map_err(|error| {
+            let socket = TcpStream::connect((self.host.hostname.as_str(), self.host.port))
+                .await
+                .map_err(|error| {
+                    remote_error(
+                        "remote-connect",
+                        &self.host.host_id,
+                        RemoteStage::Ssh,
+                        error,
+                        true,
+                        false,
+                    )
+                })?;
+            if config.nodelay {
+                socket.set_nodelay(true).map_err(|error| {
+                    remote_error(
+                        "remote-connect",
+                        &self.host.host_id,
+                        RemoteStage::Ssh,
+                        error,
+                        true,
+                        false,
+                    )
+                })?;
+            }
+            let socket = socket.into_std().map_err(|error| {
                 remote_error(
                     "remote-connect",
                     &self.host.host_id,
@@ -2312,7 +2350,41 @@ impl RusshRemoteClient {
                     false,
                 )
             })?;
+            let shutdown = socket.try_clone().map_err(|error| {
+                remote_error(
+                    "remote-connect",
+                    &self.host.host_id,
+                    RemoteStage::Ssh,
+                    error,
+                    true,
+                    false,
+                )
+            })?;
+            let mut connecting = ConnectingSocket(Some(shutdown));
+            let socket = TcpStream::from_std(socket).map_err(|error| {
+                remote_error(
+                    "remote-connect",
+                    &self.host.host_id,
+                    RemoteStage::Ssh,
+                    error,
+                    true,
+                    false,
+                )
+            })?;
+            let mut session = client::connect_stream(Arc::new(config), socket, handler)
+                .await
+                .map_err(|error| {
+                    remote_error(
+                        "remote-connect",
+                        &self.host.host_id,
+                        RemoteStage::Ssh,
+                        error,
+                        true,
+                        false,
+                    )
+                })?;
             authenticate(&mut session, &self.host).await?;
+            connecting.release();
             Ok(session)
         })
         .await
@@ -4276,6 +4348,70 @@ mod tests {
             "/tmp/known_hosts",
         )
         .unwrap()
+    }
+
+    /// Russh starts a socket-owning task after the SSH banner but before it
+    /// returns a Handle. Canceling in that interval must still close the peer.
+    #[test]
+    fn repeated_post_banner_cancellation_closes_each_socket() {
+        let runtime = Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let client = runtime.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let alias = SshAlias {
+                host_id: "ssh:kex-stall".to_owned(),
+                alias: "kex-stall".to_owned(),
+                hostname: "127.0.0.1".to_owned(),
+                user: "example".to_owned(),
+                port,
+                identity_file: None,
+                agent_socket: AgentSocket::Disabled,
+                known_hosts_file: PathBuf::from("/dev/null"),
+            };
+            let client = Arc::new(RusshRemoteClient::new(alias).unwrap());
+            for attempt in 0..6 {
+                let connecting = Arc::clone(&client);
+                let handler = KnownHostHandler::new(&client.host, None);
+                let task = tokio::spawn(async move { connecting.connect(handler).await });
+                let (mut socket, _) =
+                    tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                        .await
+                        .expect("client connects to fake SSH peer")
+                        .unwrap();
+                let mut byte = [0; 1];
+                let mut banner_end = false;
+                for _ in 0..255 {
+                    socket.read_exact(&mut byte).await.unwrap();
+                    if byte[0] == b'\n' {
+                        banner_end = true;
+                        break;
+                    }
+                }
+                assert!(banner_end, "client sends an SSH identification");
+                socket.write_all(b"SSH-2.0-kex-stall\r\n").await.unwrap();
+                socket.read_exact(&mut byte).await.unwrap();
+                task.abort();
+                let _ = task.await;
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    loop {
+                        match socket.read(&mut byte).await {
+                            Ok(0) => break,
+                            Ok(_) => {}
+                            Err(error) if error.kind() == io::ErrorKind::ConnectionReset => break,
+                            Err(error) => panic!("unexpected peer read failure: {error}"),
+                        }
+                    }
+                })
+                .await
+                .unwrap_or_else(|_| panic!("cancellation {attempt} left its SSH socket open"));
+            }
+            client
+        });
+        drop(client);
     }
 
     /// A changed host key, an unknown one and a refused sign-in each need a
