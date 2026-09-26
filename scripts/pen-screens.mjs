@@ -322,6 +322,13 @@ function screenDevicePickerRow(id, {name, detail, selected}) {
   return screenMenuItem(id, name, {glyph: 'server', reason: detail, shortcut: selected ? '✓' : undefined});
 }
 
+// The weekly usage chip at the sidebar's foot (web/src/components/weekly-usage.tsx):
+// the master draws Claude Code's mark, so only another provider's mark is named.
+function screenUsageChip(id, {provider, value}) {
+  const mark = provider === 'claude' ? {} : {'usage-chip-mark': {fill: {type: 'image', enabled: true, url: `../macos/Sources/HerdrMacOS/Resources/agent-${provider}.png`, mode: 'fit'}}};
+  return themedXref(id, 'usage-chip', `Usage ${provider}`, {}, {...mark, 'usage-chip-percent': {content: value}});
+}
+
 // The Agents/Projects sidebar App.tsx/sidebar.tsx always shows beside a
 // screen's own content; every sheet that draws a whole screen (Main,
 // Workspace) includes it so a reader sees the whole thing, not just its
@@ -338,7 +345,12 @@ function screenSidebar(id, suffix, agents) {
       icon(`${id}-newwsi-${suffix}`, 'plus', {size: 12, fill: '$--muted-foreground'}),
       text(`${id}-newwst-${suffix}`, '새 워크스페이스 ⌥⇧N', {size: '$--text-caption', fill: '$--muted-foreground'}),
     ]),
-    screenSelect(`${id}-device-${suffix}`, {content: 'This Mac', width: 190}),
+    frame(`${id}-footer-${suffix}`, 'Footer', {width: 'fill_container', gap: '$--spacing-xs', alignItems: 'center'}, [
+      screenSelect(`${id}-device-${suffix}`, {content: 'This Mac', width: 84}),
+      frame(`${id}-footergap-${suffix}`, 'Gap', {width: 'fill_container', height: 1}, []),
+      screenUsageChip(`${id}-usage0-${suffix}`, {provider: 'claude', value: '62%'}),
+      screenUsageChip(`${id}-usage1-${suffix}`, {provider: 'codex', value: '59%'}),
+    ]),
   ]);
 }
 

@@ -1660,22 +1660,74 @@
                   ]
                 },
                 {
-                  "id": "main-sidebar-device-l",
-                  "type": "ref",
-                  "ref": "hideui:sel-m",
-                  "name": "Select",
-                  "fill": "$--background",
-                  "stroke": "$--input",
-                  "width": 190,
-                  "descendants": {
-                    "hideui:sel-t": {
-                      "fill": "$--foreground",
-                      "content": "This Mac"
+                  "type": "frame",
+                  "id": "main-sidebar-footer-l",
+                  "name": "Footer",
+                  "children": [
+                    {
+                      "id": "main-sidebar-device-l",
+                      "type": "ref",
+                      "ref": "hideui:sel-m",
+                      "name": "Select",
+                      "fill": "$--background",
+                      "stroke": "$--input",
+                      "width": 84,
+                      "descendants": {
+                        "hideui:sel-t": {
+                          "fill": "$--foreground",
+                          "content": "This Mac"
+                        },
+                        "hideui:sel-i": {
+                          "fill": "$--muted-foreground"
+                        }
+                      }
                     },
-                    "hideui:sel-i": {
-                      "fill": "$--muted-foreground"
+                    {
+                      "type": "frame",
+                      "id": "main-sidebar-footergap-l",
+                      "name": "Gap",
+                      "children": [],
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "id": "main-sidebar-usage0-l",
+                      "type": "ref",
+                      "ref": "hideui:usage-chip",
+                      "name": "Usage claude",
+                      "fill": "$--secondary",
+                      "descendants": {
+                        "hideui:usage-chip-percent": {
+                          "fill": "$--success",
+                          "content": "62%"
+                        }
+                      }
+                    },
+                    {
+                      "id": "main-sidebar-usage1-l",
+                      "type": "ref",
+                      "ref": "hideui:usage-chip",
+                      "name": "Usage codex",
+                      "fill": "$--secondary",
+                      "descendants": {
+                        "hideui:usage-chip-percent": {
+                          "fill": "$--success",
+                          "content": "59%"
+                        },
+                        "hideui:usage-chip-mark": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                            "mode": "fit"
+                          }
+                        }
+                      }
                     }
-                  }
+                  ],
+                  "width": "fill_container",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "center"
                 }
               ],
               "width": 220,
@@ -1961,22 +2013,74 @@
                   ]
                 },
                 {
-                  "id": "main-sidebar-device-d",
-                  "type": "ref",
-                  "ref": "hideui:sel-m",
-                  "name": "Select",
-                  "fill": "$--background",
-                  "stroke": "$--input",
-                  "width": 190,
-                  "descendants": {
-                    "hideui:sel-t": {
-                      "fill": "$--foreground",
-                      "content": "This Mac"
+                  "type": "frame",
+                  "id": "main-sidebar-footer-d",
+                  "name": "Footer",
+                  "children": [
+                    {
+                      "id": "main-sidebar-device-d",
+                      "type": "ref",
+                      "ref": "hideui:sel-m",
+                      "name": "Select",
+                      "fill": "$--background",
+                      "stroke": "$--input",
+                      "width": 84,
+                      "descendants": {
+                        "hideui:sel-t": {
+                          "fill": "$--foreground",
+                          "content": "This Mac"
+                        },
+                        "hideui:sel-i": {
+                          "fill": "$--muted-foreground"
+                        }
+                      }
                     },
-                    "hideui:sel-i": {
-                      "fill": "$--muted-foreground"
+                    {
+                      "type": "frame",
+                      "id": "main-sidebar-footergap-d",
+                      "name": "Gap",
+                      "children": [],
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "id": "main-sidebar-usage0-d",
+                      "type": "ref",
+                      "ref": "hideui:usage-chip",
+                      "name": "Usage claude",
+                      "fill": "$--secondary",
+                      "descendants": {
+                        "hideui:usage-chip-percent": {
+                          "fill": "$--success",
+                          "content": "62%"
+                        }
+                      }
+                    },
+                    {
+                      "id": "main-sidebar-usage1-d",
+                      "type": "ref",
+                      "ref": "hideui:usage-chip",
+                      "name": "Usage codex",
+                      "fill": "$--secondary",
+                      "descendants": {
+                        "hideui:usage-chip-percent": {
+                          "fill": "$--success",
+                          "content": "59%"
+                        },
+                        "hideui:usage-chip-mark": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                            "mode": "fit"
+                          }
+                        }
+                      }
                     }
-                  }
+                  ],
+                  "width": "fill_container",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "center"
                 }
               ],
               "width": 220,
@@ -4685,22 +4789,74 @@
                           ]
                         },
                         {
-                          "id": "ws-sidebar-device-l",
-                          "type": "ref",
-                          "ref": "hideui:sel-m",
-                          "name": "Select",
-                          "fill": "$--background",
-                          "stroke": "$--input",
-                          "width": 190,
-                          "descendants": {
-                            "hideui:sel-t": {
-                              "fill": "$--foreground",
-                              "content": "This Mac"
+                          "type": "frame",
+                          "id": "ws-sidebar-footer-l",
+                          "name": "Footer",
+                          "children": [
+                            {
+                              "id": "ws-sidebar-device-l",
+                              "type": "ref",
+                              "ref": "hideui:sel-m",
+                              "name": "Select",
+                              "fill": "$--background",
+                              "stroke": "$--input",
+                              "width": 84,
+                              "descendants": {
+                                "hideui:sel-t": {
+                                  "fill": "$--foreground",
+                                  "content": "This Mac"
+                                },
+                                "hideui:sel-i": {
+                                  "fill": "$--muted-foreground"
+                                }
+                              }
                             },
-                            "hideui:sel-i": {
-                              "fill": "$--muted-foreground"
+                            {
+                              "type": "frame",
+                              "id": "ws-sidebar-footergap-l",
+                              "name": "Gap",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "id": "ws-sidebar-usage0-l",
+                              "type": "ref",
+                              "ref": "hideui:usage-chip",
+                              "name": "Usage claude",
+                              "fill": "$--secondary",
+                              "descendants": {
+                                "hideui:usage-chip-percent": {
+                                  "fill": "$--success",
+                                  "content": "62%"
+                                }
+                              }
+                            },
+                            {
+                              "id": "ws-sidebar-usage1-l",
+                              "type": "ref",
+                              "ref": "hideui:usage-chip",
+                              "name": "Usage codex",
+                              "fill": "$--secondary",
+                              "descendants": {
+                                "hideui:usage-chip-percent": {
+                                  "fill": "$--success",
+                                  "content": "59%"
+                                },
+                                "hideui:usage-chip-mark": {
+                                  "fill": {
+                                    "type": "image",
+                                    "enabled": true,
+                                    "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                                    "mode": "fit"
+                                  }
+                                }
+                              }
                             }
-                          }
+                          ],
+                          "width": "fill_container",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center"
                         }
                       ],
                       "width": 220,
@@ -5559,22 +5715,74 @@
                           ]
                         },
                         {
-                          "id": "ws-sidebar-device-d",
-                          "type": "ref",
-                          "ref": "hideui:sel-m",
-                          "name": "Select",
-                          "fill": "$--background",
-                          "stroke": "$--input",
-                          "width": 190,
-                          "descendants": {
-                            "hideui:sel-t": {
-                              "fill": "$--foreground",
-                              "content": "This Mac"
+                          "type": "frame",
+                          "id": "ws-sidebar-footer-d",
+                          "name": "Footer",
+                          "children": [
+                            {
+                              "id": "ws-sidebar-device-d",
+                              "type": "ref",
+                              "ref": "hideui:sel-m",
+                              "name": "Select",
+                              "fill": "$--background",
+                              "stroke": "$--input",
+                              "width": 84,
+                              "descendants": {
+                                "hideui:sel-t": {
+                                  "fill": "$--foreground",
+                                  "content": "This Mac"
+                                },
+                                "hideui:sel-i": {
+                                  "fill": "$--muted-foreground"
+                                }
+                              }
                             },
-                            "hideui:sel-i": {
-                              "fill": "$--muted-foreground"
+                            {
+                              "type": "frame",
+                              "id": "ws-sidebar-footergap-d",
+                              "name": "Gap",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "id": "ws-sidebar-usage0-d",
+                              "type": "ref",
+                              "ref": "hideui:usage-chip",
+                              "name": "Usage claude",
+                              "fill": "$--secondary",
+                              "descendants": {
+                                "hideui:usage-chip-percent": {
+                                  "fill": "$--success",
+                                  "content": "62%"
+                                }
+                              }
+                            },
+                            {
+                              "id": "ws-sidebar-usage1-d",
+                              "type": "ref",
+                              "ref": "hideui:usage-chip",
+                              "name": "Usage codex",
+                              "fill": "$--secondary",
+                              "descendants": {
+                                "hideui:usage-chip-percent": {
+                                  "fill": "$--success",
+                                  "content": "59%"
+                                },
+                                "hideui:usage-chip-mark": {
+                                  "fill": {
+                                    "type": "image",
+                                    "enabled": true,
+                                    "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                                    "mode": "fit"
+                                  }
+                                }
+                              }
                             }
-                          }
+                          ],
+                          "width": "fill_container",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center"
                         }
                       ],
                       "width": 220,

@@ -4,6 +4,8 @@
 // layout. Every selector is a lookup: the snapshot carries every tab's layout,
 // so a tab switch never draws a waiting state (PRD S2 B3).
 
+import type { ProviderUsage } from "./generated/hided-ws";
+
 export type AgentRow = {
   id: string;
   pane_id: string;
@@ -704,6 +706,8 @@ export type SnapshotRest = {
     agents?: AgentRow[];
     devices?: Device[];
     focused_device_id?: string | null;
+    /** Each provider's weekly window, typed by the contract (`providerUsage`). */
+    provider_usage?: ProviderUsage[];
   };
   connection?: { kind: string; state: string; target_id: string | null };
   task_operation?: TaskOperation | null;
