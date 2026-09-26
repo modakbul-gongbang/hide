@@ -58,6 +58,13 @@ describe("the side panel", () => {
     expect(frame("open", false, 1400)).toMatchObject({ content: "tools", width: 260, resizable: false });
     expect(frame("expanded", false, 1400)).toMatchObject({ shown: "open", content: "tools", width: 260 });
     expect(frame("open", false, 1400, { explorer: false })).toMatchObject({ content: "empty", width: 840, resizable: true });
+    // Only views expand, so the empty state never covers the agents.
+    expect(frame("expanded", false, 1400, { explorer: false })).toMatchObject({ shown: "open", content: "empty", width: 840 });
+  });
+
+  it("places nothing before the body is measured, so no terminal fits to a guess", () => {
+    expect(frame("open", true, 0, { pinned: true })).toMatchObject({ width: 0, agentsRight: 0, toolsOverlay: false });
+    expect(frame("open", false, 0, { pinned: true, explorer: false })).toMatchObject({ width: 0, agentsRight: 0 });
   });
 
   it("keeps a View area and the tool column beside it, and the agents left of it, at their minimum", () => {

@@ -12,7 +12,8 @@ The web shell's Workspace screen follows the approved S6 proposal, its View area
 Web owner: `web/src/WorkspaceScreen.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, `web/src/viewLayout.ts`, `web/src/viewDrag.ts`, `web/src/viewFocus.ts`.
 
 The toolbar reads left to right: the path back (`All projects / Project / Workspace`, naming the device when it is not this Mac), the side panel toggle, then the two tool toggles.
-The side panel toggle is drawn pressed while the panel shows, and ⌘⇧B does the same; while the panel is closed with views open, it carries a badge with their count, also said in its accessible name.
+The side panel toggle is drawn pressed while the panel shows, and ⌘⇧B does the same; while the panel is closed with views open, it carries a badge with their count, also given as its accessible description.
+The toggle, Pin, and Expand each keep one accessible name and say their state as pressed or not; their tooltips say what a press does.
 Explorer and History are independent toggles that open and close on their own, drawn pressed while shown; with both shown they share the tool column, Explorer above History, each with its own close.
 Pressing a tool toggle while the panel is closed opens the panel with that tool.
 A right-click or the menu key on the toolbar offers the three panel states (Side panel closed, open, and expanded), Pin or Unpin side panel, each tool, Copy Workspace path, and Open Project Overview; the palette offers the other two states and Pin or Unpin as commands.
@@ -34,6 +35,7 @@ The panel's top row holds the View tabs with their kind marks and, at its right 
 Below it the View areas sit on the left and the tool column (Explorer above History) on the right, the tool column's header sharing the tab strip's row.
 With stacked View areas each area keeps its own tab strip, and the top row holds the top area's tabs and the panel actions.
 With no view open and a tool shown, the panel is only as wide as the tool column, including after the last view closes; with no tool shown either, it says that no file or diff is open, with Show Explorer and Open file.
+Only views expand: an expanded panel with no view open is drawn at its width, so the agents stay in reach.
 
 Opening a file, a diff, or a page while the panel is closed opens it, with the active View area focused; revealing a file also shows the Explorer.
 Choosing an agent or a tab from the sidebar, the palette, or a tab cycle closes an unpinned panel and brings a pinned expanded panel back to its width, so the chosen agent is in sight; a pinned open panel stays, and a choice made in the Agent area on screen beside the panel moves nothing.
@@ -129,8 +131,8 @@ In a plain browser tab the view reads `Pages open in the hide desktop app.` with
 
 ### Narrow windows
 
-When the body cannot give the agents their minimum beside the open panel, the panel takes the whole body as if expanded, and a pinned panel floats there instead of docking.
-When the panel cannot give a View area its minimum beside the tool column, Explorer and History open as a temporary overlay inside the panel instead of a column, closed until a toggle asks for one; Escape or a click outside closes it and returns focus to the toggle that opened it.
+When the body cannot give the agents their minimum beside the open panel, the panel takes the whole body as if expanded, and a pinned panel floats there instead of docking; it is still pinned, so choosing an agent leaves it up, and the toggle or ⌘⇧B closes it.
+When the panel cannot give a View area its minimum beside the tool column, Explorer and History open as a temporary overlay inside the panel instead of a column, closed until a toggle asks for one, including the press that opened a closed panel; Escape or a click outside closes it and returns focus to the toggle that opened it.
 When the View areas cannot all have their minimum, only the active area shows, with an area switcher to the others.
 Widening the window brings back the panel's stored state, width and Pin, the area sizes, and the tool column, because none of these narrow arrangements is stored or sent to the core.
 

@@ -640,10 +640,10 @@ The e2e covers each path alone (a Playwright chord, a main-process menu click, o
 | New workspace | ⌘⇧N | ⌥⇧N (moved) | ⌘⇧N |
 | Next / previous recent panel (Recent Panels) | ⌃Tab / ⌃⇧Tab | ⌥` / ⌥⇧` (moved) | ⌃Tab / ⌃⇧Tab, committed on releasing ⌃ |
 | Next / previous recent project (Recent Projects) | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab |
-| Search, Open file, Toggle right panel | ⌘K, ⌘P, ⌘⇧B | same chords; ⌘K and ⌘P answered by the palettes | same chords |
+| Search, Open file, Toggle side panel | ⌘K, ⌘P, ⌘⇧B | same chords; ⌘K and ⌘P answered by the palettes | same chords |
 | Project home | ⌘⇧H | same chord; opens the front checkout's Project Overview | same chord |
 | Save file | ⌘S | ⌘S | ⌘S |
-| Toggle left sidebar, Toggle sidebar view, Toggle right panel, Find in pane, Keep open | ⌘B, ⌘E, ⌘⇧B, ⌘F, ⌘⇧K | same chords | same chords |
+| Toggle left sidebar, Toggle sidebar view, Toggle side panel, Find in pane, Keep open | ⌘B, ⌘E, ⌘⇧B, ⌘F, ⌘⇧K | same chords | same chords |
 | Split right / down | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D |
 | Zoom pane | ⌘⌥↩ | ⌘⌥↩ | ⌘⌥↩ |
 | Close pane | ⌘⇧W | ⌥⇧W (moved: Chrome reserves ⌘⇧W) | ⌘⇧W |

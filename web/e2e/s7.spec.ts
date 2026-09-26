@@ -839,7 +839,7 @@ test("splits, moves, resizes, focus and closes run from the palette and menus by
     await expect.poll(async () => Math.round((await boxOf(area(page, 0))).width)).toBe(Math.round(views.width));
 
     // Closing the last view with no tool shown leaves the panel saying
-    // nothing is open, and its state stays what it was (issue 170).
+    // nothing is open, and its stored state stays what it was (issue 170).
     await paletteCommand(page, "Hide Explorer", "command:tool:explorer");
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     const panelsBefore = stack.events.filter((event) => event.kind === "workspace_view" && "panel" in event.payload).length;
@@ -851,7 +851,8 @@ test("splits, moves, resizes, focus and closes run from the palette and menus by
     await expect(page.locator("[data-view-area]")).toHaveCount(0);
     await expect(page.locator("[data-side-panel]")).toHaveAttribute("data-panel-content", "empty");
     await expect(page.locator("[data-side-panel]")).toContainText("No file or diff is open in this Workspace.");
-    await expect(workspace).toHaveAttribute("data-panel", "expanded");
+    // Only views expand, so the empty panel is drawn at its width, the agents in reach.
+    await expect(workspace).toHaveAttribute("data-panel", "open");
     expect(stack.events.filter((event) => event.kind === "workspace_view" && "panel" in event.payload).length).toBe(panelsBefore);
     await screenshot(page, "s7-keys-empty");
     await paletteCommand(page, "Show Explorer", "command:tool:explorer");
@@ -1159,6 +1160,22 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     await expect.poll(() => shape(page)).toBe("@(>a.txt)");
     expect(stack.events.filter((event) => event.kind === "close_tab" || event.kind === "close_pane")).toHaveLength(0);
     expect(herdrIds(stack.herdr)).toEqual(herdrBefore);
+
+    // Floating here, the panel is still pinned: an agent chosen from the
+    // sidebar leaves it up, and the toggle closes it (issue 170).
+    const choices = () => stack.events.filter((event) => event.kind === "focus_pane" || event.kind === "focus_tab").length;
+    const choicesBefore = choices();
+    await page.locator("[data-agent-open]").first().click();
+    await expect.poll(choices).toBeGreaterThan(choicesBefore);
+    await expect(workspace).toHaveAttribute("data-panel", "expanded");
+    await page.locator('[data-panel-toggle="on"]').click();
+    await expect(workspace).toHaveAttribute("data-panel", "closed");
+    // One press of a tool toggle opens the panel with that tool, even where
+    // the tools fold into an overlay (B12).
+    await toggle.click();
+    await expect(workspace).toHaveAttribute("data-panel", "expanded");
+    await expect(page.locator('[data-tools-overlay="true"] [data-tool="explorer"]')).toBeVisible();
+    await expect(toggle).toHaveAttribute("aria-pressed", "true");
     expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {
     stopStack(stack);

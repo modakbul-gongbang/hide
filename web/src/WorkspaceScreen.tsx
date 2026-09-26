@@ -52,9 +52,12 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
   // The tool column while the panel has room for it beside a View area;
   // past that, an overlay inside the panel that stays closed until the
   // operator asks for a tool (S7 B12).
+  // It runs as the panel shows too, so a tool asked for with a closed panel
+  // opens the overlay of a panel that turns out narrow.
+  const panelShown = frame.shown !== "closed";
   useEffect(() => {
     useUiStore.getState().setToolsNarrow(frame.toolsOverlay);
-  }, [frame.toolsOverlay]);
+  }, [frame.toolsOverlay, panelShown]);
   // An overlay opened in one Workspace is not left open over the next one,
   // nor over this screen when the operator comes back to it; one left with
   // no tool to show closes too, so a tool shown later does not float over
@@ -208,13 +211,23 @@ type ToolbarMenuId = `panel:${PanelState}` | "pin" | "explorer" | "changes" | "c
 function PanelToggle({ view, actions }: { view: WorkspaceView; actions: Actions }) {
   const on = view.panel !== "closed";
   const count = on ? 0 : (view.layout?.display_count ?? 0);
-  const label = on ? "Hide side panel" : count > 0 ? `Show side panel, ${count} ${count === 1 ? "view" : "views"} open` : "Show side panel";
+  const views = count > 0 ? `${count} ${count === 1 ? "view" : "views"} open` : undefined;
+  // One name for the control, its state in aria-pressed; the tooltip says what a press does.
   return (
-    <Hint label={label} shortcut={displayCommand("toggle_right_panel", hostKind())}>
-      <Button variant={on ? "secondary" : "ghost"} size="icon-sm" className="relative" aria-pressed={on} aria-label={label} data-panel-toggle={on ? "on" : "off"} onClick={() => actions.setPanel(on ? "closed" : "open")}>
+    <Hint label={on ? "Hide side panel" : views ? `Show side panel, ${views}` : "Show side panel"} shortcut={displayCommand("toggle_right_panel", hostKind())}>
+      <Button
+        variant={on ? "secondary" : "ghost"}
+        size="icon-sm"
+        className="relative"
+        aria-pressed={on}
+        aria-label="Side panel"
+        aria-description={views}
+        data-panel-toggle={on ? "on" : "off"}
+        onClick={() => actions.setPanel(on ? "closed" : "open")}
+      >
         <PanelRightIcon />
         {count > 0 ? (
-          <span aria-hidden="true" className="absolute -right-xxs -top-xxs flex min-w-(--size-icon) items-center justify-center rounded-full bg-primary px-xxs text-micro leading-none text-primary-foreground" data-panel-badge={count}>
+          <span aria-hidden="true" className="absolute -right-xxs -top-xxs flex h-(--size-icon) min-w-(--size-icon) items-center justify-center rounded-full bg-primary px-xxs text-micro text-primary-foreground" data-panel-badge={count}>
             {count}
           </span>
         ) : null}
@@ -359,7 +372,7 @@ function PanelActions({ view, frame, actions }: { view: WorkspaceView; frame: Pa
         </Button>
       </Hint>
       <Hint label={pinLabel}>
-        <Button variant={view.pinned ? "secondary" : "ghost"} size="icon-sm" aria-pressed={view.pinned} aria-label={pinLabel} data-panel-pin={view.pinned ? "on" : "off"} onClick={() => actions.setPanelPinned(!view.pinned)}>
+        <Button variant={view.pinned ? "secondary" : "ghost"} size="icon-sm" aria-pressed={view.pinned} aria-label="Pin side panel" data-panel-pin={view.pinned ? "on" : "off"} onClick={() => actions.setPanelPinned(!view.pinned)}>
           {view.pinned ? <PinOffIcon /> : <PinIcon />}
         </Button>
       </Hint>
@@ -369,7 +382,7 @@ function PanelActions({ view, frame, actions }: { view: WorkspaceView; frame: Pa
             variant="ghost"
             size="icon-sm"
             aria-pressed={expanded}
-            aria-label={expanded ? "Restore panel width" : "Expand panel"}
+            aria-label="Expand side panel"
             data-panel-expand={expanded ? "on" : "off"}
             onClick={() => actions.setPanel(expanded ? "open" : "expanded")}
           >

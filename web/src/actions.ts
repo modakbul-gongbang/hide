@@ -271,6 +271,7 @@ export function createActions(dispatch: DispatchFn) {
     const view = workspaceViewOf(rest());
     if (!view) return diagnostic("workspace_view: no Workspace in front");
     ui().openTools();
+    if (view.panel === "closed") ui().askTools();
     if (view.panel === "closed" || !(tool === "explorer" ? view.explorer : view.changes)) setWorkspaceView(tool === "explorer" ? { explorer: true } : { changes: true });
   };
 

@@ -134,6 +134,8 @@ type UiStore = {
    * panel's width; the tools the core stores are never changed by it.
    */
   toolsPlacement: ToolsPlacement;
+  /** A tool was asked for while the side panel was closed, so the overlay opens with the panel if it turns out narrow. */
+  toolsAsked: boolean;
   /** The Explorer's inline name field, or null. */
   explorerDraft: ExplorerDraft | null;
   /** The trash confirmation the Explorer is showing, or null. */
@@ -175,10 +177,12 @@ type UiStore = {
   setExplorerSelection: (path: string | null) => void;
   requestEditorFind: (displayId: string | null) => void;
   setViewFocusRequest: (request: ViewFocusRequest | null) => void;
-  /** Follows the window: `column` when wide, a closed overlay when it turns narrow. */
+  /** Follows the window: `column` when wide, a closed overlay when it turns narrow, unless a tool was asked for with the panel. */
   setToolsNarrow: (narrow: boolean) => void;
   /** The operator asked for a tool: a narrow window's overlay opens. */
   openTools: () => void;
+  /** The operator asked for a tool while the side panel was closed. */
+  askTools: () => void;
   /** Escape or a click outside closes a narrow window's overlay. */
   closeTools: () => void;
   setExplorerDraft: (draft: ExplorerDraft | null) => void;
@@ -210,6 +214,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   editorFindDisplay: null,
   viewFocusRequest: null,
   toolsPlacement: "column",
+  toolsAsked: false,
   explorerDraft: null,
   pendingTrash: null,
   overlay: "none",
@@ -239,15 +244,19 @@ export const useUiStore = create<UiStore>((set, get) => ({
   requestEditorFind: (displayId) => set({ editorFindRequest: get().editorFindRequest + 1, editorFindDisplay: displayId }),
   setViewFocusRequest: (viewFocusRequest) => set({ viewFocusRequest }),
   setToolsNarrow: (narrow) => {
-    const current = get().toolsPlacement;
-    const next = placementForWidth(current, narrow);
-    if (next !== current) set({ toolsPlacement: next });
+    const { toolsPlacement: current, toolsAsked } = get();
+    const next = narrow && toolsAsked ? "open" : placementForWidth(current, narrow);
+    if (next !== current || toolsAsked) set({ toolsPlacement: next, toolsAsked: false });
   },
+  askTools: () => set({ toolsAsked: true }),
   openTools: () => {
     if (get().toolsPlacement === "closed") set({ toolsPlacement: "open" });
   },
+  // A tool asked for with a panel that never opened is forgotten here too,
+  // so a later narrow panel never opens its overlay by itself.
   closeTools: () => {
-    if (get().toolsPlacement === "open") set({ toolsPlacement: "closed" });
+    const { toolsPlacement, toolsAsked } = get();
+    if (toolsPlacement === "open" || toolsAsked) set({ toolsPlacement: toolsPlacement === "open" ? "closed" : toolsPlacement, toolsAsked: false });
   },
   setExplorerDraft: (explorerDraft) => set({ explorerDraft }),
   setPendingTrash: (pendingTrash) => set({ pendingTrash }),

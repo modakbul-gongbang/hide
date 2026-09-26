@@ -84,11 +84,14 @@ export function panelFrame(input: {
   const tools = view.explorer || view.changes;
   const content = views ? "views" : tools ? "tools" : "empty";
   if (view.panel === "closed") return { shown: "closed", content, width: 0, agentsRight: 0, narrow: false, resizable: false, toolsOverlay: false };
+  // Before the body is measured nothing is placed, so no terminal fits to a guess.
+  if (body <= 0) return { shown: view.panel === "expanded" && content === "views" ? "expanded" : "open", content, width: 0, agentsRight: 0, narrow: false, resizable: false, toolsOverlay: false };
   const need = panelMinimum(content, tools, sizes);
   const narrow = body > 0 && body < sizes.areaMin + need;
   const open = narrow ? body : content === "tools" ? sizes.toolColumn : panelWidth(view.views_over_share, body, need, sizes.areaMin);
-  // With no view to show, the panel stays the tool column's width.
-  const expanded = narrow || (view.panel === "expanded" && content !== "tools");
+  // Only views expand: with none, the panel stays the tool column's width or
+  // its own at the empty state, and the agents stay in reach.
+  const expanded = narrow || (view.panel === "expanded" && content === "views");
   const width = expanded ? body : open;
   return {
     shown: expanded ? "expanded" : "open",

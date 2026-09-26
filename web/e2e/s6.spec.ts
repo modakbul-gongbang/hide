@@ -227,6 +227,16 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect(page.locator("[data-view-area]")).toHaveCount(0);
     expect(last.get("workspace_view")).toEqual({ panel: "closed" });
     await expect(page.locator("[data-panel-badge]")).toHaveText("2");
+    // The badge is drawn whole on the toggle's top-right corner, inside the toolbar.
+    const badge = (await page.locator("[data-panel-badge]").boundingBox())!;
+    const toggle = (await page.locator('[data-panel-toggle="off"]').boundingBox())!;
+    const toolbar = (await page.locator("[data-workspace-toolbar]").boundingBox())!;
+    expect(badge.y).toBeGreaterThanOrEqual(toolbar.y);
+    expect(badge.x + badge.width).toBeLessThanOrEqual(toolbar.x + toolbar.width);
+    expect(badge.x).toBeGreaterThanOrEqual(toggle.x + toggle.width / 2);
+    expect(badge.y).toBeLessThan(toggle.y + toggle.height / 2);
+    expect(badge.height).toBeGreaterThanOrEqual(badge.width - 1);
+    expect(await page.locator("[data-panel-badge]").evaluate((node) => getComputedStyle(node).backgroundColor)).not.toBe("rgba(0, 0, 0, 0)");
     // Closed, the keyboard is back on the pane the core has focused.
     await expect
       .poll(() => page.evaluate(() => document.activeElement?.closest("[data-pane-view]")?.getAttribute("data-pane-view") ?? null))
