@@ -779,6 +779,153 @@ function buildMenus() {
   return screenSheet('screen-menus', 'Screen / Menus and Overlays', 'entry-menu.tsx RowMenu/EntryContextMenu, DevicePicker.tsx, and the Explorer git-status notice: overlays shown anchored in their real screen context rather than the abstract System gallery.', build, build);
 }
 
+// -- Screen / Projects Sidebar -------------------------------------------------
+
+// The sidebar's Projects tab (sidebar.tsx, projects.ts), drawn from the library's
+// Project row, Checkout row and Inactive Fold Row. One column of names: a
+// checkout's kind glyph sits under the project icon and its name under the
+// project name (md + lineage chevron + icon + two sm gaps), and an opened
+// checkout's agent rows put their status mark on that same column.
+function buildProjectsSidebar(tokens) {
+  const width = num(tokens, '--size-sidebar-ideal');
+  // sidebar.tsx's ⋯ slot and trailing lanes: the menu takes the age's column on
+  // a checkout, and keeps its own column after a project's activity.
+  const slot = num(tokens, '--size-icon-button-toolbar');
+  const chevronLane = num(tokens, '--size-lineage-chevron');
+  const trailing = num(tokens, '--spacing-xs');
+  const nameColumn = num(tokens, '--spacing-md') + num(tokens, '--size-lineage-chevron') + num(tokens, '--size-checkout-icon') + 2 * num(tokens, '--spacing-sm');
+  const glyphColumn = nameColumn - num(tokens, '--size-checkout-icon') - num(tokens, '--spacing-sm');
+  const markSlot = num(tokens, '--size-agent-mark');
+  const artwork = provider => `../web/src/assets/agent-${provider}.png`;
+  const STATUS = {working: '$--agent-working', asking: '$--warning', done: '$--success', seen: '$--muted-foreground'};
+  const KIND = {
+    primary: {icon: 'house', fill: '$--subtle-foreground'},
+    branch: {icon: 'git-branch', fill: '$--subtle-foreground'},
+    folder: {icon: 'folder', fill: '$--subtle-foreground'},
+    open: {icon: 'git-pull-request', fill: '$--pr-open'},
+    draft: {icon: 'git-pull-request-draft', fill: '$--pr-draft'},
+    missing: {icon: 'git-branch', fill: '$--destructive'},
+  };
+
+  function projectRow(id, {name, meta, expanded, git = true, hover = false}) {
+    return themedXref(id, 'qdhY0', name, {width, height: num(tokens, '--size-control-regular'), padding: [0, trailing, 0, '$--spacing-md'], ...(hover ? {fill: '$--accent'} : {})}, {
+      iBYjj: {icon: expanded ? 'chevron-down' : 'chevron-right'},
+      mIzlX: {icon: git ? 'folder-git-2' : 'folder'},
+      JkPyX: {content: name},
+      nZkan: {content: meta},
+      // The ⋯ keeps its column at rest and shows under the pointer.
+      hm1SG: {width: slot, height: slot, opacity: hover ? 1 : 0},
+    });
+  }
+
+  // Line two is the checkout's agents (the representative's mark and provider,
+  // +N for the rest) and its purpose, drawn only while the agent rows are closed.
+  // Pen draws no ellipsis, so a long name or purpose is written already cut the
+  // way the row truncates it.
+  function checkoutRow(id, {name, kind = 'branch', age, purpose, agents, expanded = false, selected = false}) {
+    const k = KIND[kind];
+    const secondLine = !expanded && Boolean(purpose || agents);
+    const summary = agents
+      ? {
+          FtZyp: {enabled: true},
+          J5xdha: {fill: STATUS[agents.status]},
+          N7YbJ: {fill: {type: 'image', enabled: true, url: artwork(agents.provider ?? 'claude'), mode: 'fit'}},
+          fklVZ: {enabled: false},
+          ExMsH: agents.more ? {content: `+${agents.more}`, enabled: true} : {enabled: false},
+        }
+      : {FtZyp: {enabled: false}};
+    const leading = glyphColumn - markSlot - num(tokens, '--spacing-sm');
+    // A line inside this ref hugs its content unless its width is a number, so
+    // both lines are sized here and the age lines up down the list.
+    const inner = width - trailing - leading;
+    return themedXref(id, 'DLP27', name, {
+      width, height: num(tokens, secondLine ? '--size-checkout-row-detailed' : '--size-checkout-row'),
+      padding: [0, trailing, 0, leading],
+      ...(selected ? {fill: '$--secondary'} : {}),
+    }, {
+      QetL0: {width: inner},
+      VtSRn: {icon: k.icon, fill: k.fill},
+      q91d7: {content: name, fontWeight: selected ? '600' : '500'},
+      TS5x9: {enabled: kind === 'missing'},
+      // The age column holds the ⋯ under the pointer, so it keeps its width with no age.
+      TuosT: {content: age ?? '', enabled: true, textGrowth: 'fixed-width', width: slot, textAlign: 'right'},
+      IXwZI: {width: chevronLane},
+      // The chevron keeps its slot on a row with no agents, so every age lines up.
+      CgZj3: agents ? {enabled: true, icon: expanded ? 'chevron-down' : 'chevron-right'} : {enabled: true, opacity: 0},
+      o6XLUj: {enabled: secondLine, width: inner},
+      yfur4: {width: markSlot + num(tokens, '--spacing-sm')},
+      ...summary,
+      D37Vr: purpose ? {content: purpose, enabled: true} : {enabled: false},
+    });
+  }
+
+  // agent-row.tsx's AgentRowItem at the name column: mark, provider, title, age.
+  function agentRow(id, {title, status, symbol, provider = 'claude', age}) {
+    return frame(id, 'Agent row', {width, layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: ['$--spacing-xs', '$--spacing-md', '$--spacing-xs', nameColumn]}, [
+      text(`${id}-mark`, symbol, {fill: STATUS[status], mono: true, size: '$--text-caption'}),
+      frame(`${id}-art`, 'Provider', {width: 16, height: 16, cornerRadius: '$--radius-xs', fill: {type: 'image', enabled: true, url: artwork(provider), mode: 'fit'}}, []),
+      text(`${id}-title`, title, {fill: '$--subtle-foreground'}),
+      frame(`${id}-gap`, 'Spacer', {width: 'fill_container', height: 1}, []),
+      text(`${id}-age`, age, {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
+    ]);
+  }
+
+  function fold(id, label, level) {
+    const inset = level === 'project' ? num(tokens, '--spacing-md') + 2 : glyphColumn + 2;
+    return themedXref(id, 'inactive-fold-row', label, {width, padding: [0, 0, 0, inset]}, {'inactive-fold-label': {content: label}});
+  }
+
+  function section(id, label) {
+    return frame(id, 'Section', {width, padding: ['$--spacing-sm', '$--spacing-md', '$--spacing-xxs', '$--spacing-md']}, [
+      text(`${id}-t`, label, {size: '$--text-micro', fill: '$--muted-foreground', weight: '600'}),
+    ]);
+  }
+
+  function build(s) {
+    const header = frame(`psb-hdr-${s}`, 'Tabs', {width, height: num(tokens, '--size-tab-strip'), padding: [0, '$--spacing-md'], gap: '$--spacing-sm', alignItems: 'center'}, [
+      text(`psb-agents-${s}`, 'Agents', {size: '$--text-caption', fill: '$--muted-foreground'}),
+      text(`psb-projects-${s}`, 'Projects', {size: '$--text-caption'}),
+      frame(`psb-hgap-${s}`, 'Spacer', {width: 'fill_container', height: 1}, []),
+      text(`psb-kbd-${s}`, '⌘E', {size: '$--text-caption', fill: '$--muted-foreground'}),
+      screenIconButton(`psb-settings-${s}`, 'settings'),
+    ]);
+    const list = frame(`psb-list-${s}`, 'Projects list', {width, layout: 'vertical'}, [
+      section(`psb-sec-pin-${s}`, 'PINNED · 1'),
+      projectRow(`psb-p-notes-${s}`, {name: 'team-notes', meta: '1 agent · 2h', expanded: true, git: false}),
+      checkoutRow(`psb-c-notes-${s}`, {name: 'team-notes', kind: 'folder', agents: {status: 'seen'}, purpose: '회의록 요약 정리'}),
+      section(`psb-sec-recent-${s}`, 'PROJECTS · RECENT ACTIVITY · 12'),
+      projectRow(`psb-p-herdr-${s}`, {name: 'herdr-ide', meta: '11 agents · now', expanded: true, hover: true}),
+      checkoutRow(`psb-c1-${s}`, {name: 'electron-shortcut-bindings', kind: 'open', age: '2h', agents: {status: 'working'}, purpose: 'Electron desktop host for the we…'}),
+      checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', agents: {status: 'working', more: 1, provider: 'codex'}, expanded: true, selected: true}),
+      agentRow(`psb-a1-${s}`, {title: 'S5.5 PRD 초안 정리', status: 'working', symbol: '●', provider: 'codex', age: '3m'}),
+      agentRow(`psb-a2-${s}`, {title: '후속 UX 계획 인터뷰', status: 'seen', symbol: '○', age: '1h'}),
+      checkoutRow(`psb-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', agents: {status: 'asking'}, purpose: '#155 browser display (WebCon…'}),
+      checkoutRow(`psb-c4-${s}`, {name: 'quick/154-search-palette', kind: 'draft', age: '1h', agents: {status: 'done'}, purpose: '#154 ⌘K search palette UI'}),
+      checkoutRow(`psb-c5-${s}`, {name: 'design/workspace-ux-prop…', age: '5h', purpose: 'Workspace UX 제안과 상태 소유…'}),
+      checkoutRow(`psb-c6-${s}`, {name: 'fix/registered-projects-only', age: '1d'}),
+      checkoutRow(`psb-c7-${s}`, {name: 'legacy-shell', kind: 'missing'}),
+      fold(`psb-f-herdr-${s}`, 'Inactive 14', 'checkout'),
+      projectRow(`psb-p-sasu-${s}`, {name: 'sasu', meta: '3 agents · 50m', expanded: false}),
+      fold(`psb-f-proj-${s}`, 'Inactive projects 3', 'project'),
+    ]);
+    const footer = frame(`psb-ftr-${s}`, 'Footer', {width, layout: 'vertical'}, [
+      frame(`psb-rule1-${s}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
+      frame(`psb-new-${s}`, 'New workspace', {width, padding: ['$--spacing-sm', '$--spacing-md'], gap: '$--spacing-xs', alignItems: 'center'}, [
+        text(`psb-newt-${s}`, '+ 새 워크스페이스', {size: '$--text-caption', fill: '$--subtle-foreground'}),
+        text(`psb-newk-${s}`, '⇧⌘N', {size: '$--text-caption', fill: '$--muted-foreground'}),
+      ]),
+      frame(`psb-rule2-${s}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
+      frame(`psb-dev-${s}`, 'Device picker', {width, padding: ['$--spacing-sm', '$--spacing-md'], gap: '$--spacing-xs', alignItems: 'center'}, [
+        icon(`psb-devi-${s}`, 'laptop', {size: 12, fill: '$--subtle-foreground'}),
+        text(`psb-devt-${s}`, 'This Mac', {size: '$--text-caption', fill: '$--subtle-foreground'}),
+        icon(`psb-devc-${s}`, 'chevrons-up-down', {size: 12, fill: '$--muted-foreground'}),
+      ]),
+    ]);
+    return [frame(`psb-sidebar-${s}`, 'Sidebar', {width, layout: 'vertical', fill: '$--sidebar', clip: true}, [header, list, footer])];
+  }
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, projects.ts: the Projects tab. A project row folds its checkouts from its chevron and opens the Overview from the rest of the row; a checkout row opens the checkout, and its trailing chevron, shown only when agents run there, opens their rows in place of line two. Line two is the agents (the representative’s mark and provider, +N) and the purpose. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.', build, build);
+}
+
 // -- assembly ---------------------------------------------------------------------
 
 export function readLocalVariables(root) {
@@ -803,5 +950,6 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Palette', build: () => buildPalette()},
     {name: 'Screen / Dialogs and Sheets', build: () => buildDialogs(tokens)},
     {name: 'Screen / Menus and Overlays', build: () => buildMenus()},
+    {name: 'Screen / Projects Sidebar', build: () => buildProjectsSidebar(tokens)},
   ];
 }
