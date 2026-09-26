@@ -261,7 +261,8 @@ A frame the daemon cannot produce at all (the core owner thread gone, an empty r
 The web shell counts snapshots (`viewGeneration`) and re-requests its terminal view on each one, so a resync redraws the pane instead of trusting what it had drawn.
 The token comparison is constant in the token's length (`subtle`), so a refusal does not leak how much of the token a caller guessed.
 The Workspace CLI uses the same `/ws` for pane-scoped commands and results, without giving an agent the shell's unrestricted token or snapshot stream.
-Its local `bootstrap.sock` lives in a private, state-directory-keyed short path under `/tmp` so a long state path cannot exceed the Unix socket limit.
+Its local bootstrap socket lives in a random private short directory under `/tmp` so a long state path cannot exceed the Unix socket limit or let another user reserve a predictable path.
+An owner-only record in `pane-capabilities` publishes the socket path atomically; daemon shutdown removes both.
 It only attests a kernel peer PID against Herdr's live pane shell and issues a protected file reference; the socket does not accept control commands.
 The scoped credential records the device, Workspace, checkout, pane terminal identity, and shell process birth, which are checked again for each command; closing or recreating a pane invalidates the credential.
 Direct CLI calls own one-shot credentials and release them after their request, while repeated agent session starts in the same attested pane reuse one reference until its pane ends or the eight-hour limit expires.

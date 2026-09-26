@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::ffi::OsStrExt;
-use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -18,7 +18,6 @@ use herdr_core::workspace_control::{Context, Query};
 use hide_herdr_client::{UnixSocketConnector, request_with_connector};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use tokio::net::UnixListener;
 use tokio::sync::{Notify, Semaphore};
 
@@ -586,44 +585,85 @@ pub(crate) fn process_start(pid: i32) -> Option<u64> {
 }
 
 pub fn bind(state_dir: &Path) -> Result<(UnixListener, PathBuf), String> {
-    let path = bootstrap_socket_path(state_dir);
-    let directory = path
-        .parent()
-        .ok_or("pane bootstrap path has no directory")?;
-    if let Err(error) = fs::DirBuilder::new().mode(0o700).create(directory)
-        && error.kind() != std::io::ErrorKind::AlreadyExists
-    {
-        return Err(error.to_string());
-    }
-    let directory_metadata = fs::symlink_metadata(directory).map_err(|error| error.to_string())?;
-    if !directory_metadata.is_dir()
-        || directory_metadata.file_type().is_symlink()
-        || directory_metadata.uid() != unsafe { libc::geteuid() }
-        || directory_metadata.permissions().mode() & 0o077 != 0
-    {
-        return Err("pane bootstrap directory is unsafe".to_owned());
-    }
-    if let Ok(metadata) = fs::symlink_metadata(&path) {
-        if !metadata.file_type().is_socket() || metadata.uid() != unsafe { libc::geteuid() } {
-            return Err("pane bootstrap path is not an owned socket".to_owned());
+    // A random private leaf keeps the Unix path short even for a long state
+    // directory, and cannot be pre-created by another /tmp user.
+    let directory = (0..8)
+        .find_map(|_| {
+            let candidate = Path::new("/tmp").join(format!("hide-pane-{}", &new_token()[..24]));
+            match fs::DirBuilder::new().mode(0o700).create(&candidate) {
+                Ok(()) => Some(Ok(candidate)),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+                Err(error) => Some(Err(error.to_string())),
+            }
+        })
+        .unwrap_or_else(|| Err("pane bootstrap directory collision limit".to_owned()))?;
+    let path = directory.join("b.sock");
+    let result = (|| {
+        let listener = UnixListener::bind(&path).map_err(|error| error.to_string())?;
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
+            .map_err(|error| error.to_string())?;
+        let record = bootstrap_socket_record(state_dir);
+        let staging = record.with_extension(format!("{}.tmp", &new_token()[..16]));
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&staging)
+            .map_err(|error| error.to_string())?;
+        let published = (|| {
+            file.write_all(path.as_os_str().as_bytes())
+                .map_err(|error| error.to_string())?;
+            file.sync_all().map_err(|error| error.to_string())?;
+            fs::rename(&staging, &record).map_err(|error| error.to_string())
+        })();
+        if published.is_err() {
+            let _ = fs::remove_file(staging);
         }
-        fs::remove_file(&path).map_err(|error| error.to_string())?;
+        published?;
+        Ok((listener, path.clone()))
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&path);
+        let _ = fs::remove_dir(&directory);
     }
-    let listener = UnixListener::bind(&path).map_err(|error| error.to_string())?;
-    fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
-        .map_err(|error| error.to_string())?;
-    Ok((listener, path))
+    result
 }
 
-pub fn bootstrap_socket_path(state_dir: &Path) -> PathBuf {
-    let hash = Sha256::digest(state_dir.as_os_str().as_bytes());
-    Path::new("/tmp")
-        .join(format!(
-            "hide-pane-{}-{}",
-            unsafe { libc::geteuid() },
-            hex::encode(&hash[..12])
-        ))
-        .join("bootstrap.sock")
+pub fn bootstrap_socket_record(state_dir: &Path) -> PathBuf {
+    state_dir.join("pane-capabilities/bootstrap-socket")
+}
+
+pub fn bootstrap_socket_path(state_dir: &Path) -> Result<PathBuf, String> {
+    let file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(bootstrap_socket_record(state_dir))
+        .map_err(|_| "hide_unavailable".to_owned())?;
+    let metadata = file.metadata().map_err(|_| "hide_unavailable".to_owned())?;
+    if !metadata.is_file()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.permissions().mode() & 0o077 != 0
+        || metadata.len() > 100
+    {
+        return Err("invalid_bootstrap_socket_record".to_owned());
+    }
+    let mut bytes = Vec::new();
+    file.take(100)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "invalid_bootstrap_socket_record".to_owned())?;
+    let path = PathBuf::from(std::ffi::OsString::from_vec(bytes));
+    let directory = path.parent().ok_or("invalid_bootstrap_socket_record")?;
+    let metadata = fs::symlink_metadata(directory)
+        .map_err(|_| "invalid_bootstrap_socket_record".to_owned())?;
+    if !path.is_absolute()
+        || !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.permissions().mode() & 0o077 != 0
+    {
+        return Err("invalid_bootstrap_socket_record".to_owned());
+    }
+    Ok(path)
 }
 
 pub async fn serve(
@@ -723,16 +763,31 @@ pub(crate) fn process_start(pid: i32) -> Option<u64> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn long_state_directory_keeps_a_short_deterministic_bootstrap_socket() {
-        let state_dir = PathBuf::from(format!("/tmp/{}", "long-state-segment/".repeat(12)));
-        let socket = bootstrap_socket_path(&state_dir);
+    #[tokio::test]
+    async fn long_state_directory_keeps_a_short_private_bootstrap_socket() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_dir = directory.path().join("long-state-segment/".repeat(12));
+        fs::create_dir_all(state_dir.join("pane-capabilities")).unwrap();
+        let (listener, socket) = bind(&state_dir).unwrap();
         assert!(socket.as_os_str().as_bytes().len() < 100);
-        assert_eq!(socket, bootstrap_socket_path(&state_dir));
-        assert_ne!(
-            socket,
-            bootstrap_socket_path(Path::new("/tmp/another-state"))
+        assert_eq!(socket, bootstrap_socket_path(&state_dir).unwrap());
+        assert_eq!(
+            fs::metadata(socket.parent().unwrap())
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o700
         );
+        drop(listener);
+        fs::remove_file(&socket).unwrap();
+        fs::remove_dir(socket.parent().unwrap()).unwrap();
+        let (listener, next) = bind(&state_dir).unwrap();
+        assert_ne!(socket, next);
+        assert_eq!(next, bootstrap_socket_path(&state_dir).unwrap());
+        drop(listener);
+        fs::remove_file(&next).unwrap();
+        fs::remove_dir(next.parent().unwrap()).unwrap();
     }
 
     #[test]

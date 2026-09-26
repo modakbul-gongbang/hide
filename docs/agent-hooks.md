@@ -44,7 +44,8 @@ An issued credential remains unclaimed for at most 30 seconds until a CLI receiv
 The CLI writes the claimed marker only after the daemon acknowledges that claim, so a caller killed before acknowledgement leaves an unclaimed reference that expires.
 A repeated SessionStart in the same attested pane reuses its live persistent reference, including when an earlier hook stopped after claiming but before delivering context.
 The SSH bridge tracks every reference it issues and revokes the corresponding daemon token when its file disappears, its unclaimed period expires, its eight-hour lifetime ends, its pane shell exits, or its one-shot caller exits.
-A failed bootstrap reply also revokes its issuance, and late bridge replies are matched by request ID so one timed-out attestation cannot poison the next bootstrap.
+A failed bootstrap reply revokes only a newly issued reference; it leaves a reused live reference intact.
+Late bridge replies are matched by request ID so one timed-out attestation cannot poison the next bootstrap.
 On `UserPromptSubmit`, it parses at most 256 KiB of runtime input, resolves the same durable Project identity as the app, and performs a read-only local lookup against the materialized active projection.
 The prompt text, up to two recent human topics, and current checkout metadata are search inputs only; the original prompt is never replaced.
 An item is eligible only after a lexical match, a bounded two- or three-character literal match, or meaningful path overlap below the Project root; extraction confidence never stands in for semantic similarity and only breaks ties after relevance.

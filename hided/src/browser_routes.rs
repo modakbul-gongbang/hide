@@ -202,8 +202,10 @@ impl BrowserRoutes {
                 IpAddr::V6(Ipv6Addr::LOCALHOST),
                 remote_port,
             ));
+            let preserve_numeric_host =
+                scheme == "https" && host != "localhost" && host != "0.0.0.0";
             let forward = tokio::task::spawn_blocking(move || {
-                client.start_local_workspace_forward(remote, alternate)
+                client.start_local_workspace_forward(remote, alternate, preserve_numeric_host)
             })
             .await
             .map_err(|_| "route_failed")?
@@ -346,10 +348,11 @@ fn loopback_target(raw: &str) -> Option<(String, u16, String, String)> {
 }
 
 fn forwarded_url(scheme: &str, host: &str, local_addr: SocketAddr, tail: &str) -> String {
-    // A localhost TLS certificate is checked against the browser URL, not
-    // against the address to which the SSH forward bound its listener.
-    let address = if scheme == "https" && host == "localhost" {
-        format!("localhost:{}", local_addr.port())
+    // HTTPS validates the URL host, so keep the source name or numeric IP.
+    // The forward binds that numeric loopback IP, and reserves both families
+    // when localhost may resolve to either one.
+    let address = if scheme == "https" && host != "0.0.0.0" {
+        format!("{host}:{}", local_addr.port())
     } else {
         local_addr.to_string()
     };
@@ -537,6 +540,15 @@ mod tests {
         assert_eq!(
             forwarded_url(&scheme, &host, "127.0.0.1:49152".parse().unwrap(), &tail),
             "https://localhost:49152/secure?q=1"
+        );
+        assert_eq!(
+            forwarded_url(
+                "https",
+                "127.0.0.2",
+                "127.0.0.2:49152".parse().unwrap(),
+                "/"
+            ),
+            "https://127.0.0.2:49152/"
         );
     }
 }

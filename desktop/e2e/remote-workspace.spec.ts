@@ -8,6 +8,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
 import https from "node:https";
+import net from "node:net";
 import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
 import path from "node:path";
@@ -163,12 +164,14 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
       expect(JSON.parse(detached.stdout)).toMatchObject({ ok: true, result: { context: { device_id: "ssh-e2e" } } });
     }
     expect(new Set(sessionReferences).size).toBe(1);
-    const stressScript = path.join(remote.root, "repeat-bootstrap.sh");
-    const stressOutput = path.join(remote.root, "repeat-bootstrap.out");
-    const stressExit = path.join(remote.root, "repeat-bootstrap.exit");
+    const stressScript = path.join(remote.root, "repeat-session-start.sh");
+    const stressOutput = path.join(remote.root, "repeat-session-start.out");
+    const stressExit = path.join(remote.root, "repeat-session-start.exit");
     fs.writeFileSync(stressScript, [
       "#!/bin/bash", "set -euo pipefail", "for i in $(seq 1 65); do",
-      `  reference=$(${quote(HIDE_CLI)} workspace bootstrap | jq -er .reference)`,
+      `  context=$(printf '{}' | ${quote(HOOK_CLI)} hook --runtime codex --event SessionStart --memory-injection --source hide-subagents@5 | jq -er .hookSpecificOutput.additionalContext)`,
+      `  reference=$(printf '%s' "$context" | sed -n "s/.*HIDE_CAP_REF='\\([^']*\\)'.*/\\1/p")`,
+      "  test -n \"$reference\"",
       `  HIDE_CAP_REF="$reference" ${quote(HIDE_CLI)} workspace info >/dev/null`,
       "  printf '%s\\n' \"$reference\"", "done", "",
     ].join("\n"), { mode: 0o700 });
@@ -229,6 +232,13 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     tlsServer = https.createServer({ key: fs.readFileSync(tlsKey), cert: fs.readFileSync(tlsCert) }, (_request, response) => response.end("remote-secure"));
     await new Promise<void>((resolve) => tlsServer!.listen(0, "127.0.0.1", resolve));
     const tlsPort = (tlsServer.address() as AddressInfo).port;
+    const remoteWorkspace = `ssh-e2e\u0000${fs.realpathSync(path.join(remote.root, "fixture"))}`;
+    const tlsPartition = `persist:hide-browser-${createHash("sha256").update(`${remoteWorkspace}\u0000web`).digest("hex").slice(0, 32)}`;
+    await app.evaluate(({ session }, partition) => {
+      session.fromPartition(partition).setCertificateVerifyProc((request, callback) => {
+        callback(request.hostname === "localhost" ? 0 : -3);
+      });
+    }, tlsPartition);
     const openedTls = await commandFromPane(remote, run, bridge, ["browser", "open", `HTTPS://localhost:${tlsPort}/secure`], "remote-tls");
     expect(openedTls.status, JSON.stringify(openedTls.answer)).toBe(0);
     const tlsView = openedTls.answer.result as { view_id: string; load: number };
@@ -240,8 +250,17 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     const tlsRoute = await tlsRouteResponse.json() as { url: string; source_url: string };
     expect(new URL(tlsRoute.url).protocol).toBe("https:");
     expect(new URL(tlsRoute.url).hostname).toBe("localhost");
+    const ipv6Collision = await new Promise<string>((resolve) => {
+      const decoy = net.createServer();
+      decoy.once("error", (error: NodeJS.ErrnoException) => resolve(error.code ?? "unknown"));
+      decoy.listen(Number(new URL(tlsRoute.url).port), "::1", () => {
+        decoy.close();
+        resolve("unexpected-bind");
+      });
+    });
+    expect(ipv6Collision).toBe("EADDRINUSE");
     const secureBody = await new Promise<string>((resolve, reject) => {
-      const request = https.get(tlsRoute.url, { ca: fs.readFileSync(tlsCert), family: 4, timeout: 5_000 }, (response) => {
+      const request = https.get(tlsRoute.url, { ca: fs.readFileSync(tlsCert), timeout: 5_000 }, (response) => {
         let body = "";
         response.setEncoding("utf8");
         response.on("data", (chunk: string) => { body += chunk; });
@@ -250,7 +269,6 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
       request.on("error", reject);
     });
     expect(secureBody).toBe("remote-secure");
-    expect((await commandFromPane(remote, run, bridge, ["view", "close", tlsView.view_id], "remote-tls-close")).status).toBe(0);
 
     devServer = http.createServer((request, response) => {
       const body = request.url === "/remote.html"
@@ -289,7 +307,15 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
       });
     }, state);
     await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen"), { timeout: 20_000 }).toContain("ssh-e2e");
+    expect((await commandFromPane(remote, run, bridge, ["view", "select", tlsView.view_id], "remote-tls-select")).status).toBe(0);
     await page.locator('[data-layout-choice="views"]').click();
+    await expect.poll(async () => app!.evaluate(async ({ BrowserWindow }, routeUrl) => {
+      const child = BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>
+        (entry as { webContents?: Electron.WebContents }).webContents?.getURL() === routeUrl);
+      return child ? (child as unknown as { webContents: Electron.WebContents }).webContents.executeJavaScript("document.body.textContent") as Promise<string> : null;
+    }, tlsRoute.url), { timeout: 30_000 }).toContain("remote-secure");
+    expect((await commandFromPane(remote, run, bridge, ["view", "close", tlsView.view_id], "remote-tls-close")).status).toBe(0);
+    expect((await commandFromPane(remote, run, bridge, ["view", "select", (openedDev.answer.result as { view_id: string }).view_id], "remote-dev-select")).status).toBe(0);
     const native = async () => app!.evaluate(async ({ BrowserWindow }, sourcePort) => {
       const child = BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>
         (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote dev"

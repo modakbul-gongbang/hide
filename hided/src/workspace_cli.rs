@@ -51,7 +51,7 @@ pub fn bootstrap(env: &Env, one_shot: bool) -> Result<PathBuf, String> {
 }
 
 fn bootstrap_local(env: &Env, request: &Value) -> Result<PathBuf, String> {
-    let socket = crate::pane_auth::bootstrap_socket_path(&env.state_dir);
+    let socket = crate::pane_auth::bootstrap_socket_path(&env.state_dir)?;
     let mut stream = UnixStream::connect(socket).map_err(|_| "hide_unavailable".to_owned())?;
     stream
         .set_read_timeout(Some(TIMEOUT))
@@ -135,10 +135,8 @@ fn bootstrap_remote(env: &Env, request: &Value) -> Result<Option<PathBuf>, Strin
         match read_bootstrap_answer(&mut stream) {
             Ok(path) if path.starts_with(&bridge_dir) => {
                 if success.is_some() {
-                    let _ = fs::remove_file(&path);
-                    if let Some(first) = success {
-                        let _ = fs::remove_file(first);
-                    }
+                    // A bridge may return a persistent reference already held
+                    // by a live pane. Ambiguity cannot revoke either holder.
                     return Err("ambiguous_pane".to_owned());
                 }
                 success = Some(path);

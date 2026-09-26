@@ -100,11 +100,13 @@ pub struct RunningDaemon {
     shutdown: Arc<Notify>,
     pane_capabilities: Arc<pane_auth::Registry>,
     pane_bootstrap_socket: std::path::PathBuf,
+    pane_bootstrap_record: std::path::PathBuf,
     remote_bridges: Arc<remote_bridge::Supervisor>,
 }
 
 impl RunningDaemon {
     fn remove_bootstrap_socket(&self) {
+        let _ = std::fs::remove_file(&self.pane_bootstrap_record);
         let _ = std::fs::remove_file(&self.pane_bootstrap_socket);
         if let Some(directory) = self.pane_bootstrap_socket.parent() {
             let _ = std::fs::remove_dir(directory);
@@ -317,6 +319,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         shutdown,
         pane_capabilities,
         pane_bootstrap_socket,
+        pane_bootstrap_record: pane_auth::bootstrap_socket_record(&env.state_dir),
         remote_bridges,
     })
 }

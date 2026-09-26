@@ -2376,6 +2376,7 @@ impl RusshRemoteClient {
         &self,
         remote: SocketAddr,
         alternate: Option<SocketAddr>,
+        preserve_numeric_host: bool,
     ) -> RemoteResult<RemoteLocalForward> {
         if !remote.ip().is_loopback()
             || remote.port() == 0
@@ -2392,25 +2393,40 @@ impl RusshRemoteClient {
                 true,
             ));
         }
-        let local_ip = if remote.is_ipv6() {
+        // Keep numeric loopback hosts unchanged for HTTPS certificate checks.
+        // A localhost URL can resolve to either family, so reserve both local
+        // addresses at the same port before publishing the route.
+        let local_ip = if preserve_numeric_host {
+            remote.ip()
+        } else if remote.is_ipv6() {
             IpAddr::V6(Ipv6Addr::LOCALHOST)
         } else {
             IpAddr::V4(Ipv4Addr::LOCALHOST)
         };
-        let listener = self
-            .runtime
-            .block_on(TcpListener::bind(SocketAddr::new(local_ip, 0)))
-            .map_err(|error| {
-                remote_error(
-                    "workspace-browser-forward",
-                    &self.host.host_id,
-                    RemoteStage::Tunnel,
-                    error,
-                    true,
-                    false,
-                )
-            })?;
-        let local_addr = listener.local_addr().map_err(|error| {
+        let listeners = self.runtime.block_on(async {
+            for _ in 0..16 {
+                let primary = TcpListener::bind(SocketAddr::new(local_ip, 0)).await?;
+                let primary_addr = primary.local_addr()?;
+                if alternate.is_none() {
+                    return Ok((primary, None, primary_addr));
+                }
+                match TcpListener::bind(SocketAddr::new(
+                    IpAddr::V6(Ipv6Addr::LOCALHOST),
+                    primary_addr.port(),
+                ))
+                .await
+                {
+                    Ok(ipv6) => return Ok((primary, Some(ipv6), primary_addr)),
+                    Err(error) if error.kind() == io::ErrorKind::AddrInUse => continue,
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(io::Error::new(
+                io::ErrorKind::AddrInUse,
+                "could not reserve both localhost address families",
+            ))
+        });
+        let (listener, ipv6_listener, local_addr) = listeners.map_err(|error| {
             remote_error(
                 "workspace-browser-forward",
                 &self.host.host_id,
@@ -2434,6 +2450,12 @@ impl RusshRemoteClient {
                 let accepted = tokio::select! {
                     _ = &mut stopped => break,
                     accepted = listener.accept() => accepted,
+                    accepted = async {
+                        match &ipv6_listener {
+                            Some(listener) => listener.accept().await,
+                            None => std::future::pending().await,
+                        }
+                    } => accepted,
                 };
                 let (mut local, _) = match accepted {
                     Ok(accepted) => accepted,

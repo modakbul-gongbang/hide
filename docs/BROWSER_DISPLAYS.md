@@ -27,6 +27,7 @@ The stamp is not saved; a relaunched page loads its address once when it is firs
   The action result confirms View placement, while `hide view status <view-id>` returns `pending`, `loading`, `loaded`, `failed`, `disconnected`, or `unsupported` for its native page.
   `disconnected` means a native page existed for that load but was removed or its desktop renderer disconnected; `unsupported` means no desktop renderer was available for a pending page.
   `--wait` polls that state for at most ten seconds and returns a failure if the page fails, disconnects, or remains pending; it does not reveal a hidden View.
+  If a later status query fails, the refusal still carries the applied open request ID and View ID for reconciliation.
   The action receipt and page status carry the load stamp, so a concurrent reopen that supersedes the requested load returns `page_superseded` instead of the newer load's result.
   `--reveal` explicitly brings the caller's checkout and selected Browser View forward, including a connected SSH device.
   The CLI returns one JSON line, exits nonzero on refusal, and never starts Hide.
@@ -52,7 +53,11 @@ The route serves the opened HTML plus at most 128 declared relative stylesheets,
 It refuses undeclared checkout files, including same-directory secrets, and sends a restrictive content security policy that prevents a remote HTML preview from contacting another origin.
 The native page receives a random loopback route for its own View and load stamp; the route URL does not replace the remote address stored in the core or shown in the toolbar.
 Remote `localhost`, `localhost.`, IPv4 `127/8`, IPv6 loopback, and IPv4-mapped IPv6 loopback HTTP, HTTPS, and WebSocket traffic instead uses a dedicated SSH local forward to that device's loopback port.
-The native route uses the forward's actual bound local address, except that HTTPS from `localhost` keeps that DNS name in the browser URL so certificate hostname checks remain valid.
+The native route binds a local loopback IP and uses its actual local port.
+For `localhost`, the forward reserves both IPv4 and IPv6 loopback at that port before publishing the route, so either resolver choice reaches the SSH device.
+HTTPS keeps the source hostname or numeric loopback IP in the browser URL for certificate checks.
+If this Mac cannot bind a numeric source IP for an HTTPS forward, the route fails explicitly.
+The wildcard spelling `0.0.0.0` uses `127.0.0.1` as its safe local destination and a certificate for the wildcard name may fail validation.
 The remote source address remains in the Browser toolbar.
 Absolute loopback subrequests from a forwarded page use that View's forward when their scheme and source port match; other loopback requests are refused instead of reaching this Mac.
 If the SSH route fails, the page shows the failure; it never tries the same port on this Mac.

@@ -453,16 +453,20 @@ fn workspace_reference(env: &Env) -> Result<(std::path::PathBuf, bool), String> 
 }
 
 fn workspace_query(env: &Env, query: &str) -> Result<(), String> {
-    let answer = workspace_query_value(env, query)?;
+    let answer = workspace_query_value(env, query, true)?;
     println!("{answer}");
     Ok(())
 }
 
-fn workspace_query_value(env: &Env, query: &str) -> Result<serde_json::Value, String> {
+fn workspace_query_value(
+    env: &Env,
+    query: &str,
+    report: bool,
+) -> Result<serde_json::Value, String> {
     let (reference, ephemeral) = match workspace_reference(env) {
         Ok(reference) => reference,
         Err(reason) => {
-            return workspace_refusal(&reason, "Run Hide, reconnect this pane, and retry");
+            return query_refusal(&reason, "Run Hide, reconnect this pane, and retry", report);
         }
     };
     let _reference_owner =
@@ -470,17 +474,31 @@ fn workspace_query_value(env: &Env, query: &str) -> Result<serde_json::Value, St
     let answer = match crate::workspace_cli::request(&reference, query) {
         Ok(answer) => answer,
         Err(reason) => {
-            return workspace_refusal(&reason, "Check Hide status, reconnect the pane, and retry");
+            return query_refusal(
+                &reason,
+                "Check Hide status, reconnect the pane, and retry",
+                report,
+            );
         }
     };
     if answer["ok"] == true {
         Ok(answer)
     } else {
-        println!("{answer}");
+        if report {
+            println!("{answer}");
+        }
         Err(answer["reason"]
             .as_str()
             .unwrap_or("workspace_request_failed")
             .to_owned())
+    }
+}
+
+fn query_refusal<T>(reason: &str, next_action: &str, report: bool) -> Result<T, String> {
+    if report {
+        workspace_refusal(reason, next_action)
+    } else {
+        Err(reason.to_owned())
     }
 }
 
@@ -492,8 +510,8 @@ fn workspace_refusal<T>(reason: &str, next_action: &str) -> Result<T, String> {
     Err(reason.to_owned())
 }
 
-fn view_status_value(env: &Env, view_id: &str) -> Result<serde_json::Value, String> {
-    let answer = workspace_query_value(env, "view_list")?;
+fn view_status_value(env: &Env, view_id: &str, report: bool) -> Result<serde_json::Value, String> {
+    let answer = workspace_query_value(env, "view_list", report)?;
     let view = answer["result"]["views"]
         .as_array()
         .and_then(|views| views.iter().find(|view| view["view_id"] == view_id));
@@ -502,9 +520,10 @@ fn view_status_value(env: &Env, view_id: &str) -> Result<serde_json::Value, Stri
             Ok(serde_json::json!({"ok":true,"context":answer["result"]["context"],"view":view}))
         }
         None => {
-            workspace_refusal(
+            query_refusal(
                 "view_missing",
                 "Run hide view list and choose a current View",
+                report,
             )?;
             unreachable!()
         }
@@ -512,7 +531,7 @@ fn view_status_value(env: &Env, view_id: &str) -> Result<serde_json::Value, Stri
 }
 
 fn view_status(env: &Env, view_id: &str) -> Result<(), String> {
-    let answer = view_status_value(env, view_id)?;
+    let answer = view_status_value(env, view_id, true)?;
     println!("{answer}");
     Ok(())
 }
@@ -547,7 +566,16 @@ fn browser_open(
         .ok_or("invalid_response")?;
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
-        let status = view_status_value(env, view_id)?;
+        let status = match view_status_value(env, view_id, false) {
+            Ok(status) => status,
+            Err(reason) => {
+                println!(
+                    "{}",
+                    serde_json::json!({"ok":false,"request_id":answer["request_id"],"applied":"applied","reason":"page_status_unavailable","detail":reason,"view_id":view_id,"result":answer["result"],"next_action":format!("Run hide view status {view_id} or retry the same request ID")})
+                );
+                return Err("page_status_unavailable".to_owned());
+            }
+        };
         let page = &status["view"]["page"];
         if page["load"].as_u64() != Some(requested_load) {
             println!(
@@ -580,10 +608,11 @@ fn browser_open(
             }
             Some("pending" | "loading") => {}
             _ => {
-                return workspace_refusal(
-                    "page_status_unavailable",
-                    "Run hide view status for the returned View",
+                println!(
+                    "{}",
+                    serde_json::json!({"ok":false,"request_id":answer["request_id"],"applied":"applied","reason":"page_status_unavailable","view_id":view_id,"result":answer["result"],"page":page,"next_action":format!("Run hide view status {view_id} or retry the same request ID")})
                 );
+                return Err("page_status_unavailable".to_owned());
             }
         }
         if std::time::Instant::now() >= deadline {
