@@ -8,16 +8,18 @@ import { Hint } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
 import { FACT, FACTS_LINE, OpeningStatus, UnavailableNotice } from "./MainScreen";
 import { overviewProject } from "./navigation";
-import { buildAgents, buildTasks, formatBytes, projectStats, type BoardProject, type BoardStats, type TaskCard } from "./projectBoard";
+import { buildAgents, buildTasks, buildWaiting, formatBytes, projectStats, type BoardProject, type BoardStats, type TaskCard } from "./projectBoard";
 import type { Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { ProjectSessions } from "./ProjectSessions";
 import { AgentsView, DependenciesView, TasksModeToggle, TasksView } from "./TaskBoards";
 import { scopeView, useUiStore, type ProjectView } from "./ui";
+import { WaitingBand } from "./WaitingBand";
 
 // A Project's Overview (PRD web-project-overview, task-agents-views): the
 // Project scope the sidebar's project row opens. Under its title sits one
-// line of facts, then the view: the Tasks board of its tasks in five columns
+// line of facts and, while an agent waits on the operator, the waiting band,
+// then the view: the Tasks board of its tasks in five columns
 // under an ad hoc strip (or, in its Dependencies mode, the tasks that wait on
 // one another), the Agents board of its agents with their tasks, or
 // its Sessions. The view is the page's (`projectView`), so another Project
@@ -50,6 +52,7 @@ export function ProjectOverview({ projectId, actions }: { projectId: string; act
   );
   const tasks = useMemo(() => (projects.length > 0 ? buildTasks(projects, "project", Date.now()) : null), [projects]);
   const agentBoard = useMemo(() => (projects.length > 0 ? buildAgents(projects, "project") : null), [projects]);
+  const waiting = useMemo(() => buildWaiting(projects, "project"), [projects]);
   const stats = useMemo(() => (workspace ? projectStats(workspace) : null), [workspace]);
   // A local Git project's size is measured each time its Overview opens, and
   // its tasks are read from its source; a device project has neither here.
@@ -107,6 +110,7 @@ export function ProjectOverview({ projectId, actions }: { projectId: string; act
           </Button>
         </div>
         <Stats workspace={project} stats={stats} onMerged={showDone} />
+        <WaitingBand rows={waiting} onOpen={actions.openAgent} />
       </header>
       <OpeningStatus actions={actions} />
       {device ? <UnavailableNotice device={device} availability={availability} actions={actions} /> : null}

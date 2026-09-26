@@ -1521,7 +1521,7 @@
           "type": "text",
           "id": "screen-main-spec",
           "name": "web/src/App.tsx, sidebar.tsx",
-          "content": "web/src/App.tsx, sidebar.tsx, MainScreen.tsx, TaskBoards.tsx: All projects, the scope the sidebar’s top row opens - its title with Add project, the facts line (the project count, and the open-PR and merged totals only when every project can give its part), the Tasks · Agents · Projects tabs, every project’s tasks on one board, and a project with agents and no task source gathered under it; its Dependencies mode names each card’s project above its title and draws a blocker in another project as an arrow. The Projects view is the project list grouped by device.",
+          "content": "web/src/App.tsx, sidebar.tsx, MainScreen.tsx, TaskBoards.tsx, WaitingBand.tsx: All projects, the scope the sidebar’s top row opens - its title with Add project, the facts line (the project count, and the open-PR and merged totals only when every project can give its part), the waiting band while an agent waits, the Tasks · Agents · Projects tabs, every project’s tasks on one board, and a project with agents and no task source gathered under it; its Dependencies mode names each card’s project above its title and draws a blocker in another project as an arrow. The Projects view is the project list grouped by device.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -1938,6 +1938,104 @@
                           "layout": "horizontal",
                           "gap": "$--spacing-md",
                           "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "main-band-l",
+                          "name": "Waiting band",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "main-band-l-0",
+                              "name": "Waiting row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "main-band-l-0-mark",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "main-band-l-0-mark-glyph",
+                                      "name": "?",
+                                      "content": "?",
+                                      "fill": "$--warning",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "main-band-l-0-where",
+                                  "name": "herdr-ide · #170 · feat/wait",
+                                  "content": "herdr-ide · #170 · feat/waiting-band",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "main-band-l-0-line",
+                                  "name": "WebContentsView 크기를 창 기준으로 할",
+                                  "content": "WebContentsView 크기를 창 기준으로 할까요?",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "main-band-l-0-gap",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "main-band-l-0-age",
+                                  "name": "20m",
+                                  "content": "20m",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "main-band-l-0-g",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "chevron-right",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-md"
+                              ],
+                              "width": 1500,
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-md"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xxs",
+                          "width": 1500
                         },
                         {
                           "type": "frame",
@@ -4127,6 +4225,104 @@
                         },
                         {
                           "type": "frame",
+                          "id": "main-band-d",
+                          "name": "Waiting band",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "main-band-d-0",
+                              "name": "Waiting row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "main-band-d-0-mark",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "main-band-d-0-mark-glyph",
+                                      "name": "?",
+                                      "content": "?",
+                                      "fill": "$--warning",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "main-band-d-0-where",
+                                  "name": "herdr-ide · #170 · feat/wait",
+                                  "content": "herdr-ide · #170 · feat/waiting-band",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "main-band-d-0-line",
+                                  "name": "WebContentsView 크기를 창 기준으로 할",
+                                  "content": "WebContentsView 크기를 창 기준으로 할까요?",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "main-band-d-0-gap",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "main-band-d-0-age",
+                                  "name": "20m",
+                                  "content": "20m",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "main-band-d-0-g",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "chevron-right",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-md"
+                              ],
+                              "width": 1500,
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-md"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xxs",
+                          "width": 1500
+                        },
+                        {
+                          "type": "frame",
                           "id": "main-rule-d",
                           "name": "Rule",
                           "children": [],
@@ -5929,7 +6125,7 @@
           "type": "text",
           "id": "screen-project-overview-spec",
           "name": "web/src/ProjectOverview.tsx,",
-          "content": "web/src/ProjectOverview.tsx, TaskBoards.tsx, projectBoard.ts: a project’s Tasks board in five columns (백로그 · 준비 · 진행 중 · 리뷰 · 완료, Done folded) with task cards - the id before the title, the lock line naming what it waits on, the delivery facts, at most two agents and +N, Start agent on a ready card only on hover, an untracked checkout titled by its branch with 태스크 없음, the pull request as the result - its Dependencies mode (the same cards with a stage word, blockers left of what they block, a blocked or done card dimmed, unrelated tasks below), and the Agents board with each agent’s checkout, task chip and device.",
+          "content": "web/src/ProjectOverview.tsx, TaskBoards.tsx, WaitingBand.tsx, projectBoard.ts: a project’s waiting band under its header while an agent waits, its Tasks board in five columns (백로그 · 준비 · 진행 중 · 리뷰 · 완료, Done folded) with task cards - the id before the title, the lock line naming what it waits on, the delivery facts, at most two agents and +N, Start agent on a ready card only on hover, an untracked checkout titled by its branch with 태스크 없음, the pull request as the result - its Dependencies mode (the same cards with a stage word, blockers left of what they block, a blocked or done card dimmed, unrelated tasks below), and the Agents board with each agent’s checkout, task chip and device.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -6199,6 +6395,104 @@
                           "layout": "horizontal",
                           "gap": "$--spacing-md",
                           "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-head-band-l",
+                          "name": "Waiting band",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ov-head-band-l-0",
+                              "name": "Waiting row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ov-head-band-l-0-mark",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ov-head-band-l-0-mark-glyph",
+                                      "name": "?",
+                                      "content": "?",
+                                      "fill": "$--warning",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-head-band-l-0-where",
+                                  "name": "#170 · feat/waiting-band",
+                                  "content": "#170 · feat/waiting-band",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-head-band-l-0-line",
+                                  "name": "WebContentsView 크기를 창 기준으로 할",
+                                  "content": "WebContentsView 크기를 창 기준으로 할까요?",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-head-band-l-0-gap",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-head-band-l-0-age",
+                                  "name": "20m",
+                                  "content": "20m",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "ov-head-band-l-0-g",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "chevron-right",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-md"
+                              ],
+                              "width": 1560,
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-md"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xxs",
+                          "width": 1560
                         },
                         {
                           "type": "frame",
@@ -7631,6 +7925,104 @@
                         },
                         {
                           "type": "frame",
+                          "id": "ov-dhead-band-l",
+                          "name": "Waiting band",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ov-dhead-band-l-0",
+                              "name": "Waiting row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ov-dhead-band-l-0-mark",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ov-dhead-band-l-0-mark-glyph",
+                                      "name": "?",
+                                      "content": "?",
+                                      "fill": "$--warning",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-dhead-band-l-0-where",
+                                  "name": "#170 · feat/waiting-band",
+                                  "content": "#170 · feat/waiting-band",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-dhead-band-l-0-line",
+                                  "name": "WebContentsView 크기를 창 기준으로 할",
+                                  "content": "WebContentsView 크기를 창 기준으로 할까요?",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-dhead-band-l-0-gap",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-dhead-band-l-0-age",
+                                  "name": "20m",
+                                  "content": "20m",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "ov-dhead-band-l-0-g",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "chevron-right",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-md"
+                              ],
+                              "width": 1560,
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-md"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xxs",
+                          "width": 1560
+                        },
+                        {
+                          "type": "frame",
                           "id": "ov-dhead-rule-l",
                           "name": "Rule",
                           "children": [],
@@ -8912,6 +9304,104 @@
                         },
                         {
                           "type": "frame",
+                          "id": "ov-ahead-band-l",
+                          "name": "Waiting band",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ov-ahead-band-l-0",
+                              "name": "Waiting row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ov-ahead-band-l-0-mark",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ov-ahead-band-l-0-mark-glyph",
+                                      "name": "?",
+                                      "content": "?",
+                                      "fill": "$--warning",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-ahead-band-l-0-where",
+                                  "name": "#170 · feat/waiting-band",
+                                  "content": "#170 · feat/waiting-band",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-ahead-band-l-0-line",
+                                  "name": "WebContentsView 크기를 창 기준으로 할",
+                                  "content": "WebContentsView 크기를 창 기준으로 할까요?",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-ahead-band-l-0-gap",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-ahead-band-l-0-age",
+                                  "name": "20m",
+                                  "content": "20m",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "ov-ahead-band-l-0-g",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "chevron-right",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-md"
+                              ],
+                              "width": 1000,
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-md"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xxs",
+                          "width": 1000
+                        },
+                        {
+                          "type": "frame",
                           "id": "ov-ahead-rule-l",
                           "name": "Rule",
                           "children": [],
@@ -10077,6 +10567,104 @@
                           "layout": "horizontal",
                           "gap": "$--spacing-md",
                           "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-head-band-d",
+                          "name": "Waiting band",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ov-head-band-d-0",
+                              "name": "Waiting row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ov-head-band-d-0-mark",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ov-head-band-d-0-mark-glyph",
+                                      "name": "?",
+                                      "content": "?",
+                                      "fill": "$--warning",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-head-band-d-0-where",
+                                  "name": "#170 · feat/waiting-band",
+                                  "content": "#170 · feat/waiting-band",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-head-band-d-0-line",
+                                  "name": "WebContentsView 크기를 창 기준으로 할",
+                                  "content": "WebContentsView 크기를 창 기준으로 할까요?",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-head-band-d-0-gap",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-head-band-d-0-age",
+                                  "name": "20m",
+                                  "content": "20m",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "ov-head-band-d-0-g",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "chevron-right",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-md"
+                              ],
+                              "width": 1560,
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-md"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xxs",
+                          "width": 1560
                         },
                         {
                           "type": "frame",
@@ -11509,6 +12097,104 @@
                         },
                         {
                           "type": "frame",
+                          "id": "ov-dhead-band-d",
+                          "name": "Waiting band",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ov-dhead-band-d-0",
+                              "name": "Waiting row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ov-dhead-band-d-0-mark",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ov-dhead-band-d-0-mark-glyph",
+                                      "name": "?",
+                                      "content": "?",
+                                      "fill": "$--warning",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-dhead-band-d-0-where",
+                                  "name": "#170 · feat/waiting-band",
+                                  "content": "#170 · feat/waiting-band",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-dhead-band-d-0-line",
+                                  "name": "WebContentsView 크기를 창 기준으로 할",
+                                  "content": "WebContentsView 크기를 창 기준으로 할까요?",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-dhead-band-d-0-gap",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-dhead-band-d-0-age",
+                                  "name": "20m",
+                                  "content": "20m",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "ov-dhead-band-d-0-g",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "chevron-right",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-md"
+                              ],
+                              "width": 1560,
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-md"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xxs",
+                          "width": 1560
+                        },
+                        {
+                          "type": "frame",
                           "id": "ov-dhead-rule-d",
                           "name": "Rule",
                           "children": [],
@@ -12787,6 +13473,104 @@
                           "layout": "horizontal",
                           "gap": "$--spacing-md",
                           "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-ahead-band-d",
+                          "name": "Waiting band",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ov-ahead-band-d-0",
+                              "name": "Waiting row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ov-ahead-band-d-0-mark",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ov-ahead-band-d-0-mark-glyph",
+                                      "name": "?",
+                                      "content": "?",
+                                      "fill": "$--warning",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-ahead-band-d-0-where",
+                                  "name": "#170 · feat/waiting-band",
+                                  "content": "#170 · feat/waiting-band",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-ahead-band-d-0-line",
+                                  "name": "WebContentsView 크기를 창 기준으로 할",
+                                  "content": "WebContentsView 크기를 창 기준으로 할까요?",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ov-ahead-band-d-0-gap",
+                                  "name": "Spacer",
+                                  "children": [],
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ov-ahead-band-d-0-age",
+                                  "name": "20m",
+                                  "content": "20m",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "icon",
+                                  "id": "ov-ahead-band-d-0-g",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 12,
+                                  "height": 12,
+                                  "icon": "chevron-right",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-md"
+                              ],
+                              "width": 1000,
+                              "fill": "$--card",
+                              "cornerRadius": "$--radius-md"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": "$--spacing-xxs",
+                          "width": 1000
                         },
                         {
                           "type": "frame",

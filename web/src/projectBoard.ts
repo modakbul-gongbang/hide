@@ -480,6 +480,37 @@ export function agentColumnCards(board: AgentsBoard, column: AgentColumn): Agent
   return cards;
 }
 
+/** One row of the waiting band (D-11): an agent that waits on the operator, where it works, and its request. */
+export type WaitingRow = {
+  agent: AgentRow;
+  place: BoardPlace;
+  /** Mono context before the request: the project on All projects, the task's id, the branch. */
+  where: string;
+};
+
+/**
+ * The waiting band (D-11, B10): every agent of the scope that waits on the
+ * operator, the ones asking first (an error before a question or approval),
+ * then the finished ones not yet looked at, each group in the core's order.
+ * Only an agent in the Project's own checkouts counts; a delegated agent is
+ * never Needs You or unread, so its parent is the one that waits.
+ */
+export function buildWaiting(projects: readonly BoardProject[], scope: BoardScope): WaitingRow[] {
+  const rows: (WaitingRow & { rank: number; index: number })[] = [];
+  for (const { workspace, agents } of projects) {
+    const { owners } = lineage(workspace, agents);
+    const tasks = new Map((workspace.tasks?.tasks ?? []).map((task) => [task.key, task]));
+    for (const agent of agents) {
+      const checkout = owners.get(agent.pane_id);
+      if (!checkout || (agent.group !== "needs_you" && agent.group !== "done")) continue;
+      const task = checkout.task_key ? tasks.get(checkout.task_key) : undefined;
+      const where = [scope === "all" ? workspace.label : null, task?.id ?? null, checkout.branch ?? checkout.label].filter(Boolean).join(" · ");
+      rows.push({ agent, place: place(workspace), where, rank: attention(agent), index: rows.length });
+    }
+  }
+  return rows.sort((a, b) => a.rank - b.rank || a.index - b.index).map(({ agent, place: at, where }) => ({ agent, place: at, where }));
+}
+
 export type BoardStats = {
   worktrees: number;
   /** Open pull requests, or null until GitHub has answered for this project. */

@@ -203,6 +203,13 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await expect(asking).toHaveAttribute("data-needs-you", "true", { timeout: 20_000 });
     // Its row carries the question on a second line (B8).
     await expect(asking.locator(`[data-pane="${askingPane}"] [data-agent-line="request"]`)).toContainText("Done 그룹 회색 링을 바꿔도 될까요?");
+    // The waiting band under the header names it too, where it works and
+    // what it asks, and leads with it (task-agents-views D-11, B10).
+    const band = overview.locator("[data-waiting-band]");
+    const bandRow = band.locator(`[data-waiting-row="${askingPane}"]`);
+    await expect(band.locator("[data-waiting-row]").first()).toHaveAttribute("data-waiting-row", askingPane);
+    await expect(bandRow.locator("[data-waiting-where]")).toHaveText("prd/asking");
+    await expect(bandRow.locator("[data-waiting-line]")).toHaveText("Done 그룹 회색 링을 바꿔도 될까요?");
     const working = column("working").locator("[data-overview-card]", { hasText: "prd/web-overview-with-a-long-branch-name" });
     // An untracked checkout is titled by its branch and says it has no task (D-07).
     await expect(working.locator('[data-fact="files"]')).toHaveText("1 files");
@@ -311,6 +318,7 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await expect(main).toHaveAttribute("data-main-view", "tasks");
     await expect(main.locator('[data-overview-column="backlog"] [data-overview-card]')).toHaveCount(1, { timeout: 20_000 });
     await expect(main.locator("[data-unconnected-project]")).toHaveCount(1);
+    await expect(main.locator(`[data-waiting-row="${askingPane}"] [data-waiting-where]`)).toHaveText("repo · prd/asking");
     await expect(main.locator("[data-unconnected-project]")).toContainText("fixture · 태스크 출처 연결 안 됨");
     for (const theme of ["dark", "light"] as const) {
       await chooseTheme(page, theme);
@@ -354,6 +362,13 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await expect(workspace).toBeVisible();
     await expect(page.locator(`[data-pane-view="${mainPane}"]`)).toHaveAttribute("data-focused", "true");
 
+    // A waiting band row opens the asking agent's pane, where it is answered (B10).
+    await page.keyboard.press("Meta+Shift+KeyH");
+    await expect(overview).toBeVisible();
+    await page.locator(`[data-waiting-row="${askingPane}"]`).click();
+    await expect(workspace).toBeVisible();
+    await expect(page.locator(`[data-pane-view="${askingPane}"]`)).toHaveAttribute("data-focused", "true");
+
     // A folder with agents shows only the ad hoc strip (B10). Its sidebar
     // row opens its checkout, so its Overview is reached from All projects.
     await page.locator("[data-go-main]").click();
@@ -370,6 +385,8 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await page.locator("[data-go-main]").click();
     await page.locator("[data-main-project]", { hasText: /^quiet/ }).click();
     await expect(overview).toHaveAttribute("data-overview-state", "empty");
+    // Nothing waits here, so there is no band at all (B10).
+    await expect(page.locator("[data-waiting-band]")).toHaveCount(0);
     await expect(page.locator("[data-overview-empty] [data-connect-source]")).toBeVisible();
     await screenshot(page, "overview-empty-light");
     await page.locator("[data-overview-new-agent]").click();

@@ -3,7 +3,7 @@
 // as the result, at most two agents per card, and both scopes.
 
 import { describe, expect, it } from "vitest";
-import { agentColumnCards, allProjectsStats, buildAgents, buildDependencies, buildTasks, formatBytes, projectStats, shownAgents, stageCards, stageOf, type BoardProject } from "./projectBoard";
+import { agentColumnCards, allProjectsStats, buildAgents, buildDependencies, buildTasks, buildWaiting, formatBytes, projectStats, shownAgents, stageCards, stageOf, type BoardProject } from "./projectBoard";
 import type { AgentRow, Checkout, PullRequest, Task, Workspace } from "./snapshot";
 
 const NOW = 1_800_000_000_000;
@@ -259,6 +259,32 @@ describe("the Dependencies mode", () => {
       ["#12", "#11", "#20"],
     ]);
     expect(graph.edges.filter((edge) => edge.from.includes("#2") && edge.to.includes("#2"))).toHaveLength(1);
+  });
+});
+
+describe("the waiting band", () => {
+  it("lists the agents that wait on the operator, asking before finished, an error first, and nothing else (B10)", () => {
+    const project = workspace([checkout("feat", { task: "github:acme/project#170", panes: ["ask", "fail", "done", "busy", "seen"] }), checkout("main", { worktree: false, panes: ["root"] })], { tasks: [task(170)] });
+    const agents = [
+      agent("done", "done", { unread: true }),
+      agent("ask", "needs_you", { demand: "question", detail: "창 기준으로 할까요?" }),
+      agent("busy"),
+      agent("seen", "seen"),
+      agent("fail", "needs_you", { demand: "error" }),
+      agent("root", "needs_you", { demand: "approval" }),
+      // A pane of another project's checkout waits there, not here.
+      agent("elsewhere", "needs_you", { demand: "question" }),
+    ];
+    const rows = buildWaiting(one(project, agents), "project");
+    expect(rows.map((row) => row.agent.pane_id)).toEqual(["fail", "ask", "root", "done"]);
+    expect(rows.find((row) => row.agent.pane_id === "ask")?.where).toBe("#170 · feat");
+    expect(rows.find((row) => row.agent.pane_id === "root")?.where).toBe("main");
+    expect(buildWaiting(one(project, [agent("busy"), agent("seen", "seen")]), "project")).toEqual([]);
+  });
+
+  it("names the project first on All projects", () => {
+    const rows = buildWaiting(one(workspace([checkout("feat", { task: "github:acme/project#170", panes: ["ask"] })], { id: "herdr-ide", tasks: [task(170)] }), [agent("ask", "needs_you", { demand: "question" })]), "all");
+    expect(rows[0]?.where).toBe("herdr-ide · #170 · feat");
   });
 });
 
