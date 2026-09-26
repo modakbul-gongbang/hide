@@ -93,14 +93,36 @@ test("Main, Overview and a Workspace with its layouts, tools and delegated child
     await page.locator('[data-tool-toggle="changes"]').click();
     await expect(page.locator('[data-tool="changes"]')).toHaveCount(0);
 
-    // A file opened from Agents only brings the View area back beside the
-    // agents (B11).
+    // A file opened from Agents only draws the View areas over the agents,
+    // which keep their size underneath, so no terminal resizes (issue 170).
+    const agentArea = page.locator("[data-agent-area]");
+    const agentBox = await agentArea.boundingBox();
+    const resizes = sent.get("terminal_resize") ?? 0;
     await page.locator(`[data-explorer-row="${path.join(root, "notes.md")}"]`).dblclick();
-    await expect(workspace).toHaveAttribute("data-layout", "together");
+    await expect(workspace).toHaveAttribute("data-layout", "agents");
+    await expect(workspace).toHaveAttribute("data-views-over-agents", "true");
     await expect(page.locator('[data-view-area] [data-tab-kind="file"]')).toHaveCount(1);
     await page.locator(`[data-explorer-row="${path.join(root, "gone.txt")}"]`).dblclick();
     await expect(page.locator('[data-view-area] [data-tab-kind="file"]')).toHaveCount(2);
-    await screenshot(page, "s6-together");
+    expect(await page.locator("[data-views-over-agents] [data-view-area]").boundingBox()).toEqual(agentBox);
+    expect(await agentArea.boundingBox()).toEqual(agentBox);
+    await expect(agentArea).toHaveAttribute("inert", "");
+    await screenshot(page, "s6-views-over-agents");
+    // The toggle takes them down without closing a view and brings them
+    // back; neither way resizes a terminal.
+    await page.locator('[data-views-over-toggle="on"]').click();
+    await expect(workspace).toHaveAttribute("data-views-over-agents", "false");
+    await expect(page.locator("[data-view-area]")).toHaveCount(0);
+    await expect(agentArea).not.toHaveAttribute("inert", "");
+    expect(last.get("workspace_view")).toEqual({ views_over_agents: false });
+    await page.locator('[data-views-over-toggle="off"]').click();
+    await expect(page.locator('[data-view-area] [data-tab-kind="file"]')).toHaveCount(2);
+    // Choosing an agent takes them down too.
+    await page.locator(`[data-agent-open="${parent}"]`).first().click();
+    await expect(workspace).toHaveAttribute("data-views-over-agents", "false");
+    await expect(page.locator('[data-views-over-toggle="off"]')).toBeVisible();
+    expect(await agentArea.boundingBox()).toEqual(agentBox);
+    expect(sent.get("terminal_resize") ?? 0).toBe(resizes);
 
     // A declared child shows as a chip under its parent's header; the core
     // moves the delegated pane to its own tab, so the chip crosses tabs with

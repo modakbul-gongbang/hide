@@ -8,7 +8,7 @@ import { projectPaneIds } from "./navigation";
 import { contextAgents, contextWorkspaces } from "./remote";
 import type { SnapshotRest } from "./snapshot";
 import { besideUnavailable, shownTools, viewCommands, type Geometry, type LayoutSizes, type ToolsPlacement, type ViewCommandId } from "./viewLayout";
-import { LAYOUTS, workspaceViewOf, type ViewMode } from "./workspace";
+import { LAYOUTS, canShowViewsOverAgents, workspaceViewOf, type ViewMode } from "./workspace";
 
 /** The header an entry is drawn under, in the Swift search view's form (`herdr-ide > AGENTS`). */
 export type SearchGroup = { id: string; label: string };
@@ -32,7 +32,7 @@ export type SearchEntry = {
   workspaceId?: string;
   checkoutId?: string;
   /** What a command entry changes on the Workspace in front. */
-  command?: { layout: ViewMode } | { tool: "explorer" | "changes"; visible: boolean } | { view: ViewCommandId } | { openBeside: true };
+  command?: { layout: ViewMode } | { viewsOverAgents: boolean } | { tool: "explorer" | "changes"; visible: boolean } | { view: ViewCommandId } | { openBeside: true };
   /** Why a command cannot run now; the palette shows it and runs nothing. */
   unavailable?: string | null;
 };
@@ -76,7 +76,10 @@ export function workspaceCommands(rest: SnapshotRest | null, screen: WorkspaceOn
   const view = workspaceViewOf(rest);
   if (!view) return [];
   const shown = shownTools(view, screen.placement);
-  const entries: SearchEntry[] = LAYOUTS.filter((layout) => layout.mode !== view.mode).map((layout) => ({
+  // Agents only is offered while the View areas are over the agents too,
+  // since choosing it takes them down.
+  const over = canShowViewsOverAgents(view) && view.views_over_agents === true;
+  const entries: SearchEntry[] = LAYOUTS.filter((layout) => layout.mode !== view.mode || over).map((layout) => ({
     id: `command:layout:${layout.mode}`,
     title: `Layout: ${layout.label}`,
     subtitle: "Workspace layout",
@@ -84,6 +87,16 @@ export function workspaceCommands(rest: SnapshotRest | null, screen: WorkspaceOn
     group: COMMANDS_GROUP,
     command: { layout: layout.mode },
   }));
+  if (canShowViewsOverAgents(view)) {
+    entries.push({
+      id: "command:views-over-agents",
+      title: over ? "Hide Views over agents" : "Show Views over agents",
+      subtitle: "Workspace layout",
+      kind: "command",
+      group: COMMANDS_GROUP,
+      command: { viewsOverAgents: !over },
+    });
+  }
   entries.push({
     id: "command:tool:explorer",
     title: shown.explorer ? "Hide Explorer" : "Show Explorer",

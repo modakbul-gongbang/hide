@@ -50,7 +50,11 @@ A single click on an Explorer file or a History row opens it in the active area'
 Each area has at most one preview, and a click never touches another area or a pinned view.
 A double-click on the row or the tab, Keep open, or the first edit pins the preview where it is; because the first edit pins, a document that is dirty, saving, or whose save failed is never a preview in any area that shows it.
 Opening a file that is already shown moves to its view instead of adding a tab, choosing the one used last when several views show it.
-Opening a file from Agents only switches to Agents and Views and focuses the active View area.
+Opening a file from Agents only keeps the layout and draws the View areas over the Agent area, at its full size, with the active View area focused.
+The Agent area keeps its size underneath, so no terminal resizes when the View areas come or go, and it takes no input while they cover it.
+Inside that overlay the View areas behave as they do anywhere else: tabs, splits, preview, dirty state and browser displays, each page inside the overlay's bounds.
+While Agents only has a view open, a Views over agents toggle beside the layout switch (also in the toolbar menu and the palette) takes the overlay down and brings it back without closing any view; choosing an agent or a tab, or choosing Agents only again, also takes it down, and closing the last view does too.
+Agents and Views and Views only, chosen from the layout switch, keep their side-by-side and full-width arrangements.
 Diffs are placed by the same rules.
 
 Open to the side (from the Explorer's file menu, a History row's menu, or the palette) is the only way to show one file twice.

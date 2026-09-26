@@ -69,6 +69,15 @@ fn mode(runtime: &Runtime) -> ViewMode {
         .mode
 }
 
+fn over(runtime: &Runtime) -> bool {
+    runtime
+        .snapshot
+        .workspace_view
+        .as_ref()
+        .expect("a front Workspace")
+        .views_over_agents
+}
+
 pub(super) fn active_label(runtime: &Runtime) -> Option<String> {
     let active = runtime.snapshot.editor.active_tab_id.as_deref()?;
     runtime
@@ -122,9 +131,9 @@ fn a_terminal_tab_choice_keeps_the_workspace_document_only_with_separate_areas()
     }
 }
 
-/// D-08, B11, B12: an explicit file open from Agents-only and an explicit
-/// agent choice from Views-only bring the other area back; a status update
-/// moves nothing.
+/// D-08, B11, B12, issue 170: an explicit file open from Agents-only draws the
+/// View areas over the agents and an explicit agent choice from Views-only
+/// brings the Agent area back; a status update moves nothing.
 #[test]
 fn explicit_opens_bring_the_hidden_area_back_and_status_changes_do_not() {
     let (runtime, checkout_id, directory) = strip_checkout("area-intent");
@@ -137,7 +146,7 @@ fn explicit_opens_bring_the_hidden_area_back_and_status_changes_do_not() {
     );
 
     open(&mut runtime, &checkout_id, &directory.join("notes.md"));
-    assert_eq!(mode(&runtime), ViewMode::Together);
+    assert_eq!((mode(&runtime), over(&runtime)), (ViewMode::Agents, true));
 
     layout(&mut runtime, serde_json::json!({"mode": "views"}));
     // B22: choosing Views alone makes no split.
@@ -165,6 +174,58 @@ fn explicit_opens_bring_the_hidden_area_back_and_status_changes_do_not() {
     );
     runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2"));
     assert_eq!(mode(&runtime), ViewMode::Together);
+}
+
+/// Issue 170: the View areas a file opened from Agents only drew over the
+/// agents come down on an agent choice or an explicit Agents only and come
+/// back on request, closing no view and changing no layout; they are only
+/// ever up in Agents only, and the file keeps them.
+#[test]
+fn views_over_the_agents_come_down_and_back_without_closing_a_view() {
+    let (runtime, checkout_id, directory) = strip_checkout("views-over");
+    let state = views_path("views-over");
+    let mut runtime = with_views(runtime, &state);
+    with_tabs(&mut runtime, &directory);
+    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+    assert_eq!((mode(&runtime), over(&runtime)), (ViewMode::Agents, true));
+
+    // A session update is not a request: the View areas stay up.
+    let tabs = ["w-order:t1", "w-order:t2"];
+    runtime.ingest_session(Ok(tab_order_payload(
+        &directory.to_string_lossy(),
+        &tabs,
+        &tabs,
+        "w-order:t2",
+    )));
+    assert!(over(&runtime));
+    runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2"));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!((mode(&runtime), over(&runtime)), (ViewMode::Agents, false));
+    assert_eq!(
+        active_label(&runtime).as_deref(),
+        Some("notes.md"),
+        "taking them down closes no view"
+    );
+
+    layout(&mut runtime, serde_json::json!({"views_over_agents": true}));
+    assert_eq!((mode(&runtime), over(&runtime)), (ViewMode::Agents, true));
+    let (saved, _) = crate::workspace_views::load(&state, 0);
+    assert!(
+        saved.workspaces.iter().any(|view| view.views_over_agents),
+        "the file keeps them up"
+    );
+    layout(&mut runtime, serde_json::json!({"mode": "agents"}));
+    assert!(!over(&runtime), "choosing Agents only takes them down");
+
+    layout(
+        &mut runtime,
+        serde_json::json!({"mode": "together", "views_over_agents": true}),
+    );
+    assert_eq!(
+        (mode(&runtime), over(&runtime)),
+        (ViewMode::Together, false),
+        "only Agents only draws them over the agents"
+    );
 }
 
 /// D-05, A5: the tools are the Workspace's, and the one global panel every

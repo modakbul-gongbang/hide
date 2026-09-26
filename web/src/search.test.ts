@@ -80,6 +80,15 @@ describe("workspace commands", () => {
     expect(searchEntries(rest, wide).map((entry) => entry.title)).toEqual(["Layout: Agents only", "Layout: Views only", "Hide Explorer", "Show History"]);
   });
 
+  it("offers the View areas over the agents in Agents only with a view open, and Agents only again to take them down (issue 170)", () => {
+    const agentsOnly = (over: boolean, displays: number) =>
+      ({ workspace_view: { ...(rest.workspace_view as object), mode: "agents", views_over_agents: over, layout: { root: { area: { id: "a1", active: null, displays: [] } }, active_area: "a1", limits: { areas: 6, depth: 3, displays: 64 }, display_count: displays } } }) as unknown as SnapshotRest;
+    const layoutTitles = (snapshot: SnapshotRest) => searchEntries(snapshot, wide).filter((entry) => entry.subtitle === "Workspace layout").map((entry) => entry.title);
+    expect(layoutTitles(agentsOnly(false, 1))).toEqual(["Layout: Agents and Views", "Layout: Views only", "Show Views over agents"]);
+    expect(layoutTitles(agentsOnly(true, 1))).toEqual(["Layout: Agents only", "Layout: Agents and Views", "Layout: Views only", "Hide Views over agents"]);
+    expect(layoutTitles(agentsOnly(false, 0))).toEqual(["Layout: Agents and Views", "Layout: Views only"]);
+  });
+
   it("offers a tool a narrow window's closed overlay keeps out of sight as one to show (S7 B12)", () => {
     const explorer = (placement: "closed" | "open") => searchEntries(rest, { drawn: null, placement }).find((entry) => entry.id === "command:tool:explorer");
     expect(explorer("closed")).toMatchObject({ title: "Show Explorer", command: { tool: "explorer", visible: true } });

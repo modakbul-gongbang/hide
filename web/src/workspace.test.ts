@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRow, Checkout, StripTab, Tab } from "./snapshot";
-import { agentEntries, agentWidth, drawnMode, shareAt, tabAgent, tabIdentity, type WorkspaceView } from "./workspace";
+import { agentEntries, agentWidth, canShowViewsOverAgents, drawnMode, shareAt, tabAgent, tabIdentity, viewsOverAgents, type WorkspaceView } from "./workspace";
 
 const strip: StripTab[] = [
   { id: "herdr:1", kind: "herdr", source_id: "t1", label: "1", preview: false },
@@ -62,5 +62,24 @@ describe("the drawn layout", () => {
   it("keeps the View areas while a file is opening, so the opening state has a place", () => {
     expect(drawnMode(view("together", 0), true)).toBe("together");
     expect(drawnMode(view("agents", 3), false)).toBe("agents");
+  });
+});
+
+describe("the View areas over the agents", () => {
+  const view = (mode: WorkspaceView["mode"], over: boolean, displays: number): WorkspaceView =>
+    ({ device_id: "local", path: "/r", mode, explorer: true, changes: false, agent_share: 0.5, views_over_agents: over, layout: { display_count: displays } }) as unknown as WorkspaceView;
+
+  it("draws them over Agents only while the core has them up and they have something to show", () => {
+    expect(viewsOverAgents(view("agents", true, 1), false)).toBe(true);
+    expect(viewsOverAgents(view("agents", true, 0), true)).toBe(true);
+    expect(viewsOverAgents(view("agents", true, 0), false)).toBe(false);
+    expect(viewsOverAgents(view("agents", false, 2), false)).toBe(false);
+    expect(viewsOverAgents(view("together", true, 2), false)).toBe(false);
+  });
+
+  it("offers them only in Agents only with a view open", () => {
+    expect(canShowViewsOverAgents(view("agents", false, 1))).toBe(true);
+    expect(canShowViewsOverAgents(view("agents", false, 0))).toBe(false);
+    expect(canShowViewsOverAgents(view("together", false, 1))).toBe(false);
   });
 });

@@ -16,6 +16,8 @@ export type WorkspaceView = {
   explorer: boolean;
   changes: boolean;
   agent_share: number;
+  /** Agents only with the View areas drawn over the Agent area (issue 170); absent from a core that predates it. */
+  views_over_agents?: boolean;
   /** The Workspace the operator last chose, now or before a restart, so the page opens on it (D-11). */
   resumed?: boolean;
   /** The View areas (S7); absent only from a core that predates them. */
@@ -43,6 +45,22 @@ export function layoutLabel(mode: ViewMode): string {
 export function drawnMode(view: WorkspaceView, opening: boolean): ViewMode {
   if (view.mode === "agents" || opening || !view.layout) return view.mode;
   return view.layout.display_count > 0 ? view.mode : "agents";
+}
+
+/**
+ * Whether the View areas are drawn over the Agent area (issue 170): Agents
+ * only with the core's `views_over_agents` up, while they hold a display or a
+ * file of this checkout is opening into them. The Agent area keeps its size
+ * underneath, so no terminal resizes when they come or go.
+ */
+export function viewsOverAgents(view: WorkspaceView, opening: boolean): boolean {
+  if (view.mode !== "agents" || !view.views_over_agents) return false;
+  return opening || !view.layout || view.layout.display_count > 0;
+}
+
+/** Whether Agents only has View areas to draw over the agents: the toolbar and the palette offer them only then. */
+export function canShowViewsOverAgents(view: WorkspaceView): boolean {
+  return view.mode === "agents" && (view.layout?.display_count ?? 0) > 0;
 }
 
 export function workspaceViewOf(rest: SnapshotRest | null): WorkspaceView | null {

@@ -184,6 +184,7 @@ function SearchPalette({ actions }: { actions: Actions }) {
     useUiStore.getState().closeOverlay();
     if (entry.command) {
       if ("layout" in entry.command) actions.setLayout(entry.command.layout);
+      else if ("viewsOverAgents" in entry.command) actions.setViewsOverAgents(entry.command.viewsOverAgents);
       else if ("tool" in entry.command) actions.setTool(entry.command.tool, entry.command.visible);
       else if ("view" in entry.command) actions.runViewCommand(entry.command.view);
       else actions.openFilePaletteBeside();

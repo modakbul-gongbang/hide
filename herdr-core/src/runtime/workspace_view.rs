@@ -70,9 +70,11 @@ pub(super) struct WorkspaceViewStore {
 }
 
 /// What an event asks of the front Workspace's areas once it has moved the
-/// screen: a document opened while only Agents show brings the View area
-/// back, and an agent opened while only Views show brings the Agent area
-/// back (D-08). Nothing else changes the mode on its own.
+/// screen: a document opened while only Agents show draws the View areas over
+/// the Agent area, which keeps its size so no terminal resizes (issue 170),
+/// and an agent chosen then takes them down again; an agent opened while only
+/// Views show brings the Agent area back beside them (D-08). Nothing else
+/// changes the areas on its own.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum AreaIntent {
     Views,
@@ -108,6 +110,10 @@ pub(super) struct WorkspaceViewPayload {
     pub(super) changes: Option<bool>,
     #[serde(default)]
     pub(super) agent_share: Option<f32>,
+    /// Agents only with the View areas drawn over the Agent area. A payload
+    /// that names a `mode` takes them down unless it also names this.
+    #[serde(default)]
+    pub(super) views_over_agents: Option<bool>,
     /// A file of the front Workspace to reveal: the Explorer shows with the
     /// file's folders unfolded, in the same event, and nothing is opened.
     #[serde(default)]
@@ -301,23 +307,23 @@ impl Runtime {
             return;
         };
         let entry = store.views.entry(&key.0, &key.1);
-        let before = (entry.mode, entry.explorer);
+        let before = (entry.mode, entry.explorer, entry.views_over_agents);
         match intent {
             AreaIntent::Views | AreaIntent::RevealInViews => {
                 if entry.mode == ViewMode::Agents {
-                    entry.mode = ViewMode::Together;
+                    entry.views_over_agents = true;
                 }
                 if intent == AreaIntent::RevealInViews {
                     entry.explorer = true;
                 }
             }
-            AreaIntent::Agents => {
-                if entry.mode == ViewMode::Views {
-                    entry.mode = ViewMode::Together;
-                }
-            }
+            AreaIntent::Agents => match entry.mode {
+                ViewMode::Views => entry.mode = ViewMode::Together,
+                ViewMode::Agents => entry.views_over_agents = false,
+                ViewMode::Together => {}
+            },
         }
-        if before != (entry.mode, entry.explorer) {
+        if before != (entry.mode, entry.explorer, entry.views_over_agents) {
             self.persist_workspace_views();
         }
     }
@@ -369,6 +375,15 @@ impl Runtime {
         let before = entry.clone();
         if let Some(mode) = mode {
             entry.mode = mode;
+            entry.views_over_agents = false;
+        }
+        if let Some(over) = payload.views_over_agents {
+            entry.views_over_agents = over;
+        }
+        // The View areas are drawn over the agents only in Agents only; the
+        // other layouts already show them.
+        if entry.mode != ViewMode::Agents {
+            entry.views_over_agents = false;
         }
         if let Some(explorer) = payload.explorer {
             entry.explorer = explorer;
@@ -445,7 +460,44 @@ impl Runtime {
         }
         self.restore_front_when_ready();
         self.reconcile_view_displays();
+        // After the reconcile, which removes a display whose document left.
+        if let Some(key) = front.as_ref() {
+            self.settle_views_over_agents(key);
+        }
         self.publish_workspace_view(front.as_ref());
+    }
+
+    /// The View areas stay over the agents only while they have something to
+    /// show: once the last view has left, by whichever path closed it, the
+    /// agents are uncovered, while a read still in flight keeps them covered
+    /// for the view it will land in. Costs one flag read unless they are up.
+    fn settle_views_over_agents(&mut self, key: &WorkspaceKey) {
+        let Some(view) = self
+            .workspace_views
+            .as_ref()
+            .and_then(|store| store.views.get(&key.0, &key.1))
+        else {
+            return;
+        };
+        if !view.views_over_agents || view.layout.display_count() > 0 {
+            return;
+        }
+        let opening = self.snapshot.editor.opening.iter().any(|row| {
+            self.workspace_key(&row.workspace_id, &row.checkout_id)
+                .as_ref()
+                == Some(key)
+        });
+        if opening {
+            return;
+        }
+        if let Some(view) = self
+            .workspace_views
+            .as_mut()
+            .and_then(|store| store.views.get_mut(&key.0, &key.1))
+        {
+            view.views_over_agents = false;
+        }
+        self.persist_workspace_views();
     }
 
     /// Reads the front Workspace's displays back the first time in this
@@ -518,6 +570,7 @@ impl Runtime {
             explorer: view.explorer,
             changes: view.changes,
             agent_share: view.agent_share,
+            views_over_agents: view.views_over_agents,
             resumed: Some(key) == store.resumable.as_ref(),
             layout: self.view_layout_snapshot(key, &view.layout),
         });

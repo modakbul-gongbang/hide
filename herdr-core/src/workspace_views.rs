@@ -40,8 +40,9 @@ pub const DEFAULT_AGENT_SHARE: f32 = 0.5;
 
 /// Which working areas a Workspace shows. Changing it only changes space:
 /// no tab, document or pane is closed and no split is made (D-03). A new
-/// Workspace starts with its agents alone, since it has no View yet; the
-/// first file opened into it brings the View area beside them (B11).
+/// Workspace starts with its agents alone, since it has no View yet; a file
+/// opened into it draws the View areas over them ([`WorkspaceView::views_over_agents`],
+/// issue 170).
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ViewMode {
@@ -82,6 +83,12 @@ pub struct WorkspaceView {
     pub changes: bool,
     #[serde(default = "default_agent_share")]
     pub agent_share: f32,
+    /// Agents only with the View areas drawn over the Agent area, which keeps
+    /// its size underneath so no terminal resizes. A file opened from Agents
+    /// only raises it rather than changing the mode; it is only ever set in
+    /// Agents only and only while the View areas have something to show.
+    #[serde(default)]
+    pub views_over_agents: bool,
     #[serde(default)]
     pub last_used_unix_ms: u64,
     #[serde(default)]
@@ -105,6 +112,7 @@ impl WorkspaceView {
             explorer: default_explorer(),
             changes: false,
             agent_share: DEFAULT_AGENT_SHARE,
+            views_over_agents: false,
             last_used_unix_ms: 0,
             layout: Layout::default(),
         }
@@ -112,6 +120,12 @@ impl WorkspaceView {
 
     pub fn is(&self, device_id: &str, path: &str) -> bool {
         self.device_id == device_id && self.path == path
+    }
+
+    /// Whether the View areas are on screen: in a layout that shows them, or
+    /// drawn over the agents.
+    pub fn shows_views(&self) -> bool {
+        self.mode.shows_views() || self.views_over_agents
     }
 }
 
@@ -244,6 +258,7 @@ impl V1View {
             explorer: self.explorer,
             changes: self.changes,
             agent_share: self.agent_share,
+            views_over_agents: false,
             last_used_unix_ms: self.last_used_unix_ms,
             layout,
         }

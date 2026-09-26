@@ -71,7 +71,9 @@ test("an observed agent pane scrolls, Cmd+F finds in the focused pane, and an em
     await expect.poll(() => paneText(page, observed), { timeout: 10_000 }).toContain("row-160");
 
     // B4: with a document open beside the agents, Cmd+F in a focused pane
-    // opens that pane's find bar, not the document's.
+    // opens that pane's find bar, not the document's. Beside them is a layout
+    // the operator chooses; from Agents only a file is drawn over them.
+    await page.locator('[data-layout-choice="together"]').click();
     await page.locator(`[data-explorer-row$="/notes.txt"]`).dblclick();
     await expect(page.locator("[data-view-area]")).toBeVisible();
     // Both panes narrow and redraw at the new grid, the observed one by

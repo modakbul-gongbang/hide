@@ -255,7 +255,7 @@ export function createActions(dispatch: DispatchFn) {
    * `workspace_view` event naming only what changes. The core keeps them per
    * Workspace, so another Workspace is never touched.
    */
-  const setWorkspaceView = (patch: { mode?: ViewMode; explorer?: boolean; changes?: boolean; agent_share?: number; reveal?: string }) => {
+  const setWorkspaceView = (patch: { mode?: ViewMode; explorer?: boolean; changes?: boolean; agent_share?: number; views_over_agents?: boolean; reveal?: string }) => {
     if (!workspaceViewOf(rest())) return diagnostic("workspace_view: no Workspace in front");
     dispatch({ schema_version: 2, kind: "workspace_view", payload: patch });
   };
@@ -1132,6 +1132,11 @@ export function createActions(dispatch: DispatchFn) {
 
     setLayout(mode: ViewMode) {
       setWorkspaceView({ mode });
+    },
+
+    /** Agents only: draws the View areas over the agents or takes them down, closing no view (issue 170). */
+    setViewsOverAgents(on: boolean) {
+      setWorkspaceView({ views_over_agents: on });
     },
 
     revealInExplorer,

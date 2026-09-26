@@ -1,4 +1,4 @@
-import { Columns2Icon, FileTextIcon, FolderIcon, GitBranchIcon, TerminalIcon } from "lucide-react";
+import { Columns2Icon, FileTextIcon, FolderIcon, GitBranchIcon, LayersIcon, TerminalIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AreaEmpty } from "./AreaEmpty";
@@ -19,13 +19,14 @@ import { Tools } from "./Tools";
 import { useUiStore, type WorkingRegion } from "./ui";
 import { ViewAreas } from "./ViewAreas";
 import { narrowWorkspace, shownTools } from "./viewLayout";
-import { LAYOUTS, agentEntries, agentWidth, drawnMode, layoutLabel, shareAt, workspaceViewOf, type ViewMode } from "./workspace";
+import { LAYOUTS, agentEntries, agentWidth, canShowViewsOverAgents, drawnMode, layoutLabel, shareAt, viewsOverAgents, workspaceViewOf, type ViewMode } from "./workspace";
 import { hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
 
 // A Workspace (PRD S6 D-01..D-05, B4-B11; S7 B12, B13): one checkout's Agent
 // area (its Herdr tabs and their panes) and View areas (its files and diffs),
-// side by side or one at a time, with its tools beside them. The layout, the
+// side by side, one at a time, or in Agents only drawn over the Agent area
+// (issue 170), with its tools beside them. The layout, the
 // tools and the boundary are the core's, per Workspace; this draws them and
 // sends one event per operator choice. A hidden area is unmounted, never
 // closed: its terminals park and stay fed, and its tabs stay in the core.
@@ -49,6 +50,7 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
   // With nothing open in the View areas the agents take their space; the
   // stored layout, the toolbar's choice and the tools stay as they are.
   const mode = view ? drawnMode(view, opening) : "agents";
+  const over = view ? viewsOverAgents(view, opening) : false;
   const narrow = view ? narrowWorkspace({ bodyWidth: width, mode, ...sizes }) : WIDE;
   // The column while there is room for it; past that, an overlay that stays
   // closed until the operator asks for a tool (S7 B12).
@@ -71,10 +73,10 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
   const placement = narrow.toolsOverlay ? (stored === "open" ? "open" : "closed") : "column";
   const { explorer, changes } = shownTools(view, placement);
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={`Workspace ${checkout.branch ?? checkout.label}`} data-workspace-screen={checkout.id} data-layout={view.mode}>
-      <WorkspaceToolbar checkout={checkout} mode={view.mode} explorer={explorer} changes={changes} singleRegion={narrow.singleRegion} actions={actions} />
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={`Workspace ${checkout.branch ?? checkout.label}`} data-workspace-screen={checkout.id} data-layout={view.mode} data-views-over-agents={over}>
+      <WorkspaceToolbar checkout={checkout} mode={view.mode} over={canShowViewsOverAgents(view) ? over : null} explorer={explorer} changes={changes} singleRegion={narrow.singleRegion} actions={actions} />
       <div ref={setBody} className="relative flex min-h-0 flex-1" data-workspace-body={narrow.toolsOverlay ? "narrow" : "wide"}>
-        <Areas checkout={checkout} mode={mode} share={view.agent_share} single={narrow.singleRegion} actions={actions} />
+        <Areas checkout={checkout} mode={mode} over={over} share={view.agent_share} single={narrow.singleRegion} actions={actions} />
         <Tools explorer={explorer} changes={changes} overlay={narrow.toolsOverlay} actions={actions} />
       </div>
     </section>
@@ -98,8 +100,12 @@ function useWidth(element: HTMLElement | null): number {
   return width;
 }
 
-/** The path back (B4), the layout choice (B5), the tools (B10), and the working region of a narrow Together (S7 B13). */
-function WorkspaceToolbar({ checkout, mode, explorer, changes, singleRegion, actions }: { checkout: Checkout; mode: ViewMode; explorer: boolean; changes: boolean; singleRegion: boolean; actions: Actions }) {
+/**
+ * The path back (B4), the layout choice (B5), the View areas over the agents
+ * (`over`, null while Agents only has none to show), the tools (B10), and the
+ * working region of a narrow Together (S7 B13).
+ */
+function WorkspaceToolbar({ checkout, mode, over, explorer, changes, singleRegion, actions }: { checkout: Checkout; mode: ViewMode; over: boolean | null; explorer: boolean; changes: boolean; singleRegion: boolean; actions: Actions }) {
   const project = useShellStore((s) => catalogWorkspaces(s.rest).find((row) => row.checkouts.some((candidate) => candidate.id === checkout.id)) ?? null);
   const device = useShellStore((s) => focusedRemoteDevice(s.rest));
   const setScreen = useUiStore((s) => s.setScreen);
@@ -108,6 +114,7 @@ function WorkspaceToolbar({ checkout, mode, explorer, changes, singleRegion, act
   // path and its Project (B18). Opening the menu changes none of them.
   const menuItems = (): MenuEntry<ToolbarMenuId>[] => [
     ...LAYOUTS.map((layout) => ({ id: `layout:${layout.mode}` as const, label: `${layout.mode === mode ? "✓ " : ""}${layout.label}`, unavailable: null })),
+    ...(over === null ? [] : [{ id: "views_over_agents" as const, label: over ? "Hide Views over agents" : "Show Views over agents", unavailable: null }]),
     { id: "explorer", label: explorer ? "Hide Explorer" : "Show Explorer", unavailable: null, separated: true },
     { id: "changes", label: changes ? "Hide History" : "Show History", unavailable: null },
     { id: "copy_path", label: "Copy Workspace path", unavailable: null, separated: true },
@@ -115,6 +122,7 @@ function WorkspaceToolbar({ checkout, mode, explorer, changes, singleRegion, act
   ];
   const select = (id: ToolbarMenuId) => {
     if (id.startsWith("layout:")) return actions.setLayout(id.slice("layout:".length) as ViewMode);
+    if (id === "views_over_agents") return actions.setViewsOverAgents(!over);
     if (id === "explorer") return actions.setTool("explorer", !explorer);
     if (id === "changes") return actions.setTool("changes", !changes);
     if (id === "copy_path") return void navigator.clipboard?.writeText(checkout.path).catch(() => undefined);
@@ -156,6 +164,7 @@ function WorkspaceToolbar({ checkout, mode, explorer, changes, singleRegion, act
         </nav>
         {singleRegion ? <RegionSwitch /> : null}
         <LayoutSwitch mode={mode} actions={actions} />
+        {over === null ? null : <ViewsOverToggle on={over} actions={actions} />}
         <div className="flex items-center gap-xxs" role="group" aria-label="Workspace tools">
           <ToolToggle tool="explorer" label="Explorer" on={explorer} actions={actions} />
           <ToolToggle tool="changes" label="History" on={changes} actions={actions} />
@@ -165,7 +174,7 @@ function WorkspaceToolbar({ checkout, mode, explorer, changes, singleRegion, act
   );
 }
 
-type ToolbarMenuId = `layout:${ViewMode}` | "explorer" | "changes" | "copy_path" | "overview";
+type ToolbarMenuId = `layout:${ViewMode}` | "views_over_agents" | "explorer" | "changes" | "copy_path" | "overview";
 
 /** The layout mode's own mark, standing in for the hand-drawn `LayoutIcon` (D-09). */
 function layoutMark(mode: ViewMode) {
@@ -206,6 +215,21 @@ function LayoutSwitch({ mode, actions }: { mode: ViewMode; actions: Actions }) {
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
+  );
+}
+
+/**
+ * Agents only's way to the View areas and back (issue 170): pressed while they
+ * are drawn over the agents. Taking them down closes no view, and the agents
+ * underneath never changed size, so neither direction resizes a terminal.
+ */
+function ViewsOverToggle({ on, actions }: { on: boolean; actions: Actions }) {
+  return (
+    <Hint label={on ? "Hide Views over agents" : "Show Views over agents"}>
+      <Button variant={on ? "secondary" : "ghost"} size="icon-sm" aria-pressed={on} data-views-over-toggle={on ? "on" : "off"} onClick={() => actions.setViewsOverAgents(!on)}>
+        <LayersIcon />
+      </Button>
+    </Hint>
   );
 }
 
@@ -267,9 +291,11 @@ function areaMinimum(): number {
  * a guide line as it is dragged and sends one `workspace_view` share on
  * release, so a drag never resizes the terminals on every pointer event.
  * `single` is a Together window too narrow for both: it shows the working
- * region the operator was last in (S7 B13).
+ * region the operator was last in (S7 B13). `over` draws the View areas over
+ * an Agent area that keeps its full size and takes no input meanwhile, so an
+ * agent nobody can see is never typed into (issue 170).
  */
-function Areas({ checkout, mode, share, single, actions }: { checkout: Checkout; mode: ViewMode; share: number; single: boolean; actions: Actions }) {
+function Areas({ checkout, mode, over, share, single, actions }: { checkout: Checkout; mode: ViewMode; over: boolean; share: number; single: boolean; actions: Actions }) {
   const region = useUiStore((s) => s.workingRegion);
   const body = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -329,6 +355,7 @@ function Areas({ checkout, mode, share, single, actions }: { checkout: Checkout;
           className={`flex min-h-0 min-w-0 flex-col ${agentPx === null ? "flex-1" : "shrink-0"}`}
           style={agentPx === null ? undefined : { width: agentPx }}
           data-agent-area="true"
+          inert={over}
           onPointerDownCapture={workIn("agents")}
           onFocusCapture={workIn("agents")}
         >
@@ -358,6 +385,11 @@ function Areas({ checkout, mode, share, single, actions }: { checkout: Checkout;
       ) : null}
       {views ? (
         <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-view-area="true" onPointerDownCapture={workIn("views")} onFocusCapture={workIn("views")}>
+          <ViewAreas actions={actions} />
+        </div>
+      ) : null}
+      {over ? (
+        <div className="absolute inset-0 z-10 flex min-h-0 min-w-0 flex-col bg-background" data-view-area="true" data-views-over-agents="true">
           <ViewAreas actions={actions} />
         </div>
       ) : null}

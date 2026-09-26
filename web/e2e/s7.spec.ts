@@ -175,7 +175,8 @@ test("a click previews in the last used area, a pin keeps a view, and a shown fi
     // A single click previews in the one area, italic, and the next single
     // click replaces that preview in place (B1).
     await row("a.txt").click();
-    await expect(workspace).toHaveAttribute("data-layout", "together");
+    await expect(workspace).toHaveAttribute("data-layout", "agents");
+    await expect(workspace).toHaveAttribute("data-views-over-agents", "true");
     await expect.poll(() => shape(page)).toBe("@(>a.txt*)");
     await expect(tab(page, "a.txt").getByText("a.txt")).toHaveCSS("font-style", "italic");
     await expect(tab(page, "a.txt")).toHaveAttribute("aria-label", /· Preview$/);
@@ -417,6 +418,8 @@ test("Open to the side from the only area is refused with its reason until that 
   await page.setViewportSize({ width: 1280, height: 720 });
   const stack = await startStack(page, "s7-beside-room", { "a.txt": "a\n" }, { prepare: gitCheckout });
   try {
+    // Beside the agents, where the one area is too narrow to halve.
+    await page.locator('[data-layout-choice="together"]').click();
     const row = explorerRow(page, stack, "a.txt");
     await row.click();
     await expect.poll(() => shape(page)).toBe("@(>a.txt*)");
@@ -517,6 +520,8 @@ test("dragging a tab reorders, moves or splits once on a valid drop and leaves e
   await page.setViewportSize({ width: 1920, height: 1080 });
   const stack = await startStack(page, "s7-drag", { "a.txt": "a\n", "b.txt": "b\n", "c.txt": "c\n" });
   try {
+    // The drop points below are measured beside the agents.
+    await page.locator('[data-layout-choice="together"]').click();
     for (const name of ["a.txt", "b.txt", "c.txt"]) await explorerRow(page, stack, name).dblclick();
     await expect.poll(() => shape(page)).toBe("@(a.txt b.txt >c.txt)");
     const moves = () => stack.sent.get("view_layout.move") ?? 0;
@@ -1051,6 +1056,8 @@ test("a narrow window floats the tools, shows one region and one area with a way
   await page.setViewportSize({ width: 1920, height: 1080 });
   const stack = await startStack(page, "s7-narrow", { "a.txt": "a\n", "b.txt": "b\n" });
   try {
+    // Agents and Views, the layout that has two regions to narrow.
+    await page.locator('[data-layout-choice="together"]').click();
     await explorerRow(page, stack, "a.txt").dblclick();
     await explorerRow(page, stack, "b.txt").dblclick();
     await tabMenu(page, page, "b.txt", "split_right");
@@ -1422,14 +1429,16 @@ test("S6's layouts, tools, kind marks and the open from Agents only keep working
     expect(viewEvents(stack).length).toBe(viewsBefore);
     await expect.poll(() => shape(page)).toBe("(a.txt >a.txt) | @(>b.txt)");
 
-    // A file opened from Agents only brings the Views back beside the agents
-    // and lands in the area used last, which is the one in use (B22, S6 B11).
+    // A file opened from Agents only draws the Views over the agents, whole,
+    // and lands in the area used last, which is the one in use (issue 170,
+    // B22); the layout stays Agents only.
     await page.locator('[data-layout-choice="agents"]').click();
     await expect(workspace).toHaveAttribute("data-layout", "agents");
     await expect(page.locator("[data-view-area-id]")).toHaveCount(0);
     const layoutsBefore = layouts();
     await explorerRow(page, stack, "c.txt").click();
-    await expect(workspace).toHaveAttribute("data-layout", "together");
+    await expect(workspace).toHaveAttribute("data-layout", "agents");
+    await expect(workspace).toHaveAttribute("data-views-over-agents", "true");
     await expect.poll(() => shape(page)).toBe("(a.txt >a.txt) | @(b.txt >c.txt*)");
     await expect(area(page, 1)).toHaveAttribute("data-active-area", "true");
     expect(layouts()).toBe(layoutsBefore);

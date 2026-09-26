@@ -1082,11 +1082,13 @@ fn closing_the_last_display_of_a_dirty_document_saves_it_first() {
     let emptied = tree(&mut runtime);
     assert_eq!(emptied.display_count, 0);
     // B10: the Views empty out without the mode changing, and the last area
-    // stays, empty.
+    // stays, empty; the View areas the open drew over the agents come down
+    // with the last view (issue 170).
     assert!(matches!(emptied.root, ViewNodeSnapshot::Area(_)));
+    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
     assert_eq!(
-        runtime.snapshot.workspace_view.as_ref().unwrap().mode,
-        crate::workspace_views::ViewMode::Together
+        (view.mode, view.views_over_agents),
+        (crate::workspace_views::ViewMode::Agents, false)
     );
 }
 
@@ -1949,7 +1951,7 @@ fn last_error_kind(runtime: &Runtime) -> Option<&str> {
 }
 
 /// A page opens in the Workspace of the pane that asked, in its area in
-/// use, and brings the View area back; the same address again shows that
+/// use, and draws the View areas over the agents; the same address again shows that
 /// page and loads it again rather than opening a second one. A request that
 /// names itself reads its answer in `status.browser_opens`.
 #[test]
@@ -1996,9 +1998,10 @@ fn a_page_opens_in_the_workspace_of_the_pane_that_asked_and_once_per_address() {
         )
     );
     assert!(page.load > 0);
+    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
     assert_eq!(
-        runtime.snapshot.workspace_view.as_ref().unwrap().mode,
-        crate::workspace_views::ViewMode::Together
+        (view.mode, view.views_over_agents),
+        (crate::workspace_views::ViewMode::Agents, true)
     );
 
     // The front Workspace, named by nothing, shows the page again.
