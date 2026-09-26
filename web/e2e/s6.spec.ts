@@ -150,6 +150,11 @@ test("Main, Overview and a Workspace with its layouts, tools and delegated child
     await page.keyboard.type("typed beside the panel");
     await expect.poll(() => fs.readFileSync(herdr.inputLogs[1], "utf8"), { timeout: 10_000 }).toContain("typed beside the panel");
     await expect(workspace).toHaveAttribute("data-views-over-agents", "true");
+    // A tab of the Agent area's own strip is chosen in place too.
+    await page.locator('[data-agent-tab-bar] [data-tab-kind="herdr"]').first().click();
+    await expect.poll(() => last.get("focus_tab")).toMatchObject({ in_place: true });
+    await expect(workspace).toHaveAttribute("data-views-over-agents", "true");
+    await childHost.click({ position: { x: 40, y: 60 } });
     expect(resizes()).toBe(resizesBefore);
     // The pane's find bar takes a row of the pane itself, so the count starts
     // again after it.

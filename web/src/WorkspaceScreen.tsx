@@ -20,7 +20,7 @@ import { Tools } from "./Tools";
 import { useUiStore, type WorkingRegion } from "./ui";
 import { ViewAreas } from "./ViewAreas";
 import { narrowWorkspace, shownTools } from "./viewLayout";
-import { DEFAULT_VIEWS_OVER_SHARE, LAYOUTS, agentEntries, agentWidth, canShowViewsOverAgents, drawnMode, layoutLabel, shareAt, viewsOverAgents, viewsOverShareAt, workspaceViewOf, type ViewMode } from "./workspace";
+import { DEFAULT_VIEWS_OVER_SHARE, LAYOUTS, agentEntries, agentWidth, canShowViewsOverAgents, drawnMode, layoutLabel, shareAt, viewsOverAgents, viewsOverShareAt, viewsOverWidth, workspaceViewOf, type ViewMode } from "./workspace";
 import { hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
 
@@ -330,7 +330,7 @@ function Areas({ checkout, mode, over, share, overShare, single, actions }: { ch
   // The region the operator works in is the one a narrow Together keeps.
   const workIn = (next: WorkingRegion) => () => useUiStore.getState().setWorkingRegion(next);
   const agentPx = agents && views && width > 0 ? agentWidth(share, width, minimum) : null;
-  const panelPx = over && width > 0 ? agentWidth(overShare, width, minimum) : null;
+  const panelPx = over && width > 0 ? viewsOverWidth(overShare, width, inset, minimum) : null;
   // A boundary drag: `shareOf` reads a share off the pointer's offset from the
   // body's left edge, `guideAt` places the guide line for it, and `land`
   // sends it once on release.
@@ -373,7 +373,7 @@ function Areas({ checkout, mode, over, share, overShare, single, actions }: { ch
     dragBoundary(
       event,
       (x, total) => viewsOverShareAt(x, total, inset, minimum),
-      (next, total) => total - inset - agentWidth(next, total, minimum),
+      (next, total) => total - inset - viewsOverWidth(next, total, inset, minimum),
       (next) => {
         if (Math.abs(next - overShare) > 0.001) actions.setWorkspaceView({ views_over_share: next });
       },
@@ -450,7 +450,7 @@ function Areas({ checkout, mode, over, share, overShare, single, actions }: { ch
               event.preventDefault();
               // Left widens the panel, as its edge moves left.
               const step = event.key === "ArrowLeft" ? 0.05 : -0.05;
-              const next = width > 0 ? agentWidth(overShare + step, width, minimum) / width : overShare;
+              const next = width > 0 ? viewsOverWidth(overShare + step, width, inset, minimum) / width : overShare;
               if (Math.abs(next - overShare) > 0.001) actions.setWorkspaceView({ views_over_share: next });
             }}
           />

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRow, Checkout, StripTab, Tab } from "./snapshot";
-import { agentEntries, agentWidth, canShowViewsOverAgents, drawnMode, shareAt, tabAgent, tabIdentity, viewsOverAgents, viewsOverShareAt, type WorkspaceView } from "./workspace";
+import { agentEntries, agentWidth, canShowViewsOverAgents, drawnMode, shareAt, tabAgent, tabIdentity, viewsOverAgents, viewsOverShareAt, viewsOverWidth, type WorkspaceView } from "./workspace";
 
 const strip: StripTab[] = [
   { id: "herdr:1", kind: "herdr", source_id: "t1", label: "1", preview: false },
@@ -94,7 +94,11 @@ describe("the panel's width", () => {
   it("follows its left edge, keeping itself and the agents left of it at their minimum", () => {
     expect(viewsOverShareAt(392, 1000, 8, 320)).toBeCloseTo(0.6);
     expect(viewsOverShareAt(900, 1000, 8, 320)).toBeCloseTo(0.32);
-    expect(viewsOverShareAt(10, 1000, 8, 320)).toBeCloseTo(0.68);
+    expect(viewsOverShareAt(10, 1000, 8, 320)).toBeCloseTo(0.672);
+    // Within the core's bounds even where the pixels would allow more.
+    expect(viewsOverShareAt(30, 1400, 8, 224)).toBeCloseTo(0.8);
+    // The inset counts against the agents' minimum.
+    expect(1400 - 8 - viewsOverWidth(0.8, 1400, 8, 300)).toBe(300);
     expect(viewsOverShareAt(10, 0, 8, 320)).toBe(0.6);
   });
 });

@@ -128,15 +128,28 @@ export function agentWidth(share: number, total: number, minimum: number): numbe
 /** The core's default for the panel's share, used until a core that predates it says otherwise. */
 export const DEFAULT_VIEWS_OVER_SHARE = 0.6;
 
+/** The bounds the core keeps the panel's share in (`MIN_VIEWS_OVER_SHARE`, `MAX_VIEWS_OVER_SHARE`). */
+export const VIEWS_OVER_SHARE_MIN = 0.2;
+export const VIEWS_OVER_SHARE_MAX = 0.8;
+
 /**
- * The share a panel whose left edge is dragged to `x` pixels from the Agent
- * area's left edge stands for, the panel keeping `inset` from the right edge:
- * neither the panel nor the agents left of it gets narrower than `minimum`,
- * by the boundary's own rule (`agentWidth`).
+ * The panel's width in pixels for a share of an Agent area `total` wide, the
+ * panel keeping `inset` from the right edge: the share within the core's
+ * bounds, and neither the panel nor the agents left of it narrower than
+ * `minimum`. An area too narrow for both splits what is left of the inset
+ * evenly, as the boundary does (`agentWidth`).
  */
+export function viewsOverWidth(share: number, total: number, inset: number, minimum: number): number {
+  const room = total - inset;
+  if (room <= minimum * 2) return Math.round(room / 2);
+  const bounded = Math.min(Math.max(share, VIEWS_OVER_SHARE_MIN), VIEWS_OVER_SHARE_MAX);
+  return Math.round(Math.min(Math.max(bounded * total, minimum), room - minimum));
+}
+
+/** The share a panel whose left edge is dragged to `x` pixels from the Agent area's left edge lands at, by `viewsOverWidth`. */
 export function viewsOverShareAt(x: number, total: number, inset: number, minimum: number): number {
   if (total <= 0) return DEFAULT_VIEWS_OVER_SHARE;
-  return agentWidth((total - inset - x) / total, total, minimum) / total;
+  return viewsOverWidth((total - inset - x) / total, total, inset, minimum) / total;
 }
 
 /** The share a boundary dragged to `x` pixels from the body's left edge stands for. */
