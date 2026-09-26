@@ -1163,11 +1163,12 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
 
     // Floating here, the panel is still pinned: an agent chosen from the
     // sidebar leaves it up, and the toggle closes it (issue 170).
-    const choices = () => stack.events.filter((event) => event.kind === "focus_pane" || event.kind === "focus_tab").length;
-    const choicesBefore = choices();
-    await page.locator("[data-agent-open]").first().click();
-    await expect.poll(choices).toBeGreaterThan(choicesBefore);
+    const agent = page.locator("[data-agent-open]").first();
+    const pane = await agent.getAttribute("data-agent-open");
+    await agent.click();
+    await expect(page.locator(`[data-pane-view="${pane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     await expect(workspace).toHaveAttribute("data-panel", "expanded");
+    expect(storedWorkspace(stack.daemon, stack.root)).toMatchObject({ panel: "open", pinned: true });
     await page.locator('[data-panel-toggle="on"]').click();
     await expect(workspace).toHaveAttribute("data-panel", "closed");
     // One press of a tool toggle opens the panel with that tool, even where
@@ -1176,6 +1177,12 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     await expect(workspace).toHaveAttribute("data-panel", "expanded");
     await expect(page.locator('[data-tools-overlay="true"] [data-tool="explorer"]')).toBeVisible();
     await expect(toggle).toHaveAttribute("aria-pressed", "true");
+    // Reveal in Explorer from the palette does the same with the panel closed.
+    await page.locator('[data-panel-toggle="on"]').click();
+    await expect(workspace).toHaveAttribute("data-panel", "closed");
+    await paletteCommand(page, "Reveal in Explorer", "command:view:reveal");
+    await expect(workspace).toHaveAttribute("data-panel", "expanded");
+    await expect(page.locator('[data-tools-overlay="true"] [data-tool="explorer"]')).toBeVisible();
     expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {
     stopStack(stack);

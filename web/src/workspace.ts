@@ -87,7 +87,7 @@ export function panelFrame(input: {
   // Before the body is measured nothing is placed, so no terminal fits to a guess.
   if (body <= 0) return { shown: view.panel === "expanded" && content === "views" ? "expanded" : "open", content, width: 0, agentsRight: 0, narrow: false, resizable: false, toolsOverlay: false };
   const need = panelMinimum(content, tools, sizes);
-  const narrow = body > 0 && body < sizes.areaMin + need;
+  const narrow = body < sizes.areaMin + need;
   const open = narrow ? body : content === "tools" ? sizes.toolColumn : panelWidth(view.views_over_share, body, need, sizes.areaMin);
   // Only views expand: with none, the panel stays the tool column's width or
   // its own at the empty state, and the agents stay in reach.

@@ -65,7 +65,7 @@ import {
   type ViewMenuId,
   type ViewWorkspace,
 } from "./viewLayout";
-import { workspaceViewOf, type PanelState } from "./workspace";
+import { workspaceViewOf, type PanelState, type WorkspaceView } from "./workspace";
 
 /** The `device_id` an event carries: none for this machine, which the core takes as the default. */
 function deviceField(device: string): { device_id?: string } {
@@ -267,11 +267,16 @@ export function createActions(dispatch: DispatchFn) {
    * core's rule); nothing is sent when the open panel already shows it, since
    * the overlay closing never stored it hidden.
    */
+  /** A narrow panel's overlay opens for the tool asked for, including with the panel that the same event opens. */
+  const askForTools = (view: WorkspaceView) => {
+    ui().openTools();
+    if (view.panel === "closed") ui().askTools();
+  };
+
   const showTool = (tool: "explorer" | "changes") => {
     const view = workspaceViewOf(rest());
     if (!view) return diagnostic("workspace_view: no Workspace in front");
-    ui().openTools();
-    if (view.panel === "closed") ui().askTools();
+    askForTools(view);
     if (view.panel === "closed" || !(tool === "explorer" ? view.explorer : view.changes)) setWorkspaceView(tool === "explorer" ? { explorer: true } : { changes: true });
   };
 
@@ -631,7 +636,8 @@ export function createActions(dispatch: DispatchFn) {
 
   /** Shows the Explorer with a file's row unfolded and selected; nothing is opened. */
   const revealInExplorer = (path: string) => {
-    ui().openTools();
+    const view = workspaceViewOf(rest());
+    if (view) askForTools(view);
     setWorkspaceView({ explorer: true, reveal: path });
     ui().setExplorerSelection(path);
   };
