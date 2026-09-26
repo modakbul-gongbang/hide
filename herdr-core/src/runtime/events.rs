@@ -833,6 +833,8 @@ pub(super) struct TerminalResizePayload {
 pub(super) enum Event {
     WorkspaceView(WorkspaceViewPayload),
     ViewLayout(ViewLayoutPayload),
+    BrowserOpen(BrowserOpenPayload),
+    BrowserState(BrowserStatePayload),
     Key(KeyPayload),
     Attachment(AttachmentPayload),
     AttachmentReady(AttachmentCompletionPayload),
@@ -1092,6 +1094,8 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pet_shortcut_update" => decode!(PetShortcutPayload, PetShortcutUpdate),
         "workspace_view" => decode!(WorkspaceViewPayload, WorkspaceView),
         "view_layout" => decode!(ViewLayoutPayload, ViewLayout),
+        "browser_open" => decode!(BrowserOpenPayload, BrowserOpen),
+        "browser_state" => decode!(BrowserStatePayload, BrowserState),
         _ => Err(EventValidationError {
             kind: "event.unknown_kind",
             message: format!("Unknown event kind: {kind}"),
@@ -1104,6 +1108,8 @@ impl Runtime {
         match event {
             Event::WorkspaceView(payload) => self.apply_workspace_view(payload),
             Event::ViewLayout(payload) => self.apply_view_layout(payload),
+            Event::BrowserOpen(payload) => self.open_browser(payload),
+            Event::BrowserState(payload) => self.record_browser_state(payload),
             Event::SessionsRefresh(payload) => match payload.workspace_id {
                 Some(workspace_id) => {
                     self.refresh_project_sessions(payload.device_id.as_deref(), &workspace_id)

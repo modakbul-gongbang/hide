@@ -1,11 +1,13 @@
 pub mod attachments;
 pub mod boundary;
+pub mod browser_cli;
 pub mod cli;
 pub mod coexist;
 pub mod core;
 pub mod demand;
 pub mod device_watch;
 pub mod env;
+pub mod file_url;
 pub mod index;
 pub mod opener;
 pub mod server;

@@ -1580,6 +1580,12 @@ fn apply_boundary(boundary: &Boundary, event: &mut Value) -> Option<Value> {
         "path_rename" => explorer_rename(boundary, event, &kind),
         "path_move" => explorer_move(boundary, event, &kind),
         "path_trash" => explorer_trash(boundary, event, &kind),
+        "browser_open" | "browser_state" => browser_url(boundary, event, &kind),
+        "view_layout"
+            if event.pointer("/payload/action").and_then(Value::as_str) == Some("navigate") =>
+        {
+            browser_url(boundary, event, &kind)
+        }
         // The shell's attachment events name files the operator's machine
         // shows it; hided is their only producer for a web client (which
         // stages bytes instead), so a client that sends one is naming an
@@ -1760,6 +1766,28 @@ fn explorer_open(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<V
     rewrite(event, kind, "path", |raw| {
         boundary.resolve_checkout(&workspace_id, &checkout_id, raw)
     })
+}
+
+/// A browser display's address. A `file:` URL names a local file, so its
+/// path has to be under a registered checkout like any path a client sends,
+/// and it is written back as the URL of the path that was checked. Any other
+/// address is the core's to judge.
+fn browser_url(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Value> {
+    let raw = payload_str(event, "url");
+    if !crate::file_url::is_file_url(&raw) {
+        return None;
+    }
+    let Some((path, suffix)) = crate::file_url::file_path(&raw) else {
+        return Some(refused(kind, &raw, Refusal::InvalidPath));
+    };
+    match boundary.resolve_target(&path) {
+        Ok(real) => {
+            let url = crate::file_url::file_url(&real.display().to_string(), suffix);
+            event["payload"]["url"] = Value::String(url);
+            None
+        }
+        Err(refusal) => Some(refused(kind, &path, refusal)),
+    }
 }
 
 /// A save carries a path the client already opened, and the core compares it
@@ -2318,5 +2346,65 @@ mod tests {
             Refusal::InvalidPath.code(),
             "{answer}"
         );
+    }
+
+    /// A browser display's `file:` address is a path like any other: under a
+    /// registered checkout it reaches the core as the URL of the checked
+    /// path; outside one, or naming another host, it never does. A web
+    /// address is not the boundary's to judge, and a layout action other than
+    /// navigate carries no address.
+    #[test]
+    fn a_file_address_reaches_the_core_only_under_a_checkout() {
+        let home = tempfile::tempdir().unwrap();
+        let checkout = home.path().join("check out");
+        std::fs::create_dir(&checkout).unwrap();
+        std::fs::write(checkout.join("보고서.html"), "<p>ok</p>").unwrap();
+        std::fs::write(home.path().join("secret.html"), "no").unwrap();
+        let boundary = Boundary::new(home.path()).unwrap();
+        boundary.set_roots(vec![crate::boundary::Root {
+            workspace_id: "w1".to_owned(),
+            checkout_id: "c1".to_owned(),
+            path: checkout.clone(),
+        }]);
+        // Sent as `localhost` with the file name escaped in lower case; it
+        // reaches the core as the one spelling of the path that was checked.
+        let checked =
+            crate::file_url::file_url(&checkout.join("보고서.html").display().to_string(), "#top");
+        let inside = checked
+            .replacen("file://", "file://localhost", 1)
+            .replace("%EB%B3%B4", "%eb%b3%b4");
+
+        for kind in ["browser_open", "browser_state"] {
+            let mut event = json!({"schema_version": 2, "kind": kind, "payload": {"url": inside}});
+            assert_eq!(apply_boundary(&boundary, &mut event), None, "{kind}");
+            assert_eq!(event["payload"]["url"], checked, "{kind}");
+        }
+        let mut event = json!({"schema_version": 2, "kind": "view_layout", "payload": {"action": "navigate", "display_id": "d1", "url": inside}});
+        assert_eq!(apply_boundary(&boundary, &mut event), None);
+        assert_eq!(event["payload"]["url"], checked);
+
+        let outside =
+            crate::file_url::file_url(&home.path().join("secret.html").display().to_string(), "");
+        for (url, reason) in [
+            (outside.as_str(), Refusal::OutsideCheckout),
+            ("file://server/share/a.html", Refusal::InvalidPath),
+        ] {
+            let mut event =
+                json!({"schema_version": 2, "kind": "browser_open", "payload": {"url": url}});
+            let answer = apply_boundary(&boundary, &mut event).expect("refused");
+            assert_eq!(answer["type"], "path_refused", "{answer}");
+            assert_eq!(answer["payload"]["reason"], reason.code(), "{answer}");
+        }
+        let mut event = json!({"schema_version": 2, "kind": "view_layout", "payload": {"action": "navigate", "display_id": "d1", "url": outside}});
+        assert!(apply_boundary(&boundary, &mut event).is_some());
+
+        for mut event in [
+            json!({"schema_version": 2, "kind": "browser_open", "payload": {"url": "https://example.com/a"}}),
+            json!({"schema_version": 2, "kind": "view_layout", "payload": {"action": "close", "display_id": "d1", "url": outside}}),
+        ] {
+            let before = event.clone();
+            assert_eq!(apply_boundary(&boundary, &mut event), None);
+            assert_eq!(event, before);
+        }
     }
 }

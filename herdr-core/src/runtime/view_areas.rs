@@ -11,6 +11,10 @@
 //! tab no display shows gets one, a dirty document is never a preview, and
 //! the editor's active tab is the active area's active display.
 //!
+//! A browser display (issue 155) shows a page, not a document: it binds to
+//! no tab, so the reconcile never removes or binds one, and its address and
+//! title are what the desktop host reports of the page (`browser_state`).
+//!
 //! Inert without `CoreOptions::workspace_views_path`: the Swift shell keeps
 //! one canvas and one preview slot per checkout.
 
@@ -20,17 +24,24 @@ use super::documents::OpenRequestFields;
 use super::workspace_view::{WorkspaceKey, file_label};
 use super::*;
 use crate::model::{
-    ViewAreaSnapshot, ViewDisplaySnapshot, ViewDisplayState, ViewLayoutSnapshot,
-    ViewLimitsSnapshot, ViewNodeSnapshot, ViewSplitSnapshot,
+    BrowserOpenReceiptSnapshot, ViewAreaSnapshot, ViewDisplaySnapshot, ViewDisplayState,
+    ViewLayoutSnapshot, ViewLimitsSnapshot, ViewNodeSnapshot, ViewSplitSnapshot,
 };
 use crate::view_layout::{
     Display, DisplayKind, Edge, Layout, LayoutError, MAX_SPLIT_DEPTH, MAX_VIEW_AREAS,
-    MAX_VIEW_DISPLAYS, Node,
+    MAX_VIEW_DISPLAYS, Node, browser_address, browser_title, is_file_address,
 };
 
 /// Split request ids remembered per Workspace, so a split sent twice splits
 /// once (engineering principle 11). Runtime only.
 const SPLIT_REQUESTS_KEPT: usize = 32;
+
+/// `browser_open` receipts kept for the requests that named themselves; a
+/// CLI waiting on one reads it within a frame or two of its event.
+const BROWSER_OPEN_RECEIPTS_KEPT: usize = 8;
+
+const UNLOADABLE_ADDRESS: &str = "A page opens from an http, https or file address, or about:blank";
+const FILE_ELSEWHERE: &str = "A file on this Mac cannot open in a Workspace on another device";
 
 /// Where Open to the side looks for an area next to the one in use.
 const BESIDE_ORDER: [Edge; 4] = [Edge::Right, Edge::Left, Edge::Down, Edge::Up];
@@ -53,9 +64,38 @@ pub(super) struct ViewLayoutPayload {
 }
 
 #[derive(Debug, Deserialize)]
-struct ViewWorkspace {
+pub(super) struct ViewWorkspace {
     device_id: String,
     path: String,
+}
+
+/// The payload of `browser_open` (issue 155): show `url` as a page in a View
+/// area of a Workspace, which need not be the one in front: the one named,
+/// else the one the pane `pane_id` works in (`hide browser open` from an
+/// agent's pane), else the one in front. A Workspace already showing `url`
+/// shows that page again, loaded again, rather than a second one.
+#[derive(Debug, Deserialize)]
+pub(super) struct BrowserOpenPayload {
+    url: String,
+    #[serde(default)]
+    workspace: Option<ViewWorkspace>,
+    #[serde(default)]
+    pane_id: Option<String>,
+    /// Names the receipt in `status.browser_opens` the sender waits for.
+    #[serde(default)]
+    request_id: Option<String>,
+}
+
+/// The payload of `browser_state`: what a browser display's page says now,
+/// its address after it navigated and its title, as the desktop host reports
+/// it. It records; it never loads anything.
+#[derive(Debug, Deserialize)]
+pub(super) struct BrowserStatePayload {
+    workspace: ViewWorkspace,
+    display_id: String,
+    url: String,
+    #[serde(default)]
+    title: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -100,6 +140,11 @@ enum ViewLayoutAction {
     Retry {
         display_id: String,
     },
+    /// The operator typed an address into a browser display's toolbar.
+    Navigate {
+        display_id: String,
+        url: String,
+    },
 }
 
 impl ViewLayoutAction {
@@ -113,6 +158,7 @@ impl ViewLayoutAction {
             Self::Close { .. } => "close",
             Self::KeepOpen { .. } => "keep_open",
             Self::Retry { .. } => "retry",
+            Self::Navigate { .. } => "navigate",
         }
     }
 }
@@ -1007,6 +1053,9 @@ impl Runtime {
             ViewLayoutAction::Retry { display_id } => {
                 return self.retry_view_display(&key, &display_id);
             }
+            ViewLayoutAction::Navigate { display_id, url } => {
+                return self.navigate_browser(&key, &display_id, url);
+            }
         };
         match outcome {
             Ok(changed) => changed,
@@ -1015,6 +1064,232 @@ impl Runtime {
                 true
             }
         }
+    }
+
+    /// `browser_open`: a page in a View area of the Workspace the payload
+    /// names (see `BrowserOpenPayload`), in its area in use, and the View
+    /// area brought back if only Agents showed. A refusal says why and
+    /// changes nothing; a request that named itself gets a receipt either way.
+    pub(super) fn open_browser(&mut self, payload: BrowserOpenPayload) -> bool {
+        let BrowserOpenPayload {
+            url,
+            workspace,
+            pane_id,
+            request_id,
+        } = payload;
+        let outcome = self.place_browser(&url, workspace, pane_id.as_deref());
+        if let Err(message) = &outcome {
+            self.set_error("browser.open_refused", message.clone(), false);
+        }
+        if let Some(request_id) = request_id {
+            let receipt = match outcome {
+                Ok(((device_id, path), display_id)) => BrowserOpenReceiptSnapshot {
+                    request_id,
+                    ok: true,
+                    message: None,
+                    device_id: Some(device_id),
+                    path: Some(path),
+                    display_id: Some(display_id),
+                },
+                Err(message) => BrowserOpenReceiptSnapshot {
+                    request_id,
+                    ok: false,
+                    message: Some(message),
+                    device_id: None,
+                    path: None,
+                    display_id: None,
+                },
+            };
+            let receipts = &mut self.snapshot.status.browser_opens;
+            receipts.push(receipt);
+            if receipts.len() > BROWSER_OPEN_RECEIPTS_KEPT {
+                receipts.remove(0);
+            }
+        }
+        true
+    }
+
+    fn place_browser(
+        &mut self,
+        url: &str,
+        workspace: Option<ViewWorkspace>,
+        pane_id: Option<&str>,
+    ) -> Result<(WorkspaceKey, String), String> {
+        if !self.separate_view_areas() {
+            return Err("This shell does not draw View areas".to_owned());
+        }
+        if !browser_address(url) {
+            return Err(UNLOADABLE_ADDRESS.to_owned());
+        }
+        let key = match (workspace, pane_id) {
+            (Some(workspace), _) => {
+                let key = (workspace.device_id, workspace.path);
+                if !self.catalog_has_workspace(&key) {
+                    return Err(format!("{} is not a Workspace hide shows", key.1));
+                }
+                key
+            }
+            (None, Some(pane_id)) => self.pane_workspace_key(pane_id).ok_or_else(|| {
+                format!("Pane {pane_id} is not in a Workspace hide shows on this Mac")
+            })?,
+            (None, None) => self
+                .front_workspace_key()
+                .ok_or_else(|| "No Workspace is in front to open the page in".to_owned())?,
+        };
+        if is_file_address(url) && key.0 != workspace::LOCAL_DEVICE_ID {
+            return Err(FILE_ELSEWHERE.to_owned());
+        }
+        let load = self.next_browser_load();
+        let display_id = self
+            .change_view_layout(&key, |layout, stamp| {
+                let shown = layout
+                    .displays()
+                    .find(|display| {
+                        display.kind == DisplayKind::Browser && display.url.as_deref() == Some(url)
+                    })
+                    .map(|display| display.id.clone());
+                if let Some(display_id) = shown {
+                    layout.focus(&display_id, stamp)?;
+                    if let Some(display) = layout.display_mut(&display_id) {
+                        display.load = load;
+                    }
+                    return Ok((display_id, true));
+                }
+                let area = layout.active_area().id.clone();
+                let display = layout.new_browser_display(url, load);
+                let display_id = display.id.clone();
+                layout.insert(&area, display, stamp)?;
+                Ok((display_id, true))
+            })
+            .map_err(|error| error.message())?;
+        self.apply_area_intent_to(&key, AreaIntent::Views);
+        Ok((key, display_id))
+    }
+
+    /// `view_layout` navigate: the operator's own address in a browser
+    /// display's toolbar, which its page loads.
+    fn navigate_browser(&mut self, key: &WorkspaceKey, display_id: &str, url: String) -> bool {
+        if !browser_address(&url) {
+            self.set_error("browser.navigate_refused", UNLOADABLE_ADDRESS, false);
+            return true;
+        }
+        if is_file_address(&url) && key.0 != workspace::LOCAL_DEVICE_ID {
+            self.set_error("browser.navigate_refused", FILE_ELSEWHERE, false);
+            return true;
+        }
+        let load = self.next_browser_load();
+        let outcome = self.change_view_layout(key, |layout, _| {
+            let display = layout
+                .display_mut(display_id)
+                .filter(|display| display.kind == DisplayKind::Browser)
+                .ok_or_else(|| LayoutError::UnknownDisplay(display_id.to_owned()))?;
+            let changed = display.url.as_deref() != Some(url.as_str());
+            if changed {
+                display.url = Some(url);
+                display.title = None;
+            }
+            display.load = load;
+            Ok(((), changed))
+        });
+        if let Err(error) = outcome {
+            self.set_error(error.kind(), error.message(), false);
+        }
+        true
+    }
+
+    /// `browser_state`: what a browser display's page says now. It applies to
+    /// any Workspace, since a page keeps loading while another is in front,
+    /// and records only: the page is already where it says.
+    pub(super) fn record_browser_state(&mut self, payload: BrowserStatePayload) -> bool {
+        let BrowserStatePayload {
+            workspace,
+            display_id,
+            url,
+            title,
+        } = payload;
+        let key = (workspace.device_id, workspace.path);
+        let file_elsewhere = is_file_address(&url) && key.0 != workspace::LOCAL_DEVICE_ID;
+        if !browser_address(&url) || file_elsewhere {
+            // A page that moved somewhere a display does not hold keeps the
+            // last address it may; the log names only the scheme.
+            let scheme: String = url
+                .split(':')
+                .next()
+                .unwrap_or("")
+                .chars()
+                .take(16)
+                .collect();
+            crate::diagnostic!(serde_json::json!({
+                "component": "view_areas",
+                "kind": "browser.state_refused",
+                "device": key.0,
+                "display": display_id,
+                "scheme": scheme,
+            }));
+            return false;
+        }
+        let title = Some(browser_title(&title)).filter(|title| !title.is_empty());
+        let Some(display) = self
+            .view_layout_of(&key)
+            .and_then(|layout| layout.display(&display_id))
+            .filter(|display| display.kind == DisplayKind::Browser)
+        else {
+            return false;
+        };
+        if display.url.as_deref() == Some(url.as_str()) && display.title == title {
+            return false;
+        }
+        self.change_view_layout(&key, |layout, _| {
+            let display = layout
+                .display_mut(&display_id)
+                .ok_or_else(|| LayoutError::UnknownDisplay(display_id.clone()))?;
+            display.url = Some(url);
+            display.title = title;
+            Ok(((), true))
+        })
+        .is_ok()
+    }
+
+    /// A load stamp later than every one given in this process, and than the
+    /// clock, so a host that outlived a daemon restart still sees a new one
+    /// as newer than any it loaded.
+    fn next_browser_load(&mut self) -> u64 {
+        let now = unix_milliseconds();
+        let Some(store) = self.workspace_views.as_mut() else {
+            return now;
+        };
+        store.browser_load = now.max(store.browser_load + 1);
+        store.browser_load
+    }
+
+    /// The Workspace of a pane on this Mac: the checkout whose tab holds it.
+    fn pane_workspace_key(&self, pane_id: &str) -> Option<WorkspaceKey> {
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find_map(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .find(|checkout| {
+                        checkout
+                            .tabs
+                            .iter()
+                            .any(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
+                    })
+                    .map(|checkout| (workspace.device_id.clone(), checkout.path.clone()))
+            })
+    }
+
+    fn catalog_has_workspace(&self, key: &WorkspaceKey) -> bool {
+        self.catalog_workspaces().any(|workspace| {
+            workspace.device_id == key.0
+                && workspace
+                    .checkouts
+                    .iter()
+                    .any(|checkout| checkout.path == key.1)
+        })
     }
 
     fn split_request_seen(&self, key: &WorkspaceKey, request_id: &str) -> bool {
@@ -1198,7 +1473,11 @@ impl Runtime {
         };
         let areas = layout.area_count();
         let mut targets: Vec<(String, DisplayKind, Option<bool>)> = Vec::new();
-        for display in layout.displays() {
+        // A page has no document to read back; the host loads it once shown.
+        for display in layout
+            .displays()
+            .filter(|display| display.kind != DisplayKind::Browser)
+        {
             let target = (display.path.clone(), display.kind, display.committed);
             if display.tab_id.is_none() && !targets.contains(&target) {
                 targets.push(target);
@@ -1217,6 +1496,7 @@ impl Runtime {
                 continue;
             }
             match kind {
+                DisplayKind::Browser => {}
                 DisplayKind::Diff => {
                     self.insert_diff_tab(
                         &workspace_id,
@@ -1548,6 +1828,11 @@ impl Runtime {
         facts: &DisplayFacts<'_>,
         display: &Display,
     ) -> (ViewDisplayState, Option<String>) {
+        // The host loads a page wherever it is; whether it loaded is the
+        // page's own state, which the host draws.
+        if display.kind == DisplayKind::Browser {
+            return (ViewDisplayState::Open, None);
+        }
         if let Some(tab) = display.tab_id.as_deref().and_then(|id| facts.tabs.get(id)) {
             return match (tab.kind, &tab.unavailable_reason) {
                 (EditorTabKind::Diff, _) => (ViewDisplayState::Open, None),
@@ -1577,7 +1862,9 @@ impl Runtime {
             return (ViewDisplayState::Opening, None);
         }
         let reason = match display.kind {
-            DisplayKind::File => "This view's file is not open; Retry reads it again",
+            DisplayKind::File | DisplayKind::Browser => {
+                "This view's file is not open; Retry reads it again"
+            }
             DisplayKind::Diff => "This view's diff is not open; Retry opens it again",
         };
         (ViewDisplayState::Unavailable, Some(reason.to_owned()))
@@ -1624,6 +1911,7 @@ impl Runtime {
                             tab_id: tab.map(|tab| tab.id.clone()),
                             path: display.path.clone(),
                             label: match (tab, display.kind) {
+                                (_, DisplayKind::Browser) => browser_label(display),
                                 (Some(tab), _) => tab.label.clone(),
                                 (None, DisplayKind::File) => file_label(&display.path),
                                 (None, DisplayKind::Diff) => super::editor::diff_label(
@@ -1636,6 +1924,9 @@ impl Runtime {
                             preview: display.preview,
                             state,
                             reason,
+                            url: display.url.clone(),
+                            title: display.title.clone(),
+                            load: display.load,
                         }
                     })
                     .collect(),
@@ -1649,4 +1940,26 @@ impl Runtime {
             }),
         }
     }
+}
+
+/// A page's name on its tab: its title once it has one, else its host (for
+/// a file, its file name), else its address.
+fn browser_label(display: &Display) -> String {
+    if let Some(title) = display.title.as_deref().filter(|title| !title.is_empty()) {
+        return title.to_owned();
+    }
+    let url = display
+        .url
+        .as_deref()
+        .unwrap_or(crate::view_layout::BLANK_PAGE);
+    if is_file_address(url) {
+        let path = url.split(['?', '#']).next().unwrap_or(url);
+        let name = path.rsplit('/').next().unwrap_or(path);
+        return file_label(&percent_encoding::percent_decode_str(name).decode_utf8_lossy());
+    }
+    url.split_once("://")
+        .map(|(_, rest)| rest.split(['/', '?', '#']).next().unwrap_or(rest))
+        .filter(|host| !host.is_empty())
+        .unwrap_or(url)
+        .to_owned()
 }

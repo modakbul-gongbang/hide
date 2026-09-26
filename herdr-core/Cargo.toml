@@ -20,6 +20,7 @@ hide-session = { path = "../hide-session" }
 base64 = "=0.23.1"
 cap-std = "=4.0.3"
 libc = "=0.2.189"
+percent-encoding = "=2.3.2"
 regress = "=0.12.0"
 regex = "=1.13.1"
 russh = { version = "=0.63.2", default-features = false, features = ["ring", "rsa"] }

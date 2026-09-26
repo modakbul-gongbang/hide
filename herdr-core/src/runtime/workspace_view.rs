@@ -48,6 +48,9 @@ pub(super) struct WorkspaceViewStore {
     pub(super) split_requests: HashMap<WorkspaceKey, VecDeque<String>>,
     /// Editor tabs the display cap keeps off screen, already reported.
     pub(super) unshown: HashSet<String>,
+    /// The last load stamp a browser display was given (`next_browser_load`).
+    /// Runtime only.
+    pub(super) browser_load: u64,
     /// The Workspace the operator last chose, in this process or before it
     /// started: the one the app opens on (D-11); none on a first run.
     resumable: Option<WorkspaceKey>,
@@ -189,6 +192,7 @@ impl WorkspaceViewStore {
                 reconciled: None,
                 derived_active: None,
                 split_requests: HashMap::new(),
+                browser_load: 0,
                 unshown: HashSet::new(),
                 resumable,
                 pending_choice: None,

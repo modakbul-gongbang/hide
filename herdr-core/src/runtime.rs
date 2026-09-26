@@ -27,7 +27,7 @@ pub use snapshot_delta::serialize_snapshot_delta;
 
 use events::*;
 use operations::*;
-use view_areas::ViewLayoutPayload;
+use view_areas::{BrowserOpenPayload, BrowserStatePayload, ViewLayoutPayload};
 use workspace_view::{AreaIntent, WorkspaceViewPayload, WorkspaceViewStore};
 
 use crate::ffi::ChangeNotifier;

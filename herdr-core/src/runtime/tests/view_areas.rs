@@ -1888,3 +1888,310 @@ fn a_late_history_answer_does_not_bring_back_the_row_the_operator_left() {
     assert_eq!(pump.started, vec![row("e.rs")]);
     assert_eq!(runtime.snapshot.changes.selected_path, row("e.rs"));
 }
+
+// Issue 155: a browser display shows a page the desktop host draws. It binds
+// to no document, so the reconcile never takes it away, and its address and
+// title are what the page last said.
+
+fn browser_open(runtime: &mut Runtime, payload: serde_json::Value) -> bool {
+    runtime.dispatch_json(&explorer_event("browser_open", payload))
+}
+
+fn browser_displays(runtime: &mut Runtime) -> Vec<ViewDisplaySnapshot> {
+    areas(&tree(runtime))
+        .into_iter()
+        .flat_map(|(_, _, displays)| displays)
+        .filter(|display| display.kind == crate::view_layout::DisplayKind::Browser)
+        .collect()
+}
+
+fn receipt(runtime: &Runtime, request_id: &str) -> crate::model::BrowserOpenReceiptSnapshot {
+    runtime
+        .snapshot
+        .status
+        .browser_opens
+        .iter()
+        .find(|receipt| receipt.request_id == request_id)
+        .unwrap_or_else(|| panic!("a receipt for {request_id}"))
+        .clone()
+}
+
+/// A Herdr session with one tab in the checkout, and the id of its pane.
+fn with_pane(runtime: &mut Runtime, directory: &Path) -> String {
+    let tabs = ["w-order:t1"];
+    assert!(runtime.ingest_session(Ok(tab_order_payload(
+        &directory.to_string_lossy(),
+        &tabs,
+        &tabs,
+        "w-order:t1"
+    ))));
+    runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.checkouts.iter())
+        .flat_map(|checkout| checkout.tabs.iter())
+        .flat_map(|tab| tab.panes.iter())
+        .next()
+        .expect("the session's pane")
+        .id
+        .clone()
+}
+
+fn last_error_kind(runtime: &Runtime) -> Option<&str> {
+    runtime
+        .snapshot
+        .status
+        .last_error
+        .as_ref()
+        .map(|error| error.kind.as_str())
+}
+
+/// A page opens in the Workspace of the pane that asked, in its area in
+/// use, and brings the View area back; the same address again shows that
+/// page and loads it again rather than opening a second one. A request that
+/// names itself reads its answer in `status.browser_opens`.
+#[test]
+fn a_page_opens_in_the_workspace_of_the_pane_that_asked_and_once_per_address() {
+    let (mut runtime, _, directory) = views_runtime("browser-open");
+    layout(&mut runtime, serde_json::json!({"mode": "agents"}));
+    let pane = with_pane(&mut runtime, &directory);
+    assert!(browser_open(
+        &mut runtime,
+        serde_json::json!({"url": "https://a.test/docs?x#y", "pane_id": pane, "request_id": "r1"}),
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    let opened = receipt(&runtime, "r1");
+    let [page] = browser_displays(&mut runtime).try_into().expect("one page");
+    let checkout = directory.to_string_lossy().into_owned();
+    assert_eq!(
+        (
+            opened.ok,
+            opened.device_id.as_deref(),
+            opened.path.as_deref(),
+            opened.display_id.as_deref()
+        ),
+        (
+            true,
+            Some("local"),
+            Some(checkout.as_str()),
+            Some(page.id.as_str())
+        )
+    );
+    assert_eq!(
+        (
+            page.label.as_str(),
+            page.path.as_str(),
+            page.url.as_deref(),
+            page.state,
+            page.tab_id.as_deref()
+        ),
+        (
+            "a.test",
+            "",
+            Some("https://a.test/docs?x#y"),
+            ViewDisplayState::Open,
+            None
+        )
+    );
+    assert!(page.load > 0);
+    assert_eq!(
+        runtime.snapshot.workspace_view.as_ref().unwrap().mode,
+        crate::workspace_views::ViewMode::Together
+    );
+
+    // The front Workspace, named by nothing, shows the page again.
+    assert!(browser_open(
+        &mut runtime,
+        serde_json::json!({"url": "https://a.test/docs?x#y"})
+    ));
+    let [again] = browser_displays(&mut runtime)
+        .try_into()
+        .expect("still one page");
+    assert_eq!(again.id, page.id);
+    assert!(again.load > page.load, "loaded again");
+
+    // Refusals change nothing and say why.
+    for (request, mut payload) in [
+        ("r2", serde_json::json!({"url": "javascript:alert(1)"})),
+        (
+            "r3",
+            serde_json::json!({"url": "https://b.test/", "pane_id": "nowhere:p9"}),
+        ),
+        (
+            "r4",
+            serde_json::json!({"url": "https://b.test/", "workspace": {"device_id": "local", "path": "/not/a/checkout"}}),
+        ),
+        (
+            "r5",
+            serde_json::json!({"url": "file:///etc/hosts", "workspace": {"device_id": "local", "path": checkout}}),
+        ),
+    ] {
+        payload["request_id"] = serde_json::json!(request);
+        browser_open(&mut runtime, payload);
+        let refused = receipt(&runtime, request);
+        if request == "r5" {
+            // A file of this Mac in a Workspace on this Mac opens: the
+            // daemon's boundary, not the core, keeps it inside a checkout.
+            assert!(refused.ok, "{refused:?}");
+            continue;
+        }
+        assert!(
+            !refused.ok && refused.message.is_some(),
+            "{request}: {refused:?}"
+        );
+        assert_eq!(last_error_kind(&runtime), Some("browser.open_refused"));
+        assert_eq!(browser_displays(&mut runtime).len(), 1, "{request}");
+    }
+
+    // Receipts are bounded: the oldest go first.
+    for n in 0..10 {
+        browser_open(
+            &mut runtime,
+            serde_json::json!({"url": "https://a.test/docs?x#y", "request_id": format!("again-{n}")}),
+        );
+    }
+    let kept: Vec<&str> = runtime
+        .snapshot
+        .status
+        .browser_opens
+        .iter()
+        .map(|receipt| receipt.request_id.as_str())
+        .collect();
+    assert_eq!(kept.len(), 8);
+    assert_eq!((kept[0], kept[7]), ("again-2", "again-9"));
+}
+
+/// The page's own navigation is recorded, not loaded; the toolbar's address
+/// is loaded. Neither touches a document display.
+#[test]
+fn a_page_records_where_it_went_and_the_toolbar_loads_what_was_typed() {
+    let (mut runtime, checkout_id, directory) = views_runtime("browser-state");
+    files(&directory, &["a.md"]);
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("a.md"),
+        false,
+        false,
+    );
+    browser_open(&mut runtime, serde_json::json!({"url": "https://a.test/"}));
+    let [page] = browser_displays(&mut runtime).try_into().expect("one page");
+    let workspace = serde_json::json!({"device_id": "local", "path": directory.to_string_lossy()});
+
+    assert!(runtime.dispatch_json(&explorer_event(
+        "browser_state",
+        serde_json::json!({"workspace": workspace, "display_id": page.id, "url": "https://a.test/next", "title": " Next\tpage "}),
+    )));
+    let [moved] = browser_displays(&mut runtime).try_into().expect("one page");
+    assert_eq!(
+        (
+            moved.url.as_deref(),
+            moved.title.as_deref(),
+            moved.label.as_str(),
+            moved.load
+        ),
+        (
+            Some("https://a.test/next"),
+            Some("Next page"),
+            "Next page",
+            page.load
+        )
+    );
+    // The same report again changes nothing; one the page may not hold is dropped.
+    assert!(!runtime.dispatch_json(&explorer_event(
+        "browser_state",
+        serde_json::json!({"workspace": workspace, "display_id": page.id, "url": "https://a.test/next", "title": "Next page"}),
+    )));
+    assert!(!runtime.dispatch_json(&explorer_event(
+        "browser_state",
+        serde_json::json!({"workspace": workspace, "display_id": page.id, "url": "chrome://settings", "title": ""}),
+    )));
+
+    assert!(act(
+        &mut runtime,
+        serde_json::json!({"action": "navigate", "display_id": page.id, "url": "http://localhost:3000/"}),
+    ));
+    let [typed] = browser_displays(&mut runtime).try_into().expect("one page");
+    assert_eq!(
+        (
+            typed.url.as_deref(),
+            typed.title.as_deref(),
+            typed.label.as_str()
+        ),
+        (Some("http://localhost:3000/"), None, "localhost:3000")
+    );
+    assert!(typed.load > moved.load);
+
+    let file = display(&mut runtime, 0, "a.md");
+    act(
+        &mut runtime,
+        serde_json::json!({"action": "navigate", "display_id": file, "url": "https://a.test/"}),
+    );
+    assert_eq!(
+        last_error_kind(&runtime),
+        Some("view_layout.unknown_display")
+    );
+    assert_eq!(labels(&mut runtime), vec![vec!["a.md", "localhost:3000"]]);
+}
+
+/// A page is part of the tree the file keeps: a restart shows it again at
+/// its last address with nothing to read back, the reconcile never takes it
+/// for a closed document, and Close removes it like any view.
+#[test]
+fn a_page_survives_a_restart_and_closes_like_any_view() {
+    let (runtime, checkout_id, directory) = strip_checkout("browser-restart");
+    let state = views_path("browser-restart");
+    let mut runtime = with_views(runtime, &state);
+    files(&directory, &["a.md", "report.html"]);
+    let report = format!("file://{}", directory.join("report.html").to_string_lossy());
+    browser_open(&mut runtime, serde_json::json!({"url": report}));
+    open(
+        &mut runtime,
+        &checkout_id,
+        &directory.join("a.md"),
+        false,
+        false,
+    );
+    let [page] = browser_displays(&mut runtime).try_into().expect("one page");
+    assert_eq!(page.label, "report.html");
+    let workspace = serde_json::json!({"device_id": "local", "path": directory.to_string_lossy()});
+    runtime.dispatch_json(&explorer_event(
+        "browser_state",
+        serde_json::json!({"workspace": workspace, "display_id": page.id, "url": report, "title": "Report"}),
+    ));
+    drop(runtime);
+
+    let (restarted, _) = tab_order_runtime(&directory.to_string_lossy());
+    let mut restarted = with_views(restarted, &state);
+    assert_eq!(labels(&mut restarted), vec![vec!["Report", "a.md"]]);
+    let [back] = browser_displays(&mut restarted)
+        .try_into()
+        .expect("one page");
+    assert_eq!(
+        (back.id.as_str(), back.url.as_deref(), back.load, back.state),
+        (
+            page.id.as_str(),
+            Some(report.as_str()),
+            0,
+            ViewDisplayState::Open
+        )
+    );
+    assert!(
+        !restarted
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .any(|tab| tab.path.is_empty()),
+        "a page reads no document back"
+    );
+
+    assert!(act(
+        &mut restarted,
+        serde_json::json!({"action": "close", "display_id": back.id}),
+    ));
+    assert!(browser_displays(&mut restarted).is_empty());
+    assert_eq!(labels(&mut restarted), vec![vec!["a.md"]]);
+}

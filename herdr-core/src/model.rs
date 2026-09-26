@@ -231,6 +231,20 @@ pub struct ViewDisplaySnapshot {
     pub state: ViewDisplayState,
     /// Why a `waiting` or `unavailable` display shows no document.
     pub reason: Option<String>,
+    /// A browser display's address and its page's title (issue 155); absent
+    /// for a file or a diff, and the title until the page reports one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// A browser display's load stamp: a larger one than the host last
+    /// loaded asks it to load `url` again. Zero for a file or a diff.
+    #[serde(skip_serializing_if = "load_unset")]
+    pub load: u64,
+}
+
+fn load_unset(load: &u64) -> bool {
+    *load == 0
 }
 
 /// `waiting` while its Workspace's root cannot be read yet (a device helper
@@ -2539,6 +2553,21 @@ pub struct StatusSnapshot {
     /// this receipt, so a relationship control never mistakes another pane's
     /// error or an older focused layout for its own answer.
     pub pane_focus_request: Option<PaneFocusRequestSnapshot>,
+    /// The answers to the latest `browser_open` requests that named
+    /// themselves, oldest first and bounded, so a `hide browser open` waiting
+    /// on one reads its own (issue 155).
+    pub browser_opens: Vec<BrowserOpenReceiptSnapshot>,
+}
+
+/// One `browser_open` request's outcome: where the page opened, or why not.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct BrowserOpenReceiptSnapshot {
+    pub request_id: String,
+    pub ok: bool,
+    pub message: Option<String>,
+    pub device_id: Option<String>,
+    pub path: Option<String>,
+    pub display_id: Option<String>,
 }
 
 /// One explicitly correlated pane-focus request and its core-owned outcome.
@@ -2908,6 +2937,7 @@ impl Snapshot {
                 last_error: None,
                 async_operations: Vec::new(),
                 pane_focus_request: None,
+                browser_opens: Vec::new(),
             },
             pet: PetSnapshot::initial(),
             recent_closed: RecentClosedSnapshot::default(),
