@@ -2,6 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { RefreshCwIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
+import { browserOpenUnavailable, isHtmlFile } from "./browserViews";
 import { EntryPointMenu, type MenuEntry } from "./components/entry-menu";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
@@ -486,6 +487,10 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
             setSelection(path);
             actions.openFileBeside(path);
           }}
+          onOpenBrowser={(path) => {
+            setMenu(null);
+            actions.openInBrowser(path);
+          }}
           onNewFile={beginCreate}
           onRename={beginRename}
           onTrash={requestTrash}
@@ -550,13 +555,14 @@ function DraftRowView({
   );
 }
 
-type ExplorerMenuId = "new-file" | "new-folder" | "open-beside" | "rename" | "trash";
+type ExplorerMenuId = "new-file" | "new-folder" | "open-beside" | "open-browser" | "rename" | "trash";
 
 function ExplorerContextMenu({
   menu,
   row,
   onClose,
   onOpenBeside,
+  onOpenBrowser,
   onNewFile,
   onRename,
   onTrash,
@@ -566,6 +572,8 @@ function ExplorerContextMenu({
   onClose: () => void;
   /** A second, pinned display of the file beside the active View area (S7 B4). */
   onOpenBeside: (path: string) => void;
+  /** An HTML file as a page in a browser display (issue 155). */
+  onOpenBrowser: (path: string) => void;
   onNewFile: (parent: string, kind: "file" | "folder") => void;
   onRename: (row: ExplorerRow) => void;
   onTrash: (row: ExplorerRow) => void;
@@ -578,6 +586,7 @@ function ExplorerContextMenu({
     items.push({ id: "new-folder", label: "New Folder", unavailable: null });
   } else if (row) {
     items.push({ id: "open-beside", label: "Open to the side", unavailable: besideReason });
+    if (isHtmlFile(row.path)) items.push({ id: "open-browser", label: "Open in Browser", unavailable: browserOpenUnavailable(explorerContext(useShellStore.getState().rest).device) });
   }
   if (row) items.push({ id: "rename", label: "Rename", unavailable: null });
   if (row) items.push({ id: "trash", label: "Move to Trash", unavailable: null, separated: true, destructive: true });
@@ -592,6 +601,7 @@ function ExplorerContextMenu({
         if (id === "new-file") onNewFile(menu.path, "file");
         else if (id === "new-folder") onNewFile(menu.path, "folder");
         else if (row && id === "open-beside") onOpenBeside(row.path);
+        else if (row && id === "open-browser") onOpenBrowser(row.path);
         else if (row && id === "rename") onRename(row);
         else if (row && id === "trash") onTrash(row);
       }}

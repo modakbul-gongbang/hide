@@ -36,6 +36,7 @@ import {
   type EditorTabSnapshot,
   type Tab,
 } from "./snapshot";
+import { fileUrl } from "./browserViews";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
@@ -359,6 +360,12 @@ export function createActions(dispatch: DispatchFn) {
     return view?.layout ? { workspace: { device_id: view.device_id, path: view.path }, layout: view.layout } : null;
   };
 
+  /** The Workspace in front, whose View areas an open lands in. */
+  const frontViewWorkspace = (): ViewWorkspace | null => {
+    const view = workspaceViewOf(rest());
+    return view ? { device_id: view.device_id, path: view.path } : null;
+  };
+
   /** The frame an action acts on, or null with a diagnostic naming the action. */
   const frameFor = (action: string): ViewFrame | null => {
     const frame = frameNow();
@@ -642,7 +649,10 @@ export function createActions(dispatch: DispatchFn) {
     if (!frame || !located) return diagnostic(`view menu ${id}: ${displayId} is not open`);
     const edge = menuEdge(id);
     if (id === "keep_open") return keepViewOpen(displayId);
-    if (id === "copy_path") return void navigator.clipboard?.writeText(located.display.path).catch(() => undefined);
+    if (id === "copy_path") {
+      const text = located.display.kind === "browser" ? (located.display.url ?? "") : located.display.path;
+      return void navigator.clipboard?.writeText(text).catch(() => undefined);
+    }
     if (id === "reveal") return revealInExplorer(located.display.path);
     if (id === "close_view") return closeView(displayId);
     if (!edge) return;
@@ -1224,6 +1234,41 @@ export function createActions(dispatch: DispatchFn) {
     /** "Open to the side" (S7 B4): a second, pinned display in the next area. */
     openFileBeside(path: string) {
       openInFront(path, false, "file_open", true);
+    },
+
+    /**
+     * A browser display of `url` in a Workspace (issue 155): the front one,
+     * or the one a page that asked for a new window belongs to. An address
+     * the Workspace already shows is focused and loaded again.
+     */
+    openBrowser(url: string, workspace?: ViewWorkspace) {
+      const target = workspace ?? frontViewWorkspace();
+      if (!target) return diagnostic("browser_open: no Workspace in front");
+      ui().setWorkingRegion("views");
+      dispatch({ schema_version: 2, kind: "browser_open", payload: { url, workspace: { device_id: target.device_id, path: target.path } } });
+    },
+
+    /** Explorer "Open in Browser" on an HTML file of this machine's checkout. */
+    openInBrowser(path: string) {
+      const target = frontViewWorkspace();
+      if (!target) return diagnostic("browser_open: no Workspace in front");
+      ui().setWorkingRegion("views");
+      dispatch({ schema_version: 2, kind: "browser_open", payload: { url: fileUrl(path), workspace: { device_id: target.device_id, path: target.path } } });
+    },
+
+    /** The address field: the display loads what was typed. */
+    navigateBrowser(displayId: string, url: string) {
+      const frame = frameFor("navigate");
+      if (frame) viewLayout(frame, { action: "navigate", display_id: displayId, url });
+    },
+
+    /** What a page says (its address and title), recorded so the tab and a relaunch show it. */
+    reportBrowserState(workspace: ViewWorkspace, displayId: string, url: string, title: string) {
+      dispatch({
+        schema_version: 2,
+        kind: "browser_state",
+        payload: { workspace: { device_id: workspace.device_id, path: workspace.path }, display_id: displayId, url, title },
+      });
     },
 
     /** ⌘⇧K, a double click or Keep open: a preview display becomes an ordinary one. */

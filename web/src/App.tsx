@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react";
 import { createActions, type Actions } from "./actions";
 import { identity, moveBuffer, tabBufferKey, type BufferKey } from "./buffers";
+import { BrowserHost } from "./BrowserDisplay";
 import { DraftRecoveryLine, refreshRecoveryDrafts } from "./DraftRecovery";
 import { pruneDrafts, settleDraft } from "./editor/draft";
 import { ConnectionBadge } from "./badge";
@@ -210,6 +211,7 @@ export function App() {
         <ShortcutSheetGate actions={actions} />
         <SettingsGate actions={actions} />
         <WorkspaceDialogs actions={actions} />
+        <BrowserHost actions={actions} />
       </div>
     </TooltipProvider>
   );

@@ -12,9 +12,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { app, BrowserWindow, screen, session, shell } from "electron";
+import { app, BrowserWindow, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import type { CommandId } from "../../../web/src/shortcuts";
 import { COMMAND_CHANNEL } from "../channel";
+import { BrowserViews } from "./browser";
 import {
   LOGIN_PATH_ARGS,
   parseConnect,
@@ -78,6 +79,8 @@ export class DesktopHost {
   private loginPath: string | null | undefined = undefined;
   private watch: NodeJS.Timeout | null = null;
   private quitting = false;
+  /** The pages of browser displays; made once the app is ready, since a session needs it. */
+  private browsers: BrowserViews | null = null;
 
   constructor(
     private readonly env: DesktopEnv,
@@ -88,6 +91,7 @@ export class DesktopHost {
 
   start(): void {
     this.guardSession();
+    this.browsers = new BrowserViews(this.log, (event) => this.fromShell(event));
     this.openWindow();
     void this.discover("launch");
   }
@@ -114,6 +118,9 @@ export class DesktopHost {
   /** An app-menu click, delivered to the shell only while it is loaded. */
   sendCommand(id: CommandId): void {
     if (!this.window || (this.state.kind !== "attached" && this.state.kind !== "lost")) return;
+    // A chord the page of a browser display left unhandled reaches the menu;
+    // the command's surface (the palette, a dialog) needs the keyboard.
+    if (this.browsers?.hasFocus()) this.window.webContents.focus();
     this.window.webContents.send(COMMAND_CHANNEL, id);
   }
 
@@ -298,6 +305,7 @@ export class DesktopHost {
       },
     });
     this.window = window;
+    this.browsers?.attach(window);
     window.once("ready-to-show", () => window.show());
     window.on("close", () => {
       try {
@@ -322,6 +330,12 @@ export class DesktopHost {
 
   private daemonOrigin(): string | null {
     return this.state.kind === "attached" || this.state.kind === "lost" ? this.state.origin : null;
+  }
+
+  /** An IPC message from the shell the daemon serves in this window's own frame; the status page and every browser page are refused. */
+  private fromShell(event: IpcMainEvent | IpcMainInvokeEvent): boolean {
+    const frame = event.senderFrame;
+    return this.window !== null && event.sender === this.window.webContents && frame !== null && frame.parent === null && this.isDaemonUrl(frame.url);
   }
 
   private isDaemonUrl(url: string): boolean {
