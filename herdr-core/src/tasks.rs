@@ -30,6 +30,16 @@ pub struct TaskSnapshot {
     pub url: Option<String>,
     pub title: String,
     pub open: bool,
+    /// The open tasks this one waits on, which may belong to another project
+    /// (PRD task-agents-views D-09, D-10); the source records them.
+    pub blocked_by: Vec<TaskRefSnapshot>,
+}
+
+/// Another task, named by its key and by the id this task's source shows for it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TaskRefSnapshot {
+    pub key: String,
+    pub id: Option<String>,
 }
 
 /// Where a project's tasks come from and how the last read went.
@@ -102,7 +112,13 @@ pub fn github_tasks(
         failure: status
             .stale
             .then(|| status.unavailable_reason.clone())
-            .flatten(),
+            .flatten()
+            .or_else(|| {
+                issues
+                    .dependencies_failure
+                    .as_ref()
+                    .map(|reason| format!("issue dependencies: {reason}"))
+            }),
         last_read_at_unix_ms: status.last_success_at_unix_ms,
     };
     ProjectTasksSnapshot {
@@ -117,20 +133,32 @@ pub fn github_tasks(
     }
 }
 
-fn github_task(issue: &IssueSnapshot, repository: Option<&str>) -> TaskSnapshot {
-    let reference = &issue.reference;
-    let id = if Some(reference.repository.as_str()) == repository {
+/// `#170` in its own repository, `owner/repo#170` from another.
+fn github_id(reference: &IssueReference, repository: Option<&str>) -> String {
+    if Some(reference.repository.as_str()) == repository {
         format!("#{}", reference.number)
     } else {
         reference.token()
-    };
+    }
+}
+
+fn github_task(issue: &IssueSnapshot, repository: Option<&str>) -> TaskSnapshot {
+    let reference = &issue.reference;
     TaskSnapshot {
         key: github_key(reference),
         source: GITHUB.into(),
-        id: Some(id),
+        id: Some(github_id(reference, repository)),
         url: Some(issue.url.clone()),
         title: issue.title.clone(),
         open: issue.state == "OPEN",
+        blocked_by: issue
+            .blocked_by
+            .iter()
+            .map(|blocker| TaskRefSnapshot {
+                key: github_key(blocker),
+                id: Some(github_id(blocker, repository)),
+            })
+            .collect(),
     }
 }
 
@@ -149,6 +177,7 @@ mod tests {
             state: state.into(),
             project_status: None,
             updated_at_unix_ms: None,
+            blocked_by: Vec::new(),
         }
     }
 
@@ -160,6 +189,7 @@ mod tests {
                 issue("acme/other", 12, "CLOSED"),
             ],
             overflow: true,
+            dependencies_failure: None,
         }
     }
 
@@ -184,6 +214,47 @@ mod tests {
         // Another repository's issue keeps its repository in the id.
         assert_eq!(tasks.tasks[1].id.as_deref(), Some("acme/other#12"));
         assert!(!tasks.tasks[1].open);
+    }
+
+    #[test]
+    fn a_blocker_is_named_by_key_and_by_the_id_this_repository_shows() {
+        let mut issues = answered();
+        issues.issues[0].blocked_by = vec![
+            IssueReference {
+                repository: "acme/app".into(),
+                number: 169,
+            },
+            IssueReference {
+                repository: "acme/other".into(),
+                number: 12,
+            },
+        ];
+        let tasks = github_tasks(true, &issues, &healthy());
+        assert_eq!(
+            tasks.tasks[0].blocked_by,
+            vec![
+                TaskRefSnapshot {
+                    key: "github:acme/app#169".into(),
+                    id: Some("#169".into())
+                },
+                TaskRefSnapshot {
+                    key: "github:acme/other#12".into(),
+                    id: Some("acme/other#12".into())
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn unread_dependencies_are_a_source_failure_beside_current_tasks() {
+        let mut issues = answered();
+        issues.dependencies_failure = Some("Field 'blockedBy' doesn't exist".into());
+        let tasks = github_tasks(true, &issues, &healthy());
+        assert_eq!(tasks.tasks.len(), 2);
+        assert_eq!(
+            tasks.source.and_then(|source| source.failure).as_deref(),
+            Some("issue dependencies: Field 'blockedBy' doesn't exist")
+        );
     }
 
     #[test]

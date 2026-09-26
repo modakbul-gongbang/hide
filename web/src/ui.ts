@@ -45,6 +45,13 @@ export type Screen = { kind: "main" } | { kind: "overview"; projectId: string } 
  */
 export type ProjectView = "tasks" | "agents" | "sessions" | "projects";
 
+/**
+ * How the Tasks view draws its tasks: the stage columns, or the tasks that
+ * wait on one another laid out left to right (PRD task-agents-views D-02).
+ * Like the view it belongs to the page, so another scope keeps it (B9).
+ */
+export type TasksMode = "board" | "dependencies";
+
 /** The view a scope draws: the page's own when the scope has it, else the scope's first. */
 export function scopeView(view: ProjectView, views: readonly ProjectView[]): ProjectView {
   return views.includes(view) ? view : (views[0] ?? view);
@@ -110,6 +117,7 @@ export type PendingTrash = {
 type UiStore = {
   screen: Screen | null;
   projectView: ProjectView;
+  tasksMode: TasksMode;
   /** The focus asked for by a chip, a Return or a relationship Open, until another replaces it (S6 B15, B16). */
   relation: Relation | null;
   sidebarMode: SidebarMode;
@@ -168,6 +176,7 @@ type UiStore = {
   escapeLayers: (() => void)[];
   setScreen: (screen: Screen) => void;
   setProjectView: (view: ProjectView) => void;
+  setTasksMode: (mode: TasksMode) => void;
   setRelation: (relation: Relation | null) => void;
   setSidebarMode: (mode: SidebarMode) => void;
   toggleSidebarMode: () => void;
@@ -202,6 +211,7 @@ type UiStore = {
 export const useUiStore = create<UiStore>((set, get) => ({
   screen: null,
   projectView: "tasks",
+  tasksMode: "board",
   relation: null,
   sidebarMode: "agents",
   explorerSelection: null,
@@ -228,6 +238,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   // answer does not pull the screen away from where the operator went.
   setScreen: (screen) => set({ screen, opening: null }),
   setProjectView: (projectView) => set({ projectView }),
+  setTasksMode: (tasksMode) => set({ tasksMode }),
   setRelation: (relation) => set({ relation }),
   setSidebarMode: (sidebarMode) => set({ sidebarMode }),
   toggleSidebarMode: () => {

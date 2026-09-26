@@ -31123,6 +31123,10 @@
     "--size-status-mark": {
       "type": "number",
       "value": 7
+    },
+    "--home-dependency-gap": {
+      "type": "number",
+      "value": 96
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4",

@@ -12,6 +12,7 @@ fn issue(number: u32) -> IssueSnapshot {
         state: "OPEN".into(),
         project_status: None,
         updated_at_unix_ms: Some(1),
+        blocked_by: Vec::new(),
     }
 }
 fn issue_runtime() -> Runtime {
@@ -26,6 +27,7 @@ fn issue_runtime() -> Runtime {
         repository: Some("acme/project".into()),
         issues: (1..=4).map(issue).collect(),
         overflow: false,
+        dependencies_failure: None,
     };
     runtime.snapshot.navigator.workspaces = vec![workspace];
     runtime
@@ -269,5 +271,71 @@ fn a_linked_checkout_names_its_task_in_the_projects_task_list() {
     assert!(
         !runtime.sync_tasks(),
         "an unchanged projection publishes nothing"
+    );
+}
+
+#[test]
+fn a_pass_that_cannot_read_dependencies_keeps_the_blockers_read_before() {
+    use crate::model::{GithubProjectSnapshot, GithubSnapshot, GithubStatusSnapshot};
+    let mut runtime = issue_runtime();
+    let answer = |blocked_by: Vec<IssueReference>, failure: Option<&str>| {
+        let mut blocked = issue(2);
+        blocked.blocked_by = blocked_by;
+        GithubSnapshot {
+            projects: vec![GithubProjectSnapshot {
+                issues: ProjectIssuesSnapshot {
+                    repository: Some("acme/project".into()),
+                    issues: vec![issue(1), blocked],
+                    overflow: false,
+                    dependencies_failure: failure.map(str::to_owned),
+                },
+                root_path: "/repo".into(),
+                status: GithubStatusSnapshot {
+                    available: true,
+                    last_success_at_unix_ms: Some(1),
+                    ..Default::default()
+                },
+                pull_requests: Vec::new(),
+                pull_requests_read: true,
+                issues_read: true,
+            }],
+        }
+    };
+    let blocker = IssueReference {
+        repository: "acme/project".into(),
+        number: 1,
+    };
+    assert!(runtime.ingest_github(answer(vec![blocker.clone()], None)));
+    let blockers = |runtime: &Runtime| {
+        runtime.snapshot.navigator.workspaces[0]
+            .tasks
+            .tasks
+            .iter()
+            .find(|task| task.key == "github:acme/project#2")
+            .map(|task| {
+                task.blocked_by
+                    .iter()
+                    .map(|b| b.key.clone())
+                    .collect::<Vec<_>>()
+            })
+    };
+    assert_eq!(
+        blockers(&runtime),
+        Some(vec!["github:acme/project#1".to_owned()])
+    );
+    runtime.ingest_github(answer(Vec::new(), Some("rate limited")));
+    assert_eq!(
+        blockers(&runtime),
+        Some(vec!["github:acme/project#1".to_owned()]),
+        "the failed pass keeps the earlier blockers"
+    );
+    let source = runtime.snapshot.navigator.workspaces[0]
+        .tasks
+        .source
+        .clone()
+        .unwrap();
+    assert_eq!(
+        source.failure.as_deref(),
+        Some("issue dependencies: rate limited")
     );
 }

@@ -1,5 +1,5 @@
-import { CheckIcon, ChevronDownIcon, ChevronRightIcon, CircleDotIcon, CircleHelpIcon, FileTextIcon, GitPullRequestIcon, InboxIcon, Link2Icon, LinkIcon, PlugIcon, PlusIcon, ServerIcon, XIcon } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { ArrowRightIcon, CheckIcon, ChevronDownIcon, ChevronRightIcon, CircleDotIcon, CircleHelpIcon, FileTextIcon, GitPullRequestIcon, InboxIcon, Link2Icon, LinkIcon, LockIcon, PlugIcon, PlusIcon, ServerIcon, XIcon } from "lucide-react";
+import { useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { lineTone, markTone, rowAccessibleName, rowLine } from "./agentRow";
@@ -9,14 +9,17 @@ import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover";
+import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
 import { Hint } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
-import { AGENT_COLUMNS, STAGES, agentColumnCards, stageCards, type AgentCard, type AgentsBoard, type PrChip, type TaskCard, type TasksBoard } from "./projectBoard";
+import { AGENT_COLUMNS, STAGES, agentColumnCards, buildDependencies, stageCards, type AgentCard, type AgentsBoard, type BoardScope, type DependencyGraph, type PrChip, type TaskCard, type TasksBoard, type Unconnected } from "./projectBoard";
 import type { AgentRow, Task } from "./snapshot";
+import { useUiStore, type TasksMode } from "./ui";
 
 // The Tasks and Agents boards (PRD task-agents-views), drawn the same for a
-// Project and for All projects: `buildTasks` and `buildAgents` decide every
-// card, and this file only draws them and routes the clicks (D-08). A card's
+// Project and for All projects: `buildTasks`, `buildDependencies` and
+// `buildAgents` decide every card, and this file only draws them and routes
+// the clicks (D-08). A card's
 // head opens its checkout, an agent row its pane, the id its source and the
 // PR chip its pull request.
 
@@ -72,20 +75,153 @@ export function TasksView({
           })}
         </div>
       ) : null}
-      {board.unconnected.length > 0 ? (
-        <div className="flex shrink-0 flex-col gap-sm px-lg pb-lg" data-overview-unconnected="true">
-          {board.unconnected.map((value) => (
-            <section key={value.place.projectId} className="flex flex-col gap-xs rounded-md border border-border bg-card p-sm" aria-label={`${value.place.projectLabel} · 태스크 출처 연결 안 됨`} data-unconnected-project={value.place.projectId}>
-              <h2 className="flex items-center gap-xs text-body font-semibold text-foreground">
-                <PlugIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />
-                {value.place.projectLabel} · 태스크 출처 연결 안 됨
-              </h2>
+      <UnconnectedCells cells={board.unconnected} mode="board" />
+    </div>
+  );
+}
+
+/**
+ * All projects' Projects with agents and no task source, one cell each under
+ * the board (D-10). Dependencies has no task of theirs to draw and says so.
+ */
+function UnconnectedCells({ cells, mode }: { cells: Unconnected[]; mode: TasksMode }) {
+  if (cells.length === 0) return null;
+  return (
+    <div className="flex shrink-0 flex-col gap-sm px-lg pb-lg" data-overview-unconnected="true">
+      {cells.map((value) => (
+        <section key={value.place.projectId} className="flex flex-col gap-xs rounded-md border border-border bg-card p-sm" aria-label={`${value.place.projectLabel} · 태스크 출처 연결 안 됨`} data-unconnected-project={value.place.projectId}>
+          <h2 className="flex items-center gap-xs text-body font-semibold text-foreground">
+            <PlugIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />
+            {value.place.projectLabel} · 태스크 출처 연결 안 됨
+          </h2>
+          {mode === "board" ? (
+            <>
               <p className="text-caption text-muted-foreground">{value.agents}개 에이전트가 작업 중이지만 이 프로젝트에는 태스크 출처가 없음</p>
               <ConnectSource reason={value.reason} />
-            </section>
-          ))}
+            </>
+          ) : (
+            <p className="text-caption text-muted-foreground">의존 관계를 그릴 태스크가 없음</p>
+          )}
+        </section>
+      ))}
+    </div>
+  );
+}
+
+/** `Board | Dependencies` on the right of the tab row, a mode of the Tasks view rather than a tab (D-02). */
+export function TasksModeToggle() {
+  const mode = useUiStore((s) => s.tasksMode);
+  const setMode = useUiStore((s) => s.setTasksMode);
+  return (
+    <ToggleGroup type="single" value={mode} onValueChange={(value) => value && setMode(value as TasksMode)} aria-label="Tasks mode" data-tasks-mode={mode}>
+      <ToggleGroupItem value="board" data-tasks-mode-item="board">
+        Board
+      </ToggleGroupItem>
+      <ToggleGroupItem value="dependencies" data-tasks-mode-item="dependencies">
+        Dependencies
+      </ToggleGroupItem>
+    </ToggleGroup>
+  );
+}
+
+/**
+ * The Dependencies mode (D-09, D-10): the same task cards with a quiet stage
+ * word, laid out left to right with an arrow from each blocker to what it
+ * blocks, the tasks with no relation below. Arrows are measured from the
+ * drawn cards, so a card that grows or a window that narrows redraws them.
+ */
+export function DependenciesView({
+  board,
+  scope,
+  focusedPaneId,
+  actions,
+  openCheckout,
+}: {
+  board: TasksBoard;
+  scope: BoardScope;
+  focusedPaneId: string | null;
+  actions: Actions;
+  openCheckout: (card: TaskCard) => void;
+}) {
+  const graph = useMemo(() => buildDependencies(board), [board]);
+  if (board.empty) return <EmptyTasks reason={board.unconnectedReason} />;
+  const draw = (value: TaskCard) => (
+    <div key={value.id} data-dependency-node={value.id}>
+      <TaskCardView card={value} focusedPaneId={focusedPaneId} actions={actions} onHead={() => openCheckout(value)} graph={{ status: STAGES.find((row) => row.stage === value.stage)?.label ?? null, project: scope === "all" ? value.place.projectLabel : null }} />
+    </div>
+  );
+  const nothing = graph.layers.length === 0 && graph.unrelated.length === 0;
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-auto" data-tasks-dependencies="true">
+      <div className="flex w-fit min-w-full flex-col gap-lg px-lg pb-lg">
+        <p className="flex items-center gap-xs text-caption text-muted-foreground" data-dependency-legend="true">
+          <ArrowRightIcon aria-hidden="true" className="size-(--size-icon) text-warning" />
+          선행 · 왼쪽 태스크가 끝나야 화살표가 향하는 태스크를 시작할 수 있음
+        </p>
+        {graph.layers.length > 0 ? <DependencyGraphView graph={graph} draw={draw} /> : null}
+        {graph.unrelated.length > 0 ? (
+          <section className="flex flex-col gap-sm" aria-label="관계 없는 태스크" data-dependency-unrelated="true">
+            {graph.layers.length > 0 ? <h2 className="text-subhead font-semibold text-subtle-foreground">관계 없는 태스크</h2> : null}
+            <div className="flex flex-wrap items-start gap-md">{graph.unrelated.map(draw)}</div>
+          </section>
+        ) : null}
+        {nothing && board.unconnected.length === 0 ? <p className="text-caption text-muted-foreground" data-dependency-empty="true">의존 관계를 그릴 태스크가 없음</p> : null}
+      </div>
+      <UnconnectedCells cells={board.unconnected} mode="dependencies" />
+    </div>
+  );
+}
+
+type Arrow = { id: string; d: string };
+
+/** The layered graph: one column per depth of blockers, and the arrows drawn over it from each card's right middle to the next one's left middle. */
+function DependencyGraphView({ graph, draw }: { graph: DependencyGraph; draw: (value: TaskCard) => ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
+  const marker = `dependency-arrow-${useId()}`;
+  const [arrows, setArrows] = useState<Arrow[]>([]);
+  useLayoutEffect(() => {
+    const root = box.current;
+    if (!root) return;
+    const measure = () => {
+      const origin = root.getBoundingClientRect();
+      const at = (id: string) => root.querySelector(`[data-dependency-node="${CSS.escape(id)}"]`)?.getBoundingClientRect() ?? null;
+      const next = graph.edges.flatMap((edge): Arrow[] => {
+        const from = at(edge.from);
+        const to = at(edge.to);
+        if (!from || !to) return [];
+        const x1 = from.right - origin.left;
+        const y1 = from.top + from.height / 2 - origin.top;
+        const x2 = to.left - origin.left;
+        const y2 = to.top + to.height / 2 - origin.top;
+        const bend = (x2 - x1) / 2;
+        return [{ id: `${edge.from}>${edge.to}`, d: `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}` }];
+      });
+      setArrows((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
+    };
+    measure();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(root);
+    for (const node of root.querySelectorAll("[data-dependency-node]")) observer.observe(node);
+    return () => observer.disconnect();
+  }, [graph]);
+  return (
+    <div ref={box} className="relative flex w-fit items-start gap-(--home-dependency-gap)" data-dependency-graph="true" data-dependency-edges={graph.edges.length}>
+      {graph.layers.map((layer, index) => (
+        <div key={index} className="flex flex-col gap-xl" data-dependency-layer={index}>
+          {layer.map(draw)}
         </div>
-      ) : null}
+      ))}
+      <svg aria-hidden="true" className="pointer-events-none absolute inset-0 size-full overflow-visible text-warning">
+        <defs>
+          <marker id={marker} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+            <path d="M 1 1 L 7 4 L 1 7" fill="none" stroke="currentColor" />
+          </marker>
+        </defs>
+        {arrows.map((arrow) => (
+          <path key={arrow.id} d={arrow.d} fill="none" stroke="currentColor" strokeWidth={1.5} markerEnd={`url(#${marker})`} data-dependency-edge={arrow.id} />
+        ))}
+      </svg>
     </div>
   );
 }
@@ -183,14 +319,29 @@ function TaskGlyph({ task, className }: { task: Task; className?: string }) {
 }
 
 /**
- * A task card (D-04): head (id and title), then the delivery facts, then at
- * most two agents and `+N`. A ready card with no agent offers Start agent on
- * hover or focus only (D-05).
+ * A task card (D-04): head (id and title), then the blockers it waits on,
+ * then the delivery facts, then at most two agents and `+N`. A ready card
+ * with no agent offers Start agent on hover or focus only (D-05). In
+ * Dependencies (`graph`) it also carries its stage word and, on All projects,
+ * its project, and a blocked card is dimmed like a done one (D-09, D-10).
  */
-export function TaskCardView({ card, focusedPaneId, actions, onHead }: { card: TaskCard; focusedPaneId: string | null; actions: Actions; onHead: () => void }) {
+export function TaskCardView({
+  card,
+  focusedPaneId,
+  actions,
+  onHead,
+  graph,
+}: {
+  card: TaskCard;
+  focusedPaneId: string | null;
+  actions: Actions;
+  onHead: () => void;
+  graph?: { status: string | null; project: string | null };
+}) {
   const { checkout, task, facts } = card;
   const halo = card.needsYou ? (card.error ? "border-destructive shadow-[0_0_var(--home-halo-radius)_var(--destructive)]" : "border-warning shadow-[0_0_var(--home-halo-radius)_var(--warning)]") : "border-border";
-  const dimmed = card.stage === "done";
+  const blocked = card.blockedBy.length > 0;
+  const dimmed = card.stage === "done" || (graph !== undefined && blocked);
   const hasFacts = facts.files !== null || facts.ahead !== null || facts.pr !== null || facts.behind !== null;
   return (
     <article
@@ -199,7 +350,13 @@ export function TaskCardView({ card, focusedPaneId, actions, onHead }: { card: T
       data-stage={card.stage ?? undefined}
       data-needs-you={card.needsYou ? "true" : undefined}
       data-task-key={task?.key}
+      data-blocked={blocked ? "true" : undefined}
     >
+      {graph?.project ? (
+        <p className="truncate text-caption text-muted-foreground" data-card-project="true">
+          {graph.project}
+        </p>
+      ) : null}
       <div className="flex min-w-0 items-start gap-xs">
         <p className="min-w-0 flex-1 break-words text-title font-semibold text-foreground">
           {task ? <TaskId task={task} help={card.idHelp} /> : null}
@@ -218,7 +375,20 @@ export function TaskCardView({ card, focusedPaneId, actions, onHead }: { card: T
             </span>
           </Hint>
         ) : null}
+        {graph?.status ? (
+          <span className="shrink-0 pt-xxs text-caption text-muted-foreground" data-card-status="true">
+            {graph.status}
+          </span>
+        ) : null}
       </div>
+      {blocked ? (
+        <Hint label={`먼저 끝나야 하는 태스크: ${card.blockedBy.map((blocker) => blocker.label).join(", ")}`}>
+          <p className="flex w-fit min-w-0 items-center gap-xxs text-caption text-warning" data-blocked-by={card.blockedBy.map((blocker) => blocker.key).join(" ")} tabIndex={0}>
+            <LockIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
+            <span className="truncate">{card.blockedBy.map((blocker) => blocker.label).join(", ")}</span>
+          </p>
+        </Hint>
+      ) : null}
       {hasFacts ? (
         <div className="flex flex-wrap items-center gap-xxs" data-overview-facts="true">
           {facts.files !== null ? (

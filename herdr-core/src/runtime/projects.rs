@@ -640,6 +640,22 @@ impl Runtime {
                         previous.status.last_success_at_unix_ms;
                 }
             }
+            // Dependencies that could not be read this pass keep the ones
+            // read before, the same way a failed lookup keeps its answer.
+            if project.issues.dependencies_failure.is_some()
+                && let Some(previous) = self.github.project(&project.root_path)
+            {
+                for issue in &mut project.issues.issues {
+                    if let Some(known) = previous
+                        .issues
+                        .issues
+                        .iter()
+                        .find(|known| known.reference == issue.reference)
+                    {
+                        issue.blocked_by = known.blocked_by.clone();
+                    }
+                }
+            }
         }
         if self.github == merged {
             return false;

@@ -9,7 +9,7 @@ import { AGENT_GROUPS, boardProjects, mainSections, type DeviceAvailability, typ
 import { allProjectsStats, buildAgents, buildTasks, type AllProjectsStats, type TaskCard } from "./projectBoard";
 import type { Device } from "./snapshot";
 import { useShellStore } from "./store";
-import { AgentsView, TasksView } from "./TaskBoards";
+import { AgentsView, DependenciesView, TasksModeToggle, TasksView } from "./TaskBoards";
 import { scopeView, useUiStore, type ProjectView } from "./ui";
 import { hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
@@ -36,6 +36,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
   const view = scopeView(useUiStore((s) => s.projectView), VIEW_IDS);
   const setView = useUiStore((s) => s.setProjectView);
+  const tasksMode = useUiStore((s) => s.tasksMode);
   const [doneOpen, setDoneOpen] = useState(false);
   const sections = useMemo(() => mainSections(rest, agents), [rest, agents]);
   const stats = useMemo(() => allProjectsStats(sections.flatMap((section) => section.projects.map((project) => project.workspace))), [sections]);
@@ -68,7 +69,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
         <Facts stats={stats} />
       </header>
       <OpeningStatus actions={actions} />
-      <div className="flex shrink-0 px-lg py-sm">
+      <div className="flex shrink-0 items-center justify-between gap-md px-lg py-sm">
         <Tabs value={view} onValueChange={(value) => setView(value as ProjectView)}>
           <TabsList aria-label="All projects view">
             {VIEWS.map((choice) => (
@@ -78,6 +79,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
             ))}
           </TabsList>
         </Tabs>
+        {view === "tasks" ? <TasksModeToggle /> : null}
       </div>
       {boards ? (
         // A device that cannot answer keeps its last rows off these boards and says why here.
@@ -87,7 +89,9 @@ export function MainScreen({ actions }: { actions: Actions }) {
           </div>
         ))
       ) : null}
-      {view === "tasks" ? (
+      {view === "tasks" && tasksMode === "dependencies" ? (
+        <DependenciesView board={tasks} scope="all" focusedPaneId={focusedPaneId} actions={actions} openCheckout={openCheckout} />
+      ) : view === "tasks" ? (
         <TasksView board={tasks} focusedPaneId={focusedPaneId} actions={actions} openCheckout={openCheckout} doneOpen={doneOpen} onToggleDone={() => setDoneOpen((open) => !open)} />
       ) : view === "agents" ? (
         <AgentsView board={agentBoard} focusedPaneId={focusedPaneId} actions={actions} />

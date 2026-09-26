@@ -201,7 +201,7 @@ Merged is Git ancestry against the base the core resolves, so a branch with no c
 The ad hoc strip holds the checkouts that are not linked worktrees (the primary checkout, a folder) and only while an agent works in them.
 완료 starts folded to one line per card (`title >`), and its header's `>` unfolds it; the facts line's merged count opens it.
 
-A task card reads top to bottom: the source glyph and the id small and muted before the title (a title of several lines keeps the id on its first), then the delivery facts (`N files` in warning and `↑N` while in progress, the `PR #n` chip, `↓N behind` on any card), then at most two agents, the ones that need the operator first, and `+N` for the rest.
+A task card reads top to bottom: the source glyph and the id small and muted before the title (a title of several lines keeps the id on its first), then a lock and the ids of the open tasks it waits on in warning (a task of another repository by `owner/repo#N`, a task with no id by its title), then the delivery facts (`N files` in warning and `↑N` while in progress, the `PR #n` chip, `↓N behind` on any card), then at most two agents, the ones that need the operator first, and `+N` for the rest.
 An issue is the work and a pull request is the result: the bare `#N` before a title is always the issue and opens it, and its tooltip names the source and the branch; the `PR #n` chip carries the pull-request glyph in its lifecycle colour (open green, draft grey, merged purple, closed red) and the CI mark once read, and opens the pull request.
 A pull request that closes two issues shows the same chip on both cards.
 The title opens the task's checkout and an agent row opens its pane; the card has no link line.
@@ -210,6 +210,15 @@ Needs You uses the warning halo and an error uses danger, and raises the card to
 When the source cannot be read the board keeps the last tasks it read and each task card carries a small warning mark whose tooltip says the read failed and how old the tasks are; there is no banner, and the reason is in the diagnostic log.
 A column past 40 cards shows the first 40 and `스크롤 · N개 더 보기`, and a tall column scrolls inside itself; the board scrolls horizontally below its column minimum, and titles wrap.
 With no task source and no agent, Tasks is one sentence and `GitHub 이슈 연결`, whose popover says, in `gh`'s own words, why no source is connected.
+
+`Board | Dependencies` on the right of the tab row is a mode of the Tasks view, not a tab; like the view it belongs to the page, so another scope keeps it.
+Dependencies draws the Board's task cards left to right with a quiet stage word at each card's top right: a task sits one column right of the longest chain of tasks it waits on, and an arrow runs from the blocker's right middle to the blocked card's left middle.
+Arrows carry no label; one legend line above the graph says the left task has to finish first.
+A blocked card is dimmed with its lock line, a done card is dimmed, and Needs You and error keep the Board's warning and danger borders.
+Tasks with no relation in scope gather below the graph under `관계 없는 태스크`, and untracked checkouts and the ad hoc strip stay on the Board.
+A blocker outside the scope, or one the source says is closed, is no arrow; an open one outside the scope is still named on the lock line.
+On All projects each card carries its project above its title and an arrow crosses projects, and a project with no source keeps its cell under the graph, saying `의존 관계를 그릴 태스크가 없음`.
+When the source answers the issues but not their dependencies, the last blockers read stay and the task cards carry the same warning mark as a failed read.
 
 The Agents view keeps its three columns, `진행 중 · 내 확인 대기 · 끝`, one card per agent: its status mark, provider, title and age; a request it is waiting on in the warning colour; the checkout it works in (on All projects, `project · branch`); its task chip (the issue's `#N`, a local task's title with a file glyph, or a quiet `태스크 없음`) and, for an agent on an SSH device, a device chip.
 A delegated agent sits right under its parent, one step in, in its parent's column.
