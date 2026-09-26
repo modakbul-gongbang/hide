@@ -55,8 +55,12 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
   const logDir = process.env.HIDE_E2E_SCREENSHOT_DIR;
   if (logDir) {
     const log = fs.createWriteStream(path.join(logDir, `hided-${label}-${path.basename(dir)}.log`), { flags: "a" });
-    child.stdout?.pipe(log);
-    child.stderr?.pipe(log);
+    // Two pipes share the file: the first stream to end must not close it
+    // under the other's last write ("write after end" on a restart), so it
+    // closes once the daemon's output has ended on both.
+    child.stdout?.pipe(log, { end: false });
+    child.stderr?.pipe(log, { end: false });
+    child.once("close", () => log.end());
   }
   const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
   const stop = () => {
