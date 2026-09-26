@@ -415,7 +415,7 @@ The web shell draws the same trigger and list at the bottom of its sidebar from 
 Web owner: `web/src/components/weekly-usage.tsx`, `web/src/usage.ts`. Native owner: the sidebar utility bar's usage button and `HideUsagePopover`.
 The core reads the numbers and names each row's state (`navigator.provider_usage`, [AI_PROVIDERS.md: weekly usage display](AI_PROVIDERS.md#weekly-usage-display)); the shells only draw them.
 
-The sidebar footer carries one chip per provider at its right, beside the device picker: the provider mark and the rounded percent of the seven-day window.
+The sidebar footer reads, as the native utility bar does, the device picker at its left, then one chip per provider and the Settings gear at its right; a chip is the provider mark and the rounded percent of the seven-day window.
 A percent reads in the success color below 70, the warning color from 70 and the destructive color from 90.
 A provider that is loading or unavailable is a dimmed mark with no percent; a stale or fallback reading keeps its percent.
 The chips' accessible name lists every provider with its reading.
