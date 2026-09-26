@@ -131,17 +131,22 @@ The pane menu (from its overflow control or a right-click on the header) lists t
 The Agents explorer groups every current agent, this machine's and each connected device's, under Needs You, Done, Working, and Seen, and leaves an empty group out; a device's row names its device before the agent kind, and a device that is not connected lists nothing it only last reported.
 Each group lists its root rows; a delegated row is drawn only beneath its parent, indented one step per level and muted, while the operator has that parent unfolded.
 A group's heading counts every agent it speaks for, its roots and all their live descendants whether folded or not, so each agent is counted once, under its root's heading.
-Descendants start folded; the parent's chevron folds and unfolds them, and the choice is the core's `expanded_agent_pane_ids`, so it survives a restart.
+Descendants start folded; the parent's chevron folds and unfolds them, and the choice is the core's `expanded_agent_pane_ids`, so it survives a restart and is the same fold wherever the parent is drawn, in Agents or under its checkout in Projects.
+The chevron is at the row's right end and exists only on a row with children, so a leaf row has no lineage slot: folded, it is always shown; unfolded, it shows under the pointer, while anything in the row has keyboard focus, and always on an input with no hover, in a slot kept at rest so nothing beside it moves.
 A folded parent with live descendants carries a badge after its title: one mark and count per state (error, approval, question, working, done), summed over every live descendant, or `↳N` when all of them are merely ready.
 The badge is a button: a click, Enter or Space opens a list of the direct children with their status mark, name, status word, branch when it differs, and elapsed time; the arrow keys move the highlight, Enter or the highlighted row's arrow opens that child's pane, the last item unfolds the children in the list, and Escape closes it and returns focus to the parent row.
 The list has no Stop action, drops a child the moment it leaves the projection, and closes when no child is left.
 
 A root whose own turn is over while a descendant still works or asks is waiting on its children (docs/status-model.md): it stays in Working with its ring in the working color, and its badge, not its own sentence, says what is going on.
 
-An agent row's first line is always its status mark, provider mark, stable task name, a branch chip only when a delegated row's checkout differs from its parent's, a device chip for a row on an SSH device, the badge, and the elapsed time.
-A second line appears only when the row has something to say: a question, approval or error keeps its request in the warning color (red for an error) until it is resolved, however often the row is read; a row that changed since the operator last looked shows its sentence bright until it is read; and the selected or hovered row reveals its full sentence over up to two lines, with the whole of it in the row's tooltip.
-Every other row is one line, and no row draws a progress number or step the agent did not report.
-Web owner: `web/src/agentRow.ts` (rules, reusable by any list of agents), `web/src/components/agent-row.tsx`, `web/src/components/agent-children-popover.tsx`.
+A sidebar agent row's first line is always its status mark, provider mark, stable task name, a branch chip only when a delegated row's checkout differs from its parent's and the row above does not already name that checkout, a device chip for a row on an SSH device, the badge, the elapsed time, and a parent's chevron; the elapsed time is always drawn and never gives way to a control.
+Its second line exists only when the row has something to say, and from the moment it does: a question, approval or error keeps its request in the warning color (red for an error) until it is resolved, however often the row is read, and a row that changed since the operator last looked shows its sentence bright until it is read; either is one line, cut at its end.
+A quiet sentence is never drawn on the row; the row's tooltip carries it with the full title.
+In Agents a root row adds a fixed context line naming its project and checkout (`project › checkout`, the project alone for a plain folder), since the list does not otherwise say where the agent works; a row under a checkout in Projects has none, because the rows above it say it.
+Hover, keyboard focus, selection and an open badge list change a fill, a ring and a chevron's opacity only; they never add a line or change a row's height, so the row below never moves.
+No row draws a progress number or step the agent did not report.
+The Project Overview's agent rows keep their own density: a quiet sentence is revealed on the selected or hovered row over up to two lines, with the whole of it in the tooltip.
+Web owner: `web/src/agentRow.ts` (rules, reusable by any list of agents), `web/src/components/sidebar-agent-row.tsx` (the sidebar row), `web/src/components/agent-row.tsx` (the Overview row and the descendant badge both draw), `web/src/components/agent-children-popover.tsx`.
 
 ## Web Project Sessions
 
@@ -321,15 +326,21 @@ The sidebar hierarchy is Project > Workspace > Agents; a Workspace corresponds t
 Two checkouts of one repository share a project cycle.
 Each checkout row shows a kind glyph, selected in priority order: the pull-request lifecycle icon when current GitHub data has a pull request, then branch, home for the primary checkout, commit for detached HEAD, or folder for a plain folder.
 Open, draft, merged, and closed pull requests keep their own lifecycle shapes and colors, stale GitHub data mutes only the icon, an unavailable GitHub lookup falls back to the branch glyph, and a missing folder colors its branch glyph as danger and omits the age.
-Workspaces with nested agent rows toggle disclosure across the whole row; workspaces without nested agent rows open on click.
-In the web shell a checkout row always opens its checkout: a trailing chevron, drawn only while agents run there, opens and closes their rows, and the row's `⋯` menu takes the last-commit age's place while the pointer is over the row.
+Workspaces with nested agent rows toggle disclosure across the whole row; workspaces without nested agent rows open on click (the Swift shell).
+In the web shell every row reads on the left and acts on the right: the glyph, the name and the time read at fixed columns, and the fold and the `⋯` menu sit in two slots at the row's right end that are kept at rest, so nothing moves when a control shows.
+A folded chevron is always shown; an unfolded one and the `⋯` show under the pointer, while anything in the row has keyboard focus, while its menu is open, and always on an input with no hover.
+A web checkout row always opens its checkout: its chevron, drawn only while agents run there, opens and closes their rows, and its last-commit age stays beside the `⋯` whatever the pointer does.
+An opened checkout and its agent rows share one small group fill; no card border nests inside another.
 A web checkout's agent rows start closed, so its second line names them, and the checkouts the operator opens are kept in the core's ui state across launches; the Swift shell keeps its own disclosure until it is removed.
-A web project row folds its checkouts from its leading chevron, and the rest of the row opens the project's Overview; both folds are this machine's, so a selected SSH device's tree is drawn with nothing folded.
+A web project row folds its checkouts from its chevron on the right, and the rest of the row opens the project's Overview; both folds are this machine's, so a selected SSH device's tree is drawn with nothing folded.
+An opened checkout's parent agent folds its children with the lineage chevron and badge the Agents list uses, from the same core state; a child working in another checkout is also drawn as a root in that checkout, so folding a parent never hides where an agent runs, and a selected SSH device's lineage is drawn unfolded with no chevron.
+Folding a project, a checkout or a parent changes the list only: the center, the focused pane and tab, read state, groups and running processes stay as they were.
+Before the first snapshot arrives the Agents and Projects lists say they are connecting rather than drawing an empty list, and a local Projects list with no registered project offers Add project.
 The web Projects list is the scope picker: an All projects row heads it, with the layout-grid glyph and `N projects`, and opens All projects.
 One row carries the selected fill at a time, the row of the scope the center shows: All projects, a project row on its Overview, or the focused checkout and its open agent row only while a Workspace is in front.
 A plain folder, a project that is not a Git repository and holds one checkout, is one web row instead of a project row over an identical checkout row.
 Its first line is the project's folder glyph, name and activity, set in the checkout row's columns with the activity where the age stands; its second line and trailing chevron are the checkout's.
-It has no fold of its own and keeps the fold's lane; the row opens the checkout and is marked while that checkout's Workspace or the project's Overview is in front, its menu lists the project's items and then the checkout's, and its Overview is reached from All projects, the palette or the Workspace toolbar.
+It has no project fold of its own and keeps the checkout row's right slots; the row opens the checkout and is marked while that checkout's Workspace or the project's Overview is in front, its menu lists the project's items and then the checkout's, and its Overview is reached from All projects, the palette or the Workspace toolbar.
 While a checkout's agent rows are closed, its second line names them, the representative agent's mark and provider and `+N` for the rest, before the purpose; a checkout with neither, or one whose Git facts have not been read yet, is one line.
 Workspace disclosure persists across launches and hides only the nested agent rows, preserving selection, running panes, and raised attention rows.
 An agent row's title is its identity label at both densities: the rolling task, or the workspace label when no task exists; a Herdr agent name remains a control identifier and never becomes display copy.
