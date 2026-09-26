@@ -5,6 +5,7 @@
 // previous project back on the surface it was last used on.
 
 import { expect, test } from "@playwright/test";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
@@ -23,8 +24,20 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     fs.mkdirSync(path.join(herdr.root, "beta"), { recursive: true });
     const beta = herdr.run([
       "workspace", "create", "--cwd", path.join(herdr.root, "beta"), "--label", "beta", "--env", `PATH=${herdr.fixturePath}`, "--no-focus",
-    ]) as { result: { tab: { tab_id: string } } };
+    ]) as { result: { tab: { tab_id: string }; root_pane: { pane_id: string } } };
     const betaTab = beta.result.tab.tab_id;
+    // One agent per tab, so each row is named and marked by its agent: a
+    // Codex in beta (the fixture's shim under that name) and a Claude alone
+    // in a second fixture tab. The fixture's first tab holds two agents and
+    // keeps its Herdr label and the neutral mark.
+    fs.copyFileSync(path.join(herdr.root, "bin", "claude"), path.join(herdr.root, "bin", "codex"));
+    const solo = herdr.run([
+      "tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "solo", "--env", `PATH=${herdr.fixturePath}`, "--no-focus",
+    ]) as { result: { root_pane: { pane_id: string } } };
+    for (const [name, kind, pane] of [["three", "codex", beta.result.root_pane.pane_id], ["four", "claude", solo.result.root_pane.pane_id]] as const) {
+      await expect.poll(() => execFileSync(herdr.bin, ["pane", "read", pane, "--source", "recent", "--lines", "5"], { env: herdr.env, encoding: "utf8" }), { timeout: 20_000 }).toContain("fixture %");
+      herdr.run(["agent", "start", name, "--kind", kind, "--pane", pane]);
+    }
     daemon = await startHided(herdr, "recent");
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
@@ -88,10 +101,23 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     await expect.poll(() => page.evaluate(() => document.activeElement?.closest("[data-view-area]") !== null)).toBe(true);
 
     // Escape while held keeps the original selection and commits nothing.
+    // Meanwhile every row wears its marks: an agent's status mark then which
+    // agent it is, the neutral mark for a tab of several, a file's own mark.
     const quiet = [sent.get("focus_checkout") ?? 0, sent.get("focus_tab") ?? 0];
     await page.keyboard.down("Alt");
     await page.keyboard.press("Backquote");
     await expect(page.locator("[data-cycle=panels]")).toBeVisible();
+    const marks = (row: string) => page.locator(`[data-cycle=panels] [data-cycle-row="${row}"] [data-cycle-marks]`);
+    await expect(marks(betaTab)).toHaveAttribute("data-cycle-marks", "codex");
+    await expect(marks(betaTab).locator("[data-cycle-status]")).toHaveCount(1);
+    await expect(marks(betaTab).locator('[data-agent-mark="codex"]')).toHaveCount(1);
+    await expect(page.locator(`[data-cycle=panels] [data-cycle-row="${betaTab}"]`)).toHaveAttribute("aria-label", /codex agent/);
+    await expect(page.locator('[data-cycle=panels] [data-cycle-marks="claude"] [data-agent-mark="claude"]')).toHaveCount(1);
+    await expect(marks(herdr.tab)).toHaveAttribute("data-cycle-marks", "herdr");
+    await expect(marks(herdr.tab).locator('[data-agent-mark="neutral"]')).toHaveCount(1);
+    await expect(marks(herdr.tab).locator("[data-cycle-status]")).toHaveCount(0);
+    await expect(marks(display!).locator('[data-view-mark="file"]')).toHaveCount(1);
+    await screenshot(page, "recent-panels-marks");
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-cycle]")).toHaveCount(0);
     await page.keyboard.up("Alt");

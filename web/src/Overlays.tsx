@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronUpIcon, FolderIcon, TerminalIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon, FolderIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./components/ui/alert-dialog";
@@ -15,6 +15,8 @@ import { hostKind } from "./host";
 import { visibleWindow, type CycleItem } from "./recent";
 import { displayCommand, hostRegistry } from "./shortcuts";
 import { displayMark } from "./ViewAreas";
+import { AgentMark } from "./AgentMark";
+import { knownProvider } from "./workspace";
 
 /**
  * Recent Panels or Recent Projects while the chord's modifier is held: at
@@ -44,12 +46,10 @@ export function CycleOverlay() {
               data-cycle-row={item.surface?.id ?? item.key}
               data-cycle-kind={item.kind}
               aria-selected={selected}
-              aria-label={[item.title, item.agent?.status_label, item.detail].filter(Boolean).join(", ")}
+              aria-label={[item.title, item.agent && `${item.agent.agent_kind} agent`, item.agent?.status_label, item.detail].filter(Boolean).join(", ")}
               className={`flex items-center gap-sm px-md py-xxs ${selected ? "bg-secondary text-foreground" : "text-subtle-foreground"}`}
             >
-              <span className="flex w-(--size-icon) shrink-0 justify-center">
-                <CycleMark item={item} />
-              </span>
+              <CycleMarks item={item} />
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-body">{item.title}</span>
                 <span className="truncate text-caption text-muted-foreground">{item.detail}</span>
@@ -62,11 +62,28 @@ export function CycleOverlay() {
   );
 }
 
-/** A row's mark: the one agent's status mark, never its colour alone; else what kind of surface it is. */
-function CycleMark({ item }: { item: CycleItem }) {
-  if (item.agent) return <StatusMark symbol={item.agent.symbol} className={markTone(item.agent)} />;
+/**
+ * A row's marks, in the sidebar agent row's order and spacing: the one
+ * agent's status mark, never its colour alone, then which agent it is; a
+ * tab with no single agent wears the neutral mark the tab strip draws. Other
+ * rows keep the empty status slot, so every title starts in one column.
+ */
+function CycleMarks({ item }: { item: CycleItem }) {
+  return (
+    <span className="flex shrink-0 items-center gap-xs" data-cycle-marks={item.agent ? (knownProvider(item.agent.agent_kind) ?? "neutral") : item.kind}>
+      <span className="flex w-(--size-agent-mark) shrink-0 justify-center">
+        {item.agent ? <StatusMark symbol={item.agent.symbol} className={markTone(item.agent)} data-cycle-status={item.agent.status_label} /> : null}
+      </span>
+      <span className="flex w-(--size-agent-badge-compact) shrink-0 justify-center">
+        <KindMark item={item} />
+      </span>
+    </span>
+  );
+}
+
+function KindMark({ item }: { item: CycleItem }) {
+  if (item.kind === "herdr") return <AgentMark kind={item.agent?.agent_kind} />;
   if (item.kind === "project") return <FolderIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />;
-  if (item.kind === "herdr") return <TerminalIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />;
   return displayMark({ kind: item.kind, label: item.title });
 }
 
