@@ -83,12 +83,12 @@ node scripts/pen-transplant.mjs --from <branch-file> --into <main-file> --sheet 
 Each sheet carries a `Light` and a `Dark` frame and uses realistic content, including Korean labels and a long path, to show real wrapping and truncation rather than an abstract state.
 `scripts/check-hide-screens.mjs` enforces the shape (`Screen / ` naming, both theme frames, every reference resolving against the library, every cross-library color restated locally, and local variables matching `design/tokens.json`) and `scripts/gen-screens.mjs` regenerates the file from `scripts/pen-screens.mjs`.
 
-Main is `Screen / Main`.
-It draws the agent and project sidebar beside the Projects list, grouped by device.
+All projects is `Screen / Main`, named after its web file and screen kind.
+It draws the agent and project sidebar beside All projects: its title with Add project, its facts line, and the project list grouped by device, with no view tabs while it has one view.
 Its web files are `web/src/App.tsx`, `web/src/sidebar.tsx`, and `web/src/MainScreen.tsx`.
 
 Project Overview is `Screen / Project Overview`.
-It draws a project's Tasks board under its header: the ad hoc strip, the four Git columns with Merged folded, and a needs-you card in the warning halo.
+It draws a project's Tasks board under its header: the title row with the path back and New agent, the facts line, the Tasks, Agents and Sessions tabs, the ad hoc strip, the four Git columns with Merged folded, and a needs-you card in the warning halo.
 Its web files are `web/src/ProjectOverview.tsx` and `web/src/projectBoard.ts`; its agent rows are `web/src/components/agent-row.tsx`.
 
 Workspace is `Screen / Workspace`.
@@ -96,8 +96,8 @@ It draws the tab strip, the layout switch, and the split content of a terminal b
 Its web files are `web/src/WorkspaceScreen.tsx`, `web/src/TabBar.tsx`, `web/src/ViewAreas.tsx`, and `web/src/ExplorerTree.tsx`.
 
 Project Sessions is `Screen / Project Sessions`.
-It draws the provider-filtered session list with search, and the read-only detail pane.
-Its web file is `web/src/SessionsScreen.tsx`.
+It draws the Project Overview on its Sessions tab: the Overview's header over the provider-filtered session list with search, and the read-only detail pane.
+Its web files are `web/src/ProjectOverview.tsx` and `web/src/ProjectSessions.tsx`.
 
 Settings is `Screen / Settings`.
 It draws the five tabs (General, Appearance, Agents, Devices, Shortcuts) and the Group/Row layout a tab renders, shown on the Appearance tab.
@@ -116,7 +116,7 @@ It draws the sidebar row menu, the Explorer context menu, the device picker, and
 Its web files are `web/src/entry-menu.tsx` and `web/src/DevicePicker.tsx`.
 
 Projects Sidebar is `Screen / Projects Sidebar`.
-It draws the sidebar's Projects tab: pinned and activity-ordered projects, checkout rows with their kind glyph, age and agent line, an opened checkout's agent rows, and both inactive folds.
+It draws the sidebar's Projects tab as the scope picker: the All projects row on top, pinned and activity-ordered projects with the row of the scope on screen selected, checkout rows with their kind glyph, age and agent line, an opened checkout's agent rows, and both inactive folds.
 Its web files are `web/src/sidebar.tsx` and `web/src/projects.ts`.
 
 ## How to add a token

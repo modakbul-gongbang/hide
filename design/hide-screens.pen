@@ -1517,7 +1517,7 @@
           "type": "text",
           "id": "screen-main-spec",
           "name": "web/src/App.tsx, sidebar.tsx",
-          "content": "web/src/App.tsx, sidebar.tsx, MainScreen.tsx: the agent/project sidebar beside the Projects list, grouped by device. Long checkout names truncate inside their row (B11).",
+          "content": "web/src/App.tsx, sidebar.tsx, MainScreen.tsx: All projects, the scope the sidebar’s top row opens - its title with Add project, the facts line (the project count, and the open-PR and merged totals only when every project can give its part), and the project list grouped by device. It has one view, so it draws no tabs. Long checkout names truncate inside their row (B11).",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -1780,7 +1780,7 @@
             {
               "type": "frame",
               "id": "main-list-l",
-              "name": "Projects",
+              "name": "All projects",
               "children": [
                 {
                   "type": "frame",
@@ -1788,40 +1788,161 @@
                   "name": "Header",
                   "children": [
                     {
-                      "type": "text",
-                      "id": "main-listtitle-l",
-                      "name": "Projects",
-                      "content": "Projects",
-                      "fill": "$--foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-title",
-                      "fontWeight": "600"
+                      "type": "frame",
+                      "id": "main-listtitlerow-l",
+                      "name": "Title row",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "main-listtitle-l",
+                          "name": "All projects",
+                          "content": "All projects",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-headline",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "id": "main-addproj-l",
+                          "type": "ref",
+                          "ref": "hideui:btn-m",
+                          "name": "Add project",
+                          "fill": "#00000000",
+                          "height": 24,
+                          "descendants": {
+                            "hideui:btn-ic": {
+                              "fill": "$--subtle-foreground",
+                              "icon": "plus",
+                              "enabled": true
+                            },
+                            "hideui:btn-lb": {
+                              "fill": "$--subtle-foreground",
+                              "content": "Add project"
+                            }
+                          }
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "justifyContent": "space_between",
+                      "alignItems": "center",
+                      "width": 480
                     },
                     {
-                      "id": "main-addproj-l",
-                      "type": "ref",
-                      "ref": "hideui:btn-m",
-                      "name": "Add project",
-                      "fill": "$--secondary",
-                      "stroke": "$--border",
-                      "strokeWidth": "$--size-hairline",
-                      "strokeAlignment": "inner",
-                      "height": 24,
-                      "descendants": {
-                        "hideui:btn-ic": {
-                          "fill": "$--primary-foreground",
-                          "enabled": false
+                      "type": "frame",
+                      "id": "main-facts-l",
+                      "name": "Facts",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "main-facts-l-0",
+                          "name": "12 projects",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "main-facts-l-0-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "folder",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "main-facts-l-0-t",
+                              "name": "12 projects",
+                              "content": "12 projects",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
                         },
-                        "hideui:btn-lb": {
-                          "fill": "$--subtle-foreground",
-                          "content": "Add project"
+                        {
+                          "type": "frame",
+                          "id": "main-facts-l-1",
+                          "name": "5 open PRs",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "main-facts-l-1-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "git-pull-request",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "main-facts-l-1-t",
+                              "name": "5 open PRs",
+                              "content": "5 open PRs",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "main-facts-l-2",
+                          "name": "7 merged",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "main-facts-l-2-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "git-merge",
+                              "library": "lucide",
+                              "fill": "$--pr-merged"
+                            },
+                            {
+                              "type": "text",
+                              "id": "main-facts-l-2-t",
+                              "name": "7 merged",
+                              "content": "7 merged",
+                              "fill": "$--pr-merged",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
                         }
-                      }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-md",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "main-rule-l",
+                      "name": "Rule",
+                      "children": [],
+                      "width": 480,
+                      "height": 1,
+                      "fill": "$--border"
                     }
                   ],
-                  "layout": "horizontal",
-                  "justifyContent": "space_between",
-                  "alignItems": "center"
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "width": 480
                 },
                 {
                   "id": "main-sect-l",
@@ -2165,7 +2286,7 @@
             {
               "type": "frame",
               "id": "main-list-d",
-              "name": "Projects",
+              "name": "All projects",
               "children": [
                 {
                   "type": "frame",
@@ -2173,40 +2294,161 @@
                   "name": "Header",
                   "children": [
                     {
-                      "type": "text",
-                      "id": "main-listtitle-d",
-                      "name": "Projects",
-                      "content": "Projects",
-                      "fill": "$--foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-title",
-                      "fontWeight": "600"
+                      "type": "frame",
+                      "id": "main-listtitlerow-d",
+                      "name": "Title row",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "main-listtitle-d",
+                          "name": "All projects",
+                          "content": "All projects",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-headline",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "id": "main-addproj-d",
+                          "type": "ref",
+                          "ref": "hideui:btn-m",
+                          "name": "Add project",
+                          "fill": "#00000000",
+                          "height": 24,
+                          "descendants": {
+                            "hideui:btn-ic": {
+                              "fill": "$--subtle-foreground",
+                              "icon": "plus",
+                              "enabled": true
+                            },
+                            "hideui:btn-lb": {
+                              "fill": "$--subtle-foreground",
+                              "content": "Add project"
+                            }
+                          }
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "justifyContent": "space_between",
+                      "alignItems": "center",
+                      "width": 480
                     },
                     {
-                      "id": "main-addproj-d",
-                      "type": "ref",
-                      "ref": "hideui:btn-m",
-                      "name": "Add project",
-                      "fill": "$--secondary",
-                      "stroke": "$--border",
-                      "strokeWidth": "$--size-hairline",
-                      "strokeAlignment": "inner",
-                      "height": 24,
-                      "descendants": {
-                        "hideui:btn-ic": {
-                          "fill": "$--primary-foreground",
-                          "enabled": false
+                      "type": "frame",
+                      "id": "main-facts-d",
+                      "name": "Facts",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "main-facts-d-0",
+                          "name": "12 projects",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "main-facts-d-0-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "folder",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "main-facts-d-0-t",
+                              "name": "12 projects",
+                              "content": "12 projects",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
                         },
-                        "hideui:btn-lb": {
-                          "fill": "$--subtle-foreground",
-                          "content": "Add project"
+                        {
+                          "type": "frame",
+                          "id": "main-facts-d-1",
+                          "name": "5 open PRs",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "main-facts-d-1-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "git-pull-request",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "main-facts-d-1-t",
+                              "name": "5 open PRs",
+                              "content": "5 open PRs",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "main-facts-d-2",
+                          "name": "7 merged",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "main-facts-d-2-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "git-merge",
+                              "library": "lucide",
+                              "fill": "$--pr-merged"
+                            },
+                            {
+                              "type": "text",
+                              "id": "main-facts-d-2-t",
+                              "name": "7 merged",
+                              "content": "7 merged",
+                              "fill": "$--pr-merged",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
                         }
-                      }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-md",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "main-rule-d",
+                      "name": "Rule",
+                      "children": [],
+                      "width": 480,
+                      "height": 1,
+                      "fill": "$--border"
                     }
                   ],
-                  "layout": "horizontal",
-                  "justifyContent": "space_between",
-                  "alignItems": "center"
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "width": 480
                 },
                 {
                   "id": "main-sect-d",
@@ -2323,7 +2565,7 @@
           "type": "text",
           "id": "screen-project-overview-spec",
           "name": "web/src/ProjectOverview.tsx,",
-          "content": "web/src/ProjectOverview.tsx, projectBoard.ts: a project’s Tasks board - header facts, the ad hoc strip, Git columns with 머지됨 folded, a needs-you card in the warning halo - and the same cards on the Agents board.",
+          "content": "web/src/ProjectOverview.tsx, projectBoard.ts: a project’s Tasks board - the facts line under the title (worktrees, open PRs, disk, behind, and merged, which opens 머지됨), the Tasks/Agents/Sessions tabs, the ad hoc strip, Git columns with 머지됨 folded, a needs-you card in the warning halo - and the same cards on the Agents board.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -2348,51 +2590,263 @@
                   "children": [
                     {
                       "type": "frame",
-                      "id": "ov-crumb-l",
-                      "name": "Path",
+                      "id": "ov-head-title-l",
+                      "name": "Title row",
                       "children": [
                         {
-                          "type": "text",
-                          "id": "ov-crumb1-l",
-                          "name": "Main",
-                          "content": "Main",
-                          "fill": "$--subtle-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
+                          "type": "frame",
+                          "id": "ov-head-crumb-l",
+                          "name": "Path",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ov-head-crumb1-l",
+                              "name": "All projects",
+                              "content": "All projects",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-head-crumb2-l",
+                              "name": "/",
+                              "content": "/",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-head-crumb3-l",
+                              "name": "herdr-ide",
+                              "content": "herdr-ide",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-headline",
+                              "fontWeight": "600"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center"
                         },
                         {
-                          "type": "text",
-                          "id": "ov-crumb2-l",
-                          "name": "/",
-                          "content": "/",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
+                          "type": "frame",
+                          "id": "ov-head-gap-l",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
                         },
                         {
-                          "type": "text",
-                          "id": "ov-crumb3-l",
-                          "name": "herdr-ide",
-                          "content": "herdr-ide",
-                          "fill": "$--foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-headline",
-                          "fontWeight": "600"
+                          "id": "ov-head-new-l",
+                          "type": "ref",
+                          "ref": "hideui:btn-m",
+                          "name": "New agent",
+                          "fill": "$--primary",
+                          "height": 24,
+                          "descendants": {
+                            "hideui:btn-ic": {
+                              "fill": "$--primary-foreground",
+                              "icon": "plus",
+                              "enabled": true
+                            },
+                            "hideui:btn-lb": {
+                              "fill": "$--primary-foreground",
+                              "content": "New agent"
+                            }
+                          }
                         }
                       ],
                       "layout": "horizontal",
-                      "gap": "$--spacing-xs",
+                      "gap": "$--spacing-lg",
+                      "alignItems": "center",
+                      "width": 1240
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ov-head-facts-l",
+                      "name": "Facts",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ov-head-facts-l-0",
+                          "name": "5 worktrees",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "ov-head-facts-l-0-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "folder-git-2",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-head-facts-l-0-t",
+                              "name": "5 worktrees",
+                              "content": "5 worktrees",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-head-facts-l-1",
+                          "name": "2 open PRs",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "ov-head-facts-l-1-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "git-pull-request",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-head-facts-l-1-t",
+                              "name": "2 open PRs",
+                              "content": "2 open PRs",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-head-facts-l-2",
+                          "name": "4.1 GB",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "ov-head-facts-l-2-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "hard-drive",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-head-facts-l-2-t",
+                              "name": "4.1 GB",
+                              "content": "4.1 GB",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-head-facts-l-3",
+                          "name": "main ↓3 behind origin",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "ov-head-facts-l-3-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "arrow-down",
+                              "library": "lucide",
+                              "fill": "$--warning"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-head-facts-l-3-t",
+                              "name": "main ↓3 behind origin",
+                              "content": "main ↓3 behind origin",
+                              "fill": "$--warning",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-head-facts-l-4",
+                          "name": "3 merged → 정리",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "ov-head-facts-l-4-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "git-merge",
+                              "library": "lucide",
+                              "fill": "$--pr-merged"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-head-facts-l-4-t",
+                              "name": "3 merged → 정리",
+                              "content": "3 merged → 정리",
+                              "fill": "$--pr-merged",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-md",
                       "alignItems": "center"
                     },
                     {
                       "type": "frame",
-                      "id": "ov-tabs-l",
+                      "id": "ov-head-rule-l",
+                      "name": "Rule",
+                      "children": [],
+                      "width": 1240,
+                      "height": 1,
+                      "fill": "$--border"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ov-head-tabs-l",
                       "name": "Tabs",
                       "children": [
                         {
-                          "id": "ov-tabs-l-0",
+                          "id": "ov-head-tabs-l-0",
                           "type": "ref",
                           "ref": "hideui:tab-m",
                           "name": "Tasks",
@@ -2405,7 +2859,7 @@
                           }
                         },
                         {
-                          "id": "ov-tabs-l-1",
+                          "id": "ov-head-tabs-l-1",
                           "type": "ref",
                           "ref": "hideui:tab-m",
                           "name": "Agents",
@@ -2415,6 +2869,18 @@
                               "content": "Agents"
                             }
                           }
+                        },
+                        {
+                          "id": "ov-head-tabs-l-2",
+                          "type": "ref",
+                          "ref": "hideui:tab-m",
+                          "name": "Sessions",
+                          "descendants": {
+                            "hideui:tab-t": {
+                              "fill": "$--subtle-foreground",
+                              "content": "Sessions"
+                            }
+                          }
                         }
                       ],
                       "layout": "horizontal",
@@ -2422,76 +2888,10 @@
                       "padding": "$--spacing-xxs",
                       "fill": "$--card",
                       "cornerRadius": "$--radius-sm"
-                    },
-                    {
-                      "type": "text",
-                      "id": "ov-stats-l",
-                      "name": "5 worktrees   2 open PRs",
-                      "content": "5 worktrees   2 open PRs",
-                      "fill": "$--subtle-foreground",
-                      "fontFamily": "$--font-mono",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "400"
-                    },
-                    {
-                      "type": "text",
-                      "id": "ov-behind-l",
-                      "name": "main ↓3 behind origin",
-                      "content": "main ↓3 behind origin",
-                      "fill": "$--warning",
-                      "fontFamily": "$--font-mono",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "400"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "ov-gap-l",
-                      "name": "Spacer",
-                      "children": [],
-                      "width": "fill_container",
-                      "height": 1
-                    },
-                    {
-                      "id": "ov-sessions-l",
-                      "type": "ref",
-                      "ref": "hideui:btn-m",
-                      "name": "Sessions",
-                      "fill": "#00000000",
-                      "height": 24,
-                      "descendants": {
-                        "hideui:btn-ic": {
-                          "fill": "$--primary-foreground",
-                          "enabled": false
-                        },
-                        "hideui:btn-lb": {
-                          "fill": "$--subtle-foreground",
-                          "content": "Sessions"
-                        }
-                      }
-                    },
-                    {
-                      "id": "ov-new-l",
-                      "type": "ref",
-                      "ref": "hideui:btn-m",
-                      "name": "New agent",
-                      "fill": "$--primary",
-                      "height": 24,
-                      "descendants": {
-                        "hideui:btn-ic": {
-                          "fill": "$--primary-foreground",
-                          "icon": "plus",
-                          "enabled": true
-                        },
-                        "hideui:btn-lb": {
-                          "fill": "$--primary-foreground",
-                          "content": "New agent"
-                        }
-                      }
                     }
                   ],
-                  "layout": "horizontal",
-                  "gap": "$--spacing-lg",
-                  "alignItems": "center",
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
                   "width": 1240
                 },
                 {
@@ -3498,51 +3898,263 @@
                   "children": [
                     {
                       "type": "frame",
-                      "id": "ov-crumb-d",
-                      "name": "Path",
+                      "id": "ov-head-title-d",
+                      "name": "Title row",
                       "children": [
                         {
-                          "type": "text",
-                          "id": "ov-crumb1-d",
-                          "name": "Main",
-                          "content": "Main",
-                          "fill": "$--subtle-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
+                          "type": "frame",
+                          "id": "ov-head-crumb-d",
+                          "name": "Path",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ov-head-crumb1-d",
+                              "name": "All projects",
+                              "content": "All projects",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-head-crumb2-d",
+                              "name": "/",
+                              "content": "/",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-head-crumb3-d",
+                              "name": "herdr-ide",
+                              "content": "herdr-ide",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-headline",
+                              "fontWeight": "600"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center"
                         },
                         {
-                          "type": "text",
-                          "id": "ov-crumb2-d",
-                          "name": "/",
-                          "content": "/",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
+                          "type": "frame",
+                          "id": "ov-head-gap-d",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
                         },
                         {
-                          "type": "text",
-                          "id": "ov-crumb3-d",
-                          "name": "herdr-ide",
-                          "content": "herdr-ide",
-                          "fill": "$--foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-headline",
-                          "fontWeight": "600"
+                          "id": "ov-head-new-d",
+                          "type": "ref",
+                          "ref": "hideui:btn-m",
+                          "name": "New agent",
+                          "fill": "$--primary",
+                          "height": 24,
+                          "descendants": {
+                            "hideui:btn-ic": {
+                              "fill": "$--primary-foreground",
+                              "icon": "plus",
+                              "enabled": true
+                            },
+                            "hideui:btn-lb": {
+                              "fill": "$--primary-foreground",
+                              "content": "New agent"
+                            }
+                          }
                         }
                       ],
                       "layout": "horizontal",
-                      "gap": "$--spacing-xs",
+                      "gap": "$--spacing-lg",
+                      "alignItems": "center",
+                      "width": 1240
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ov-head-facts-d",
+                      "name": "Facts",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ov-head-facts-d-0",
+                          "name": "5 worktrees",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "ov-head-facts-d-0-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "folder-git-2",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-head-facts-d-0-t",
+                              "name": "5 worktrees",
+                              "content": "5 worktrees",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-head-facts-d-1",
+                          "name": "2 open PRs",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "ov-head-facts-d-1-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "git-pull-request",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-head-facts-d-1-t",
+                              "name": "2 open PRs",
+                              "content": "2 open PRs",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-head-facts-d-2",
+                          "name": "4.1 GB",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "ov-head-facts-d-2-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "hard-drive",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-head-facts-d-2-t",
+                              "name": "4.1 GB",
+                              "content": "4.1 GB",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-head-facts-d-3",
+                          "name": "main ↓3 behind origin",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "ov-head-facts-d-3-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "arrow-down",
+                              "library": "lucide",
+                              "fill": "$--warning"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-head-facts-d-3-t",
+                              "name": "main ↓3 behind origin",
+                              "content": "main ↓3 behind origin",
+                              "fill": "$--warning",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ov-head-facts-d-4",
+                          "name": "3 merged → 정리",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "ov-head-facts-d-4-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "git-merge",
+                              "library": "lucide",
+                              "fill": "$--pr-merged"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ov-head-facts-d-4-t",
+                              "name": "3 merged → 정리",
+                              "content": "3 merged → 정리",
+                              "fill": "$--pr-merged",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-md",
                       "alignItems": "center"
                     },
                     {
                       "type": "frame",
-                      "id": "ov-tabs-d",
+                      "id": "ov-head-rule-d",
+                      "name": "Rule",
+                      "children": [],
+                      "width": 1240,
+                      "height": 1,
+                      "fill": "$--border"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ov-head-tabs-d",
                       "name": "Tabs",
                       "children": [
                         {
-                          "id": "ov-tabs-d-0",
+                          "id": "ov-head-tabs-d-0",
                           "type": "ref",
                           "ref": "hideui:tab-m",
                           "name": "Tasks",
@@ -3555,7 +4167,7 @@
                           }
                         },
                         {
-                          "id": "ov-tabs-d-1",
+                          "id": "ov-head-tabs-d-1",
                           "type": "ref",
                           "ref": "hideui:tab-m",
                           "name": "Agents",
@@ -3565,6 +4177,18 @@
                               "content": "Agents"
                             }
                           }
+                        },
+                        {
+                          "id": "ov-head-tabs-d-2",
+                          "type": "ref",
+                          "ref": "hideui:tab-m",
+                          "name": "Sessions",
+                          "descendants": {
+                            "hideui:tab-t": {
+                              "fill": "$--subtle-foreground",
+                              "content": "Sessions"
+                            }
+                          }
                         }
                       ],
                       "layout": "horizontal",
@@ -3572,76 +4196,10 @@
                       "padding": "$--spacing-xxs",
                       "fill": "$--card",
                       "cornerRadius": "$--radius-sm"
-                    },
-                    {
-                      "type": "text",
-                      "id": "ov-stats-d",
-                      "name": "5 worktrees   2 open PRs",
-                      "content": "5 worktrees   2 open PRs",
-                      "fill": "$--subtle-foreground",
-                      "fontFamily": "$--font-mono",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "400"
-                    },
-                    {
-                      "type": "text",
-                      "id": "ov-behind-d",
-                      "name": "main ↓3 behind origin",
-                      "content": "main ↓3 behind origin",
-                      "fill": "$--warning",
-                      "fontFamily": "$--font-mono",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "400"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "ov-gap-d",
-                      "name": "Spacer",
-                      "children": [],
-                      "width": "fill_container",
-                      "height": 1
-                    },
-                    {
-                      "id": "ov-sessions-d",
-                      "type": "ref",
-                      "ref": "hideui:btn-m",
-                      "name": "Sessions",
-                      "fill": "#00000000",
-                      "height": 24,
-                      "descendants": {
-                        "hideui:btn-ic": {
-                          "fill": "$--primary-foreground",
-                          "enabled": false
-                        },
-                        "hideui:btn-lb": {
-                          "fill": "$--subtle-foreground",
-                          "content": "Sessions"
-                        }
-                      }
-                    },
-                    {
-                      "id": "ov-new-d",
-                      "type": "ref",
-                      "ref": "hideui:btn-m",
-                      "name": "New agent",
-                      "fill": "$--primary",
-                      "height": 24,
-                      "descendants": {
-                        "hideui:btn-ic": {
-                          "fill": "$--primary-foreground",
-                          "icon": "plus",
-                          "enabled": true
-                        },
-                        "hideui:btn-lb": {
-                          "fill": "$--primary-foreground",
-                          "content": "New agent"
-                        }
-                      }
                     }
                   ],
-                  "layout": "horizontal",
-                  "gap": "$--spacing-lg",
-                  "alignItems": "center",
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
                   "width": 1240
                 },
                 {
@@ -6610,8 +7168,8 @@
         {
           "type": "text",
           "id": "screen-sessions-spec",
-          "name": "web/src/SessionsScreen.tsx: ",
-          "content": "web/src/SessionsScreen.tsx: the provider-filtered session list with search, and the read-only detail pane, using a real Korean session title.",
+          "name": "web/src/ProjectOverview.tsx ",
+          "content": "web/src/ProjectOverview.tsx on its Sessions tab, ProjectSessions.tsx: the Overview’s header and tabs over the provider-filtered session list with search, and the read-only detail pane, using a real Korean session title.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -6631,63 +7189,221 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "ss-crumb-l",
-                  "name": "Breadcrumb",
+                  "id": "ss-head-l",
+                  "name": "Header",
                   "children": [
                     {
-                      "type": "text",
-                      "id": "ss-c1-l",
-                      "name": "Main",
-                      "content": "Main",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-body",
-                      "fontWeight": "400"
+                      "type": "frame",
+                      "id": "ss-head-title-l",
+                      "name": "Title row",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ss-head-crumb-l",
+                          "name": "Path",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ss-head-crumb1-l",
+                              "name": "All projects",
+                              "content": "All projects",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ss-head-crumb2-l",
+                              "name": "/",
+                              "content": "/",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ss-head-crumb3-l",
+                              "name": "fixture",
+                              "content": "fixture",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-headline",
+                              "fontWeight": "600"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ss-head-gap-l",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "id": "ss-head-new-l",
+                          "type": "ref",
+                          "ref": "hideui:btn-m",
+                          "name": "New agent",
+                          "fill": "$--primary",
+                          "height": 24,
+                          "descendants": {
+                            "hideui:btn-ic": {
+                              "fill": "$--primary-foreground",
+                              "icon": "plus",
+                              "enabled": true
+                            },
+                            "hideui:btn-lb": {
+                              "fill": "$--primary-foreground",
+                              "content": "New agent"
+                            }
+                          }
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-lg",
+                      "alignItems": "center",
+                      "width": 820
                     },
                     {
-                      "type": "text",
-                      "id": "ss-c2-l",
-                      "name": "/",
-                      "content": "/",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-body",
-                      "fontWeight": "400"
+                      "type": "frame",
+                      "id": "ss-head-facts-l",
+                      "name": "Facts",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ss-head-facts-l-0",
+                          "name": "2 worktrees",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "ss-head-facts-l-0-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "folder-git-2",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ss-head-facts-l-0-t",
+                              "name": "2 worktrees",
+                              "content": "2 worktrees",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ss-head-facts-l-1",
+                          "name": "812 MB",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "ss-head-facts-l-1-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "hard-drive",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ss-head-facts-l-1-t",
+                              "name": "812 MB",
+                              "content": "812 MB",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-md",
+                      "alignItems": "center"
                     },
                     {
-                      "type": "text",
-                      "id": "ss-c3-l",
-                      "name": "fixture",
-                      "content": "fixture",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-body",
-                      "fontWeight": "400"
+                      "type": "frame",
+                      "id": "ss-head-rule-l",
+                      "name": "Rule",
+                      "children": [],
+                      "width": 820,
+                      "height": 1,
+                      "fill": "$--border"
                     },
                     {
-                      "type": "text",
-                      "id": "ss-c4-l",
-                      "name": "/",
-                      "content": "/",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-body",
-                      "fontWeight": "400"
-                    },
-                    {
-                      "type": "text",
-                      "id": "ss-c5-l",
-                      "name": "Sessions",
-                      "content": "Sessions",
-                      "fill": "$--foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-body",
-                      "fontWeight": "600"
+                      "type": "frame",
+                      "id": "ss-head-tabs-l",
+                      "name": "Tabs",
+                      "children": [
+                        {
+                          "id": "ss-head-tabs-l-0",
+                          "type": "ref",
+                          "ref": "hideui:tab-m",
+                          "name": "Tasks",
+                          "descendants": {
+                            "hideui:tab-t": {
+                              "fill": "$--subtle-foreground",
+                              "content": "Tasks"
+                            }
+                          }
+                        },
+                        {
+                          "id": "ss-head-tabs-l-1",
+                          "type": "ref",
+                          "ref": "hideui:tab-m",
+                          "name": "Agents",
+                          "descendants": {
+                            "hideui:tab-t": {
+                              "fill": "$--subtle-foreground",
+                              "content": "Agents"
+                            }
+                          }
+                        },
+                        {
+                          "id": "ss-head-tabs-l-2",
+                          "type": "ref",
+                          "ref": "hideui:tab-m",
+                          "name": "Sessions",
+                          "fill": "$--secondary",
+                          "descendants": {
+                            "hideui:tab-t": {
+                              "fill": "$--foreground",
+                              "content": "Sessions"
+                            }
+                          }
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xxs",
+                      "padding": "$--spacing-xxs",
+                      "fill": "$--card",
+                      "cornerRadius": "$--radius-sm"
                     }
                   ],
-                  "layout": "horizontal",
-                  "gap": "$--spacing-xs",
-                  "alignItems": "center"
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "width": 820
                 },
                 {
                   "type": "frame",
@@ -6861,63 +7577,221 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "ss-crumb-d",
-                  "name": "Breadcrumb",
+                  "id": "ss-head-d",
+                  "name": "Header",
                   "children": [
                     {
-                      "type": "text",
-                      "id": "ss-c1-d",
-                      "name": "Main",
-                      "content": "Main",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-body",
-                      "fontWeight": "400"
+                      "type": "frame",
+                      "id": "ss-head-title-d",
+                      "name": "Title row",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ss-head-crumb-d",
+                          "name": "Path",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "ss-head-crumb1-d",
+                              "name": "All projects",
+                              "content": "All projects",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ss-head-crumb2-d",
+                              "name": "/",
+                              "content": "/",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ss-head-crumb3-d",
+                              "name": "fixture",
+                              "content": "fixture",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-headline",
+                              "fontWeight": "600"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ss-head-gap-d",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "id": "ss-head-new-d",
+                          "type": "ref",
+                          "ref": "hideui:btn-m",
+                          "name": "New agent",
+                          "fill": "$--primary",
+                          "height": 24,
+                          "descendants": {
+                            "hideui:btn-ic": {
+                              "fill": "$--primary-foreground",
+                              "icon": "plus",
+                              "enabled": true
+                            },
+                            "hideui:btn-lb": {
+                              "fill": "$--primary-foreground",
+                              "content": "New agent"
+                            }
+                          }
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-lg",
+                      "alignItems": "center",
+                      "width": 820
                     },
                     {
-                      "type": "text",
-                      "id": "ss-c2-d",
-                      "name": "/",
-                      "content": "/",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-body",
-                      "fontWeight": "400"
+                      "type": "frame",
+                      "id": "ss-head-facts-d",
+                      "name": "Facts",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ss-head-facts-d-0",
+                          "name": "2 worktrees",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "ss-head-facts-d-0-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "folder-git-2",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ss-head-facts-d-0-t",
+                              "name": "2 worktrees",
+                              "content": "2 worktrees",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ss-head-facts-d-1",
+                          "name": "812 MB",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "ss-head-facts-d-1-g",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 12,
+                              "height": 12,
+                              "icon": "hard-drive",
+                              "library": "lucide",
+                              "fill": "$--subtle-foreground"
+                            },
+                            {
+                              "type": "text",
+                              "id": "ss-head-facts-d-1-t",
+                              "name": "812 MB",
+                              "content": "812 MB",
+                              "fill": "$--subtle-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xxs",
+                          "alignItems": "center"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-md",
+                      "alignItems": "center"
                     },
                     {
-                      "type": "text",
-                      "id": "ss-c3-d",
-                      "name": "fixture",
-                      "content": "fixture",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-body",
-                      "fontWeight": "400"
+                      "type": "frame",
+                      "id": "ss-head-rule-d",
+                      "name": "Rule",
+                      "children": [],
+                      "width": 820,
+                      "height": 1,
+                      "fill": "$--border"
                     },
                     {
-                      "type": "text",
-                      "id": "ss-c4-d",
-                      "name": "/",
-                      "content": "/",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-body",
-                      "fontWeight": "400"
-                    },
-                    {
-                      "type": "text",
-                      "id": "ss-c5-d",
-                      "name": "Sessions",
-                      "content": "Sessions",
-                      "fill": "$--foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-body",
-                      "fontWeight": "600"
+                      "type": "frame",
+                      "id": "ss-head-tabs-d",
+                      "name": "Tabs",
+                      "children": [
+                        {
+                          "id": "ss-head-tabs-d-0",
+                          "type": "ref",
+                          "ref": "hideui:tab-m",
+                          "name": "Tasks",
+                          "descendants": {
+                            "hideui:tab-t": {
+                              "fill": "$--subtle-foreground",
+                              "content": "Tasks"
+                            }
+                          }
+                        },
+                        {
+                          "id": "ss-head-tabs-d-1",
+                          "type": "ref",
+                          "ref": "hideui:tab-m",
+                          "name": "Agents",
+                          "descendants": {
+                            "hideui:tab-t": {
+                              "fill": "$--subtle-foreground",
+                              "content": "Agents"
+                            }
+                          }
+                        },
+                        {
+                          "id": "ss-head-tabs-d-2",
+                          "type": "ref",
+                          "ref": "hideui:tab-m",
+                          "name": "Sessions",
+                          "fill": "$--secondary",
+                          "descendants": {
+                            "hideui:tab-t": {
+                              "fill": "$--foreground",
+                              "content": "Sessions"
+                            }
+                          }
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xxs",
+                      "padding": "$--spacing-xxs",
+                      "fill": "$--card",
+                      "cornerRadius": "$--radius-sm"
                     }
                   ],
-                  "layout": "horizontal",
-                  "gap": "$--spacing-xs",
-                  "alignItems": "center"
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "width": 820
                 },
                 {
                   "type": "frame",
@@ -14385,7 +15259,7 @@
           "type": "text",
           "id": "screen-projects-sidebar-spec",
           "name": "sidebar.tsx, projects.ts: th",
-          "content": "sidebar.tsx, projects.ts: the Projects tab. A project’s primary checkout comes first, then the rest by activity. A project row folds its checkouts from its chevron and opens the Overview from the rest of the row; a checkout row opens the checkout, and its trailing chevron, shown only when agents run there, opens their rows in place of line two. Line two is the agents (the representative’s mark and provider, +N) and the purpose. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.",
+          "content": "sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here herdr-ide on its Overview, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. A project row folds its checkouts from its chevron and opens the Overview from the rest of the row; a checkout row opens the checkout, and its trailing chevron, shown only when agents run there, opens their rows in place of line two. Line two is the agents (the representative’s mark and provider, +N) and the purpose. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -14473,6 +15347,43 @@
                   "id": "psb-list-l",
                   "name": "Projects list",
                   "children": [
+                    {
+                      "id": "psb-all-l",
+                      "type": "ref",
+                      "ref": "hideui:qdhY0",
+                      "name": "All projects",
+                      "width": 292,
+                      "height": 36,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "descendants": {
+                        "hideui:iBYjj": {
+                          "fill": "$--muted-foreground",
+                          "opacity": 0
+                        },
+                        "hideui:mIzlX": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "layout-grid"
+                        },
+                        "hideui:JkPyX": {
+                          "fill": "$--foreground",
+                          "content": "All projects"
+                        },
+                        "hideui:nZkan": {
+                          "fill": "$--muted-foreground",
+                          "content": "12 projects"
+                        },
+                        "hideui:hm1SG": {
+                          "width": 24,
+                          "height": 24,
+                          "opacity": 0
+                        }
+                      }
+                    },
                     {
                       "type": "frame",
                       "id": "psb-sec-pin-l",
@@ -14624,7 +15535,7 @@
                         0,
                         "$--spacing-md"
                       ],
-                      "fill": "$--accent",
+                      "fill": "$--secondary",
                       "descendants": {
                         "hideui:iBYjj": {
                           "fill": "$--muted-foreground",
@@ -14645,7 +15556,7 @@
                         "hideui:hm1SG": {
                           "width": 24,
                           "height": 24,
-                          "opacity": 1
+                          "opacity": 0
                         }
                       }
                     },
@@ -14662,7 +15573,6 @@
                         0,
                         16
                       ],
-                      "fill": "$--secondary",
                       "descendants": {
                         "hideui:VtSRn": {
                           "fill": "$--subtle-foreground",
@@ -14671,7 +15581,7 @@
                         "hideui:q91d7": {
                           "fill": "$--foreground",
                           "content": "main",
-                          "fontWeight": "600"
+                          "fontWeight": "500"
                         },
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
@@ -15703,6 +16613,43 @@
                   "name": "Projects list",
                   "children": [
                     {
+                      "id": "psb-all-d",
+                      "type": "ref",
+                      "ref": "hideui:qdhY0",
+                      "name": "All projects",
+                      "width": 292,
+                      "height": 36,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "descendants": {
+                        "hideui:iBYjj": {
+                          "fill": "$--muted-foreground",
+                          "opacity": 0
+                        },
+                        "hideui:mIzlX": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "layout-grid"
+                        },
+                        "hideui:JkPyX": {
+                          "fill": "$--foreground",
+                          "content": "All projects"
+                        },
+                        "hideui:nZkan": {
+                          "fill": "$--muted-foreground",
+                          "content": "12 projects"
+                        },
+                        "hideui:hm1SG": {
+                          "width": 24,
+                          "height": 24,
+                          "opacity": 0
+                        }
+                      }
+                    },
+                    {
                       "type": "frame",
                       "id": "psb-sec-pin-d",
                       "name": "Section",
@@ -15853,7 +16800,7 @@
                         0,
                         "$--spacing-md"
                       ],
-                      "fill": "$--accent",
+                      "fill": "$--secondary",
                       "descendants": {
                         "hideui:iBYjj": {
                           "fill": "$--muted-foreground",
@@ -15874,7 +16821,7 @@
                         "hideui:hm1SG": {
                           "width": 24,
                           "height": 24,
-                          "opacity": 1
+                          "opacity": 0
                         }
                       }
                     },
@@ -15891,7 +16838,6 @@
                         0,
                         16
                       ],
-                      "fill": "$--secondary",
                       "descendants": {
                         "hideui:VtSRn": {
                           "fill": "$--subtle-foreground",
@@ -15900,7 +16846,7 @@
                         "hideui:q91d7": {
                           "fill": "$--foreground",
                           "content": "main",
-                          "fontWeight": "600"
+                          "fontWeight": "500"
                         },
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
