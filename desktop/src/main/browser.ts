@@ -13,6 +13,8 @@
 // A hidden page past `MAX_LIVE_VIEWS` is closed and loads again when shown.
 
 import { BrowserWindow, ipcMain, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type Session } from "electron";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
 import type { BrowserHostEvent, BrowserPageState, BrowserPlacement } from "../../../web/src/host";
 import { BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL } from "../channel";
 import { loadable, MAX_LIVE_VIEWS, overCap, parseCommand, parseSync, parseTarget, toBounds, viewKey } from "./browserSync";
@@ -36,7 +38,10 @@ type Page = {
   shownAt: number;
   state: BrowserPageState;
   report: NodeJS.Timeout | null;
+  route: ResolvedPage | null;
 };
+
+export type ResolvedPage = { url: string; source_url: string; load: number };
 
 export class BrowserViews {
   private readonly pages = new Map<string, Page>();
@@ -47,6 +52,8 @@ export class BrowserViews {
     private readonly log: HostLog,
     /** Whether an IPC message came from the shell the daemon serves, not the status page or a page here. */
     private readonly trusted: (event: IpcMainEvent | IpcMainInvokeEvent) => boolean,
+    private readonly resolve: (workspace: string, id: string, load: number) => Promise<ResolvedPage>,
+    private readonly release: (workspace: string, id: string, load: number) => void,
   ) {
     this.session = session.fromPartition(BROWSER_PARTITION);
     // A page gets no permission but writing the clipboard; a prompt it
@@ -157,6 +164,7 @@ export class BrowserViews {
       shownAt: 0,
       state: { url: display.url, title: "", loading: true, canGoBack: false, canGoForward: false, failure: null },
       report: null,
+      route: null,
     };
     view.setVisible(false);
     window.contentView.addChildView(view);
@@ -173,10 +181,21 @@ export class BrowserViews {
       this.update(page, { failure: "This address cannot be shown here" });
       return;
     }
-    page.view.webContents.loadURL(url).catch((error: unknown) => {
-      // did-fail-load reports it; a load a newer one replaced is not a failure.
-      const code = (error as { errno?: number }).errno;
-      if (code !== ERR_ABORTED) this.log.event("browser.load_failed", { code });
+    const stamp = page.applied;
+    this.update(page, { url, loading: true, failure: null });
+    void this.resolve(page.workspace, page.id, stamp).then((route) => {
+      if (this.pages.get(page.key) !== page || page.applied !== stamp || route.load !== stamp || route.source_url !== url) return;
+      page.route = route;
+      if (!loadable(route.url)) throw new Error("Resolved page address cannot be loaded");
+      return page.view.webContents.loadURL(route.url).catch((error: unknown) => {
+        // did-fail-load reports it; a load a newer one replaced is not a failure.
+        const code = (error as { errno?: number }).errno;
+        if (code !== ERR_ABORTED) this.log.event("browser.load_failed", { code });
+      });
+    }).catch((error: unknown) => {
+      if (this.pages.get(page.key) !== page || page.applied !== stamp) return;
+      this.log.event("browser.route_failed", { detail: String(error) });
+      this.update(page, { url, loading: false, failure: `Page route unavailable: ${String(error)}` });
     });
   }
 
@@ -185,14 +204,14 @@ export class BrowserViews {
     const history = () => ({ canGoBack: contents.navigationHistory.canGoBack(), canGoForward: contents.navigationHistory.canGoForward() });
     contents.on("did-start-loading", () => this.update(page, { loading: true, failure: null }));
     contents.on("did-stop-loading", () => this.update(page, { loading: false, ...history() }));
-    contents.on("did-navigate", (_event, url) => this.update(page, { url, ...history() }));
+    contents.on("did-navigate", (_event, url) => this.update(page, { url: this.sourceAddress(page, url), ...history() }));
     contents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
-      if (isMainFrame) this.update(page, { url, ...history() });
+      if (isMainFrame) this.update(page, { url: this.sourceAddress(page, url), ...history() });
     });
     contents.on("page-title-updated", (_event, title) => this.update(page, { title }));
     contents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
       if (!isMainFrame || code === ERR_ABORTED) return;
-      this.update(page, { url, loading: false, failure: description || `Load failed (${code})` });
+      this.update(page, { url: this.sourceAddress(page, url), loading: false, failure: description || `Load failed (${code})` });
     });
     contents.on("render-process-gone", (_event, details) => {
       this.log.event("browser.page_gone", { reason: details.reason });
@@ -226,6 +245,27 @@ export class BrowserViews {
     }, REPORT_COALESCE_MS);
   }
 
+  private sourceAddress(page: Page, raw: string): string {
+    const route = page.route;
+    if (!route || route.url === route.source_url) return raw;
+    if (raw === route.url) return route.source_url;
+    try {
+      const address = new URL(raw);
+      const local = new URL(route.url);
+      const source = new URL(route.source_url);
+      if (address.origin !== local.origin) return raw;
+      if (source.protocol === "file:") {
+        const workspace = page.workspace.split("\u0000");
+        const prefix = `/${local.pathname.split("/")[1]}/`;
+        if (workspace.length !== 2 || !address.pathname.startsWith(prefix)) return raw;
+        return `${pathToFileURL(path.join(workspace[1]!, decodeURIComponent(address.pathname.slice(prefix.length)))).href}${address.search}${address.hash}`;
+      }
+      address.host = source.host;
+      address.protocol = source.protocol;
+      return address.href;
+    } catch { return raw; }
+  }
+
   private emit(event: BrowserHostEvent): void {
     const contents = this.window?.webContents;
     if (contents && !contents.isDestroyed()) contents.send(BROWSER_EVENT_CHANNEL, event);
@@ -244,6 +284,7 @@ export class BrowserViews {
   private destroy(page: Page, reason: "closed" | "evicted" | "window_closed"): void {
     if (reason === "evicted") this.emit({ kind: "gone", workspace: page.workspace, id: page.id, load: page.applied, url: page.state.url });
     this.pages.delete(page.key);
+    this.release(page.workspace, page.id, page.applied);
     if (page.report) clearTimeout(page.report);
     const window = this.window;
     if (window && !window.isDestroyed()) window.contentView.removeChildView(page.view);

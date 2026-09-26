@@ -28,6 +28,16 @@ enum Command {
         device_id: String,
         reply: Sender<Result<Arc<dyn HostChannel>, String>>,
     },
+    WorkspaceRemoteRoutes {
+        reply: Sender<Vec<herdr_core::WorkspaceRemoteRoute>>,
+    },
+    BrowserRouteSource {
+        device_id: String,
+        checkout_path: String,
+        view_id: String,
+        load: u64,
+        reply: Sender<Option<herdr_core::workspace_control::BrowserRouteSource>>,
+    },
     WorkspaceQuery {
         device_id: String,
         pane_id: String,
@@ -117,6 +127,36 @@ impl CoreHandle {
             .map_err(|_| "core owner thread is gone".to_owned())?;
         rx.recv()
             .map_err(|_| "core owner thread dropped device-channel reply".to_owned())?
+    }
+
+    pub fn workspace_remote_routes(&self) -> Result<Vec<herdr_core::WorkspaceRemoteRoute>, String> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::WorkspaceRemoteRoutes { reply })
+            .map_err(|_| "core owner thread is gone".to_owned())?;
+        rx.recv()
+            .map_err(|_| "core owner thread dropped remote routes".to_owned())
+    }
+
+    pub fn browser_route_source(
+        &self,
+        device_id: &str,
+        checkout_path: &str,
+        view_id: &str,
+        load: u64,
+    ) -> Result<Option<herdr_core::workspace_control::BrowserRouteSource>, String> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::BrowserRouteSource {
+                device_id: device_id.to_owned(),
+                checkout_path: checkout_path.to_owned(),
+                view_id: view_id.to_owned(),
+                load,
+                reply,
+            })
+            .map_err(|_| "core owner thread is gone".to_owned())?;
+        rx.recv()
+            .map_err(|_| "core owner thread dropped browser route source".to_owned())
     }
 
     pub fn workspace_query(
@@ -262,6 +302,23 @@ fn owner_loop(
             }
             Command::DeviceChannel { device_id, reply } => {
                 let _ = reply.send(core.device_channel(&device_id));
+            }
+            Command::WorkspaceRemoteRoutes { reply } => {
+                let _ = reply.send(core.workspace_remote_routes());
+            }
+            Command::BrowserRouteSource {
+                device_id,
+                checkout_path,
+                view_id,
+                load,
+                reply,
+            } => {
+                let _ = reply.send(core.browser_route_source(
+                    &device_id,
+                    &checkout_path,
+                    &view_id,
+                    load,
+                ));
             }
             Command::WorkspaceQuery {
                 device_id,

@@ -3,7 +3,7 @@
 
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -35,6 +35,20 @@ pub fn bootstrap(env: &Env, one_shot: bool) -> Result<PathBuf, String> {
         .pane_id
         .as_deref()
         .ok_or_else(|| "pane_not_connected".to_owned())?;
+    let mut nonce = [0u8; 16];
+    getrandom::getrandom(&mut nonce).map_err(|_| "reference_unavailable".to_owned())?;
+    let request = json!({"pane_id":pane_id,"nonce":hex::encode(nonce),"one_shot":one_shot});
+    match bootstrap_local(env, &request) {
+        Ok(path) => Ok(path),
+        Err(local_reason) => match bootstrap_remote(env, &request) {
+            Ok(Some(path)) => Ok(path),
+            Ok(None) => Err(local_reason),
+            Err(remote_reason) => Err(remote_reason),
+        },
+    }
+}
+
+fn bootstrap_local(env: &Env, request: &Value) -> Result<PathBuf, String> {
     let socket = env.state_dir.join("pane-bootstrap.sock");
     let mut stream = UnixStream::connect(socket).map_err(|_| "hide_unavailable".to_owned())?;
     stream
@@ -43,14 +57,11 @@ pub fn bootstrap(env: &Env, one_shot: bool) -> Result<PathBuf, String> {
     stream
         .set_write_timeout(Some(TIMEOUT))
         .map_err(|_| "hide_unavailable".to_owned())?;
-    let mut nonce = [0u8; 16];
-    getrandom::getrandom(&mut nonce).map_err(|_| "reference_unavailable".to_owned())?;
-    writeln!(
-        stream,
-        "{}",
-        json!({"pane_id":pane_id,"nonce":hex::encode(nonce),"one_shot":one_shot})
-    )
-    .map_err(|_| "hide_unavailable".to_owned())?;
+    writeln!(stream, "{request}").map_err(|_| "hide_unavailable".to_owned())?;
+    read_bootstrap_answer(&mut stream)
+}
+
+fn read_bootstrap_answer(stream: &mut UnixStream) -> Result<PathBuf, String> {
     let mut line = String::new();
     BufReader::new(stream)
         .take(4096)
@@ -67,6 +78,80 @@ pub fn bootstrap(env: &Env, one_shot: bool) -> Result<PathBuf, String> {
         .as_str()
         .map(PathBuf::from)
         .ok_or_else(|| "reference_unavailable".to_owned())
+}
+
+fn bootstrap_remote(env: &Env, request: &Value) -> Result<Option<PathBuf>, String> {
+    let bridge_dir = env
+        .workspace_bridge_dir
+        .clone()
+        .unwrap_or_else(|| env.home.join(".local/state/hide/workspace-bridges"));
+    let metadata = match fs::symlink_metadata(&bridge_dir) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("bridge_unavailable".to_owned()),
+    };
+    if !metadata.is_dir()
+        || metadata.file_type().is_symlink()
+        || metadata.uid() != unsafe { libc::geteuid() }
+        || metadata.permissions().mode() & 0o077 != 0
+    {
+        return Err("bridge_unavailable".to_owned());
+    }
+    let entries = match fs::read_dir(&bridge_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err("bridge_unavailable".to_owned()),
+    };
+    let mut success = None;
+    let mut reason = None;
+    let mut seen = 0;
+    for entry in entries {
+        let entry = entry.map_err(|_| "bridge_unavailable".to_owned())?;
+        if !entry.file_name().to_string_lossy().starts_with("bridge-") {
+            continue;
+        }
+        let socket = entry.path().join("bootstrap.sock");
+        let Ok(metadata) = fs::symlink_metadata(&socket) else {
+            continue;
+        };
+        if !metadata.file_type().is_socket() || metadata.uid() != unsafe { libc::geteuid() } {
+            continue;
+        }
+        let Ok(mut stream) = UnixStream::connect(&socket) else {
+            continue;
+        };
+        seen += 1;
+        if seen > 16 {
+            return Err("bridge_limit".to_owned());
+        }
+        let _ = stream.set_read_timeout(Some(TIMEOUT));
+        let _ = stream.set_write_timeout(Some(TIMEOUT));
+        if writeln!(stream, "{request}").is_err() {
+            reason = Some("bridge_unavailable".to_owned());
+            continue;
+        }
+        match read_bootstrap_answer(&mut stream) {
+            Ok(path) if path.starts_with(&bridge_dir) => {
+                if success.is_some() {
+                    let _ = fs::remove_file(&path);
+                    if let Some(first) = success {
+                        let _ = fs::remove_file(first);
+                    }
+                    return Err("ambiguous_pane".to_owned());
+                }
+                success = Some(path);
+            }
+            Ok(_) => reason = Some("invalid_reference".to_owned()),
+            Err(error) => reason = Some(error),
+        }
+    }
+    if success.is_some() {
+        Ok(success)
+    } else if let Some(reason) = reason {
+        Err(reason)
+    } else {
+        Ok(None)
+    }
 }
 
 fn read_reference(path: &Path) -> Result<Reference, String> {
@@ -100,6 +185,9 @@ fn read_reference(path: &Path) -> Result<Reference, String> {
     let reference: Reference =
         serde_json::from_slice(&bytes).map_err(|_| "invalid_reference".to_owned())?;
     if reference.token.len() != 64 || !reference.token.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("invalid_reference".to_owned());
+    }
+    if reference.port == 0 || reference.origin_port == 0 {
         return Err("invalid_reference".to_owned());
     }
     Ok(reference)
@@ -171,7 +259,7 @@ async fn exchange(
         .map_err(|_| "hide_unavailable".to_owned())?;
     request.headers_mut().insert(
         ORIGIN,
-        format!("http://127.0.0.1:{}", reference.port)
+        format!("http://127.0.0.1:{}", reference.origin_port)
             .parse()
             .map_err(|_| "hide_unavailable".to_owned())?,
     );
@@ -213,7 +301,7 @@ mod tests {
     fn reference_reader_refuses_symlink_and_open_permissions() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("reference.json");
-        fs::write(&path, br#"{"token":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","port":12345}"#).unwrap();
+        fs::write(&path, br#"{"token":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","port":12345,"origin_port":12345}"#).unwrap();
         let mut permissions = fs::metadata(&path).unwrap().permissions();
         permissions.set_mode(0o600);
         fs::set_permissions(&path, permissions.clone()).unwrap();

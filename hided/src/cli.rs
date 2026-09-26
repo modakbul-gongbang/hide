@@ -398,7 +398,28 @@ fn absolute_caller_path(path: &str) -> Result<String, String> {
             other => normalized.push(other.as_os_str()),
         }
     }
-    Ok(normalized.to_string_lossy().into_owned())
+    // A pane's cwd may be reached through a platform alias such as macOS
+    // /var -> /private/var, while Herdr reports the checkout's real path.
+    // Resolve the nearest existing ancestor so deleted diff paths still
+    // retain their final components and the host can judge them in its root.
+    let mut ancestor = normalized.as_path();
+    let mut missing = Vec::new();
+    while !ancestor.exists() {
+        let name = ancestor
+            .file_name()
+            .ok_or_else(|| "path_unavailable".to_owned())?;
+        missing.push(name.to_os_string());
+        ancestor = ancestor
+            .parent()
+            .ok_or_else(|| "path_unavailable".to_owned())?;
+    }
+    let mut resolved = ancestor
+        .canonicalize()
+        .map_err(|_| "path_unavailable".to_owned())?;
+    for component in missing.into_iter().rev() {
+        resolved.push(component);
+    }
+    Ok(resolved.to_string_lossy().into_owned())
 }
 
 fn workspace_action_refusal<T>(request_id: &str, reason: &str) -> Result<T, String> {

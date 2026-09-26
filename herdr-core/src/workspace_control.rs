@@ -94,6 +94,16 @@ pub struct BrowserPage {
     pub failure: Option<String>,
 }
 
+/// The current browser target an authenticated desktop host may resolve.
+/// It is read from core-owned View state, never accepted from an IPC caller.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct BrowserRouteSource {
+    pub device_id: String,
+    pub checkout_path: String,
+    pub url: String,
+    pub load: u64,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct QueryResult {
     pub context: Context,

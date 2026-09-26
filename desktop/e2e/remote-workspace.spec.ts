@@ -1,0 +1,247 @@
+// Real SSH-origin Workspace CLI acceptance. Run with an isolated sshd whose
+// port, key and known_hosts are supplied in HIDE_E2E_SSH_*; the two Herdr
+// servers, daemon, helper install and desktop profile remain private.
+
+import { expect, test } from "@playwright/test";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
+import type { Duplex } from "node:stream";
+import path from "node:path";
+import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
+import { enterWorkspace } from "../../web/e2e/wire";
+import { HIDE_CLI, hostLog, isolate, launch, type Isolated } from "./fixture";
+
+test.describe.configure({ timeout: 180_000 });
+test.skip(!process.env.HIDE_E2E_SSH_PORT, "an isolated SSH server is required");
+
+function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
+
+async function commandFromPane(herdr: HerdrFixture, run: Isolated, bridge: string, args: string[], label: string) {
+  const result = path.join(herdr.root, `${label}.json`);
+  const exit = path.join(herdr.root, `${label}.exit`);
+  const command = `HIDE_WORKSPACE_BRIDGE_DIR=${quote(bridge)} HIDE_STATE_DIR=${quote(path.join(run.root, "remote-cli-state"))} ${[HIDE_CLI, ...args].map(quote).join(" ")} > ${quote(result)}; printf '%s' "$?" > ${quote(exit)}\n`;
+  const sent = spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0], command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
+  expect(sent.status, sent.stderr).toBe(0);
+  await expect.poll(() => fs.existsSync(exit), { timeout: 30_000 }).toBe(true);
+  return { status: Number(fs.readFileSync(exit, "utf8")), answer: JSON.parse(fs.readFileSync(result, "utf8").trim().split("\n").at(-1) || "{}") as Record<string, unknown> };
+}
+
+test("remote pane CLI reaches its own Workspace over SSH and leaves the local Workspace in front", async () => {
+  const local = await startHerdr({ agents: false });
+  const remote = await startHerdr({ agents: false });
+  const run = isolate(local, "ssh");
+  const bridge = fs.mkdtempSync("/tmp/hide-wc-");
+  const helper = path.join(run.root, "remote-helper");
+  run.env.HIDE_WORKSPACE_BRIDGE_DIR = bridge;
+  run.env.HIDE_HOST_HELPER_ROOT = helper;
+  const ssh = path.join(run.env.HOME!, ".ssh");
+  fs.mkdirSync(ssh, { recursive: true });
+  fs.copyFileSync(process.env.HIDE_E2E_SSH_KNOWN_HOSTS!, path.join(ssh, "known_hosts"));
+  fs.writeFileSync(path.join(ssh, "config"), [
+    "Host isolated-workspace", "  HostName 127.0.0.1", `  Port ${process.env.HIDE_E2E_SSH_PORT}`,
+    "  User grab", `  IdentityFile ${process.env.HIDE_E2E_SSH_KEY}`, "  IdentityAgent none", "",
+  ].join("\n"), { mode: 0o600 });
+  const daemonLog = path.join(run.root, "daemon.log");
+  const daemonOutput = fs.openSync(daemonLog, "w");
+  const daemon = spawn(path.join(path.dirname(HIDE_CLI), "hided"), [], {
+    env: run.env, stdio: ["ignore", daemonOutput, daemonOutput],
+  });
+  fs.closeSync(daemonOutput);
+  let app: Awaited<ReturnType<typeof launch>>["app"] | undefined;
+  let devServer: http.Server | undefined;
+  const upgraded = new Set<Duplex>();
+  try {
+    await expect.poll(() => run.hide(["status", "--json"]).stdout.includes('"running":true'), { timeout: 30_000 }).toBe(true);
+    ({ app } = await launch(run.env));
+    const page = await app.firstWindow();
+    await enterWorkspace(page, "fixture");
+    const state = JSON.parse(fs.readFileSync(path.join(run.env.HIDE_STATE_DIR!, "hided.json"), "utf8")) as { port: number; token: string };
+    await page.evaluate(async ({ port, token, socket }) => {
+      await new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+        const timer = setTimeout(() => reject(new Error("device registration timed out")), 10_000);
+        ws.onerror = () => { clearTimeout(timer); reject(new Error("device registration socket failed")); };
+        ws.onopen = () => ws.send(JSON.stringify({ token, schema_version: 2 }));
+        ws.onmessage = () => {
+          ws.send(JSON.stringify({ schema_version: 2, kind: "register_device", payload: {
+            id: "ssh-e2e", label: "SSH fixture", ssh_alias: "isolated-workspace",
+            herdr_socket_path: socket, host_consent: true,
+          } }));
+          clearTimeout(timer);
+          ws.close();
+          resolve();
+        };
+      });
+    }, { port: state.port, token: state.token, socket: remote.socket });
+    await expect.poll(() => {
+      if (!fs.existsSync(bridge)) return 0;
+      return fs.readdirSync(bridge).filter((name) => fs.existsSync(path.join(bridge, name, "bootstrap.sock"))).length;
+    }, { timeout: 60_000 }).toBe(1);
+    const ready = fs.readFileSync(daemonLog, "utf8").split("\n").filter(Boolean)
+      .map((line) => JSON.parse(line) as { kind?: string; remote_port?: number })
+      .findLast((line) => line.kind === "route.ready");
+    expect(ready?.remote_port).toBeGreaterThan(0);
+    const probe = spawnSync("ssh", ["-F", "/dev/null", "-p", process.env.HIDE_E2E_SSH_PORT!,
+      "-i", process.env.HIDE_E2E_SSH_KEY!, "-o", "IdentitiesOnly=yes", "-o", "BatchMode=yes",
+      "-o", `UserKnownHostsFile=${process.env.HIDE_E2E_SSH_KNOWN_HOSTS!}`, "127.0.0.1",
+      `curl --max-time 5 -fsS http://127.0.0.1:${ready!.remote_port}/health`],
+    { encoding: "utf8", timeout: 10_000 });
+    expect(probe.status, `${probe.stderr} ${probe.stdout}`).toBe(0);
+    expect(JSON.parse(probe.stdout)).toMatchObject({ schema_version: 2 });
+    const info = await commandFromPane(remote, run, bridge, ["workspace", "info"], "remote-info");
+    expect(info.status, JSON.stringify(info.answer)).toBe(0);
+    expect(info.answer).toMatchObject({ ok: true, result: { context: { device_id: "ssh-e2e", checkout_path: fs.realpathSync(path.join(remote.root, "fixture")) } } });
+    const file = path.join(remote.root, "fixture", "remote-proof.txt");
+    fs.writeFileSync(file, "Remote proof\n");
+    const opened = await commandFromPane(remote, run, bridge, ["file", "open", file], "remote-file");
+    expect(opened.status, JSON.stringify(opened.answer)).toBe(0);
+    expect(opened.answer).toMatchObject({ ok: true, result: { context: { device_id: "ssh-e2e" }, changed: true } });
+    const views = await commandFromPane(remote, run, bridge, ["view", "list"], "remote-views");
+    expect(views.status, JSON.stringify(views.answer)).toBe(0);
+    const rows = ((views.answer.result as { views: { target: string }[] }).views);
+    expect(rows.some((view) => view.target === fs.realpathSync(file))).toBe(true);
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
+    expect(await page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen")).not.toContain("ssh-e2e");
+
+    devServer = http.createServer((request, response) => {
+      const body = request.url === "/remote.html"
+        ? `<!doctype html><title>Remote dev</title><h1 id="origin">Remote dev</h1><p id="live">waiting</p><script>new WebSocket('ws://' + location.host + '/live').onmessage = e => document.getElementById('live').textContent = e.data</script>`
+        : null;
+      response.writeHead(body ? 200 : 404, { "content-type": "text/html; charset=utf-8" });
+      response.end(body ?? "missing");
+    });
+    devServer.on("upgrade", (request, socket) => {
+      const key = request.headers["sec-websocket-key"];
+      if (request.url !== "/live" || typeof key !== "string") return socket.destroy();
+      upgraded.add(socket);
+      socket.on("close", () => upgraded.delete(socket));
+      const accept = createHash("sha1").update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
+      socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+      const payload = Buffer.from("remote-live");
+      socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), payload]));
+    });
+    await new Promise<void>((resolve) => devServer!.listen(0, "127.0.0.1", resolve));
+    const remotePort = (devServer.address() as AddressInfo).port;
+    const openedDev = await commandFromPane(remote, run, bridge, ["browser", "open", `http://localhost:${remotePort}/remote.html`], "remote-dev");
+    expect(openedDev.status, JSON.stringify(openedDev.answer)).toBe(0);
+    expect(await page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen")).not.toContain("ssh-e2e");
+
+    await page.evaluate(async ({ port, token }) => {
+      await new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+        const timer = setTimeout(() => reject(new Error("device focus timed out")), 10_000);
+        ws.onerror = () => { clearTimeout(timer); reject(new Error("device focus socket failed")); };
+        ws.onopen = () => ws.send(JSON.stringify({ token, schema_version: 2 }));
+        ws.onmessage = () => {
+          ws.send(JSON.stringify({ schema_version: 2, kind: "focus_device", payload: { device_id: "ssh-e2e" } }));
+          clearTimeout(timer); ws.close(); resolve();
+        };
+      });
+    }, state);
+    await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen"), { timeout: 20_000 }).toContain("ssh-e2e");
+    await page.locator('[data-layout-choice="views"]').click();
+    const native = async () => app!.evaluate(async ({ BrowserWindow }) => {
+      const child = BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>
+        (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote dev");
+      if (!child) return null;
+      const contents = (child as unknown as { webContents: Electron.WebContents }).webContents;
+      return { url: contents.getURL(), live: await contents.executeJavaScript("document.getElementById('live')?.textContent") as string };
+    });
+    await expect.poll(async () => (await native())?.live, { timeout: 30_000 }).toBe("remote-live");
+    const routed = (await native())!.url;
+    expect(new URL(routed).port).not.toBe(String(remotePort));
+    expect(new URL(routed).hostname).toBe("localhost");
+
+    const checkout = path.join(remote.root, "fixture");
+    const html = path.join(checkout, "remote-preview.html");
+    fs.writeFileSync(html, '<!doctype html><title>Remote HTML</title><link rel="stylesheet" href="style.css"><h1 id="proof">Remote HTML</h1><img id="pixel" src="pixel.png"><script src="preview.js"></script>');
+    fs.writeFileSync(path.join(checkout, "style.css"), "#proof { color: rgb(12, 34, 56); }");
+    fs.writeFileSync(path.join(checkout, "preview.js"), "document.getElementById('proof').dataset.script = 'remote-script'");
+    fs.writeFileSync(path.join(checkout, "pixel.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR1sAAAAASUVORK5CYII=", "base64"));
+    const outside = path.join(remote.root, "outside-secret.txt");
+    fs.writeFileSync(outside, "outside");
+    fs.symlinkSync(outside, path.join(checkout, "escape.txt"));
+    const openedHtml = await commandFromPane(remote, run, bridge, ["browser", "open", html], "remote-html");
+    expect(openedHtml.status, JSON.stringify(openedHtml.answer)).toBe(0);
+    const preview = async () => app!.evaluate(async ({ BrowserWindow }) => {
+      const child = BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>
+        (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote HTML");
+      if (!child) return null;
+      const contents = (child as unknown as { webContents: Electron.WebContents }).webContents;
+      return { url: contents.getURL(), state: await contents.executeJavaScript("({ script: document.getElementById('proof')?.dataset.script, color: getComputedStyle(document.getElementById('proof')).color, image: document.getElementById('pixel')?.naturalWidth })") as { script: string; color: string; image: number } };
+    });
+    await expect.poll(async () => (await preview())?.state, { timeout: 30_000 }).toEqual({ script: "remote-script", color: "rgb(12, 34, 56)", image: 1 });
+    const previewUrl = (await preview())!.url;
+    const captureDir = process.env.HIDE_E2E_SCREENSHOT_DIR;
+    if (captureDir) {
+      fs.mkdirSync(captureDir, { recursive: true });
+      const capture = await app.evaluate(async ({ BrowserWindow }) => {
+        const windows = BrowserWindow.getAllWindows();
+        if (windows.length !== 1) throw new Error(`Expected one candidate window, found ${windows.length}`);
+        const child = windows[0]!.contentView.children.find((entry) =>
+          (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote HTML");
+        if (!child) throw new Error("Remote native page is missing");
+        return (await (child as unknown as { webContents: Electron.WebContents }).webContents.capturePage()).toPNG().toString("base64");
+      });
+      fs.writeFileSync(path.join(captureDir, "remote-html-native.png"), Buffer.from(capture, "base64"));
+    }
+    const escape = new URL("escape.txt", previewUrl);
+    expect((await fetch(escape)).status).toBe(403);
+    const parent = new URL(previewUrl);
+    const traversal = await new Promise<number>((resolve, reject) => {
+      http.get({ hostname: parent.hostname, port: parent.port, path: `${parent.pathname.slice(0, parent.pathname.lastIndexOf("/") + 1)}%2e%2e/outside-secret.txt` }, (response) => { response.resume(); resolve(response.statusCode ?? 0); }).on("error", reject);
+    });
+    expect(traversal).toBe(403);
+    const htmlId = (openedHtml.answer.result as { view_id: string }).view_id;
+    const devId = (openedDev.answer.result as { view_id: string }).view_id;
+    expect((await commandFromPane(remote, run, bridge, ["view", "close", htmlId], "remote-html-close")).status).toBe(0);
+    expect((await commandFromPane(remote, run, bridge, ["view", "close", devId], "remote-dev-close")).status).toBe(0);
+    for (const url of [previewUrl, routed]) {
+      await expect.poll(async () => {
+        try { await fetch(url, { signal: AbortSignal.timeout(500) }); return false; }
+        catch { return true; }
+      }, { timeout: 10_000 }).toBe(true);
+    }
+    await page.evaluate(async ({ port, token }) => {
+      await new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+        const timer = setTimeout(() => reject(new Error("local focus timed out")), 10_000);
+        ws.onerror = () => { clearTimeout(timer); reject(new Error("local focus socket failed")); };
+        ws.onopen = () => ws.send(JSON.stringify({ token, schema_version: 2 }));
+        ws.onmessage = () => {
+          ws.send(JSON.stringify({ schema_version: 2, kind: "focus_device", payload: { device_id: "local" } }));
+          clearTimeout(timer); ws.close(); resolve();
+        };
+      });
+    }, state);
+    await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen")).not.toContain("ssh-e2e");
+    const revealed = await commandFromPane(remote, run, bridge, ["browser", "open", `http://localhost:${remotePort}/remote.html`, "--reveal"], "remote-reveal");
+    expect(revealed.status, JSON.stringify(revealed.answer)).toBe(0);
+    await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen"), { timeout: 20_000 }).toContain("ssh-e2e");
+    await expect.poll(async () => (await native())?.live, { timeout: 20_000 }).toBe("remote-live");
+    const ownedUrl = (await native())!.url;
+    const candidatePid = app.process().pid;
+    expect(candidatePid).toBeGreaterThan(0);
+    app.process().kill("SIGKILL");
+    await expect.poll(async () => {
+      try { await fetch(ownedUrl, { signal: AbortSignal.timeout(500) }); return false; }
+      catch { return true; }
+    }, { timeout: 10_000 }).toBe(true);
+  } catch (error) {
+    console.log(hostLog(run.env).map((line) => JSON.stringify(line)).join("\n"));
+    console.log(fs.readFileSync(daemonLog, "utf8"));
+    throw error;
+  } finally {
+    await app?.close().catch(() => undefined);
+    for (const socket of upgraded) socket.destroy();
+    await new Promise<void>((resolve) => devServer?.close(() => resolve()) ?? resolve());
+    run.cleanup();
+    fs.rmSync(bridge, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    if (daemon.exitCode === null) daemon.kill("SIGTERM");
+    remote.stop();
+    local.stop();
+  }
+});

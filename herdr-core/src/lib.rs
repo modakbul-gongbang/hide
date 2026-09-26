@@ -49,4 +49,5 @@ pub use ffi::{
     herdr_core_free_bytes, herdr_core_on_change, herdr_core_snapshot,
 };
 pub use model::{CoreOptions, SCHEMA_VERSION, Snapshot, SnapshotDeltaPayload};
+pub use runtime::WorkspaceRemoteRoute;
 pub use runtime::serialize_snapshot_delta;

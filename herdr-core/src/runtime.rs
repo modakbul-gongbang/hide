@@ -24,6 +24,7 @@ mod view_areas;
 mod workspace_control;
 mod workspace_view;
 
+pub use hosts::WorkspaceRemoteRoute;
 pub use snapshot_delta::serialize_snapshot_delta;
 
 use events::*;

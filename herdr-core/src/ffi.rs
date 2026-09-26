@@ -351,6 +351,28 @@ impl HerdrCore {
         result
     }
 
+    /// Daemon-only read of consented, connected SSH routes. Opening a route
+    /// happens after this call has released the runtime lock.
+    pub fn workspace_remote_routes(&self) -> Vec<crate::WorkspaceRemoteRoute> {
+        if !check_owner_thread(self, "workspace_remote_routes") {
+            return Vec::new();
+        }
+        lock_recover(&self.runtime).workspace_remote_routes()
+    }
+
+    pub fn browser_route_source(
+        &self,
+        device_id: &str,
+        checkout_path: &str,
+        view_id: &str,
+        load: u64,
+    ) -> Option<crate::workspace_control::BrowserRouteSource> {
+        if !check_owner_thread(self, "browser_route_source") {
+            return None;
+        }
+        lock_recover(&self.runtime).browser_route_source(device_id, checkout_path, view_id, load)
+    }
+
     /// Daemon-only pane query. The daemon validates the process that asked;
     /// the core then resolves current pane membership at the point of use.
     /// Only owned result data leaves the runtime lock.

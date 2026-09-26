@@ -1,6 +1,7 @@
 pub mod attachments;
 pub mod boundary;
 pub mod browser_cli;
+pub mod browser_routes;
 pub mod cli;
 pub mod coexist;
 pub mod core;
@@ -11,6 +12,7 @@ pub mod file_url;
 pub mod index;
 pub mod opener;
 pub mod pane_auth;
+pub mod remote_bridge;
 pub mod server;
 pub mod spawn;
 pub mod state_file;
@@ -97,10 +99,12 @@ pub struct RunningDaemon {
     shutdown: Arc<Notify>,
     pane_capabilities: Arc<pane_auth::Registry>,
     pane_bootstrap_socket: std::path::PathBuf,
+    remote_bridges: Arc<remote_bridge::Supervisor>,
 }
 
 impl RunningDaemon {
     pub fn stop(&self) {
+        self.remote_bridges.stop_all();
         self.pane_capabilities.revoke_all();
         let _ = std::fs::remove_file(&self.pane_bootstrap_socket);
         self.shutdown.notify_waiters();
@@ -109,6 +113,8 @@ impl RunningDaemon {
 
 impl Drop for RunningDaemon {
     fn drop(&mut self) {
+        self.remote_bridges.stop_all();
+        self.shutdown.notify_waiters();
         self.pane_capabilities.revoke_all();
         let _ = std::fs::remove_file(&self.pane_bootstrap_socket);
     }
@@ -197,6 +203,12 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     let boundary = Arc::new(boundary::Boundary::new(&env.home)?);
     let core = Arc::new(CoreHandle::spawn(options)?);
     let pane_capabilities = Arc::new(pane_auth::Registry::new(&env.state_dir)?);
+    let remote_bridges = remote_bridge::Supervisor::spawn(
+        Arc::clone(&core),
+        Arc::clone(&pane_capabilities),
+        port,
+        env.workspace_bridge_dir.clone(),
+    );
     let (pane_listener, pane_bootstrap_socket) = pane_auth::bind(&env.state_dir)?;
     let watch = Arc::new(watch::WatchService::new(
         Arc::clone(&boundary),
@@ -218,6 +230,9 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         Arc::clone(&watch),
         Arc::clone(&index),
     ));
+    let browser_routes = browser_routes::BrowserRoutes::new(Arc::clone(&core));
+    let desktop_renderers = Arc::new(AtomicUsize::new(0));
+    browser_routes.spawn_reaper(Arc::clone(&desktop_renderers), Arc::clone(&shutdown));
     let app = AppState {
         core: Arc::clone(&core),
         boundary,
@@ -228,11 +243,12 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         opener,
         token: Arc::new(token.clone()),
         pane_capabilities: Arc::clone(&pane_capabilities),
+        browser_routes,
         herdr_socket: env.herdr_socket_path.as_ref().map(std::path::PathBuf::from),
         allowed_origins: Arc::new(server::allowed_origins(port, env.vite_origin.as_deref())),
         clients: Arc::new(AtomicUsize::new(0)),
         renderers: Arc::new(AtomicUsize::new(0)),
-        desktop_renderers: Arc::new(AtomicUsize::new(0)),
+        desktop_renderers,
         connections: Arc::new(AtomicU64::new(0)),
         last_client_gone: Arc::new(Mutex::new(Instant::now())),
         keep_alive: env.keep_alive,
@@ -293,6 +309,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         shutdown,
         pane_capabilities,
         pane_bootstrap_socket,
+        remote_bridges,
     })
 }
 

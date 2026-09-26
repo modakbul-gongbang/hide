@@ -12,6 +12,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+use herdr_core::remote::RusshRemoteClient;
 use herdr_core::workspace_control::{Context, Query};
 use hide_herdr_client::{UnixSocketConnector, request_with_connector};
 use serde::{Deserialize, Serialize};
@@ -29,7 +30,7 @@ const MAX_PARENT_HOPS: usize = 32;
 const MAX_BOOTSTRAPS: usize = 8;
 const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(5);
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct Capability {
     pub pane_id: String,
     pub context: Context,
@@ -40,12 +41,52 @@ pub struct Capability {
     holder: Option<(i32, u64)>,
     created: Instant,
     path: PathBuf,
+    remote: Option<RemoteCapability>,
+}
+
+#[derive(Clone)]
+struct RemoteCapability {
+    bridge_id: String,
+    alive: Arc<AtomicBool>,
+    client: Arc<RusshRemoteClient>,
+    helper_path: String,
+    source_pane_id: String,
+}
+
+pub(crate) struct RemoteGrant {
+    pub bridge_id: String,
+    pub alive: Arc<AtomicBool>,
+    pub client: Arc<RusshRemoteClient>,
+    pub helper_path: String,
+    pub source_pane_id: String,
+    pub one_shot: bool,
+}
+
+fn entry_alive(entry: &Capability) -> bool {
+    if entry.created.elapsed() >= CAPABILITY_LIFETIME {
+        return false;
+    }
+    if let Some(remote) = &entry.remote {
+        return remote.alive.load(Ordering::Acquire);
+    }
+    entry.path.is_file()
+        && process_start(entry.shell_pid) == Some(entry.shell_started)
+        && entry
+            .holder
+            .is_none_or(|(pid, born)| process_start(pid) == Some(born))
+}
+
+fn remove_local_reference(entry: &Capability) {
+    if entry.remote.is_none() {
+        let _ = fs::remove_file(&entry.path);
+    }
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct Reference {
     pub token: String,
     pub port: u16,
+    pub origin_port: u16,
 }
 
 pub struct Registry {
@@ -100,14 +141,9 @@ impl Registry {
             return Err("hide_unavailable");
         }
         entries.retain(|_, entry| {
-            let alive = entry.created.elapsed() < CAPABILITY_LIFETIME
-                && entry.path.is_file()
-                && process_start(entry.shell_pid) == Some(entry.shell_started)
-                && entry
-                    .holder
-                    .is_none_or(|(pid, born)| process_start(pid) == Some(born));
+            let alive = entry_alive(entry);
             if !alive {
-                let _ = fs::remove_file(&entry.path);
+                remove_local_reference(entry);
             }
             alive
         });
@@ -124,6 +160,7 @@ impl Registry {
         let bytes = serde_json::to_vec(&Reference {
             token: token.clone(),
             port,
+            origin_port: port,
         })
         .map_err(|_| "reference_unavailable")?;
         if file
@@ -146,9 +183,54 @@ impl Registry {
                 holder,
                 created: Instant::now(),
                 path: path.clone(),
+                remote: None,
             },
         );
         Ok(path)
+    }
+
+    pub(crate) fn issue_remote(
+        &self,
+        attestation: &Attestation,
+        grant: RemoteGrant,
+    ) -> Result<String, &'static str> {
+        let mut entries = self.entries.lock().map_err(|_| "capability_unavailable")?;
+        if self.closed.load(Ordering::SeqCst) || !grant.alive.load(Ordering::Acquire) {
+            return Err("hide_unavailable");
+        }
+        entries.retain(|_, entry| {
+            let alive = entry_alive(entry);
+            if !alive {
+                remove_local_reference(entry);
+            }
+            alive
+        });
+        if entries.len() >= MAX_CAPABILITIES {
+            return Err("capability_limit");
+        }
+        let token = new_token();
+        entries.insert(
+            token.clone(),
+            Capability {
+                pane_id: attestation.pane_id.clone(),
+                context: attestation.context.clone(),
+                terminal_id: attestation.terminal_id.clone(),
+                shell_pid: attestation.shell_pid,
+                shell_started: attestation.shell_started,
+                one_shot: grant.one_shot,
+                holder: None,
+                created: Instant::now(),
+                path: PathBuf::new(),
+                remote: Some(RemoteCapability {
+                    bridge_id: grant.bridge_id,
+                    alive: grant.alive,
+                    client: grant.client,
+                    helper_path: grant.helper_path,
+                    source_pane_id: grant.source_pane_id,
+                }),
+            },
+        );
+        Ok(token)
     }
 
     pub fn get(&self, token: &str) -> Option<Capability> {
@@ -157,15 +239,9 @@ impl Registry {
             return None;
         }
         let cap = entries.get(token)?.clone();
-        if cap.created.elapsed() >= CAPABILITY_LIFETIME
-            || !cap.path.is_file()
-            || process_start(cap.shell_pid) != Some(cap.shell_started)
-            || cap
-                .holder
-                .is_some_and(|(pid, born)| process_start(pid) != Some(born))
-        {
+        if !entry_alive(&cap) {
             entries.remove(token);
-            let _ = fs::remove_file(cap.path);
+            remove_local_reference(&cap);
             return None;
         }
         Some(cap)
@@ -175,20 +251,37 @@ impl Registry {
         if let Ok(mut entries) = self.entries.lock()
             && let Some(entry) = entries.remove(token)
         {
-            let _ = fs::remove_file(entry.path);
+            remove_local_reference(&entry);
         }
     }
 
     pub fn validate(
         &self,
         token: &str,
-        herdr_socket: &Path,
+        herdr_socket: Option<&Path>,
         core: &CoreHandle,
     ) -> Result<Capability, &'static str> {
         let cap = self.get(token).ok_or("credential_expired")?;
-        let actual = inspect_pane(&cap.pane_id, herdr_socket, core).inspect_err(|_| {
-            self.revoke(token);
-        })?;
+        let actual = if let Some(remote) = &cap.remote {
+            let identity = remote
+                .client
+                .workspace_pane_identity(&remote.helper_path, &remote.source_pane_id)
+                .map_err(|_| "remote_unavailable")?;
+            let context = core
+                .workspace_query(&cap.context.device_id, &cap.pane_id, Query::Info)
+                .map_err(|_| "pane_not_connected")?
+                .context;
+            Attestation {
+                pane_id: cap.pane_id.clone(),
+                context,
+                terminal_id: identity.terminal_id,
+                shell_pid: identity.shell_pid,
+                shell_started: identity.shell_started,
+            }
+        } else {
+            let socket = herdr_socket.ok_or("pane_unavailable")?;
+            inspect_pane(&cap.pane_id, socket, core).inspect_err(|_| self.revoke(token))?
+        };
         if actual.context != cap.context
             || actual.terminal_id != cap.terminal_id
             || actual.shell_pid != cap.shell_pid
@@ -200,11 +293,22 @@ impl Registry {
         Ok(cap)
     }
 
+    pub fn revoke_bridge(&self, bridge_id: &str) {
+        if let Ok(mut entries) = self.entries.lock() {
+            entries.retain(|_, entry| {
+                entry
+                    .remote
+                    .as_ref()
+                    .is_none_or(|remote| remote.bridge_id != bridge_id)
+            });
+        }
+    }
+
     pub fn revoke_all(&self) {
         if let Ok(mut entries) = self.entries.lock() {
             self.closed.store(true, Ordering::SeqCst);
             for entry in entries.values() {
-                let _ = fs::remove_file(&entry.path);
+                remove_local_reference(entry);
             }
             entries.clear();
         }
@@ -213,14 +317,9 @@ impl Registry {
     pub fn sweep(&self) {
         if let Ok(mut entries) = self.entries.lock() {
             entries.retain(|_, entry| {
-                let alive = entry.created.elapsed() < CAPABILITY_LIFETIME
-                    && entry.path.is_file()
-                    && process_start(entry.shell_pid) == Some(entry.shell_started)
-                    && entry
-                        .holder
-                        .is_none_or(|(pid, born)| process_start(pid) == Some(born));
+                let alive = entry_alive(entry);
                 if !alive {
-                    let _ = fs::remove_file(&entry.path);
+                    remove_local_reference(entry);
                 }
                 alive
             });
@@ -251,6 +350,29 @@ pub struct Attestation {
     terminal_id: String,
     shell_pid: i32,
     shell_started: u64,
+}
+
+pub fn attest_remote(
+    core: &CoreHandle,
+    device_id: &str,
+    source_pane_id: &str,
+    identity: &hide_host::workspace_bridge::PaneIdentity,
+) -> Result<Attestation, &'static str> {
+    if device_id.is_empty() || source_pane_id.is_empty() || source_pane_id.len() > 256 {
+        return Err("invalid_request");
+    }
+    let pane_id = format!("remote:{device_id}:pane:{source_pane_id}");
+    let context = core
+        .workspace_query(device_id, &pane_id, Query::Info)
+        .map_err(|_| "pane_not_connected")?
+        .context;
+    Ok(Attestation {
+        pane_id,
+        context,
+        terminal_id: identity.terminal_id.clone(),
+        shell_pid: identity.shell_pid,
+        shell_started: identity.shell_started,
+    })
 }
 
 pub fn attest_local(
@@ -386,7 +508,7 @@ fn parent_pid(pid: i32) -> Option<i32> {
 }
 
 #[cfg(target_os = "macos")]
-fn process_start(pid: i32) -> Option<u64> {
+pub(crate) fn process_start(pid: i32) -> Option<u64> {
     let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
     // SAFETY: the buffer remains valid and is read only after a full result.
     let written = unsafe {
@@ -493,7 +615,7 @@ fn parent_pid(pid: i32) -> Option<i32> {
 }
 
 #[cfg(target_os = "linux")]
-fn process_start(pid: i32) -> Option<u64> {
+pub(crate) fn process_start(pid: i32) -> Option<u64> {
     let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     stat.rsplit_once(") ")?
         .1

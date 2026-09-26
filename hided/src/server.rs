@@ -11,9 +11,9 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::State;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
-use axum::http::{HeaderMap, StatusCode, Uri};
+use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -73,6 +73,7 @@ pub struct AppState {
     pub opener: OpenHandler,
     pub token: Arc<String>,
     pub pane_capabilities: Arc<Registry>,
+    pub browser_routes: Arc<crate::browser_routes::BrowserRoutes>,
     pub herdr_socket: Option<PathBuf>,
     pub allowed_origins: Arc<HashSet<String>>,
     pub clients: Arc<AtomicUsize>,
@@ -136,10 +137,99 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/ws", get(ws_upgrade))
+        .route(
+            "/browser-route",
+            post(resolve_browser_route).delete(release_browser_route),
+        )
         .route("/", get(static_asset))
         .route("/assets/{*path}", get(static_asset))
         .fallback(|| async { StatusCode::NOT_FOUND })
         .with_state(state)
+}
+
+#[derive(Deserialize)]
+struct BrowserRouteRequest {
+    device_id: String,
+    checkout_path: String,
+    id: String,
+    load: u64,
+    owner_pid: i32,
+}
+
+fn browser_route_authorized(headers: &HeaderMap, state: &AppState) -> bool {
+    let offered = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .unwrap_or("");
+    token_matches(offered, &state.token)
+}
+
+fn browser_route_request_valid(request: &BrowserRouteRequest) -> bool {
+    !request.device_id.is_empty()
+        && request.device_id.len() <= 256
+        && request.checkout_path.starts_with('/')
+        && request.checkout_path.len() <= 8192
+        && !request.id.is_empty()
+        && request.id.len() <= 256
+        && request.owner_pid > 0
+}
+
+async fn resolve_browser_route(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<BrowserRouteRequest>,
+) -> Response {
+    if !browser_route_authorized(&headers, &state) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if !browser_route_request_valid(&request) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    match state
+        .browser_routes
+        .resolve(
+            request.device_id,
+            request.checkout_path,
+            request.id,
+            request.load,
+            request.owner_pid,
+        )
+        .await
+    {
+        Ok(route) => axum::Json(route).into_response(),
+        Err(reason) => {
+            eprintln!(
+                "{}",
+                json!({"component":"browser_routes","kind":"resolve.refused","reason":reason})
+            );
+            (StatusCode::CONFLICT, axum::Json(json!({"reason":reason}))).into_response()
+        }
+    }
+}
+
+async fn release_browser_route(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<BrowserRouteRequest>,
+) -> Response {
+    if !browser_route_authorized(&headers, &state) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if !browser_route_request_valid(&request) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    state
+        .browser_routes
+        .release(
+            &request.device_id,
+            &request.checkout_path,
+            &request.id,
+            request.load,
+            request.owner_pid,
+        )
+        .await;
+    StatusCode::NO_CONTENT.into_response()
 }
 
 fn idle_remaining_secs(state: &AppState) -> Option<u64> {
@@ -521,11 +611,8 @@ async fn scoped_client_loop(
                         let query_token = token.clone();
                         let command_request_id = request_id.clone();
                         let outcome = tokio::task::spawn_blocking(move || {
-                            let socket = herdr_socket
-                                .as_deref()
-                                .ok_or(("pane_unavailable", "Reconnect Hide to Herdr and retry"))?;
                             let cap = registry
-                                .validate(&query_token, socket, &core)
+                                .validate(&query_token, herdr_socket.as_deref(), &core)
                                 .map_err(|reason| (reason, "Reconnect the pane and retry"))?;
                             if renderers.load(Ordering::SeqCst) == 0 {
                                 return Err((
@@ -1991,6 +2078,15 @@ fn browser_url(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Val
     if !crate::file_url::is_file_url(&raw) {
         return None;
     }
+    if event
+        .pointer("/payload/workspace/device_id")
+        .and_then(Value::as_str)
+        .is_some_and(|device| device != "local")
+    {
+        // The core and the consented device host own this remote path. This
+        // Mac's checkout boundary cannot resolve a path on that device.
+        return None;
+    }
     let Some((path, suffix)) = crate::file_url::file_path(&raw) else {
         return Some(refused(kind, &raw, Refusal::InvalidPath));
     };
@@ -2280,7 +2376,7 @@ pub async fn bind(addr: SocketAddr) -> Result<tokio::net::TcpListener, String> {
         .map_err(|error| format!("bind {addr} failed: {error}"))
 }
 
-fn mime_for(path: &std::path::Path) -> &'static str {
+pub(crate) fn mime_for(path: &std::path::Path) -> &'static str {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("html") => "text/html; charset=utf-8",
         Some("js") => "text/javascript; charset=utf-8",

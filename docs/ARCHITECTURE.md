@@ -272,13 +272,16 @@ One request ID carries an action result for up to ten minutes, and the 128-resul
 The CLI returns the request ID on uncertain transport outcomes so the caller can retry that same action or inspect `hide view list`.
 Pane-scoped file and working-diff opens resolve a caller-cwd path on the calling machine, then use the checkout's existing host channel to read a document or Git status off the core lock.
 The core rechecks pane membership when it places the result into that checkout's View tree; a missing file, unavailable host, unchanged diff, or layout refusal has a request-scoped CLI outcome.
-An open without `--reveal` leaves the front Workspace and keyboard pane alone, and a local open with `--reveal` brings its checkout and chosen View forward.
+An open without `--reveal` leaves the front Workspace and keyboard pane alone, and an open with `--reveal` brings its verified local or remote checkout and chosen View forward.
 Pane-scoped `hide browser open` requires a connected desktop renderer and places a Browser View in the caller's checkout with the same bounded retry result as other actions.
-The core checks local HTML paths against that checkout and reads them outside its lock.
+The core checks HTML paths against the caller device's checkout and reads them outside its lock through the consented host channel.
 The native host reports page load, completion, failure, and eviction with a load stamp; `hide view status` and `--wait` distinguish page state from View placement.
 The desktop host creates pages only when a View has a visible slot, so waiting on a hidden View expires without taking focus.
+For a remote Browser View, the desktop host asks hided for the current core-owned address and a route bound to its own process, View, and load stamp.
+A remote loopback URL gets an SSH local forward with bounded connections, while a remote HTML file gets an owner-only loopback server whose assets are read through the device host's pinned checkout root.
+Neither route falls back to this Mac's same path or port; close, device loss, or desktop process exit releases the route.
 Client frames are core events (`schema_version`, `kind`, `payload`).
-HTTP is static assets and `GET /health` (`pid`, `version`, `schema_version`, `clients`).
+HTTP serves static assets, `GET /health` (`pid`, `version`, `schema_version`, `clients`), and token-authenticated Browser route resolution and release for the desktop host.
 No HTTP request dispatches a core event.
 The first frame after a valid handshake is `daemon` (`version`, `pid`, `schema_version`, `host_name`, the state paths, the Herdr binary and socket, the idle policy); Settings > General reads it, and it never carries the token.
 The daemon owns the core's one Settings observation flag (`ai_settings.observing`, which runs the provider probe and the hook diagnosis): a client's `observing` is only that connection's demand (`hided/src/demand.rs`), the flag follows the first observer in and the last one out, and a connection that closes releases its demand, so a closed tab never leaves the probe running.

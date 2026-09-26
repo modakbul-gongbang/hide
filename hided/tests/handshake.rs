@@ -22,6 +22,7 @@ fn test_env(keep_alive: bool) -> (tempfile::TempDir, Env) {
         open_command: None,
         host_helper_root: None,
         pane_id: None,
+        workspace_bridge_dir: None,
     };
     (dir, env)
 }

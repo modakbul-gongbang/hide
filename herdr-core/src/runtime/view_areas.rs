@@ -42,7 +42,6 @@ const BROWSER_OPEN_RECEIPTS_KEPT: usize = 8;
 const BROWSER_PAGE_REPORTS_KEPT: usize = 128;
 
 const UNLOADABLE_ADDRESS: &str = "A page opens from an http, https or file address, or about:blank";
-const FILE_ELSEWHERE: &str = "A file on this Mac cannot open in a Workspace on another device";
 
 /// Where Open to the side looks for an area next to the one in use.
 const BESIDE_ORDER: [Edge; 4] = [Edge::Right, Edge::Left, Edge::Down, Edge::Up];
@@ -1189,9 +1188,6 @@ impl Runtime {
                 .front_workspace_key()
                 .ok_or_else(|| "No Workspace is in front to open the page in".to_owned())?,
         };
-        if is_file_address(url) && key.0 != workspace::LOCAL_DEVICE_ID {
-            return Err(FILE_ELSEWHERE.to_owned());
-        }
         let load = self.next_browser_load();
         let display_id = self
             .change_view_layout(&key, |layout, stamp| {
@@ -1224,10 +1220,6 @@ impl Runtime {
     fn navigate_browser(&mut self, key: &WorkspaceKey, display_id: &str, url: String) -> bool {
         if !browser_address(&url) {
             self.set_error("browser.navigate_refused", UNLOADABLE_ADDRESS, false);
-            return true;
-        }
-        if is_file_address(&url) && key.0 != workspace::LOCAL_DEVICE_ID {
-            self.set_error("browser.navigate_refused", FILE_ELSEWHERE, false);
             return true;
         }
         let load = self.next_browser_load();
@@ -1265,8 +1257,7 @@ impl Runtime {
             present,
         } = payload;
         let key = (workspace.device_id, workspace.path);
-        let file_elsewhere = is_file_address(&url) && key.0 != workspace::LOCAL_DEVICE_ID;
-        if !browser_address(&url) || file_elsewhere {
+        if !browser_address(&url) {
             // A page that moved somewhere a display does not hold keeps the
             // last address it may; the log names only the scheme.
             let scheme: String = url

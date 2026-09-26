@@ -3,8 +3,8 @@
 use super::{AreaIntent, Runtime};
 use crate::view_layout::DisplayKind;
 use crate::workspace_control::{
-    Action, ActionMaterial, ActionPreparation, ActionResult, ActionSource, Context, Query,
-    QueryResult, Refusal, View,
+    Action, ActionMaterial, ActionPreparation, ActionResult, ActionSource, BrowserRouteSource,
+    Context, Query, QueryResult, Refusal, View,
 };
 
 const ACTION_RESULTS_KEPT: usize = 128;
@@ -27,6 +27,77 @@ pub(super) struct RecordedAction {
 }
 
 impl Runtime {
+    fn reveal_workspace_control(
+        &mut self,
+        context: &Context,
+        key: &(String, String),
+        request_id: &str,
+    ) {
+        if context.device_id == crate::workspace::LOCAL_DEVICE_ID {
+            self.bring_device_forward(context.device_id.clone());
+            self.focus_checkout(&context.workspace_id, &context.checkout_id);
+        } else {
+            self.request_remote_control(super::RemoteControlPayload {
+                target_id: context.device_id.clone(),
+                request_id: format!("{request_id}-reveal"),
+                report_pane_focus_outcome: false,
+                focus_device: true,
+                request: super::RemoteControlRequest::FocusWorkspace {
+                    workspace_id: context.workspace_id.clone(),
+                    checkout_id: Some(context.checkout_id.clone()),
+                },
+            });
+        }
+        self.apply_area_intent_to(key, AreaIntent::Views);
+    }
+
+    pub fn browser_route_source(
+        &self,
+        device_id: &str,
+        checkout_path: &str,
+        view_id: &str,
+        load: u64,
+    ) -> Option<BrowserRouteSource> {
+        let connected = if device_id == crate::workspace::LOCAL_DEVICE_ID {
+            self.snapshot.status.herdr.state == "connected"
+        } else {
+            self.snapshot
+                .status
+                .remote
+                .iter()
+                .any(|remote| remote.target_id == device_id && remote.state == "connected")
+        };
+        if !connected {
+            return None;
+        }
+        let registered = self.catalog_workspaces().into_iter().any(|workspace| {
+            workspace.device_id == device_id
+                && workspace
+                    .checkouts
+                    .iter()
+                    .any(|checkout| checkout.path == checkout_path)
+        });
+        if !registered {
+            return None;
+        }
+        let key = (device_id.to_owned(), checkout_path.to_owned());
+        let display = self
+            .view_layout_of(&key)?
+            .areas()
+            .into_iter()
+            .flat_map(|area| area.displays.iter())
+            .find(|display| {
+                display.id == view_id
+                    && display.kind == DisplayKind::Browser
+                    && display.load == load
+            })?;
+        Some(BrowserRouteSource {
+            device_id: device_id.to_owned(),
+            checkout_path: checkout_path.to_owned(),
+            url: display.url.clone()?,
+            load,
+        })
+    }
     fn check_action_request(
         &mut self,
         device_id: &str,
@@ -216,22 +287,10 @@ impl Runtime {
                     next_action: "Use an http, https, or checkout HTML address",
                 });
             }
-            if crate::view_layout::is_file_address(url) && context.device_id != "local" {
-                return Err(Refusal {
-                    reason: "remote_page_unavailable",
-                    next_action: "Reconnect the remote page route and retry",
-                });
-            }
             if crate::view_layout::is_file_address(url) && material.is_none() {
                 return Err(Refusal {
                     reason: "html_unavailable",
                     next_action: "Check the HTML file and retry",
-                });
-            }
-            if *reveal && context.device_id != "local" {
-                return Err(Refusal {
-                    reason: "reveal_unavailable",
-                    next_action: "Open without --reveal and select the remote Workspace in Hide",
                 });
             }
             let load = self.next_browser_load();
@@ -263,9 +322,7 @@ impl Runtime {
                 .and_then(|layout| layout.area_of(&view_id))
                 .map(|area| area.id.clone());
             if *reveal {
-                self.bring_device_forward("local".to_owned());
-                self.focus_checkout(&context.workspace_id, &context.checkout_id);
-                self.apply_area_intent_to(key, AreaIntent::Views);
+                self.reveal_workspace_control(context, key, request_id);
             }
             return Ok(ActionResult {
                 context: context.clone(),
@@ -286,12 +343,6 @@ impl Runtime {
             reveal,
         } = action
         {
-            if *reveal && context.device_id != "local" {
-                return Err(Refusal {
-                    reason: "reveal_unavailable",
-                    next_action: "Open without --reveal and select the remote Workspace in Hide",
-                });
-            }
             let Some(material) = material else {
                 return Err(Refusal {
                     reason: "read_missing",
@@ -401,8 +452,7 @@ impl Runtime {
                 .view_layout_of(key)
                 .map(|layout| layout.active_area().id.clone());
             if *reveal {
-                self.bring_device_forward("local".to_owned());
-                self.focus_checkout(&context.workspace_id, &context.checkout_id);
+                self.reveal_workspace_control(context, key, request_id);
             }
             return Ok(ActionResult {
                 context: context.clone(),
@@ -420,12 +470,6 @@ impl Runtime {
             Action::OpenFile { .. } | Action::OpenDiff { .. } => unreachable!("handled above"),
             Action::OpenBrowser { .. } => unreachable!("handled above"),
             Action::Select { view_id, reveal } => {
-                if *reveal && context.device_id != "local" {
-                    return Err(Refusal {
-                        reason: "reveal_unavailable",
-                        next_action: "Select without --reveal and switch to the remote Workspace in Hide",
-                    });
-                }
                 let selected = self
                     .change_view_layout(key, |layout, stamp| {
                         layout
@@ -438,8 +482,7 @@ impl Runtime {
                     .and_then(|layout| layout.area_of(view_id))
                     .map(|area| area.id.clone());
                 if *reveal {
-                    self.bring_device_forward("local".to_owned());
-                    self.focus_checkout(&context.workspace_id, &context.checkout_id);
+                    self.reveal_workspace_control(context, key, request_id);
                 }
                 (view_id.clone(), selected || *reveal, area)
             }

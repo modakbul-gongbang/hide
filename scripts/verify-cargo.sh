@@ -38,7 +38,7 @@ case "${1:-}" in
         exec cargo build --release --locked -p herdr-core
         ;;
     cli)
-        exec cargo build --locked -p hided --bins
+        exec cargo build --locked -p hided --bins -p hide-host --bin hide-host-helper
         ;;
     *)
         printf 'usage: %s test [cargo test arguments...]|lint|build|cli\n' "$0" >&2

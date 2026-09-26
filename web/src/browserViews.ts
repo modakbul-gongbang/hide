@@ -81,13 +81,8 @@ export function isHtmlFile(path: string): boolean {
   return /\.x?html?$/i.test(path);
 }
 
-/**
- * Why Explorer's Open in Browser cannot run for a file on `device`, or null.
- * A page loads on this Mac, and a device's file is not here.
- */
-export function browserOpenUnavailable(device: string): string | null {
-  return device === "local" ? null : "Pages load on this Mac, so a file on a device cannot be opened as one";
-}
+/** Explorer can offer Browser for HTML on either the local or a connected device checkout. */
+export function browserOpenUnavailable(_device: string): string | null { return null; }
 
 /** How the host places each display: its rect, and whether the page itself shows there. */
 export function placements(rows: BrowserDisplayRow[], rects: ReadonlyMap<string, BrowserRect>, hidden: ReadonlySet<string>): BrowserPlacement[] {

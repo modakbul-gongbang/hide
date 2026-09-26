@@ -25,6 +25,7 @@ pub const HIDE_OPEN_COMMAND: &str = "HIDE_OPEN_COMMAND";
 pub const HIDE_HOST_HELPER_ROOT: &str = "HIDE_HOST_HELPER_ROOT";
 pub const HERDR_PANE_ID: &str = "HERDR_PANE_ID";
 pub const HIDE_CAP_REF: &str = "HIDE_CAP_REF";
+pub const HIDE_WORKSPACE_BRIDGE_DIR: &str = "HIDE_WORKSPACE_BRIDGE_DIR";
 
 pub const REGISTRY: &[EnvKey] = &[
     EnvKey {
@@ -106,6 +107,12 @@ pub const REGISTRY: &[EnvKey] = &[
         absent_behavior: "Direct Herdr pane callers try kernel peer bootstrap; detached agent tools require a session-scoped reference",
     },
     EnvKey {
+        key: HIDE_WORKSPACE_BRIDGE_DIR,
+        required: false,
+        format: "absolute owner-only directory path on the SSH device",
+        absent_behavior: "The remote helper and remote hide CLI use $HOME/.local/state/hide/workspace-bridges; isolated verification may set a separate directory on both ends",
+    },
+    EnvKey {
         key: HOME,
         required: true,
         format: "absolute home-directory path",
@@ -135,6 +142,7 @@ pub struct Env {
     /// The pane a Workspace CLI command runs in; the daemon verifies its
     /// live membership and never trusts a caller-supplied Workspace.
     pub pane_id: Option<String>,
+    pub workspace_bridge_dir: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -296,6 +304,19 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         }
         other => other,
     };
+    let workspace_bridge_dir = match read(HIDE_WORKSPACE_BRIDGE_DIR) {
+        Some(value)
+            if !Path::new(&value).is_absolute() || value.bytes().any(|b| b.is_ascii_control()) =>
+        {
+            errors.push(EnvError {
+                key: HIDE_WORKSPACE_BRIDGE_DIR,
+                kind: "invalid",
+            });
+            None
+        }
+        Some(value) => Some(PathBuf::from(value)),
+        None => None,
+    };
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -311,6 +332,7 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         open_command,
         host_helper_root,
         pane_id,
+        workspace_bridge_dir,
     })
 }
 
