@@ -264,7 +264,9 @@ fn run_route(
             context.registry,
             &frame,
         ) {
-            Ok(token) => json!({"id":id,"ok":true,"token":token}),
+            Ok((token, issued_new)) => {
+                json!({"id":id,"ok":true,"token":token,"issued_new":issued_new})
+            }
             Err(reason) => json!({"id":id,"ok":false,"reason":reason}),
         };
         send_frame(&mut writer, response)?;
@@ -278,7 +280,7 @@ fn issue_from_frame(
     core: &CoreHandle,
     registry: &Registry,
     frame: &Value,
-) -> Result<String, &'static str> {
+) -> Result<(String, bool), &'static str> {
     let pane_id = frame["pane_id"].as_str().ok_or("invalid_request")?;
     let identity = PaneIdentity {
         terminal_id: frame["terminal_id"]

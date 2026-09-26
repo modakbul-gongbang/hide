@@ -104,10 +104,17 @@ pub struct RunningDaemon {
 }
 
 impl RunningDaemon {
+    fn remove_bootstrap_socket(&self) {
+        let _ = std::fs::remove_file(&self.pane_bootstrap_socket);
+        if let Some(directory) = self.pane_bootstrap_socket.parent() {
+            let _ = std::fs::remove_dir(directory);
+        }
+    }
+
     pub fn stop(&self) {
         self.remote_bridges.stop_all();
         self.pane_capabilities.revoke_all();
-        let _ = std::fs::remove_file(&self.pane_bootstrap_socket);
+        self.remove_bootstrap_socket();
         self.shutdown.notify_waiters();
     }
 }
@@ -117,7 +124,7 @@ impl Drop for RunningDaemon {
         self.remote_bridges.stop_all();
         self.shutdown.notify_waiters();
         self.pane_capabilities.revoke_all();
-        let _ = std::fs::remove_file(&self.pane_bootstrap_socket);
+        self.remove_bootstrap_socket();
     }
 }
 

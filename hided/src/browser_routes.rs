@@ -194,7 +194,7 @@ impl BrowserRoutes {
                 format!("http://127.0.0.1:{port}/{secret}/{escaped}{suffix}"),
                 RouteKind::File(stop),
             )
-        } else if let Some((remote_port, host, tail)) = loopback_target(&source.url) {
+        } else if let Some((scheme, remote_port, host, tail)) = loopback_target(&source.url) {
             let client = Arc::clone(&route.client);
             let remote_ip = crate::browser_cli::loopback_ip(&host).ok_or("invalid_loopback")?;
             let remote = SocketAddr::new(remote_ip, remote_port);
@@ -208,16 +208,7 @@ impl BrowserRoutes {
             .await
             .map_err(|_| "route_failed")?
             .map_err(|_| "route_failed")?;
-            let url = format!(
-                "{}://{}{}",
-                if source.url.starts_with("https:") {
-                    "https"
-                } else {
-                    "http"
-                },
-                forward.local_addr(),
-                tail
-            );
+            let url = forwarded_url(&scheme, &host, forward.local_addr(), &tail);
             (url, RouteKind::Http(forward))
         } else {
             return Ok(Resolved {
@@ -324,7 +315,7 @@ impl BrowserRoutes {
     }
 }
 
-fn loopback_target(raw: &str) -> Option<(u16, String, String)> {
+fn loopback_target(raw: &str) -> Option<(String, u16, String, String)> {
     let (without_fragment, fragment) = raw
         .split_once('#')
         .map_or((raw, ""), |(head, tail)| (head, tail));
@@ -351,7 +342,18 @@ fn loopback_target(raw: &str) -> Option<(u16, String, String)> {
     } else {
         format!("{tail}#{fragment}")
     };
-    Some((port, local_host.to_owned(), tail))
+    Some((scheme.to_owned(), port, local_host.to_owned(), tail))
+}
+
+fn forwarded_url(scheme: &str, host: &str, local_addr: SocketAddr, tail: &str) -> String {
+    // A localhost TLS certificate is checked against the browser URL, not
+    // against the address to which the SSH forward bound its listener.
+    let address = if scheme == "https" && host == "localhost" {
+        format!("localhost:{}", local_addr.port())
+    } else {
+        local_addr.to_string()
+    };
+    format!("{scheme}://{address}{tail}")
 }
 
 #[derive(Clone)]
@@ -518,13 +520,23 @@ mod tests {
             "http://[0:0:0:0:0:0:0:1]:5173/",
             "http://[::ffff:127.0.0.1]:5173/",
         ] {
-            let (port, host, _) = loopback_target(address).expect(address);
+            let (_, port, host, _) = loopback_target(address).expect(address);
             assert_eq!(port, 5173);
             assert!(crate::browser_cli::loopback_ip(&host).is_some());
         }
         assert_eq!(
             crate::browser_cli::loopback_ip("[::ffff:127.0.0.1]"),
             Some(IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
+    }
+
+    #[test]
+    fn forwarded_https_retains_localhost_certificate_name_and_scheme() {
+        let (scheme, _, host, tail) =
+            loopback_target("HTTPS://localhost:8443/secure?q=1").expect("admitted loopback URL");
+        assert_eq!(
+            forwarded_url(&scheme, &host, "127.0.0.1:49152".parse().unwrap(), &tail),
+            "https://localhost:49152/secure?q=1"
         );
     }
 }

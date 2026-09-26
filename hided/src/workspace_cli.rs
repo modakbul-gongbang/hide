@@ -51,7 +51,7 @@ pub fn bootstrap(env: &Env, one_shot: bool) -> Result<PathBuf, String> {
 }
 
 fn bootstrap_local(env: &Env, request: &Value) -> Result<PathBuf, String> {
-    let socket = env.state_dir.join("pane-bootstrap.sock");
+    let socket = crate::pane_auth::bootstrap_socket_path(&env.state_dir);
     let mut stream = UnixStream::connect(socket).map_err(|_| "hide_unavailable".to_owned())?;
     stream
         .set_read_timeout(Some(TIMEOUT))
@@ -203,6 +203,7 @@ pub fn request(path: &Path, query: &str) -> Result<Value, String> {
         &reference,
         json!({"type":"workspace_query","request_id":request_id,"query":query}),
         &request_id,
+        false,
     )
 }
 
@@ -216,6 +217,7 @@ pub fn request_action(path: &Path, action: Action, request_id: &str) -> Result<V
         &reference,
         json!({"type":"workspace_action","request_id":request_id,"command":action}),
         request_id,
+        true,
     )
 }
 
@@ -246,24 +248,42 @@ fn run_exchange(
     reference: &Reference,
     payload: Value,
     request_id: &str,
+    action: bool,
 ) -> Result<Value, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|_| "request_unavailable".to_owned())?;
-    runtime.block_on(async {
-        tokio::time::timeout(TIMEOUT, exchange(path, reference, payload, request_id))
+    let (value, mut socket) = runtime.block_on(async {
+        tokio::time::timeout(TIMEOUT, exchange_response(reference, payload, request_id))
             .await
             .map_err(|_| "request_timeout".to_owned())?
-    })
+    })?;
+    let claimed = runtime.block_on(async {
+        tokio::time::timeout(Duration::from_secs(2), claim(&mut socket, path))
+            .await
+            .map_err(|_| "credential_expired".to_owned())?
+    });
+    if let Err(reason) = claimed {
+        eprintln!(
+            "{}",
+            json!({"component":"workspace_cli","kind":"claim.failed","request_id":request_id,"reason":reason})
+        );
+        if !action {
+            return Err(reason);
+        }
+    }
+    Ok(value)
 }
 
-async fn exchange(
-    path: &Path,
+type WorkspaceSocket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+async fn exchange_response(
     reference: &Reference,
     payload: Value,
     request_id: &str,
-) -> Result<Value, String> {
+) -> Result<(Value, WorkspaceSocket), String> {
     let mut request = format!("ws://127.0.0.1:{}/ws", reference.port)
         .into_client_request()
         .map_err(|_| "hide_unavailable".to_owned())?;
@@ -295,34 +315,46 @@ async fn exchange(
             if value["type"] != "workspace_result" || value["request_id"] != request_id {
                 return Err("invalid_response".to_owned());
             }
-            socket
-                .send(Message::Text(
-                    json!({"type":"workspace_claim"}).to_string().into(),
-                ))
-                .await
-                .map_err(|_| "hide_unavailable".to_owned())?;
-            match socket.next().await {
-                Some(Ok(Message::Text(reply)))
-                    if serde_json::from_str::<Value>(&reply)
-                        .ok()
-                        .is_some_and(|answer| answer["type"] == "workspace_claimed") => {}
-                _ => return Err("credential_expired".to_owned()),
-            }
-            let marker = path.with_extension("claimed");
-            match OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .mode(0o600)
-                .open(&marker)
-            {
-                Ok(_) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
-                Err(_) => return Err("reference_unavailable".to_owned()),
-            }
-            Ok(value)
+            Ok((value, socket))
         }
         Some(Ok(Message::Close(_))) => Err("credential_rejected".to_owned()),
         _ => Err("hide_unavailable".to_owned()),
+    }
+}
+
+async fn claim(socket: &mut WorkspaceSocket, path: &Path) -> Result<(), String> {
+    socket
+        .send(Message::Text(
+            json!({"type":"workspace_claim"}).to_string().into(),
+        ))
+        .await
+        .map_err(|_| "hide_unavailable".to_owned())?;
+    match socket.next().await {
+        Some(Ok(Message::Text(reply)))
+            if serde_json::from_str::<Value>(&reply)
+                .ok()
+                .is_some_and(|answer| answer["type"] == "workspace_claimed") => {}
+        _ => return Err("credential_expired".to_owned()),
+    }
+    let marker = path.with_extension("claimed");
+    match OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&marker)
+    {
+        Ok(_) => Ok(()),
+        Err(error)
+            if error.kind() == std::io::ErrorKind::AlreadyExists
+                && fs::symlink_metadata(&marker).is_ok_and(|metadata| {
+                    metadata.file_type().is_file()
+                        && metadata.uid() == unsafe { libc::geteuid() }
+                        && metadata.permissions().mode() & 0o077 == 0
+                }) =>
+        {
+            Ok(())
+        }
+        Err(_) => Err("reference_unavailable".to_owned()),
     }
 }
 
@@ -330,6 +362,7 @@ async fn exchange(
 mod tests {
     use super::*;
     use std::os::unix::fs::{PermissionsExt, symlink};
+    use std::sync::mpsc;
 
     #[test]
     fn reference_reader_refuses_symlink_and_open_permissions() {
@@ -346,5 +379,53 @@ mod tests {
         permissions.set_mode(0o644);
         fs::set_permissions(&path, permissions).unwrap();
         assert!(matches!(read_reference(&path), Err(reason) if reason == "invalid_reference"));
+    }
+
+    #[test]
+    fn action_result_survives_a_lost_claim_ack() {
+        let (sender, receiver) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            runtime.block_on(async move {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                sender.send(listener.local_addr().unwrap().port()).unwrap();
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                let _ = socket.next().await;
+                let _ = socket.next().await;
+                socket
+                    .send(Message::Text(
+                        json!({
+                            "type":"workspace_result","request_id":"1-retry","ok":true,
+                            "result":{"view_id":"view-1"}
+                        })
+                        .to_string()
+                        .into(),
+                    ))
+                    .await
+                    .unwrap();
+                socket.close(None).await.unwrap();
+            });
+        });
+        let port = receiver.recv().unwrap();
+        let reference = Reference {
+            token: "a".repeat(64),
+            port,
+            origin_port: port,
+        };
+        let directory = tempfile::tempdir().unwrap();
+        let answer = run_exchange(
+            &directory.path().join("reference.json"),
+            &reference,
+            json!({"type":"workspace_action","request_id":"1-retry"}),
+            "1-retry",
+            true,
+        )
+        .unwrap();
+        assert_eq!(answer["result"]["view_id"], "view-1");
+        server.join().unwrap();
     }
 }

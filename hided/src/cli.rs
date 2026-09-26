@@ -784,13 +784,13 @@ fn spawn_daemon(env: &Env, keep_alive: bool) -> Result<(), String> {
 }
 
 fn wait_healthy(env: &Env) -> Result<DaemonState, String> {
-    for _ in 0..50 {
+    for _ in 0..100 {
         if let Some(state) = healthy_state(env) {
             return Ok(state);
         }
         std::thread::sleep(Duration::from_millis(100));
     }
-    Err("hided did not become healthy within 5s".into())
+    Err("hided did not become healthy within 10s".into())
 }
 
 fn healthy_state(env: &Env) -> Option<DaemonState> {

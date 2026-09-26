@@ -2,7 +2,6 @@
 //! will use. The hook never reads bearer bytes or trusts a pane ID on its own.
 
 use std::ffi::OsString;
-use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -18,23 +17,18 @@ const CAP_REF_ENV: &str = "HIDE_CAP_REF";
 pub fn live_context() -> Option<String> {
     let program = cli_program()?;
     let inherited = std::env::var_os(CAP_REF_ENV).filter(|value| !value.is_empty());
-    let (reference, created) = if let Some(value) = inherited {
-        (PathBuf::from(value), false)
+    let reference = if let Some(value) = inherited {
+        PathBuf::from(value)
     } else {
         let answer = run_cli(&program, &["workspace", "bootstrap"], None)?;
         if answer["ok"] != true {
             return None;
         }
-        (PathBuf::from(answer["reference"].as_str()?), true)
+        PathBuf::from(answer["reference"].as_str()?)
     };
-    let result = run_cli(&program, &["workspace", "info"], Some(&reference))
+    run_cli(&program, &["workspace", "info"], Some(&reference))
         .filter(|answer| answer["ok"] == true)
-        .and_then(|answer| format_context(&program, &reference, &answer));
-    if result.is_none() && created {
-        let _ = fs::remove_file(&reference);
-        let _ = fs::remove_file(reference.with_extension("claimed"));
-    }
-    result
+        .and_then(|answer| format_context(&program, &reference, &answer))
 }
 
 fn cli_program() -> Option<OsString> {

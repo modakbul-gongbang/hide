@@ -261,9 +261,11 @@ A frame the daemon cannot produce at all (the core owner thread gone, an empty r
 The web shell counts snapshots (`viewGeneration`) and re-requests its terminal view on each one, so a resync redraws the pane instead of trusting what it had drawn.
 The token comparison is constant in the token's length (`subtle`), so a refusal does not leak how much of the token a caller guessed.
 The Workspace CLI uses the same `/ws` for pane-scoped commands and results, without giving an agent the shell's unrestricted token or snapshot stream.
-Its local `pane-bootstrap.sock` only attests a kernel peer PID against Herdr's live pane shell and issues a protected file reference; the socket does not accept control commands.
+Its local `bootstrap.sock` lives in a private, state-directory-keyed short path under `/tmp` so a long state path cannot exceed the Unix socket limit.
+It only attests a kernel peer PID against Herdr's live pane shell and issues a protected file reference; the socket does not accept control commands.
 The scoped credential records the device, Workspace, checkout, pane terminal identity, and shell process birth, which are checked again for each command; closing or recreating a pane invalidates the credential.
-Direct CLI calls own one-shot credentials and release them after their request, while agent sessions may retain a reference until their pane ends or the eight-hour limit expires.
+Direct CLI calls own one-shot credentials and release them after their request, while repeated agent session starts in the same attested pane reuse one reference until its pane ends or the eight-hour limit expires.
+Once a Workspace action result has reached the CLI, a lost credential-claim acknowledgement cannot turn that result into a claim that the action was not applied; the claim failure is logged and a later command rechecks its capability.
 The registry has a 64-reference cap, the bootstrap path has an eight-worker cap, and daemon shutdown revokes every reference.
 The shell handshake marks actual web and desktop renderer connections with `client_kind`; Workspace commands refuse when only the daemon or another CLI client is connected.
 Pane-scoped `hide view select`, `split`, `move`, and `close` resolve the live device and checkout in the core, then apply one existing View layout transition without using the front Workspace as an authorization shortcut.
@@ -287,6 +289,7 @@ The first frame after a valid handshake is `daemon` (`version`, `pid`, `schema_v
 The daemon owns the core's one Settings observation flag (`ai_settings.observing`, which runs the provider probe and the hook diagnosis): a client's `observing` is only that connection's demand (`hided/src/demand.rs`), the flag follows the first observer in and the last one out, and a connection that closes releases its demand, so a closed tab never leaves the probe running.
 `hide` owns lifecycle: instance lock, `~/.local/state/hide/hided.json` mode 0600, default-browser open with `#token=`, idle exit ten minutes after the last client, and `hide serve --keep-alive`.
 `hide connect` is `hide open` for a host that loads the shell itself: the same discovery (the live daemon the state file names, else one started and waited for), answered as one JSON line (`ok`, `url`, `port`, `pid`, or `reason` `start_failed`/`no_response` with `detail`) instead of a browser; `hide status --json` is the attach-only probe and never starts a daemon.
+Daemon startup gets a bounded ten-second health wait, and the desktop host allows up to 25 seconds for the whole discovery command before showing a retryable failure.
 The daemon leads its own process group, so an interrupt to the terminal job or host that ran the CLI never reaches it.
 It does not start a Herdr server.
 A release `hided` carries `web/dist` inside the binary (`hided/build.rs`); a debug build reads the directory from disk, so `pnpm build` shows up without a cargo rebuild.

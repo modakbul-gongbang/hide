@@ -38,7 +38,7 @@ import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowS
 
 declare const __HIDE_BACKGROUND__: string;
 
-const CONNECT_TIMEOUT_MS = 15_000;
+const CONNECT_TIMEOUT_MS = 25_000;
 const STATUS_TIMEOUT_MS = 5_000;
 /** VS Code's default for the same question (`application.shellEnvironmentResolutionTimeout`); a warm rc takes seconds. */
 const LOGIN_PATH_TIMEOUT_MS = 10_000;

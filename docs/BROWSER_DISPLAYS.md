@@ -52,7 +52,8 @@ The route serves the opened HTML plus at most 128 declared relative stylesheets,
 It refuses undeclared checkout files, including same-directory secrets, and sends a restrictive content security policy that prevents a remote HTML preview from contacting another origin.
 The native page receives a random loopback route for its own View and load stamp; the route URL does not replace the remote address stored in the core or shown in the toolbar.
 Remote `localhost`, `localhost.`, IPv4 `127/8`, IPv6 loopback, and IPv4-mapped IPv6 loopback HTTP, HTTPS, and WebSocket traffic instead uses a dedicated SSH local forward to that device's loopback port.
-The native route uses the forward's actual bound local address; the remote source address remains in the Browser toolbar.
+The native route uses the forward's actual bound local address, except that HTTPS from `localhost` keeps that DNS name in the browser URL so certificate hostname checks remain valid.
+The remote source address remains in the Browser toolbar.
 Absolute loopback subrequests from a forwarded page use that View's forward when their scheme and source port match; other loopback requests are refused instead of reaching this Mac.
 If the SSH route fails, the page shows the failure; it never tries the same port on this Mac.
 Each native route is bounded, belongs to the desktop process that requested it, and closes when its View closes, its device disconnects, or that process exits.

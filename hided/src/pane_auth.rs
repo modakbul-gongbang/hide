@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::os::fd::AsRawFd;
-use std::os::unix::fs::{FileTypeExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -17,6 +18,7 @@ use herdr_core::workspace_control::{Context, Query};
 use hide_herdr_client::{UnixSocketConnector, request_with_connector};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use tokio::net::UnixListener;
 use tokio::sync::{Notify, Semaphore};
 
@@ -139,7 +141,7 @@ impl Registry {
         nonce: &str,
         port: u16,
         holder: Option<(i32, u64)>,
-    ) -> Result<PathBuf, &'static str> {
+    ) -> Result<(PathBuf, bool), &'static str> {
         let path = self.reference_path(nonce)?;
         let mut entries = self.entries.lock().map_err(|_| "capability_unavailable")?;
         if self.closed.load(Ordering::SeqCst) {
@@ -152,6 +154,19 @@ impl Registry {
             }
             alive
         });
+        if holder.is_none()
+            && let Some(existing) = entries.values().find(|entry| {
+                !entry.one_shot
+                    && entry.remote.is_none()
+                    && entry.pane_id == attestation.pane_id
+                    && entry.context == attestation.context
+                    && entry.terminal_id == attestation.terminal_id
+                    && entry.shell_pid == attestation.shell_pid
+                    && entry.shell_started == attestation.shell_started
+            })
+        {
+            return Ok((existing.path.clone(), false));
+        }
         if entries.len() >= MAX_CAPABILITIES {
             return Err("capability_limit");
         }
@@ -192,14 +207,14 @@ impl Registry {
                 remote: None,
             },
         );
-        Ok(path)
+        Ok((path, true))
     }
 
     pub(crate) fn issue_remote(
         &self,
         attestation: &Attestation,
         grant: RemoteGrant,
-    ) -> Result<String, &'static str> {
+    ) -> Result<(String, bool), &'static str> {
         let mut entries = self.entries.lock().map_err(|_| "capability_unavailable")?;
         if self.closed.load(Ordering::SeqCst) || !grant.alive.load(Ordering::Acquire) {
             return Err("hide_unavailable");
@@ -211,6 +226,22 @@ impl Registry {
             }
             alive
         });
+        if !grant.one_shot
+            && let Some((token, _)) = entries.iter().find(|(_, entry)| {
+                !entry.one_shot
+                    && entry.pane_id == attestation.pane_id
+                    && entry.context == attestation.context
+                    && entry.terminal_id == attestation.terminal_id
+                    && entry.shell_pid == attestation.shell_pid
+                    && entry.shell_started == attestation.shell_started
+                    && entry
+                        .remote
+                        .as_ref()
+                        .is_some_and(|remote| remote.bridge_id == grant.bridge_id)
+            })
+        {
+            return Ok((token.clone(), false));
+        }
         if entries.len() >= MAX_CAPABILITIES {
             return Err("capability_limit");
         }
@@ -237,7 +268,7 @@ impl Registry {
                 }),
             },
         );
-        Ok(token)
+        Ok((token, true))
     }
 
     pub fn get(&self, token: &str) -> Option<Capability> {
@@ -555,10 +586,26 @@ pub(crate) fn process_start(pid: i32) -> Option<u64> {
 }
 
 pub fn bind(state_dir: &Path) -> Result<(UnixListener, PathBuf), String> {
-    let path = state_dir.join("pane-bootstrap.sock");
+    let path = bootstrap_socket_path(state_dir);
+    let directory = path
+        .parent()
+        .ok_or("pane bootstrap path has no directory")?;
+    if let Err(error) = fs::DirBuilder::new().mode(0o700).create(directory)
+        && error.kind() != std::io::ErrorKind::AlreadyExists
+    {
+        return Err(error.to_string());
+    }
+    let directory_metadata = fs::symlink_metadata(directory).map_err(|error| error.to_string())?;
+    if !directory_metadata.is_dir()
+        || directory_metadata.file_type().is_symlink()
+        || directory_metadata.uid() != unsafe { libc::geteuid() }
+        || directory_metadata.permissions().mode() & 0o077 != 0
+    {
+        return Err("pane bootstrap directory is unsafe".to_owned());
+    }
     if let Ok(metadata) = fs::symlink_metadata(&path) {
-        if !metadata.file_type().is_socket() {
-            return Err("pane bootstrap path is not a socket".to_owned());
+        if !metadata.file_type().is_socket() || metadata.uid() != unsafe { libc::geteuid() } {
+            return Err("pane bootstrap path is not an owned socket".to_owned());
         }
         fs::remove_file(&path).map_err(|error| error.to_string())?;
     }
@@ -566,6 +613,17 @@ pub fn bind(state_dir: &Path) -> Result<(UnixListener, PathBuf), String> {
     fs::set_permissions(&path, fs::Permissions::from_mode(0o600))
         .map_err(|error| error.to_string())?;
     Ok((listener, path))
+}
+
+pub fn bootstrap_socket_path(state_dir: &Path) -> PathBuf {
+    let hash = Sha256::digest(state_dir.as_os_str().as_bytes());
+    Path::new("/tmp")
+        .join(format!(
+            "hide-pane-{}-{}",
+            unsafe { libc::geteuid() },
+            hex::encode(&hash[..12])
+        ))
+        .join("bootstrap.sock")
 }
 
 pub async fn serve(
@@ -624,12 +682,12 @@ pub async fn serve(
                     registry.issue(&attestation, &request.nonce, port, holder)
                 });
             let answer = match &result {
-                Ok(path) => json!({"ok": true, "reference": path}),
+                Ok((path, _)) => json!({"ok": true, "reference": path}),
                 Err(reason) => json!({"ok": false, "reason": reason}),
             };
             let mut stream = stream;
             if writeln!(stream, "{answer}").is_err()
-                && let Ok(path) = result
+                && let Ok((path, true)) = result
                 && let Ok(bytes) = fs::read(path)
                 && let Ok(reference) = serde_json::from_slice::<Reference>(&bytes)
             {
@@ -666,6 +724,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn long_state_directory_keeps_a_short_deterministic_bootstrap_socket() {
+        let state_dir = PathBuf::from(format!("/tmp/{}", "long-state-segment/".repeat(12)));
+        let socket = bootstrap_socket_path(&state_dir);
+        assert!(socket.as_os_str().as_bytes().len() < 100);
+        assert_eq!(socket, bootstrap_socket_path(&state_dir));
+        assert_ne!(
+            socket,
+            bootstrap_socket_path(Path::new("/tmp/another-state"))
+        );
+    }
+
+    #[test]
     fn registry_releases_references_and_refuses_issuance_after_shutdown() {
         let directory = tempfile::tempdir().unwrap();
         let registry = Registry::new(directory.path()).unwrap();
@@ -683,7 +753,7 @@ mod tests {
             shell_started: process_start(pid).unwrap(),
         };
         let nonce = "0123456789abcdef0123456789abcdef";
-        let path = registry.issue(&attestation, nonce, 12345, None).unwrap();
+        let path = registry.issue(&attestation, nonce, 12345, None).unwrap().0;
         assert_eq!(
             fs::metadata(&path).unwrap().permissions().mode() & 0o777,
             0o600
@@ -720,7 +790,7 @@ mod tests {
         };
         for attempt in 0..(MAX_CAPABILITIES * 2) {
             let nonce = format!("{attempt:032x}");
-            let path = registry.issue(&attestation, &nonce, 12345, None).unwrap();
+            let path = registry.issue(&attestation, &nonce, 12345, None).unwrap().0;
             let reference: Reference = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
             registry
                 .entries
@@ -739,5 +809,48 @@ mod tests {
                 .count(),
             0
         );
+    }
+
+    #[test]
+    fn repeated_claimed_bootstrap_reuses_one_pane_capability() {
+        let directory = tempfile::tempdir().unwrap();
+        let registry = Registry::new(directory.path()).unwrap();
+        let pid = std::process::id() as i32;
+        let attestation = Attestation {
+            pane_id: "pane".to_owned(),
+            context: Context {
+                device_id: "local".to_owned(),
+                workspace_id: "workspace".to_owned(),
+                checkout_id: "checkout".to_owned(),
+                checkout_path: "/checkout".to_owned(),
+            },
+            terminal_id: "terminal".to_owned(),
+            shell_pid: pid,
+            shell_started: process_start(pid).unwrap(),
+        };
+        let (path, created) = registry
+            .issue(&attestation, &format!("{:032x}", 0), 12345, None)
+            .unwrap();
+        assert!(created);
+        let reference: Reference = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        registry.claim(&reference.token).unwrap();
+        for attempt in 1..=MAX_CAPABILITIES + 1 {
+            let (again, created) = registry
+                .issue(&attestation, &format!("{attempt:032x}"), 12345, None)
+                .unwrap();
+            assert_eq!(again, path);
+            assert!(!created);
+        }
+        let (one_shot, created) = registry
+            .issue(
+                &attestation,
+                &format!("{:032x}", MAX_CAPABILITIES + 2),
+                12345,
+                Some((pid, process_start(pid).unwrap())),
+            )
+            .unwrap();
+        assert!(created);
+        assert_ne!(one_shot, path);
+        assert_eq!(registry.entries.lock().unwrap().len(), 2);
     }
 }

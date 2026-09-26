@@ -29,6 +29,8 @@ struct IssuedReference {
     token: String,
     created: Instant,
     holder: Option<(i32, u64)>,
+    shell_pid: i32,
+    shell_started: u64,
 }
 
 #[derive(Deserialize)]
@@ -182,7 +184,9 @@ fn sweep_references(
                 let holder_gone = reference
                     .holder
                     .is_some_and(|(pid, started)| pane_peer::process_start(pid) != Some(started));
-                (!present || expired || holder_gone).then_some(path.clone())
+                let pane_gone =
+                    pane_peer::process_start(reference.shell_pid) != Some(reference.shell_started);
+                (!present || expired || holder_gone || pane_gone).then_some(path.clone())
             })
             .collect::<Vec<_>>();
         for path in stale {
@@ -209,6 +213,8 @@ fn serve_client(
     issued: &Mutex<HashMap<PathBuf, IssuedReference>>,
 ) {
     let mut issued_token = None;
+    let mut token_new = false;
+    let mut reference_new = false;
     let result: Result<PathBuf, String> = (|| {
         let peer = pane_peer::peer_pid(&stream).ok_or("caller_unavailable")?;
         stream
@@ -239,6 +245,7 @@ fn serve_client(
         } else {
             None
         };
+        sweep_references(issued, output).map_err(|_| "bridge_unavailable")?;
         write_line(
             output,
             json!({
@@ -261,6 +268,15 @@ fn serve_client(
             .filter(|token| token.len() == 64 && token.bytes().all(|b| b.is_ascii_hexdigit()))
             .ok_or("invalid_response")?;
         issued_token = Some(token.to_owned());
+        token_new = answer["issued_new"] == true;
+        let mut issued = issued.lock().map_err(|_| "bridge_unavailable")?;
+        if !request.one_shot
+            && let Some((path, _)) = issued.iter().find(|(path, reference)| {
+                reference.token == token && path.is_file() && reference.holder.is_none()
+            })
+        {
+            return Ok(path.clone());
+        }
         let path = dir.join(format!("{}.json", request.nonce));
         let mut file = OpenOptions::new()
             .write(true)
@@ -279,25 +295,28 @@ fn serve_client(
             let _ = fs::remove_file(&path);
             return Err("reference_unavailable".to_owned());
         }
-        issued.lock().map_err(|_| "bridge_unavailable")?.insert(
+        issued.insert(
             path.clone(),
             IssuedReference {
                 token: token.to_owned(),
                 created: Instant::now(),
                 holder,
+                shell_pid: identity.shell_pid,
+                shell_started: identity.shell_started,
             },
         );
+        reference_new = true;
         Ok(path)
     })();
     let delivered = answer_client(&mut stream, result.clone()).is_ok();
     if !delivered || result.is_err() {
-        if let Ok(path) = result {
-            let _ = fs::remove_file(path);
-        }
-        if let Some(token) = issued_token {
+        if reference_new && let Ok(path) = result {
+            let _ = fs::remove_file(&path);
             if let Ok(mut issued) = issued.lock() {
-                issued.retain(|_, reference| reference.token != token);
+                issued.remove(&path);
             }
+        }
+        if token_new && let Some(token) = issued_token {
             let _ = write_line(output, json!({"type":"revoke","id":id,"token":token}));
         }
     }
@@ -397,6 +416,8 @@ mod tests {
     #[test]
     fn expired_unclaimed_reference_is_revoked_but_a_claimed_session_remains() {
         let dir = tempfile::tempdir().unwrap();
+        let shell_pid = std::process::id() as i32;
+        let shell_started = pane_peer::process_start(shell_pid).unwrap();
         let abandoned = dir.path().join(format!("{}.json", "a".repeat(32)));
         let claimed = dir.path().join(format!("{}.json", "b".repeat(32)));
         fs::write(&abandoned, "abandoned").unwrap();
@@ -409,6 +430,8 @@ mod tests {
                     token: "a".to_owned(),
                     created: Instant::now() - UNCLAIMED_LIFETIME - Duration::from_secs(1),
                     holder: None,
+                    shell_pid,
+                    shell_started,
                 },
             ),
             (
@@ -417,6 +440,8 @@ mod tests {
                     token: "b".to_owned(),
                     created: Instant::now() - UNCLAIMED_LIFETIME - Duration::from_secs(1),
                     holder: None,
+                    shell_pid,
+                    shell_started,
                 },
             ),
         ]));
@@ -434,6 +459,8 @@ mod tests {
     #[test]
     fn deleted_reference_and_late_reply_do_not_keep_a_grant_or_poison_the_next_request() {
         let dir = tempfile::tempdir().unwrap();
+        let shell_pid = std::process::id() as i32;
+        let shell_started = pane_peer::process_start(shell_pid).unwrap();
         let path = dir.path().join(format!("{}.json", "c".repeat(32)));
         let issued = Mutex::new(HashMap::from([(
             path.clone(),
@@ -441,6 +468,8 @@ mod tests {
                 token: "c".to_owned(),
                 created: Instant::now(),
                 holder: None,
+                shell_pid,
+                shell_started,
             },
         )]));
         let output = Mutex::new(Vec::new());
@@ -460,6 +489,8 @@ mod tests {
     #[test]
     fn a_killed_one_shot_caller_loses_its_claimed_reference() {
         let dir = tempfile::tempdir().unwrap();
+        let shell_pid = std::process::id() as i32;
+        let shell_started = pane_peer::process_start(shell_pid).unwrap();
         let path = dir.path().join(format!("{}.json", "d".repeat(32)));
         fs::write(&path, "reference").unwrap();
         fs::write(path.with_extension("claimed"), "").unwrap();
@@ -469,6 +500,8 @@ mod tests {
                 token: "d".to_owned(),
                 created: Instant::now(),
                 holder: Some((i32::MAX, 1)),
+                shell_pid,
+                shell_started,
             },
         )]));
         let output = Mutex::new(Vec::new());
