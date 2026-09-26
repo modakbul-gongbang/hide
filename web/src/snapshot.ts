@@ -237,6 +237,20 @@ export type Workspace = {
   inactive_checkouts: { expanded: boolean; checkout_ids: string[] };
   /** The repository's open issues, for the Overview's backlog cards. */
   home_issues?: ProjectIssues;
+  /**
+   * A local Git project's allocated disk, every worktree and the shared Git
+   * directory counted once. Present once an Overview named the project for
+   * measuring (`card_measure_disk` with its `workspace_id`).
+   */
+  disk?: ProjectDisk;
+};
+
+export type ProjectDisk = {
+  /** Known only once every part is measured. */
+  total_bytes: number | null;
+  unavailable_reason: string | null;
+  /** The named measurement has not come back yet. */
+  measuring: boolean;
 };
 
 export type InactiveProjectGroup = { device_id: string; expanded: boolean; project_ids: string[] };

@@ -177,9 +177,12 @@ export function installKeyboard(actions: Actions): () => void {
         return;
       }
       // With no layer open, Escape leaves a Project's Overview for the
-      // Workspace in front, or Main when there is none (web-project-overview B1).
-      // Every dialog, menu and popover is an escape layer, answered above.
-      if (ui().screen?.kind === "overview") {
+      // Workspace in front, or All projects when there is none
+      // (web-project-overview B1). Every dialog, menu and popover is an escape
+      // layer, answered above; a text field holding text answers it itself, so
+      // the Sessions search clears before a second Escape leaves.
+      const field = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement ? event.target : null;
+      if (ui().screen?.kind === "overview" && !field?.value) {
         actions.leaveProjectOverview();
         consume();
       }

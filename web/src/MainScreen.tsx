@@ -1,17 +1,22 @@
+import { FolderIcon, GitMergeIcon, GitPullRequestIcon, PlusIcon } from "lucide-react";
 import { useMemo } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
+import { cn } from "./lib/utils";
 import { AGENT_GROUPS, mainSections, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
+import { allProjectsStats, type AllProjectsStats } from "./projectBoard";
 import type { Device } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
 
-// Main (PRD S6 D-02, B1-B4, B21). Main lists every registered Project by
-// device; a Project opens its Overview (`ProjectOverview.tsx`), which also
-// uses the opening and device notices below.
+// All projects (PRD S6 D-02, B1-B4, B21; `screen.kind === "main"`), the scope
+// the sidebar's top row opens. Its facts line totals what every Project can
+// give, and it lists every registered Project by device; a Project opens its
+// Overview (`ProjectOverview.tsx`), which also uses the facts line style and
+// the opening and device notices below.
 // Everything drawn is a value the snapshot carries; a device that cannot
 // answer says why on its own section, with Retry where retrying can help.
 
@@ -19,14 +24,19 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const rest = useShellStore((s) => s.rest);
   const agents = useShellStore((s) => s.agents);
   const sections = useMemo(() => mainSections(rest, agents), [rest, agents]);
-  const total = sections.reduce((sum, section) => sum + section.projects.length, 0);
+  const stats = useMemo(() => allProjectsStats(sections.flatMap((section) => section.projects.map((project) => project.workspace))), [sections]);
+  const total = stats.projects;
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-background" aria-label="Main" data-main-screen="true">
-      <header className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border bg-sidebar px-md">
-        <h1 className="flex-1 text-subhead font-semibold text-foreground">Projects</h1>
-        <Button variant="ghost" onClick={() => actions.openNewWorkspace()} data-main-add-project="true">
-          Add project <span className="text-muted-foreground">{displayCommand("new_workspace", hostKind())}</span>
-        </Button>
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-background" aria-label="All projects" data-main-screen="true">
+      <header className="flex shrink-0 flex-col gap-xs border-b border-border px-lg py-sm">
+        <div className="flex min-w-0 items-center gap-lg">
+          <h1 className="min-w-0 flex-1 truncate text-headline font-semibold text-foreground">All projects</h1>
+          <Button variant="ghost" onClick={() => actions.openNewWorkspace()} data-main-add-project="true">
+            <PlusIcon aria-hidden="true" />
+            Add project <span className="text-muted-foreground">{displayCommand("new_workspace", hostKind())}</span>
+          </Button>
+        </div>
+        <Facts stats={stats} />
       </header>
       <OpeningStatus actions={actions} />
       {total === 0 && sections.every((section) => section.availability.state === "ready") ? (
@@ -44,6 +54,34 @@ export function MainScreen({ actions }: { actions: Actions }) {
         </div>
       )}
     </section>
+  );
+}
+
+/** One fact of a scope's facts line, a glyph and its number. */
+export const FACT = "inline-flex items-center gap-xxs";
+export const FACTS_LINE = "flex flex-wrap items-center gap-md font-mono text-caption text-subtle-foreground";
+
+/** The Project count, and each total only once every Project gave its part (design #10). */
+function Facts({ stats }: { stats: AllProjectsStats }) {
+  return (
+    <div className={FACTS_LINE} data-main-stats="true">
+      <span className={FACT} data-stat="projects">
+        <FolderIcon aria-hidden="true" className="size-(--size-icon)" />
+        {stats.projects} {stats.projects === 1 ? "project" : "projects"}
+      </span>
+      {stats.openPullRequests === null ? null : (
+        <span className={FACT} data-stat="open-prs">
+          <GitPullRequestIcon aria-hidden="true" className="size-(--size-icon)" />
+          {stats.openPullRequests} open {stats.openPullRequests === 1 ? "PR" : "PRs"}
+        </span>
+      )}
+      {stats.merged ? (
+        <span className={cn(FACT, "text-pr-merged")} data-stat="merged">
+          <GitMergeIcon aria-hidden="true" className="size-(--size-icon)" />
+          {stats.merged} merged
+        </span>
+      ) : null}
+    </div>
   );
 }
 
