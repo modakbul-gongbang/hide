@@ -738,90 +738,143 @@ function screenPaneHeader(id, {label, status, width}) {
   ]);
 }
 
+// The side panel's own icon button: a pressed one sits on --secondary with a
+// --foreground glyph, the rest stay --subtle-foreground (WorkspaceScreen.tsx).
+function sidePanelButton(id, glyph, {pressed = false} = {}) {
+  return themedXref(id, 'Nyvom', glyph, pressed ? {fill: '$--secondary'} : {}, {ZIZFR: {icon: glyph, fill: pressed ? '$--foreground' : '$--subtle-foreground'}});
+}
+
+// Component / Side panel toggle, composed from the flat icon button: the
+// open-view count rides on it as a --primary badge while the panel is closed.
+function sidePanelToggle(id, {count, pressed}) {
+  return frame(id, 'Side panel toggle', {layout: 'none', width: 24, height: 24}, [
+    {...sidePanelButton(`${id}-button`, 'panel-right', {pressed}), x: 0, y: 0},
+    ...(count ? [frame(`${id}-badge`, 'Open views badge', {x: 12, y: -2, width: 14, height: 14, fill: '$--primary', cornerRadius: '$--radius-lg', layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [
+      text(`${id}-count`, String(count), {size: '$--text-micro', weight: '600', fill: '$--primary-foreground'}),
+    ])] : []),
+  ]);
+}
+
 function buildWorkspace(tokens) {
-  const SIDEBAR_W = num(tokens, '--size-sidebar-ideal'), AGENT_W = 300, VIEW_W = 380, EXPLORER_W = 240;
-  const TOTAL_W = SIDEBAR_W + AGENT_W + VIEW_W + EXPLORER_W + 3 * 12;
-  function chrome(suffix) {
-    const sidebar = screenSidebar(tokens, 'ws-sidebar', suffix, [
+  const SIDEBAR_W = num(tokens, '--size-sidebar-ideal'), BODY_W = 900, BODY_H = 440;
+  const STRIP = num(tokens, '--size-tab-strip'), GAP = num(tokens, '--spacing-sm'), TOOLS_W = num(tokens, '--size-panel-min');
+  const HAIR = '$--size-hairline', PANEL_W = GAP + 300 + TOOLS_W;
+  const TERMINAL = [
+    ['fixture % echo capture-demo 한글 확인', '$--foreground'],
+    ['capture-demo 한글 확인', '$--subtle-foreground'],
+    ['fixture % git status --short', '$--foreground'],
+    [' M docs/한글 노트.md', '$--warning'],
+    ['?? scripts/pen-screens.mjs', '$--subtle-foreground'],
+    ['fixture % ', '$--foreground'],
+  ];
+
+  // Column 1 of the body: the agents, full width; the panel never resizes them.
+  function agents(key) {
+    const tabs = frame(`ws-agtabs-${key}`, 'Tab bar', {width: 'fill_container', height: STRIP, layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
+      screenPanelTab(`ws-agtab1-${key}`, 'square-terminal', 'Tab 1', true),
+      screenIconButton(`ws-agtabclose-${key}`, 'x', {size: 20}),
+      screenIconButton(`ws-agtabadd-${key}`, 'plus', {size: 20}),
+    ]);
+    // The xterm viewport takes --background in either theme (commit 7052afa).
+    const terminal = frame(`ws-terminal-${key}`, 'Terminal', {width: 'fill_container', height: 'fill_container', fill: '$--background', padding: '$--spacing-sm', layout: 'vertical', gap: '$--spacing-xxs'},
+      TERMINAL.map(([line, fill], index) => text(`ws-term${index}-${key}`, line, {fill, mono: true, size: '$--text-caption'})));
+    return [tabs, screenPaneHeader(`ws-panehdr-${key}`, {label: 'w2:p1', status: 'Working', width: 'fill_container'}), terminal];
+  }
+
+  // Component / Side panel (S2, issue 170), from flat refs and local tokens:
+  // the --spacing-sm gap in --background on the left, then the --card card
+  // with a --radius-lg top-left corner and a --border hairline, no shadow.
+  function sidePanel(key, height) {
+    const tab = (id, title, glyph, fill, active) => themedXref(id, 'view-tab', title, {
+      fill: '$--card', ...(active ? {stroke: '$--primary', strokeWidth: {bottom: '$--size-tab-indicator'}, strokeAlignment: 'inner'} : {}),
+    }, {'view-tab-mark': {icon: glyph, fill}, 'view-tab-title': {content: title, fill: active ? '$--foreground' : '$--subtle-foreground'}, 'view-tab-close': {enabled: active}});
+    const strip = frame(`ws-sp-strip-${key}`, 'Tab strip', {width: 'fill_container', height: STRIP, layout: 'horizontal', alignItems: 'center', stroke: '$--border', strokeWidth: {bottom: HAIR}, strokeAlignment: 'inner'}, [
+      frame(`ws-sp-tabs-${key}`, 'View tabs', {width: 'fill_container', height: STRIP, layout: 'horizontal', clip: true}, [
+        tab(`ws-sp-tab1-${key}`, '한글 노트.md', 'file-text', '$--file-blue', true),
+        tab(`ws-sp-tab2-${key}`, 'pen-screens.mjs', 'file-code', '$--file-orange', false),
+        frame(`ws-sp-viewactions-${key}`, 'View actions', {width: num(tokens, '--size-tab-overflow-control'), height: STRIP, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [
+          icon(`ws-sp-viewactions-i-${key}`, 'ellipsis', {size: num(tokens, '--size-icon'), fill: '$--subtle-foreground'}),
+        ]),
+      ]),
+      frame(`ws-sp-actions-${key}`, 'Side panel actions', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', padding: [0, '$--spacing-xs']}, [
+        sidePanelButton(`ws-sp-new-${key}`, 'plus'), sidePanelButton(`ws-sp-pin-${key}`, 'pin'),
+        sidePanelButton(`ws-sp-expand-${key}`, 'maximize-2'), sidePanelButton(`ws-sp-hide-${key}`, 'panel-right-close'),
+      ]),
+    ]);
+    const docHeader = frame(`ws-dochdr-${key}`, 'Document header', {width: 'fill_container', height: STRIP, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, '$--spacing-sm'], stroke: '$--border', strokeWidth: {bottom: HAIR}, strokeAlignment: 'inner'}, [
+      text(`ws-docpath-${key}`, 'docs/한글 노트.md', {mono: true, size: '$--text-caption', fill: '$--muted-foreground'}),
+      frame(`ws-doclinks-${key}`, 'Links', {layout: 'horizontal', gap: '$--spacing-md'}, [
+        text(`ws-docwrap-${key}`, 'Wrap', {size: '$--text-caption', fill: '$--subtle-foreground'}),
+        text(`ws-docfind-${key}`, 'Find', {size: '$--text-caption', fill: '$--subtle-foreground'}),
+      ]),
+    ]);
+    const line = (index, code) => frame(`ws-line${index}-${key}`, 'Line', {layout: 'horizontal', gap: '$--spacing-sm'}, [
+      text(`ws-line${index}n-${key}`, String(index), {mono: true, size: '$--text-caption', fill: '$--muted-foreground'}),
+      text(`ws-line${index}t-${key}`, code, {mono: true, size: '$--text-caption'}),
+    ]);
+    const views = frame(`ws-sp-views-${key}`, 'View areas', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: 0}, [
+      docHeader,
+      frame(`ws-editor-${key}`, 'Editor body', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: '$--spacing-xxs', padding: '$--spacing-sm', clip: true},
+        ['# 한글 노트', '', '작업 공간의 사이드 패널은 에이전트 위에 뜹니다.', 'Pin 하면 에이전트 옆에 고정됩니다.'].map((code, index) => line(index + 1, code))),
+    ]);
+    const row = (id, name, glyph, fill, {folder = false, status = '', indent = 0} = {}) => frame(`${id}-indent`, 'Tree indent', {width: 'fill_container', layout: 'horizontal', padding: [0, 0, 0, indent]}, [
+      themedXref(id, 'mSu8p', name, {width: 'fill_container'}, {
+        vEOYq: folder ? {icon: 'chevron-down', fill: '$--subtle-foreground'} : {fill: []},
+        LWCQZ: {icon: glyph, fill}, kj232: {content: name}, ZzvYJ: {content: status, fill: '$--warning'},
+      }),
+    ]);
+    const tools = frame(`ws-sp-tools-${key}`, 'Tool column', {width: TOOLS_W, height: 'fill_container', layout: 'vertical', gap: 0, stroke: '$--border', strokeWidth: {left: HAIR}, strokeAlignment: 'inner'}, [
+      frame(`ws-exphdr-row-${key}`, 'Explorer title row', {width: 'fill_container', height: STRIP, layout: 'horizontal', alignItems: 'center', padding: [0, '$--spacing-xs', 0, '$--spacing-md']}, [
+        text(`ws-exphdr-${key}`, 'EXPLORER', {size: '$--text-caption', fill: '$--muted-foreground', weight: '600', width: 'fill_container'}),
+        screenIconButton(`ws-expclose-${key}`, 'x', {size: 20}),
+      ]),
+      frame(`ws-exproot-${key}`, 'Root', {width: 'fill_container', height: num(tokens, '--size-pane-header'), layout: 'horizontal', alignItems: 'center', padding: [0, '$--spacing-xs', 0, '$--spacing-sm']}, [
+        text(`ws-exproott-${key}`, 'demo', {size: '$--text-caption', weight: '600', fill: '$--subtle-foreground', width: 'fill_container'}),
+        screenIconButton(`ws-exprefresh-${key}`, 'refresh-cw', {size: 20}),
+      ]),
+      row(`ws-file1-${key}`, 'docs', 'folder-open', '$--subtle-foreground', {folder: true, status: '●'}),
+      row(`ws-file2-${key}`, '한글 노트.md', 'file-text', '$--file-blue', {status: 'M', indent: '$--spacing-md'}),
+      row(`ws-file3-${key}`, 'scripts', 'folder-open', '$--subtle-foreground', {folder: true}),
+      row(`ws-file4-${key}`, 'pen-screens.mjs', 'file-code', '$--file-orange', {status: 'A', indent: '$--spacing-md'}),
+      row(`ws-file5-${key}`, 'README.md', 'file-text', '$--file-blue'),
+    ]);
+    return frame(`ws-sidepanel-${key}`, 'Side panel', {layoutPosition: 'absolute', x: BODY_W - PANEL_W, y: 0, width: PANEL_W, height, layout: 'horizontal', gap: 0, fill: '$--background'}, [
+      frame(`ws-sp-grip-${key}`, 'Resize grip (the gap)', {width: GAP, height: 'fill_container'}, []),
+      frame(`ws-sp-card-${key}`, 'Card', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: 0, clip: true, fill: '$--card', cornerRadius: ['$--radius-lg', 0, 0, 0], stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
+        strip, frame(`ws-sp-body-${key}`, 'Body', {width: 'fill_container', height: 'fill_container', layout: 'horizontal', gap: 0}, [views, tools]),
+      ]),
+    ]);
+  }
+
+  // One composition: the sidebar, then the toolbar over the Workspace body.
+  // The toolbar keeps one panel toggle (pressed while the panel shows, the
+  // open-view count as a badge while it is closed) beside the tool toggles.
+  function workspace(key, open) {
+    const sidebar = screenSidebar(tokens, 'ws-sidebar', key, [
       {title: 'Agent two', status: 'Working'},
       {title: 'Agent one', status: 'Seen', symbol: '○', statusColor: '$--muted-foreground'},
     ]);
-    const crumb = frame(`ws-crumb-${suffix}`, 'Breadcrumb', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-      text(`ws-c1-${suffix}`, 'Main', {fill: '$--muted-foreground'}),
-      text(`ws-c2-${suffix}`, '/', {fill: '$--muted-foreground'}),
-      text(`ws-c3-${suffix}`, 'demo', {fill: '$--muted-foreground'}),
-      text(`ws-c4-${suffix}`, '/', {fill: '$--muted-foreground'}),
-      text(`ws-c5-${suffix}`, 'demo', {weight: '600'}),
+    const crumb = frame(`ws-crumb-${key}`, 'Breadcrumb', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+      text(`ws-c1-${key}`, 'Main', {fill: '$--muted-foreground'}),
+      text(`ws-c2-${key}`, '/', {fill: '$--muted-foreground'}),
+      text(`ws-c3-${key}`, 'demo', {fill: '$--muted-foreground'}),
+      text(`ws-c4-${key}`, '/', {fill: '$--muted-foreground'}),
+      text(`ws-c5-${key}`, 'demo', {weight: '600'}),
     ]);
-    const toolIcons = frame(`ws-tools-${suffix}`, 'Tools', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
-      screenIconButton(`ws-tool1-${suffix}`, 'square-terminal'), screenIconButton(`ws-tool2-${suffix}`, 'columns-2'), screenIconButton(`ws-tool3-${suffix}`, 'file-text'),
-      screenIconButton(`ws-tool4-${suffix}`, 'ellipsis'), screenIconButton(`ws-tool5-${suffix}`, 'folder'), screenIconButton(`ws-tool6-${suffix}`, 'git-branch'),
+    const toolbar = frame(`ws-tools-${key}`, 'Tools', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
+      sidePanelToggle(`ws-paneltoggle-${key}`, open ? {pressed: true} : {count: 2}),
+      sidePanelButton(`ws-tool-explorer-${key}`, 'folder', {pressed: open}), sidePanelButton(`ws-tool-history-${key}`, 'git-branch'),
     ]);
-    const topBar = frame(`ws-topbar-${suffix}`, 'Top bar', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', width: TOTAL_W}, [crumb, toolIcons]);
-
-    // Column 1: the agent/terminal area - its own tab strip, a pane header,
-    // the terminal body filling the rest of the column.
-    const agentTabs = frame(`ws-agtabs-${suffix}`, 'Tab bar', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
-      screenPanelTab(`ws-agtab1-${suffix}`, 'square-terminal', 'Tab 1', true),
-      screenIconButton(`ws-agtabclose-${suffix}`, 'x', {size: 20}),
-      screenIconButton(`ws-agtabadd-${suffix}`, 'plus', {size: 20}),
+    const topBar = frame(`ws-topbar-${key}`, 'Top bar', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', width: BODY_W}, [crumb, toolbar]);
+    const body = frame(`ws-body-${key}`, 'Workspace body', {width: BODY_W, height: BODY_H, layout: 'vertical', gap: 0, fill: '$--background', clip: true}, [
+      ...agents(key), ...(open ? [sidePanel(key, BODY_H)] : []),
     ]);
-    const paneHeader = screenPaneHeader(`ws-panehdr-${suffix}`, {label: 'w2:p1', status: 'Unknown', width: AGENT_W});
-    // The xterm viewport takes --background in either theme (commit 7052afa); a
-    // local token, so it themes correctly without any ref-site restating.
-    const terminal = frame(`ws-terminal-${suffix}`, 'Terminal', {width: AGENT_W, height: 260, fill: '$--background', padding: '$--spacing-sm', layout: 'vertical', gap: '$--spacing-xxs'}, [
-      text(`ws-term1-${suffix}`, 'fixture % echo capture-demo 한글 확인', {fill: '$--foreground', mono: true, size: '$--text-caption'}),
+    return frame(`ws-wrap-${key}`, open ? 'Side panel open' : 'Side panel closed, two views open', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
+      sidebar, frame(`ws-main-${key}`, 'Workspace', {layout: 'vertical', gap: '$--spacing-md', width: BODY_W}, [topBar, body]),
     ]);
-    const agentColumn = frame(`ws-agcol-${suffix}`, 'Agent area', {width: AGENT_W, layout: 'vertical', gap: 0}, [agentTabs, paneHeader, terminal]);
-
-    // Column 2: the view/editor area - its own view tab strip, a document
-    // header (path + Wrap/Find/preview), the editor body with line numbers.
-    const viewTabs = frame(`ws-vtabs-${suffix}`, 'Tab bar', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
-      screenViewTab(`ws-vtab1-${suffix}`, {title: '한글 노트.md', active: true}),
-    ]);
-    const docHeader = frame(`ws-dochdr-${suffix}`, 'Document header', {width: VIEW_W, height: 28, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, '$--spacing-sm'], fill: '$--card'}, [
-      text(`ws-docpath-${suffix}`, '~/projects/sasu/demo', {mono: true, size: '$--text-caption', fill: '$--muted-foreground'}),
-      frame(`ws-doclinks-${suffix}`, 'Links', {layout: 'horizontal', gap: '$--spacing-md'}, [
-        text(`ws-docwrap-${suffix}`, 'Wrap', {size: '$--text-caption', fill: '$--subtle-foreground'}),
-        text(`ws-docfind-${suffix}`, 'Find', {size: '$--text-caption', fill: '$--subtle-foreground'}),
-        text(`ws-docpreview-${suffix}`, 'preview', {size: '$--text-caption', fill: '$--subtle-foreground'}),
-      ]),
-    ]);
-    const editorBody = frame(`ws-editor-${suffix}`, 'Editor body', {width: VIEW_W, height: 232, layout: 'vertical', gap: '$--spacing-xxs', padding: '$--spacing-sm', fill: '$--background'}, [
-      frame(`ws-line1-${suffix}`, 'Line', {layout: 'horizontal', gap: '$--spacing-sm'}, [
-        text(`ws-line1n-${suffix}`, '1', {mono: true, size: '$--text-caption', fill: '$--muted-foreground'}),
-        text(`ws-line1t-${suffix}`, 'export const answer = 41;', {mono: true, size: '$--text-caption'}),
-      ]),
-      frame(`ws-line2-${suffix}`, 'Line', {layout: 'horizontal', gap: '$--spacing-sm'}, [
-        text(`ws-line2n-${suffix}`, '2', {mono: true, size: '$--text-caption', fill: '$--muted-foreground'}),
-      ]),
-    ]);
-    const viewColumn = frame(`ws-vcol-${suffix}`, 'View area', {width: VIEW_W, layout: 'vertical', gap: 0}, [viewTabs, docHeader, editorBody]);
-
-    // Column 3: Explorer - header, root row + inline git-status warning, files.
-    const explorerHeader = frame(`ws-exphdr-row-${suffix}`, 'Header', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', width: EXPLORER_W}, [
-      text(`ws-exphdr-${suffix}`, 'EXPLORER', {size: '$--text-micro', fill: '$--muted-foreground', weight: '600'}),
-      screenIconButton(`ws-expclose-${suffix}`, 'x', {size: 20}),
-    ]);
-    const explorerRoot = frame(`ws-exproot-${suffix}`, 'Root', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', width: EXPLORER_W}, [
-      text(`ws-exproott-${suffix}`, 'demo', {size: '$--text-caption', weight: '600', fill: '$--muted-foreground'}),
-      icon(`ws-exprefresh-${suffix}`, 'refresh-cw', {size: 12, fill: '$--muted-foreground'}),
-    ]);
-    const explorerNotice = text(`ws-expnotice-${suffix}`, 'Git status unavailable: ~/projects/sasu/demo is not inside a Git repository', {fill: '$--warning', size: '$--text-caption', width: EXPLORER_W});
-    const explorer = frame(`ws-explorer-${suffix}`, 'Explorer', {width: EXPLORER_W, layout: 'vertical', gap: '$--spacing-xs', fill: '$--card', padding: '$--spacing-sm', cornerRadius: '$--radius-md'}, [
-      explorerHeader, explorerRoot, explorerNotice,
-      screenLineRow(`ws-file1-${suffix}`, {label: 'README.md', meta: '', status: '', width: EXPLORER_W - 20}),
-      screenLineRow(`ws-file2-${suffix}`, {label: '한글 노트.md', meta: '', status: 'M', width: EXPLORER_W - 20}),
-      screenLineRow(`ws-file3-${suffix}`, {label: 'scripts/pen-screens.mjs', meta: '', status: 'A', width: EXPLORER_W - 20}),
-    ]);
-
-    const content = frame(`ws-content-${suffix}`, 'Content', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [sidebar, agentColumn, viewColumn, explorer]);
-    // screenSheet's theme frame lays its top-level return array out
-    // horizontally (every other screen's peers sit side by side); this
-    // screen instead needs the top bar stacked above the content row.
-    return [frame(`ws-wrap-${suffix}`, 'Wrap', {layout: 'vertical', gap: '$--spacing-md', width: TOTAL_W}, [topBar, content])];
   }
-  return screenSheet('screen-workspace', 'Screen / Workspace', 'web/src/WorkspaceScreen.tsx, TabBar.tsx, ViewAreas.tsx, ExplorerTree.tsx: the whole workspace screen - top bar, agent/terminal column, view/editor column and Explorer, with a Korean file name to verify B11 wrapping.', chrome, chrome);
+  const build = suffix => [workspace(`${suffix}o`, true), workspace(`${suffix}c`, false)];
+  return screenSheet('screen-workspace', 'Screen / Workspace', 'web/src/WorkspaceScreen.tsx, TabBar.tsx, ViewAreas.tsx, Tools.tsx: the Workspace with its side panel (Component / Side panel, issue 170) open over the agents, then closed with two views still open. No layout switch: the toolbar keeps one panel toggle, which carries the open-view count while the panel is closed. A Korean file name verifies B11 wrapping.', build, build);
 }
 
 // -- Screen / Project Sessions --------------------------------------------------
