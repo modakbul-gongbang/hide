@@ -112,6 +112,9 @@ async function slotBounds(page: Page, displayId: string): Promise<View["bounds"]
  */
 const PAINT_WHILE_OCCLUDED = ["--disable-backgrounding-occluded-windows"];
 
+/** The window this run draws in: a CI runner's whole screen width, and a height its work area holds. */
+const WINDOW = { width: 1024, height: 640 };
+
 /** The window as macOS draws it, page views included, captured by window id without focusing it. */
 async function windowShot(name: string): Promise<void> {
   const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
@@ -125,6 +128,16 @@ function openFromCli(target: string, extra: string[] = []): Record<string, unkno
   return { status: answer.status, ...(JSON.parse(answer.stdout.trim().split("\n").at(-1) || "{}") as Record<string, unknown>) };
 }
 
+/** Waits until the view showing `url` covers its display's slot as the shell lays it out now. */
+async function expectOnSlot(page: Page, url: string, displayId: string): Promise<void> {
+  await expect
+    .poll(async () => {
+      const placed = { view: (await viewOf(url)).bounds, slot: await slotBounds(page, displayId) };
+      return JSON.stringify(placed.view) === JSON.stringify(placed.slot) ? "on its slot" : placed;
+    })
+    .toBe("on its slot");
+}
+
 async function displayIdOf(page: Page, text: string): Promise<string> {
   await expect(tab(page, text)).toBeVisible({ timeout: 20_000 });
   return (await tab(page, text).getAttribute("data-display"))!;
@@ -134,11 +147,15 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   const report = path.join(herdr.root, "fixture", "리포트 1.html");
   fs.writeFileSync(report, '<!doctype html><meta charset="utf-8"><title>Local report</title><h1>리포트</h1>');
   ({ app } = await launch(run.env, PAINT_WHILE_OCCLUDED));
-  // Two View areas side by side need room beside the Agents area.
-  await app.evaluate(({ BrowserWindow, screen }) => {
+  // The window is the size this run needs, whatever the machine's screen:
+  // a CI runner's screen is 1024 points wide.
+  const bounds = await app.evaluate(({ BrowserWindow, screen }, size) => {
     const area = screen.getPrimaryDisplay().workArea;
-    BrowserWindow.getAllWindows()[0]!.setBounds({ x: area.x, y: area.y, width: Math.min(1800, area.width), height: Math.min(1000, area.height) });
-  });
+    const window = BrowserWindow.getAllWindows()[0]!;
+    window.setBounds({ x: area.x, y: area.y, ...size });
+    return window.getBounds();
+  }, WINDOW);
+  expect(bounds, "the screen cannot hold the window this run needs").toMatchObject(WINDOW);
   const page = await app.firstWindow();
   await enterWorkspace(page, "fixture");
   const checkout = path.join(fs.realpathSync(herdr.root), "fixture");
@@ -150,7 +167,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   const a = await displayIdOf(page, "Page A");
   let pageA = await viewOf(`${origin}/a.html`);
   await expect.poll(async () => (await viewOf(`${origin}/a.html`)).visible).toBe(true);
-  await expect.poll(async () => (await views()).find((view) => view.url === `${origin}/a.html`)?.bounds).toEqual(await slotBounds(page, a));
+  await expectOnSlot(page, `${origin}/a.html`, a);
   await inPage(`${origin}/a.html`, "window.__hideMarker = 'a'");
 
   // Hangul reaches the page's field as committed text.
@@ -168,6 +185,12 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   const pageB = await viewOf(`${origin}/b.html`);
   await expect.poll(async () => (await viewOf(`${origin}/a.html`)).visible).toBe(false);
 
+  // Two View areas side by side need the Workspace's width: the Views take
+  // it all and the Explorer steps aside until it is used below.
+  await page.locator('[data-layout-choice="views"]').click();
+  await page.locator('[data-tool-toggle="explorer"][aria-pressed="true"]').click();
+  await expect(page.locator('[data-tool-toggle="explorer"]')).toHaveAttribute("aria-pressed", "false");
+
   // Split right moves B into a new area: both pages show, neither loaded again.
   await tab(page, "Page B").click({ button: "right" });
   const splitRight = page.locator('[role="menu"] [data-menu-item="split_right"]');
@@ -180,7 +203,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   expect(await inPage(`${origin}/b.html`, "window.__hideMarker")).toBe("b");
   expect((await viewOf(`${origin}/a.html`)).pid).toBe(pageA.pid);
   expect((await viewOf(`${origin}/b.html`)).pid).toBe(pageB.pid);
-  await expect.poll(async () => (await viewOf(`${origin}/b.html`)).bounds).toEqual(await slotBounds(page, b));
+  await expectOnSlot(page, `${origin}/b.html`, b);
 
   // A narrower window moves the pages with their slots.
   await app.evaluate(({ BrowserWindow }) => {
@@ -188,8 +211,8 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
     const [width, height] = window.getSize();
     window.setSize(width! - 160, height! - 80);
   });
-  await expect.poll(async () => (await viewOf(`${origin}/b.html`)).bounds).toEqual(await slotBounds(page, b));
-  await expect.poll(async () => (await viewOf(`${origin}/a.html`)).bounds).toEqual(await slotBounds(page, a));
+  await expectOnSlot(page, `${origin}/b.html`, b);
+  await expectOnSlot(page, `${origin}/a.html`, a);
   await windowShot("browser-two-areas");
 
   // The palette cannot draw over a native view: a page it meets hides and
@@ -208,7 +231,10 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
 
   // The toolbar: a typed address loads in that display; Back returns.
   const address = page.locator(`[data-browser-display="${a}"] [data-browser-address]`);
+  await address.click();
+  await expect(address).toHaveValue(`${origin}/a.html`);
   await address.fill(`${origin}/c.html`);
+  await expect(address).toHaveValue(`${origin}/c.html`);
   await address.press("Enter");
   await expect(tab(page, "Page C")).toBeVisible();
   await viewOf(`${origin}/c.html`);
@@ -229,6 +255,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   await windowShot("browser-load-failed");
 
   // The Explorer opens an HTML file of the checkout as a page.
+  await page.locator('[data-tool-toggle="explorer"]').click();
   await page.locator(`[data-explorer-row="${path.join(checkout, "리포트 1.html")}"]`).click({ button: "right" });
   await page.locator('[data-explorer-menu] [data-menu-item="open-browser"]').click();
   await expect(tab(page, "Local report")).toBeVisible({ timeout: 20_000 });
@@ -238,7 +265,10 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   fs.writeFileSync(outside, "<title>Outside</title>");
   expect(openFromCli(outside)).toMatchObject({ ok: false, reason: "outside_checkout" });
 
-  // Closing B's display ends its renderer process.
+  // Closing B's display ends its renderer process. Without the Explorer both
+  // areas show again, B's among them.
+  await page.locator('[data-tool-toggle="explorer"][aria-pressed="true"]').click();
+  await expect(tab(page, "Page B")).toBeVisible();
   await tab(page, "Page B").click({ button: "right" });
   await page.locator('[role="menu"] [data-menu-item="close_view"]').click();
   await expect(tab(page, "Page B")).toHaveCount(0);
