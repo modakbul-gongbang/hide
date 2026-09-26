@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { agentSections, allAgents, liveDescendantCounts, mainSections, openingProgress, overviewProject, startupScreen } from "./navigation";
+import { agentSections, allAgents, allProjectsCount, liveDescendantCounts, mainSections, openingProgress, overviewProject, startupScreen } from "./navigation";
 import type { SnapshotRest } from "./snapshot";
 
 const project = (id: string, device: string, pinned = false) => ({
@@ -11,7 +11,7 @@ const project = (id: string, device: string, pinned = false) => ({
   checkouts: [{ id: `${id}-main`, tabs: [{ panes: [{ id: `${id}-pane` }] }] }],
 });
 
-describe("Main", () => {
+describe("All projects", () => {
   it("lists this machine first and a device that cannot answer without counts", () => {
     const rest = {
       navigator: {
@@ -31,10 +31,12 @@ describe("Main", () => {
     expect(local?.projects[1]?.workspaceCount).toBe(1);
     expect(mini?.availability).toEqual({ state: "unavailable", text: "mini is unreachable", retry: "connect" });
     expect(mini?.projects.map((row) => [row.id, row.counts, row.workspaceCount])).toEqual([["r", null, null]]);
+    // The sidebar's All projects row counts the same list without building it.
+    expect(allProjectsCount(rest)).toBe(3);
   });
 });
 
-describe("Main while this machine's Herdr does not answer", () => {
+describe("All projects while this machine's Herdr does not answer", () => {
   it("shows why instead of counting no agents", () => {
     const rest = {
       navigator: { devices: [{ id: "local", kind: "local", label: "This Mac" }], workspaces: [project("a", "local")] },

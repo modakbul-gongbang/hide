@@ -5,8 +5,10 @@
 // the header facts (B2), the ad hoc strip and the Git columns with Merged
 // folded (B4, B5), a needs-you card raised in its own column (B7), opens a
 // checkout from a card header and a pane from an agent row (B8), switches to
-// the Agents board (B9), and draws the folder and empty states (B10). Light
-// and Dark captures land in HIDE_E2E_SCREENSHOT_DIR (B13, B14).
+// the Agents board (B9), and draws the folder and empty states (B10). The
+// sidebar is the scope picker: All projects on top, the project row marked on
+// its Overview, and the view kept from one project to the next, Sessions
+// included. Light and Dark captures land in HIDE_E2E_SCREENSHOT_DIR (B13, B14).
 
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -116,10 +118,19 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await expect(overview).toBeVisible();
     await expect(overview).toHaveAttribute("data-overview-state", "board");
     await expect(overview).toHaveAttribute("data-overview-view", "tasks");
+    // The sidebar marks the scope on screen: this project's row, not All
+    // projects and not a checkout.
+    await expect(repoRow).toHaveAttribute("aria-current", "page");
+    await expect(page.locator("[data-all-projects]")).not.toHaveAttribute("aria-current", "page");
+    await expect(page.locator('[data-project-list] [data-checkout][aria-current="true"]')).toHaveCount(0);
 
-    // Header facts (B2): three worktrees; no PR count, since GitHub never answered here.
+    // Header facts (B2): three worktrees; no PR count, since GitHub never
+    // answered here; the size the Overview asked the core to measure; the
+    // merged worktree, which opens the Merged column.
     await expect(page.locator('[data-stat="worktrees"]')).toHaveText(/3 worktrees/);
     await expect(page.locator('[data-stat="open-prs"]')).toHaveCount(0);
+    await expect(page.locator('[data-stat="disk"]')).toHaveText(/^\d+(\.\d)? (B|KB|MB|GB)$/, { timeout: 30_000 });
+    await expect(page.locator('[data-stat="merged"]')).toHaveText("1 merged → 정리", { timeout: 20_000 });
 
     // The primary checkout is on the ad hoc strip; each worktree in its Git column (B4, B5).
     const adhoc = page.locator("[data-overview-adhoc]");
@@ -135,10 +146,11 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await expect(asking.locator(`[data-pane="${askingPane}"] [data-agent-line="request"]`)).toContainText("Done 그룹 회색 링을 바꿔도 될까요?");
     const working = column("working").locator("[data-overview-card]", { hasText: "prd/web-overview-with-a-long-branch-name" });
     await expect(working.locator('[data-overview-delivery="working"]')).toContainText("변경 1 · ↑1 커밋");
-    // Merged starts folded and lists only its names until opened.
+    // Merged starts folded and lists only its names until opened; the merged
+    // fact opens it.
     await expect(column("merged")).toHaveAttribute("data-collapsed", "true");
     await expect(column("merged").locator("[data-overview-collapsed-names]")).toContainText("prd/shipped", { timeout: 20_000 });
-    await column("merged").locator("[data-overview-column-toggle]").click();
+    await page.locator('[data-stat="merged"]').click();
     await expect(column("merged")).toHaveAttribute("data-collapsed", "false");
     await expect(column("merged").locator('[data-overview-delivery="merged"]')).toContainText("머지됨");
     await column("merged").locator("[data-overview-column-toggle]").click();
@@ -164,6 +176,37 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
       await chooseTheme(page, theme);
       await screenshot(page, `overview-agents-${theme}`);
     }
+
+    // The Sessions tab is the project's Sessions, and the view stays when
+    // another project opens; All projects is its own scope, marked in turn.
+    await page.locator('[data-overview-tab="sessions"]').click();
+    await expect(overview).toHaveAttribute("data-overview-view", "sessions");
+    await expect(page.locator("[data-sessions-screen]")).toBeVisible();
+    await expect(page.locator("[data-sessions-state]")).toHaveAttribute("data-sessions-state", /^(empty|rows)$/, { timeout: 20_000 });
+    for (const theme of ["dark", "light"] as const) {
+      await chooseTheme(page, theme);
+      // Settings hands focus back to the control that was clicked; the capture shows it at rest.
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await screenshot(page, `overview-sessions-${theme}`);
+    }
+    const allProjects = page.locator("[data-all-projects]");
+    await allProjects.click();
+    await expect(page.locator("[data-main-screen]")).toBeVisible();
+    await expect(allProjects).toHaveAttribute("aria-current", "page");
+    await expect(allProjects).toContainText("3 projects");
+    await expect(repoRow).not.toHaveAttribute("aria-current", "page");
+    await expect(page.locator('[data-main-stats] [data-stat="projects"]')).toHaveText("3 projects");
+    await expect(page.locator('[data-main-stats] [data-stat="merged"]')).toHaveText("1 merged");
+    for (const theme of ["dark", "light"] as const) {
+      await chooseTheme(page, theme);
+      // Settings hands focus back to the control that was clicked; the capture shows it at rest.
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await screenshot(page, `all-projects-${theme}`);
+    }
+    await page.locator("[data-main-project]", { hasText: /^quiet/ }).click();
+    await expect(overview).toHaveAttribute("data-overview-view", "sessions");
+    await expect(page.locator("[data-sessions-screen]")).toBeVisible();
+    await repoRow.click();
     await page.locator('[data-overview-tab="tasks"]').click();
 
     // A card header opens its checkout; ⌘⇧H comes back; Esc returns to the Workspace (B1, B8).
@@ -186,7 +229,7 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await expect(page.locator(`[data-pane-view="${mainPane}"]`)).toHaveAttribute("data-focused", "true");
 
     // A folder with agents shows only the ad hoc strip (B10). Its sidebar
-    // row opens its checkout, so its Overview is reached from Main.
+    // row opens its checkout, so its Overview is reached from All projects.
     await page.locator("[data-go-main]").click();
     await page.locator("[data-main-project]", { hasText: /^fixture/ }).click();
     await expect(overview).toHaveAttribute("data-overview-state", "adhoc");
