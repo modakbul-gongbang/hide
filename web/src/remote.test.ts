@@ -141,6 +141,7 @@ function deviceViews(panel: WorkspaceView["panel"]): WorkspaceView {
     path: "/home/remote/app",
     panel,
     pinned: false,
+    covered: false,
     explorer: false,
     changes: false,
     views_over_share: 0.6,

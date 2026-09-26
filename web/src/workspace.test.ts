@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRow, Checkout, StripTab, Tab } from "./snapshot";
-import { agentEntries, panelFrame, panelShareAt, tabAgent, tabIdentity, type WorkspaceView } from "./workspace";
+import { agentEntries, panelCoversToSend, panelFrame, panelShareAt, tabAgent, tabIdentity, type WorkspaceView } from "./workspace";
 
 const strip: StripTab[] = [
   { id: "herdr:1", kind: "herdr", source_id: "t1", label: "1", preview: false },
@@ -83,6 +83,16 @@ describe("the side panel", () => {
     expect(frame("expanded", true, 424).toolsOverlay).toBe(false);
     expect(frame("expanded", true, 424, { explorer: false }).toolsOverlay).toBe(false);
     expect(frame("open", true, 1400).toolsOverlay).toBe(false);
+  });
+
+  it("reports whether it covers the body once per change, and two pages that disagree each report once", () => {
+    expect(panelCoversToSend(true, false, null)).toBe(true);
+    expect(panelCoversToSend(true, true, null)).toBe(false);
+    // Sent and not echoed yet, or undone by another page: not sent again.
+    expect(panelCoversToSend(true, false, true)).toBe(false);
+    // Forgotten after a reconnect: sent again.
+    expect(panelCoversToSend(false, true, null)).toBe(true);
+    expect(panelCoversToSend(false, true, true)).toBe(true);
   });
 
   it("follows its left edge to a share the core keeps where it was released", () => {

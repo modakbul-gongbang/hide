@@ -329,13 +329,27 @@ fn the_side_panel_closes_and_opens_without_closing_a_view() {
 fn a_tool_shown_while_the_panel_is_closed_opens_the_panel() {
     let (runtime, _checkout_id, directory) = strip_checkout("tool-opens");
     let mut runtime = with_views(runtime, &views_path("tool-opens"));
-    layout(&mut runtime, serde_json::json!({"explorer": false}));
+    let tools = |runtime: &Runtime| {
+        let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+        (view.explorer, view.changes)
+    };
+    // A new Workspace keeps the Explorer on while its panel is closed.
     assert_eq!(panel(&runtime).0, PanelState::Closed);
+    assert_eq!(tools(&runtime), (true, false));
     assert!(!runtime.snapshot.ui_state.right_panel_visible);
 
+    // History pressed while it is closed opens it with History alone.
     layout(&mut runtime, serde_json::json!({"changes": true}));
     assert_eq!(panel(&runtime).0, PanelState::Open);
+    assert_eq!(
+        tools(&runtime),
+        (false, true),
+        "only the pressed tool opens"
+    );
     assert!(runtime.snapshot.ui_state.right_panel_visible);
+    // While it shows, a tool is added beside the other.
+    layout(&mut runtime, serde_json::json!({"explorer": true}));
+    assert_eq!(tools(&runtime), (true, true));
 
     layout(&mut runtime, serde_json::json!({"panel": "closed"}));
     assert!(
@@ -347,6 +361,11 @@ fn a_tool_shown_while_the_panel_is_closed_opens_the_panel() {
         serde_json::json!({"reveal": directory.join("notes.md").to_string_lossy()}),
     );
     assert_eq!(panel(&runtime).0, PanelState::Open);
+    assert_eq!(
+        tools(&runtime),
+        (true, false),
+        "a reveal opens it with the Explorer alone"
+    );
 
     layout(
         &mut runtime,

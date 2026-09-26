@@ -1245,11 +1245,14 @@ test("a pinned panel over a narrow window uncovers the agent chosen from the sid
     await expect(workspace).toHaveAttribute("data-panel", "closed");
     await expect(page.locator(`[data-pane-view="${pane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toMatchObject({ panel: "closed", pinned: true });
-    await expect.poll(() => reports().at(-1)?.payload).toEqual({ workspace: { device_id: "local", path: stack.root }, covers: false });
+    // The window did not change, so neither did the fact: closing sends nothing.
+    await page.waitForTimeout(300);
+    expect(reports().length).toBe(before + 1);
 
     // Beta's panel is as it was, stored and drawn once the window is wide again.
     expect(storedWorkspace(stack.daemon, betaRoot)).toEqual(beta);
     await page.setViewportSize({ width: 1920, height: 1080 });
+    await expect.poll(() => reports().at(-1)?.payload).toEqual({ workspace: { device_id: "local", path: stack.root }, covers: false });
     await choose("beta");
     await expect(workspace).toHaveAttribute("data-panel", "open");
     await expect(workspace).toHaveAttribute("data-panel-docked", "true");

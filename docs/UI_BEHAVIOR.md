@@ -15,7 +15,7 @@ The toolbar reads left to right: the path back (`All projects / Project / Worksp
 The side panel toggle is drawn pressed while the panel shows, and ⌘⇧B does the same; while the panel is closed with views open, it carries a badge with their count, also given as its accessible description.
 The toggle, Pin, and Expand each keep one accessible name and say their state as pressed or not; their tooltips say what a press does.
 Explorer and History are independent toggles that open and close on their own, drawn pressed while shown; with both shown they share the tool column, Explorer above History, each with its own close.
-Pressing a tool toggle while the panel is closed opens the panel with that tool alone: History opens without the Explorer, and the Explorer without History.
+Showing a tool while the panel is closed, from its toggle, the toolbar menu, or the palette, opens the panel with that tool alone: History opens without the Explorer, and the Explorer without History.
 A right-click or the menu key on the toolbar offers the three panel states (Side panel closed, open, and expanded), Pin or Unpin side panel, each tool, Copy Workspace path, and Open Project Overview; the palette offers the other two states and Pin or Unpin as commands.
 An empty Agent area offers New tab.
 
@@ -38,7 +38,7 @@ With no view open and a tool shown, the panel is only as wide as the tool column
 Only views expand: an expanded panel with no view open is drawn at its width, so the agents stay in reach.
 
 Opening a file, a diff, or a page while the panel is closed opens it, with the active View area focused; revealing a file also shows the Explorer.
-Choosing an agent or a tab from the sidebar, the palette, or a tab cycle closes an unpinned panel and brings a pinned expanded panel back to its width, so the chosen agent is in sight; a pinned open panel stays, and a choice made in the Agent area on screen beside the panel moves nothing.
+Choosing an agent or a tab from the sidebar, the palette, or a tab cycle closes an unpinned panel and brings a pinned expanded panel back to its width, so the chosen agent is in sight; a pinned open panel stays beside the agents (in a window too narrow for both it closes too; see Narrow windows), and a choice made in the Agent area on screen beside the panel moves nothing.
 Closing the panel closes no view, document, or pane, and the keyboard goes back to the focused pane.
 Changing the panel's state only changes space, and expanding never makes a split; a split comes only from a split command or a drop on an edge.
 Inside the panel the View areas behave as they do anywhere else: tabs, splits, preview, dirty state and browser displays, each page inside the panel's bounds.
@@ -136,8 +136,8 @@ In a plain browser tab the view reads `Pages open in the hide desktop app.` with
 
 ### Narrow windows
 
-When the body cannot give the agents their minimum beside the open panel, the panel takes the whole body as if expanded, and a pinned panel floats there instead of docking; it then covers the agents like an unpinned one, so an agent or a tab chosen from the sidebar, the palette, or a tab cycle closes it and uncovers the chosen agent, the Pin kept for when the panel opens again.
-Only the Workspace on screen is affected: another Workspace's panel stays as it was.
+When the body cannot give the agents their minimum beside the open panel, the panel takes the whole body as if expanded, and a pinned panel floats there instead of docking; it then covers the agents like an unpinned one, so an agent or a tab of that Workspace chosen from the sidebar, the palette, or a tab cycle closes it and uncovers the chosen agent, the Pin kept for when the panel opens again.
+Only the Workspace on screen is affected: another Workspace's panel stays as it was, so an agent chosen in another Workspace whose pinned panel is open lands under that panel in a narrow window until the toggle or ⌘⇧B closes it.
 When the panel cannot give a View area its minimum beside the tool column, Explorer and History open as a temporary overlay inside the panel instead of a column, drawn with a border and no shadow, closed until a toggle asks for one, including the press that opened a closed panel; Escape or a click outside closes it and returns focus to the toggle that opened it.
 When the View areas cannot all have their minimum, only the active area shows, with an area switcher to the others.
 Widening the window brings back the panel's stored state, width and Pin, the area sizes, and the tool column, because none of these narrow arrangements is stored; the core is told only whether the panel covers the whole body, and only when that changes.

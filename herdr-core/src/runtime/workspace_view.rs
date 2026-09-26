@@ -435,8 +435,12 @@ impl Runtime {
             || payload.reveal.is_some();
         match panel {
             Some(panel) => entry.panel = panel,
+            // A closed panel opens with the tool asked for alone, whatever
+            // the other one was stored as (issue 170).
             None if shows_tool && entry.panel == PanelState::Closed => {
                 entry.panel = PanelState::Open;
+                entry.explorer = payload.reveal.is_some();
+                entry.changes = false;
             }
             None => {}
         }

@@ -261,25 +261,24 @@ export function createActions(dispatch: DispatchFn) {
     dispatch({ schema_version: 2, kind: "workspace_view", payload: patch });
   };
 
-  /**
-   * Shows one tool (B10). The operator asked for it, so a narrow panel's
-   * overlay opens (S7 B12), and a closed panel opens with it (issue 170, the
-   * core's rule); nothing is sent when the open panel already shows it, since
-   * the overlay closing never stored it hidden.
-   */
   /** A narrow panel's overlay opens for the tool asked for, including with the panel that the same event opens. */
   const askForTools = (view: WorkspaceView) => {
     ui().openTools();
     if (view.panel === "closed") ui().askTools();
   };
 
+  /**
+   * Shows one tool (B10). The operator asked for it, so a narrow panel's
+   * overlay opens (S7 B12), and a closed panel opens with that tool alone
+   * (issue 170, the core's rule); nothing is sent when the open panel already
+   * shows it, since the overlay closing never stored it hidden.
+   */
   const showTool = (tool: "explorer" | "changes") => {
     const view = workspaceViewOf(rest());
     if (!view) return diagnostic("workspace_view: no Workspace in front");
     askForTools(view);
-    // A closed panel opens with the pressed tool alone, whatever the other one was.
-    if (view.panel === "closed") setWorkspaceView(tool === "explorer" ? { explorer: true, changes: false } : { changes: true, explorer: false });
-    else if (!(tool === "explorer" ? view.explorer : view.changes)) setWorkspaceView(tool === "explorer" ? { explorer: true } : { changes: true });
+    // The core opens a closed panel with the pressed tool alone.
+    if (view.panel === "closed" || !(tool === "explorer" ? view.explorer : view.changes)) setWorkspaceView(tool === "explorer" ? { explorer: true } : { changes: true });
   };
 
   const showExplorerPanel = () => showTool("explorer");
@@ -1338,8 +1337,8 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     /** Whether the page draws this Workspace's side panel over the whole body; sent only when that changes (issue 170). */
-    reportPanelCovers(workspace: ViewWorkspace, covers: boolean) {
-      dispatch({ schema_version: 2, kind: "panel_covers", payload: { workspace: { device_id: workspace.device_id, path: workspace.path }, covers } });
+    reportPanelCovers(workspace: ViewWorkspace, covers: boolean): unknown {
+      return dispatch({ schema_version: 2, kind: "panel_covers", payload: { workspace: { device_id: workspace.device_id, path: workspace.path }, covers } });
     },
 
     /** What a page says (its address and title), recorded so the tab and a relaunch show it. */

@@ -93,7 +93,7 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     // the Workspace had the Explorer on (issue 170).
     await page.locator('[data-tool-toggle="changes"]').click();
     await expect(workspace).toHaveAttribute("data-panel", "open");
-    expect(last.get("workspace_view")).toEqual({ changes: true, explorer: false });
+    expect(last.get("workspace_view")).toEqual({ changes: true });
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     await expect(page.locator('[data-tool-toggle="explorer"]')).toHaveAttribute("aria-pressed", "false");

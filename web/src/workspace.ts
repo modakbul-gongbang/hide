@@ -20,8 +20,8 @@ export type WorkspaceView = {
   changes: boolean;
   /** The open panel's width, as a share of the Workspace body's. */
   views_over_share: number;
-  /** The page reported drawing this panel over the whole body (a narrow window); absent from an older core. */
-  covered?: boolean;
+  /** A page reported that this panel takes the whole body when it shows (a narrow window). */
+  covered: boolean;
   /** The Workspace the operator last chose, now or before a restart, so the page opens on it (D-11). */
   resumed?: boolean;
   /** The View areas (S7); absent only from a core that predates them. */
@@ -135,6 +135,17 @@ export function panelShareAt(x: number, total: number, need: number, areaMin: nu
 /** The minimum an open panel holding the View areas needs, for a drag to land within. */
 export function panelNeed(tools: boolean, sizes: PanelSizes): number {
   return panelMinimum("views", tools, sizes);
+}
+
+/**
+ * Whether a page reports `panel_covers` now (issue 170): only when what it
+ * draws differs from what the core holds and from its own last report, so a
+ * crossing is sent once, a report dropped by a reconnect is sent again once
+ * the page forgets its last one, and two pages that disagree each send once
+ * rather than undoing each other forever.
+ */
+export function panelCoversToSend(covers: boolean, core: boolean, lastSent: boolean | null): boolean {
+  return covers !== core && covers !== lastSent;
 }
 
 export function workspaceViewOf(rest: SnapshotRest | null): WorkspaceView | null {
