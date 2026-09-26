@@ -31,6 +31,17 @@ export function rowLine(agent: Pick<AgentRow, "detail" | "demand" | "unread">): 
   return { text, mode: "quiet" };
 }
 
+/**
+ * The line a sidebar row draws (PRD sidebar-readability D-4, B4, B6): a
+ * request or news only, on one line from the moment it exists, so a pointer,
+ * the keyboard or a selection never adds a line or grows the row. A quiet
+ * sentence is read in the row's tooltip.
+ */
+export function sidebarLine(agent: Pick<AgentRow, "detail" | "demand" | "unread">): RowLine | null {
+  const line = rowLine(agent);
+  return line && line.mode !== "quiet" ? line : null;
+}
+
 /** Whether the line is drawn without a pointer or selection on the row. */
 export function lineShownAtRest(line: RowLine, selected: boolean): boolean {
   return line.mode !== "quiet" || selected;
@@ -146,4 +157,22 @@ export function sectionCount(rows: TreeRow[]): number {
 /** The direct children the badge's popover lists, in lineage order, that are still rows. */
 export function directChildren(agent: AgentRow, byPane: (paneId: string) => AgentRow | undefined): AgentRow[] {
   return (agent.lineage_child_pane_ids ?? []).map(byPane).filter((row): row is AgentRow => row !== undefined);
+}
+
+/**
+ * The rows of a lineage drawn root first (`checkoutAgentRows`), less the
+ * descendants of every parent the operator has folded (`lineage_collapsed`
+ * not false), the same core choice the Agents list folds by (PRD
+ * sidebar-readability D-6, B12). A folded parent's badge speaks for what is
+ * left out.
+ */
+export function unfoldedRows<Row extends { agent: Pick<AgentRow, "lineage_collapsed">; depth: number }>(rows: Row[]): Row[] {
+  const drawn: Row[] = [];
+  let foldedAt: number | null = null;
+  for (const row of rows) {
+    if (foldedAt !== null && row.depth > foldedAt) continue;
+    foldedAt = row.agent.lineage_collapsed === false ? null : row.depth;
+    drawn.push(row);
+  }
+  return drawn;
 }

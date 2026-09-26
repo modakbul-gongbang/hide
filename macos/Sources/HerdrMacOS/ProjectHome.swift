@@ -212,7 +212,9 @@ private struct ProjectHomeCardView: View {
                     HStack(spacing: HideTheme.spacingXS) {
                         Text(agent.identityLabel).lineLimit(1).truncationMode(.tail)
                         Spacer(minLength: HideTheme.spacingNone)
-                        Text(agent.elapsed).foregroundStyle(HideTheme.muted)
+                        if !agent.elapsed.isEmpty {
+                            Text(agent.elapsed).foregroundStyle(HideTheme.muted)
+                        }
                     }
                     if ProjectHomeRow.showsDetail(agent), let detail = agent.detail {
                         Text(detail).foregroundStyle(HideTheme.secondary).lineLimit(2)

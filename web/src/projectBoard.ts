@@ -239,10 +239,10 @@ export function formatBytes(bytes: number): string {
 
 /**
  * Which checkout owns each pane, and a lineage walker over `agents`: a list
- * of agents drawn with their whole lineage, root first, whatever the sidebar
- * has folded, so its rows carry no descendant badge; a row's branch chip is
- * the Agents list's rule (`branchChip`), a checkout that differs from its
- * parent's.
+ * of agents drawn with their whole lineage, root first, whatever is folded;
+ * the Projects sidebar drops a folded row's descendants itself
+ * (`unfoldedRows`). A row's branch chip is the Agents list's rule
+ * (`branchChip`), a checkout that differs from its parent's.
  */
 function lineage(workspace: Workspace, agents: AgentRow[]) {
   const owners = new Map<string, Checkout>();

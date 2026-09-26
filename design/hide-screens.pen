@@ -1254,7 +1254,7 @@
     },
     "--size-checkout-metadata-inset": {
       "type": "number",
-      "value": 46
+      "value": 22
     },
     "--size-lineage-indent": {
       "type": "number",
@@ -1577,76 +1577,166 @@
                 {
                   "id": "main-sidebar-agent0-l",
                   "type": "ref",
-                  "ref": "hideui:HXWFK",
+                  "ref": "hideui:sidebar-agent-row",
                   "name": "두 번째 에이전트",
-                  "width": 260,
+                  "width": 268,
+                  "padding": [
+                    "$--spacing-xs",
+                    "$--spacing-xs",
+                    "$--spacing-xs",
+                    4
+                  ],
                   "descendants": {
-                    "hideui:sWhWS": {
+                    "hideui:sar-dot": {
                       "fill": "$--agent-working",
                       "enabled": true
                     },
-                    "hideui:i9p0pi": {
+                    "hideui:sar-ring": {
                       "stroke": "$--muted-foreground",
                       "enabled": false
                     },
-                    "hideui:PCeNa": {
+                    "hideui:sar-glyph": {
                       "fill": "$--warning",
                       "enabled": false
                     },
-                    "hideui:x0h40": {
-                      "fill": "$--foreground",
+                    "hideui:sar-title": {
+                      "fill": "$--subtle-foreground",
                       "content": "두 번째 에이전트"
                     },
-                    "hideui:X6LdE": {
-                      "fill": "$--agent-working",
-                      "content": "Working"
+                    "hideui:sar-branch": {
+                      "fill": "$--secondary",
+                      "enabled": false
                     },
-                    "hideui:BsCNW": {
-                      "fill": "$--subtle-foreground"
+                    "hideui:sar-branch-label": {
+                      "fill": "$--subtle-foreground",
+                      "content": ""
                     },
-                    "hideui:jb7mF": {
-                      "fill": "$--muted-foreground"
+                    "hideui:sar-device": {
+                      "stroke": "$--border",
+                      "enabled": false
                     },
-                    "hideui:w4jdH": {
-                      "fill": "$--muted-foreground"
+                    "hideui:sar-device-label": {
+                      "fill": "$--subtle-foreground",
+                      "content": ""
+                    },
+                    "hideui:sar-badge": {
+                      "fill": "$--secondary",
+                      "enabled": false
+                    },
+                    "hideui:sar-badge-label": {
+                      "fill": "$--subtle-foreground",
+                      "content": ""
+                    },
+                    "hideui:sar-elapsed": {
+                      "fill": "$--muted-foreground",
+                      "content": "3m"
+                    },
+                    "hideui:sar-chevron": {
+                      "fill": "$--muted-foreground",
+                      "icon": "chevron-right"
+                    },
+                    "hideui:sar-line": {
+                      "fill": "$--warning",
+                      "enabled": false
+                    },
+                    "hideui:sar-place": {
+                      "fill": "$--muted-foreground",
+                      "enabled": true,
+                      "content": "herdr-ide › main"
+                    },
+                    "hideui:sar-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "hideui:sar-fold": {
+                      "enabled": false
                     }
                   }
                 },
                 {
                   "id": "main-sidebar-agent1-l",
                   "type": "ref",
-                  "ref": "hideui:HXWFK",
+                  "ref": "hideui:sidebar-agent-row",
                   "name": "Agent one",
-                  "width": 260,
+                  "width": 268,
+                  "padding": [
+                    "$--spacing-xs",
+                    "$--spacing-xs",
+                    "$--spacing-xs",
+                    4
+                  ],
                   "descendants": {
-                    "hideui:sWhWS": {
+                    "hideui:sar-dot": {
                       "fill": "$--agent-working",
                       "enabled": false
                     },
-                    "hideui:i9p0pi": {
+                    "hideui:sar-ring": {
                       "stroke": "$--muted-foreground",
                       "enabled": true
                     },
-                    "hideui:PCeNa": {
+                    "hideui:sar-glyph": {
                       "fill": "$--warning",
                       "enabled": false
                     },
-                    "hideui:x0h40": {
-                      "fill": "$--foreground",
+                    "hideui:sar-title": {
+                      "fill": "$--subtle-foreground",
                       "content": "Agent one"
                     },
-                    "hideui:X6LdE": {
-                      "fill": "$--agent-working",
-                      "content": "Seen"
+                    "hideui:sar-branch": {
+                      "fill": "$--secondary",
+                      "enabled": false
                     },
-                    "hideui:BsCNW": {
-                      "fill": "$--subtle-foreground"
+                    "hideui:sar-branch-label": {
+                      "fill": "$--subtle-foreground",
+                      "content": ""
                     },
-                    "hideui:jb7mF": {
-                      "fill": "$--muted-foreground"
+                    "hideui:sar-device": {
+                      "stroke": "$--border",
+                      "enabled": false
                     },
-                    "hideui:w4jdH": {
-                      "fill": "$--muted-foreground"
+                    "hideui:sar-device-label": {
+                      "fill": "$--subtle-foreground",
+                      "content": ""
+                    },
+                    "hideui:sar-badge": {
+                      "fill": "$--secondary",
+                      "enabled": false
+                    },
+                    "hideui:sar-badge-label": {
+                      "fill": "$--subtle-foreground",
+                      "content": ""
+                    },
+                    "hideui:sar-elapsed": {
+                      "fill": "$--muted-foreground",
+                      "content": "3m"
+                    },
+                    "hideui:sar-chevron": {
+                      "fill": "$--muted-foreground",
+                      "icon": "chevron-right"
+                    },
+                    "hideui:sar-line": {
+                      "fill": "$--warning",
+                      "enabled": false
+                    },
+                    "hideui:sar-place": {
+                      "fill": "$--muted-foreground",
+                      "enabled": true,
+                      "content": "herdr-ide › main"
+                    },
+                    "hideui:sar-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "hideui:sar-fold": {
+                      "enabled": false
                     }
                   }
                 },
@@ -1975,9 +2065,6 @@
                   "name": "sasu-web-design-system-reset",
                   "width": 480,
                   "descendants": {
-                    "hideui:iBYjj": {
-                      "fill": "$--muted-foreground"
-                    },
                     "hideui:mIzlX": {
                       "fill": "$--subtle-foreground"
                     },
@@ -1988,6 +2075,15 @@
                     "hideui:nZkan": {
                       "fill": "$--muted-foreground",
                       "content": "3 agents"
+                    },
+                    "hideui:iBYjj": {
+                      "fill": "$--muted-foreground"
+                    },
+                    "hideui:wgtfo": {
+                      "enabled": false
+                    },
+                    "hideui:hm1SG": {
+                      "enabled": false
                     }
                   }
                 },
@@ -1998,9 +2094,6 @@
                   "name": "herdr-ide.worktrees/checkout-row-d",
                   "width": 480,
                   "descendants": {
-                    "hideui:iBYjj": {
-                      "fill": "$--muted-foreground"
-                    },
                     "hideui:mIzlX": {
                       "fill": "$--subtle-foreground"
                     },
@@ -2011,6 +2104,15 @@
                     "hideui:nZkan": {
                       "fill": "$--muted-foreground",
                       "content": "No agents"
+                    },
+                    "hideui:iBYjj": {
+                      "fill": "$--muted-foreground"
+                    },
+                    "hideui:wgtfo": {
+                      "enabled": false
+                    },
+                    "hideui:hm1SG": {
+                      "enabled": false
                     }
                   }
                 }
@@ -2083,76 +2185,166 @@
                 {
                   "id": "main-sidebar-agent0-d",
                   "type": "ref",
-                  "ref": "hideui:HXWFK",
+                  "ref": "hideui:sidebar-agent-row",
                   "name": "두 번째 에이전트",
-                  "width": 260,
+                  "width": 268,
+                  "padding": [
+                    "$--spacing-xs",
+                    "$--spacing-xs",
+                    "$--spacing-xs",
+                    4
+                  ],
                   "descendants": {
-                    "hideui:sWhWS": {
+                    "hideui:sar-dot": {
                       "fill": "$--agent-working",
                       "enabled": true
                     },
-                    "hideui:i9p0pi": {
+                    "hideui:sar-ring": {
                       "stroke": "$--muted-foreground",
                       "enabled": false
                     },
-                    "hideui:PCeNa": {
+                    "hideui:sar-glyph": {
                       "fill": "$--warning",
                       "enabled": false
                     },
-                    "hideui:x0h40": {
-                      "fill": "$--foreground",
+                    "hideui:sar-title": {
+                      "fill": "$--subtle-foreground",
                       "content": "두 번째 에이전트"
                     },
-                    "hideui:X6LdE": {
-                      "fill": "$--agent-working",
-                      "content": "Working"
+                    "hideui:sar-branch": {
+                      "fill": "$--secondary",
+                      "enabled": false
                     },
-                    "hideui:BsCNW": {
-                      "fill": "$--subtle-foreground"
+                    "hideui:sar-branch-label": {
+                      "fill": "$--subtle-foreground",
+                      "content": ""
                     },
-                    "hideui:jb7mF": {
-                      "fill": "$--muted-foreground"
+                    "hideui:sar-device": {
+                      "stroke": "$--border",
+                      "enabled": false
                     },
-                    "hideui:w4jdH": {
-                      "fill": "$--muted-foreground"
+                    "hideui:sar-device-label": {
+                      "fill": "$--subtle-foreground",
+                      "content": ""
+                    },
+                    "hideui:sar-badge": {
+                      "fill": "$--secondary",
+                      "enabled": false
+                    },
+                    "hideui:sar-badge-label": {
+                      "fill": "$--subtle-foreground",
+                      "content": ""
+                    },
+                    "hideui:sar-elapsed": {
+                      "fill": "$--muted-foreground",
+                      "content": "3m"
+                    },
+                    "hideui:sar-chevron": {
+                      "fill": "$--muted-foreground",
+                      "icon": "chevron-right"
+                    },
+                    "hideui:sar-line": {
+                      "fill": "$--warning",
+                      "enabled": false
+                    },
+                    "hideui:sar-place": {
+                      "fill": "$--muted-foreground",
+                      "enabled": true,
+                      "content": "herdr-ide › main"
+                    },
+                    "hideui:sar-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "hideui:sar-fold": {
+                      "enabled": false
                     }
                   }
                 },
                 {
                   "id": "main-sidebar-agent1-d",
                   "type": "ref",
-                  "ref": "hideui:HXWFK",
+                  "ref": "hideui:sidebar-agent-row",
                   "name": "Agent one",
-                  "width": 260,
+                  "width": 268,
+                  "padding": [
+                    "$--spacing-xs",
+                    "$--spacing-xs",
+                    "$--spacing-xs",
+                    4
+                  ],
                   "descendants": {
-                    "hideui:sWhWS": {
+                    "hideui:sar-dot": {
                       "fill": "$--agent-working",
                       "enabled": false
                     },
-                    "hideui:i9p0pi": {
+                    "hideui:sar-ring": {
                       "stroke": "$--muted-foreground",
                       "enabled": true
                     },
-                    "hideui:PCeNa": {
+                    "hideui:sar-glyph": {
                       "fill": "$--warning",
                       "enabled": false
                     },
-                    "hideui:x0h40": {
-                      "fill": "$--foreground",
+                    "hideui:sar-title": {
+                      "fill": "$--subtle-foreground",
                       "content": "Agent one"
                     },
-                    "hideui:X6LdE": {
-                      "fill": "$--agent-working",
-                      "content": "Seen"
+                    "hideui:sar-branch": {
+                      "fill": "$--secondary",
+                      "enabled": false
                     },
-                    "hideui:BsCNW": {
-                      "fill": "$--subtle-foreground"
+                    "hideui:sar-branch-label": {
+                      "fill": "$--subtle-foreground",
+                      "content": ""
                     },
-                    "hideui:jb7mF": {
-                      "fill": "$--muted-foreground"
+                    "hideui:sar-device": {
+                      "stroke": "$--border",
+                      "enabled": false
                     },
-                    "hideui:w4jdH": {
-                      "fill": "$--muted-foreground"
+                    "hideui:sar-device-label": {
+                      "fill": "$--subtle-foreground",
+                      "content": ""
+                    },
+                    "hideui:sar-badge": {
+                      "fill": "$--secondary",
+                      "enabled": false
+                    },
+                    "hideui:sar-badge-label": {
+                      "fill": "$--subtle-foreground",
+                      "content": ""
+                    },
+                    "hideui:sar-elapsed": {
+                      "fill": "$--muted-foreground",
+                      "content": "3m"
+                    },
+                    "hideui:sar-chevron": {
+                      "fill": "$--muted-foreground",
+                      "icon": "chevron-right"
+                    },
+                    "hideui:sar-line": {
+                      "fill": "$--warning",
+                      "enabled": false
+                    },
+                    "hideui:sar-place": {
+                      "fill": "$--muted-foreground",
+                      "enabled": true,
+                      "content": "herdr-ide › main"
+                    },
+                    "hideui:sar-provider": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../web/src/assets/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "hideui:sar-fold": {
+                      "enabled": false
                     }
                   }
                 },
@@ -2481,9 +2673,6 @@
                   "name": "sasu-web-design-system-reset",
                   "width": 480,
                   "descendants": {
-                    "hideui:iBYjj": {
-                      "fill": "$--muted-foreground"
-                    },
                     "hideui:mIzlX": {
                       "fill": "$--subtle-foreground"
                     },
@@ -2494,6 +2683,15 @@
                     "hideui:nZkan": {
                       "fill": "$--muted-foreground",
                       "content": "3 agents"
+                    },
+                    "hideui:iBYjj": {
+                      "fill": "$--muted-foreground"
+                    },
+                    "hideui:wgtfo": {
+                      "enabled": false
+                    },
+                    "hideui:hm1SG": {
+                      "enabled": false
                     }
                   }
                 },
@@ -2504,9 +2702,6 @@
                   "name": "herdr-ide.worktrees/checkout-row-d",
                   "width": 480,
                   "descendants": {
-                    "hideui:iBYjj": {
-                      "fill": "$--muted-foreground"
-                    },
                     "hideui:mIzlX": {
                       "fill": "$--subtle-foreground"
                     },
@@ -2517,6 +2712,15 @@
                     "hideui:nZkan": {
                       "fill": "$--muted-foreground",
                       "content": "No agents"
+                    },
+                    "hideui:iBYjj": {
+                      "fill": "$--muted-foreground"
+                    },
+                    "hideui:wgtfo": {
+                      "enabled": false
+                    },
+                    "hideui:hm1SG": {
+                      "enabled": false
                     }
                   }
                 }
@@ -5440,76 +5644,166 @@
                         {
                           "id": "ws-sidebar-agent0-l",
                           "type": "ref",
-                          "ref": "hideui:HXWFK",
+                          "ref": "hideui:sidebar-agent-row",
                           "name": "Agent two",
-                          "width": 260,
+                          "width": 268,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            4
+                          ],
                           "descendants": {
-                            "hideui:sWhWS": {
+                            "hideui:sar-dot": {
                               "fill": "$--agent-working",
                               "enabled": true
                             },
-                            "hideui:i9p0pi": {
+                            "hideui:sar-ring": {
                               "stroke": "$--muted-foreground",
                               "enabled": false
                             },
-                            "hideui:PCeNa": {
+                            "hideui:sar-glyph": {
                               "fill": "$--warning",
                               "enabled": false
                             },
-                            "hideui:x0h40": {
-                              "fill": "$--foreground",
+                            "hideui:sar-title": {
+                              "fill": "$--subtle-foreground",
                               "content": "Agent two"
                             },
-                            "hideui:X6LdE": {
-                              "fill": "$--agent-working",
-                              "content": "Working"
+                            "hideui:sar-branch": {
+                              "fill": "$--secondary",
+                              "enabled": false
                             },
-                            "hideui:BsCNW": {
-                              "fill": "$--subtle-foreground"
+                            "hideui:sar-branch-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
                             },
-                            "hideui:jb7mF": {
-                              "fill": "$--muted-foreground"
+                            "hideui:sar-device": {
+                              "stroke": "$--border",
+                              "enabled": false
                             },
-                            "hideui:w4jdH": {
-                              "fill": "$--muted-foreground"
+                            "hideui:sar-device-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-badge": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-badge-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-elapsed": {
+                              "fill": "$--muted-foreground",
+                              "content": "3m"
+                            },
+                            "hideui:sar-chevron": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-right"
+                            },
+                            "hideui:sar-line": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-place": {
+                              "fill": "$--muted-foreground",
+                              "enabled": true,
+                              "content": "herdr-ide › main"
+                            },
+                            "hideui:sar-provider": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "hideui:sar-fold": {
+                              "enabled": false
                             }
                           }
                         },
                         {
                           "id": "ws-sidebar-agent1-l",
                           "type": "ref",
-                          "ref": "hideui:HXWFK",
+                          "ref": "hideui:sidebar-agent-row",
                           "name": "Agent one",
-                          "width": 260,
+                          "width": 268,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            4
+                          ],
                           "descendants": {
-                            "hideui:sWhWS": {
+                            "hideui:sar-dot": {
                               "fill": "$--agent-working",
                               "enabled": false
                             },
-                            "hideui:i9p0pi": {
+                            "hideui:sar-ring": {
                               "stroke": "$--muted-foreground",
                               "enabled": true
                             },
-                            "hideui:PCeNa": {
+                            "hideui:sar-glyph": {
                               "fill": "$--warning",
                               "enabled": false
                             },
-                            "hideui:x0h40": {
-                              "fill": "$--foreground",
+                            "hideui:sar-title": {
+                              "fill": "$--subtle-foreground",
                               "content": "Agent one"
                             },
-                            "hideui:X6LdE": {
-                              "fill": "$--agent-working",
-                              "content": "Seen"
+                            "hideui:sar-branch": {
+                              "fill": "$--secondary",
+                              "enabled": false
                             },
-                            "hideui:BsCNW": {
-                              "fill": "$--subtle-foreground"
+                            "hideui:sar-branch-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
                             },
-                            "hideui:jb7mF": {
-                              "fill": "$--muted-foreground"
+                            "hideui:sar-device": {
+                              "stroke": "$--border",
+                              "enabled": false
                             },
-                            "hideui:w4jdH": {
-                              "fill": "$--muted-foreground"
+                            "hideui:sar-device-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-badge": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-badge-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-elapsed": {
+                              "fill": "$--muted-foreground",
+                              "content": "3m"
+                            },
+                            "hideui:sar-chevron": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-right"
+                            },
+                            "hideui:sar-line": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-place": {
+                              "fill": "$--muted-foreground",
+                              "enabled": true,
+                              "content": "herdr-ide › main"
+                            },
+                            "hideui:sar-provider": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "hideui:sar-fold": {
+                              "enabled": false
                             }
                           }
                         },
@@ -6398,76 +6692,166 @@
                         {
                           "id": "ws-sidebar-agent0-d",
                           "type": "ref",
-                          "ref": "hideui:HXWFK",
+                          "ref": "hideui:sidebar-agent-row",
                           "name": "Agent two",
-                          "width": 260,
+                          "width": 268,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            4
+                          ],
                           "descendants": {
-                            "hideui:sWhWS": {
+                            "hideui:sar-dot": {
                               "fill": "$--agent-working",
                               "enabled": true
                             },
-                            "hideui:i9p0pi": {
+                            "hideui:sar-ring": {
                               "stroke": "$--muted-foreground",
                               "enabled": false
                             },
-                            "hideui:PCeNa": {
+                            "hideui:sar-glyph": {
                               "fill": "$--warning",
                               "enabled": false
                             },
-                            "hideui:x0h40": {
-                              "fill": "$--foreground",
+                            "hideui:sar-title": {
+                              "fill": "$--subtle-foreground",
                               "content": "Agent two"
                             },
-                            "hideui:X6LdE": {
-                              "fill": "$--agent-working",
-                              "content": "Working"
+                            "hideui:sar-branch": {
+                              "fill": "$--secondary",
+                              "enabled": false
                             },
-                            "hideui:BsCNW": {
-                              "fill": "$--subtle-foreground"
+                            "hideui:sar-branch-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
                             },
-                            "hideui:jb7mF": {
-                              "fill": "$--muted-foreground"
+                            "hideui:sar-device": {
+                              "stroke": "$--border",
+                              "enabled": false
                             },
-                            "hideui:w4jdH": {
-                              "fill": "$--muted-foreground"
+                            "hideui:sar-device-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-badge": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-badge-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-elapsed": {
+                              "fill": "$--muted-foreground",
+                              "content": "3m"
+                            },
+                            "hideui:sar-chevron": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-right"
+                            },
+                            "hideui:sar-line": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-place": {
+                              "fill": "$--muted-foreground",
+                              "enabled": true,
+                              "content": "herdr-ide › main"
+                            },
+                            "hideui:sar-provider": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "hideui:sar-fold": {
+                              "enabled": false
                             }
                           }
                         },
                         {
                           "id": "ws-sidebar-agent1-d",
                           "type": "ref",
-                          "ref": "hideui:HXWFK",
+                          "ref": "hideui:sidebar-agent-row",
                           "name": "Agent one",
-                          "width": 260,
+                          "width": 268,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            4
+                          ],
                           "descendants": {
-                            "hideui:sWhWS": {
+                            "hideui:sar-dot": {
                               "fill": "$--agent-working",
                               "enabled": false
                             },
-                            "hideui:i9p0pi": {
+                            "hideui:sar-ring": {
                               "stroke": "$--muted-foreground",
                               "enabled": true
                             },
-                            "hideui:PCeNa": {
+                            "hideui:sar-glyph": {
                               "fill": "$--warning",
                               "enabled": false
                             },
-                            "hideui:x0h40": {
-                              "fill": "$--foreground",
+                            "hideui:sar-title": {
+                              "fill": "$--subtle-foreground",
                               "content": "Agent one"
                             },
-                            "hideui:X6LdE": {
-                              "fill": "$--agent-working",
-                              "content": "Seen"
+                            "hideui:sar-branch": {
+                              "fill": "$--secondary",
+                              "enabled": false
                             },
-                            "hideui:BsCNW": {
-                              "fill": "$--subtle-foreground"
+                            "hideui:sar-branch-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
                             },
-                            "hideui:jb7mF": {
-                              "fill": "$--muted-foreground"
+                            "hideui:sar-device": {
+                              "stroke": "$--border",
+                              "enabled": false
                             },
-                            "hideui:w4jdH": {
-                              "fill": "$--muted-foreground"
+                            "hideui:sar-device-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-badge": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-badge-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-elapsed": {
+                              "fill": "$--muted-foreground",
+                              "content": "3m"
+                            },
+                            "hideui:sar-chevron": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-right"
+                            },
+                            "hideui:sar-line": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-place": {
+                              "fill": "$--muted-foreground",
+                              "enabled": true,
+                              "content": "herdr-ide › main"
+                            },
+                            "hideui:sar-provider": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "hideui:sar-fold": {
+                              "enabled": false
                             }
                           }
                         },
@@ -15259,7 +15643,7 @@
           "type": "text",
           "id": "screen-projects-sidebar-spec",
           "name": "sidebar.tsx, projects.ts: th",
-          "content": "sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here herdr-ide on its Overview, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. A project row folds its checkouts from its chevron and opens the Overview from the rest of the row; a checkout row opens the checkout, and its trailing chevron, shown only when agents run there, opens their rows in place of line two. Line two is the agents (the representative’s mark and provider, +N) and the purpose. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.",
+          "content": "sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here herdr-ide on its Overview, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. The left reads and the right acts: every row keeps a fold slot and a ⋯ slot on its right, a folded chevron is drawn and an unfolded one, like the ⋯, waits for the pointer, so names, ages and activity never move. A project row opens the Overview; a checkout row opens the checkout and keeps its last-commit age, and its chevron, there only while agents run, opens their rows in place of line two, on one group fill. A parent agent folds its children with the same chevron and speaks for them with its badge. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -15352,19 +15736,9 @@
                       "type": "ref",
                       "ref": "hideui:qdhY0",
                       "name": "All projects",
-                      "width": 292,
+                      "width": 284,
                       "height": 36,
-                      "padding": [
-                        0,
-                        4,
-                        0,
-                        "$--spacing-md"
-                      ],
                       "descendants": {
-                        "hideui:iBYjj": {
-                          "fill": "$--muted-foreground",
-                          "opacity": 0
-                        },
                         "hideui:mIzlX": {
                           "fill": "$--subtle-foreground",
                           "icon": "layout-grid"
@@ -15377,9 +15751,10 @@
                           "fill": "$--muted-foreground",
                           "content": "12 projects"
                         },
-                        "hideui:hm1SG": {
-                          "width": 24,
-                          "height": 24,
+                        "hideui:iBYjj": {
+                          "fill": "$--muted-foreground"
+                        },
+                        "hideui:wgtfo": {
                           "opacity": 0
                         }
                       }
@@ -15400,12 +15775,12 @@
                           "fontWeight": "600"
                         }
                       ],
-                      "width": 292,
+                      "width": 284,
                       "padding": [
                         "$--spacing-sm",
-                        "$--spacing-md",
+                        "$--spacing-sm",
                         "$--spacing-xxs",
-                        "$--spacing-md"
+                        "$--spacing-sm"
                       ]
                     },
                     {
@@ -15413,13 +15788,13 @@
                       "type": "ref",
                       "ref": "hideui:DLP27",
                       "name": "team-notes",
-                      "width": 292,
+                      "width": 284,
                       "height": 44,
                       "padding": [
                         0,
                         4,
                         0,
-                        16
+                        -12
                       ],
                       "descendants": {
                         "hideui:VtSRn": {
@@ -15436,12 +15811,10 @@
                           "fill": "$--muted-foreground",
                           "content": "1 agent · 2h",
                           "enabled": true,
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body"
+                          "fontFamily": "$--font-ui"
                         },
                         "hideui:CgZj3": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": true,
+                          "fill": "$--muted-foreground",
                           "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
@@ -15478,17 +15851,17 @@
                           "enabled": true
                         },
                         "hideui:QetL0": {
-                          "width": 272
+                          "width": 292
                         },
                         "hideui:TS5x9": {
                           "enabled": false
                         },
                         "hideui:IXwZI": {
-                          "width": 16
+                          "opacity": 1
                         },
                         "hideui:o6XLUj": {
                           "enabled": true,
-                          "width": 272
+                          "width": 292
                         },
                         "hideui:yfur4": {
                           "width": 20
@@ -15514,12 +15887,12 @@
                           "fontWeight": "600"
                         }
                       ],
-                      "width": 292,
+                      "width": 284,
                       "padding": [
                         "$--spacing-sm",
-                        "$--spacing-md",
+                        "$--spacing-sm",
                         "$--spacing-xxs",
-                        "$--spacing-md"
+                        "$--spacing-sm"
                       ]
                     },
                     {
@@ -15527,20 +15900,10 @@
                       "type": "ref",
                       "ref": "hideui:qdhY0",
                       "name": "herdr-ide",
-                      "width": 292,
+                      "width": 284,
                       "height": 36,
-                      "padding": [
-                        0,
-                        4,
-                        0,
-                        "$--spacing-md"
-                      ],
                       "fill": "$--secondary",
                       "descendants": {
-                        "hideui:iBYjj": {
-                          "fill": "$--muted-foreground",
-                          "icon": "chevron-down"
-                        },
                         "hideui:mIzlX": {
                           "fill": "$--subtle-foreground",
                           "icon": "folder-git-2"
@@ -15553,277 +15916,539 @@
                           "fill": "$--muted-foreground",
                           "content": "11 agents · now"
                         },
-                        "hideui:hm1SG": {
-                          "width": 24,
-                          "height": 24,
+                        "hideui:iBYjj": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-down"
+                        },
+                        "hideui:wgtfo": {
                           "opacity": 0
                         }
                       }
                     },
                     {
-                      "id": "psb-c2-l",
-                      "type": "ref",
-                      "ref": "hideui:DLP27",
-                      "name": "main",
-                      "width": 292,
-                      "height": 36,
-                      "padding": [
-                        0,
-                        4,
-                        0,
-                        16
-                      ],
-                      "descendants": {
-                        "hideui:VtSRn": {
-                          "fill": "$--subtle-foreground",
-                          "icon": "house"
-                        },
-                        "hideui:q91d7": {
-                          "fill": "$--foreground",
-                          "content": "main",
-                          "fontWeight": "500"
-                        },
-                        "hideui:TuosT": {
-                          "fill": "$--muted-foreground",
-                          "content": "now",
-                          "enabled": true,
-                          "textGrowth": "fixed-width",
-                          "width": 24,
-                          "textAlign": "right"
-                        },
-                        "hideui:CgZj3": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": true,
-                          "icon": "chevron-down"
-                        },
-                        "hideui:J5xdha": {
-                          "fill": "$--agent-working",
-                          "enabled": true
-                        },
-                        "hideui:G3d9T": {
-                          "stroke": "$--muted-foreground",
-                          "enabled": false
-                        },
-                        "hideui:aFPLo": {
-                          "fill": "$--warning",
-                          "enabled": false
-                        },
-                        "hideui:N7YbJ": {
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-codex.png",
-                            "mode": "fit"
-                          }
-                        },
-                        "hideui:fklVZ": {
-                          "fill": "$--background",
-                          "enabled": false
-                        },
-                        "hideui:ExMsH": {
-                          "fill": "$--subtle-foreground",
-                          "content": "+1",
-                          "enabled": true
-                        },
-                        "hideui:D37Vr": {
-                          "fill": "$--muted-foreground",
-                          "enabled": false
-                        },
-                        "hideui:QetL0": {
-                          "width": 272
-                        },
-                        "hideui:TS5x9": {
-                          "enabled": false
-                        },
-                        "hideui:IXwZI": {
-                          "width": 16
-                        },
-                        "hideui:o6XLUj": {
-                          "enabled": false,
-                          "width": 272
-                        },
-                        "hideui:yfur4": {
-                          "width": 20
-                        },
-                        "hideui:FtZyp": {
-                          "enabled": true
-                        }
-                      }
-                    },
-                    {
                       "type": "frame",
-                      "id": "psb-a1-l",
-                      "name": "Agent row",
+                      "id": "psb-g-main-l",
+                      "name": "Opened checkout",
                       "children": [
                         {
-                          "type": "frame",
-                          "id": "psb-a1-l-mark",
-                          "name": "Status mark",
-                          "children": [
-                            {
-                              "type": "ellipse",
-                              "id": "psb-a1-l-mark-dot",
-                              "name": "Dot",
-                              "width": 7,
-                              "height": 7,
-                              "fill": "$--agent-working"
-                            }
+                          "id": "psb-c2-l",
+                          "type": "ref",
+                          "ref": "hideui:DLP27",
+                          "name": "main",
+                          "width": 284,
+                          "height": 36,
+                          "padding": [
+                            0,
+                            4,
+                            0,
+                            6
                           ],
-                          "width": 12,
-                          "height": 12,
-                          "layout": "horizontal",
-                          "justifyContent": "center",
-                          "alignItems": "center"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "psb-a1-l-art",
-                          "name": "Provider",
-                          "children": [],
-                          "width": 16,
-                          "height": 16,
-                          "cornerRadius": "$--radius-xs",
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-codex.png",
-                            "mode": "fit"
-                          }
-                        },
-                        {
-                          "type": "text",
-                          "id": "psb-a1-l-title",
-                          "name": "S5.5 PRD 초안 정리",
-                          "content": "S5.5 PRD 초안 정리",
-                          "fill": "$--subtle-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
-                          "fontWeight": "400"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "psb-a1-l-gap",
-                          "name": "Spacer",
-                          "children": [],
-                          "width": "fill_container",
-                          "height": 1
-                        },
-                        {
-                          "type": "text",
-                          "id": "psb-a1-l-age",
-                          "name": "3m",
-                          "content": "3m",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
-                        }
-                      ],
-                      "width": 292,
-                      "layout": "horizontal",
-                      "gap": "$--spacing-xs",
-                      "alignItems": "center",
-                      "padding": [
-                        "$--spacing-xs",
-                        "$--spacing-md",
-                        "$--spacing-xs",
-                        58
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "psb-a2-l",
-                      "name": "Agent row",
-                      "children": [
-                        {
-                          "type": "frame",
-                          "id": "psb-a2-l-mark",
-                          "name": "Status mark",
-                          "children": [
-                            {
-                              "type": "ellipse",
-                              "id": "psb-a2-l-mark-ring",
-                              "name": "Ring",
-                              "width": 7,
-                              "height": 7,
+                          "descendants": {
+                            "hideui:VtSRn": {
+                              "fill": "$--subtle-foreground",
+                              "icon": "house"
+                            },
+                            "hideui:q91d7": {
+                              "fill": "$--foreground",
+                              "content": "main",
+                              "fontWeight": "500"
+                            },
+                            "hideui:TuosT": {
+                              "fill": "$--muted-foreground",
+                              "content": "now",
+                              "enabled": true
+                            },
+                            "hideui:CgZj3": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-down"
+                            },
+                            "hideui:J5xdha": {
+                              "fill": "$--agent-working",
+                              "enabled": true
+                            },
+                            "hideui:G3d9T": {
                               "stroke": "$--muted-foreground",
-                              "strokeWidth": 1,
-                              "strokeAlignment": "inner"
+                              "enabled": false
+                            },
+                            "hideui:aFPLo": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:N7YbJ": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-codex.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "hideui:fklVZ": {
+                              "fill": "$--background",
+                              "enabled": false
+                            },
+                            "hideui:ExMsH": {
+                              "fill": "$--subtle-foreground",
+                              "content": "+3",
+                              "enabled": true
+                            },
+                            "hideui:D37Vr": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:QetL0": {
+                              "width": 274
+                            },
+                            "hideui:TS5x9": {
+                              "enabled": false
+                            },
+                            "hideui:IXwZI": {
+                              "opacity": 0
+                            },
+                            "hideui:o6XLUj": {
+                              "enabled": false,
+                              "width": 274
+                            },
+                            "hideui:yfur4": {
+                              "width": 20
+                            },
+                            "hideui:FtZyp": {
+                              "enabled": true
                             }
-                          ],
-                          "width": 12,
-                          "height": 12,
-                          "layout": "horizontal",
-                          "justifyContent": "center",
-                          "alignItems": "center"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "psb-a2-l-art",
-                          "name": "Provider",
-                          "children": [],
-                          "width": 16,
-                          "height": 16,
-                          "cornerRadius": "$--radius-xs",
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-claude.png",
-                            "mode": "fit"
                           }
                         },
                         {
-                          "type": "text",
-                          "id": "psb-a2-l-title",
+                          "id": "psb-a1-l",
+                          "type": "ref",
+                          "ref": "hideui:sidebar-agent-row",
+                          "name": "사이드바 가독성 개선",
+                          "width": 284,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            48
+                          ],
+                          "descendants": {
+                            "hideui:sar-dot": {
+                              "fill": "$--agent-working",
+                              "enabled": true
+                            },
+                            "hideui:sar-ring": {
+                              "stroke": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-glyph": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-title": {
+                              "fill": "$--subtle-foreground",
+                              "content": "사이드바 가독성 개선"
+                            },
+                            "hideui:sar-branch": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-branch-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-device": {
+                              "stroke": "$--border",
+                              "enabled": false
+                            },
+                            "hideui:sar-device-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-badge": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-badge-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-elapsed": {
+                              "fill": "$--muted-foreground",
+                              "content": "1m"
+                            },
+                            "hideui:sar-chevron": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-down"
+                            },
+                            "hideui:sar-line": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-place": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-provider": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "hideui:sar-fold": {
+                              "enabled": true,
+                              "opacity": 0
+                            }
+                          }
+                        },
+                        {
+                          "id": "psb-a1c1-l",
+                          "type": "ref",
+                          "ref": "hideui:sidebar-agent-row",
+                          "name": "컴포넌트 구조 검토",
+                          "width": 284,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            66
+                          ],
+                          "descendants": {
+                            "hideui:sar-dot": {
+                              "fill": "$--agent-working",
+                              "enabled": true
+                            },
+                            "hideui:sar-ring": {
+                              "stroke": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-glyph": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-title": {
+                              "fill": "$--subtle-foreground",
+                              "content": "컴포넌트 구조 검토"
+                            },
+                            "hideui:sar-branch": {
+                              "fill": "$--secondary",
+                              "enabled": true
+                            },
+                            "hideui:sar-branch-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": "feat/ui"
+                            },
+                            "hideui:sar-device": {
+                              "stroke": "$--border",
+                              "enabled": false
+                            },
+                            "hideui:sar-device-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-badge": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-badge-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-elapsed": {
+                              "fill": "$--muted-foreground",
+                              "content": "42s"
+                            },
+                            "hideui:sar-chevron": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-right"
+                            },
+                            "hideui:sar-line": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-place": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-provider": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-codex.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "hideui:sar-fold": {
+                              "enabled": false
+                            }
+                          }
+                        },
+                        {
+                          "id": "psb-a1c2-l",
+                          "type": "ref",
+                          "ref": "hideui:sidebar-agent-row",
+                          "name": "한글 가독성 확인",
+                          "width": 284,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            66
+                          ],
+                          "descendants": {
+                            "hideui:sar-dot": {
+                              "fill": "$--agent-working",
+                              "enabled": false
+                            },
+                            "hideui:sar-ring": {
+                              "stroke": "$--muted-foreground",
+                              "enabled": true
+                            },
+                            "hideui:sar-glyph": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-title": {
+                              "fill": "$--subtle-foreground",
+                              "content": "한글 가독성 확인"
+                            },
+                            "hideui:sar-branch": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-branch-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-device": {
+                              "stroke": "$--border",
+                              "enabled": false
+                            },
+                            "hideui:sar-device-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-badge": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-badge-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-elapsed": {
+                              "fill": "$--muted-foreground",
+                              "content": "38s"
+                            },
+                            "hideui:sar-chevron": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-right"
+                            },
+                            "hideui:sar-line": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-place": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-provider": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "hideui:sar-fold": {
+                              "enabled": false
+                            }
+                          }
+                        },
+                        {
+                          "id": "psb-a2-l",
+                          "type": "ref",
+                          "ref": "hideui:sidebar-agent-row",
                           "name": "후속 UX 계획 인터뷰",
-                          "content": "후속 UX 계획 인터뷰",
-                          "fill": "$--subtle-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
-                          "fontWeight": "400"
+                          "width": 284,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            48
+                          ],
+                          "descendants": {
+                            "hideui:sar-dot": {
+                              "fill": "$--agent-working",
+                              "enabled": true
+                            },
+                            "hideui:sar-ring": {
+                              "stroke": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-glyph": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-title": {
+                              "fill": "$--subtle-foreground",
+                              "content": "후속 UX 계획 인터뷰"
+                            },
+                            "hideui:sar-branch": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-branch-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-device": {
+                              "stroke": "$--border",
+                              "enabled": false
+                            },
+                            "hideui:sar-device-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-badge": {
+                              "fill": "$--secondary",
+                              "enabled": true
+                            },
+                            "hideui:sar-badge-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": "?1 ●1"
+                            },
+                            "hideui:sar-elapsed": {
+                              "fill": "$--muted-foreground",
+                              "content": "2m"
+                            },
+                            "hideui:sar-chevron": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-right"
+                            },
+                            "hideui:sar-line": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-place": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-provider": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "hideui:sar-fold": {
+                              "enabled": true,
+                              "opacity": 1
+                            }
+                          }
                         },
                         {
-                          "type": "frame",
-                          "id": "psb-a2-l-gap",
-                          "name": "Spacer",
-                          "children": [],
-                          "width": "fill_container",
-                          "height": 1
-                        },
-                        {
-                          "type": "text",
-                          "id": "psb-a2-l-age",
-                          "name": "1h",
-                          "content": "1h",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
+                          "id": "psb-a3-l",
+                          "type": "ref",
+                          "ref": "hideui:sidebar-agent-row",
+                          "name": "배포 전 확인",
+                          "width": 284,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            48
+                          ],
+                          "descendants": {
+                            "hideui:sar-dot": {
+                              "fill": "$--agent-working",
+                              "enabled": false
+                            },
+                            "hideui:sar-ring": {
+                              "stroke": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-glyph": {
+                              "fill": "$--warning",
+                              "enabled": true,
+                              "content": "?"
+                            },
+                            "hideui:sar-title": {
+                              "fill": "$--foreground",
+                              "content": "배포 전 확인",
+                              "fontWeight": "500"
+                            },
+                            "hideui:sar-branch": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-branch-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-device": {
+                              "stroke": "$--border",
+                              "enabled": false
+                            },
+                            "hideui:sar-device-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-badge": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-badge-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-elapsed": {
+                              "fill": "$--muted-foreground",
+                              "content": "30s"
+                            },
+                            "hideui:sar-chevron": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-right"
+                            },
+                            "hideui:sar-line": {
+                              "fill": "$--warning",
+                              "enabled": true,
+                              "content": "프로덕션 배포 전에 변경 내용을 확인해 주세요"
+                            },
+                            "hideui:sar-place": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-provider": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "hideui:sar-fold": {
+                              "enabled": false
+                            }
+                          }
                         }
                       ],
-                      "width": 292,
-                      "layout": "horizontal",
-                      "gap": "$--spacing-xs",
-                      "alignItems": "center",
-                      "padding": [
-                        "$--spacing-xs",
-                        "$--spacing-md",
-                        "$--spacing-xs",
-                        58
-                      ]
+                      "width": 284,
+                      "layout": "vertical",
+                      "fill": "$--muted",
+                      "cornerRadius": "$--radius-sm"
                     },
                     {
                       "id": "psb-c3-l",
                       "type": "ref",
                       "ref": "hideui:DLP27",
                       "name": "quick/155-browser-display",
-                      "width": 292,
+                      "width": 284,
                       "height": 44,
                       "padding": [
                         0,
                         4,
                         0,
-                        16
+                        6
                       ],
                       "descendants": {
                         "hideui:VtSRn": {
@@ -15838,14 +16463,10 @@
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
                           "content": "40m",
-                          "enabled": true,
-                          "textGrowth": "fixed-width",
-                          "width": 24,
-                          "textAlign": "right"
+                          "enabled": true
                         },
                         "hideui:CgZj3": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": true,
+                          "fill": "$--muted-foreground",
                           "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
@@ -15883,17 +16504,17 @@
                           "enabled": true
                         },
                         "hideui:QetL0": {
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:TS5x9": {
                           "enabled": false
                         },
                         "hideui:IXwZI": {
-                          "width": 16
+                          "opacity": 1
                         },
                         "hideui:o6XLUj": {
                           "enabled": true,
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:yfur4": {
                           "width": 20
@@ -15908,13 +16529,13 @@
                       "type": "ref",
                       "ref": "hideui:DLP27",
                       "name": "quick/154-search-palette",
-                      "width": 292,
+                      "width": 284,
                       "height": 44,
                       "padding": [
                         0,
                         4,
                         0,
-                        16
+                        6
                       ],
                       "descendants": {
                         "hideui:VtSRn": {
@@ -15929,14 +16550,10 @@
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
                           "content": "1h",
-                          "enabled": true,
-                          "textGrowth": "fixed-width",
-                          "width": 24,
-                          "textAlign": "right"
+                          "enabled": true
                         },
                         "hideui:CgZj3": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": true,
+                          "fill": "$--muted-foreground",
                           "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
@@ -15974,17 +16591,17 @@
                           "enabled": true
                         },
                         "hideui:QetL0": {
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:TS5x9": {
                           "enabled": false
                         },
                         "hideui:IXwZI": {
-                          "width": 16
+                          "opacity": 1
                         },
                         "hideui:o6XLUj": {
                           "enabled": true,
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:yfur4": {
                           "width": 20
@@ -15999,13 +16616,13 @@
                       "type": "ref",
                       "ref": "hideui:DLP27",
                       "name": "electron-shortcut-bindings",
-                      "width": 292,
+                      "width": 284,
                       "height": 44,
                       "padding": [
                         0,
                         4,
                         0,
-                        16
+                        6
                       ],
                       "descendants": {
                         "hideui:VtSRn": {
@@ -16020,14 +16637,10 @@
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
                           "content": "2h",
-                          "enabled": true,
-                          "textGrowth": "fixed-width",
-                          "width": 24,
-                          "textAlign": "right"
+                          "enabled": true
                         },
                         "hideui:CgZj3": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": true,
+                          "fill": "$--muted-foreground",
                           "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
@@ -16064,17 +16677,17 @@
                           "enabled": true
                         },
                         "hideui:QetL0": {
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:TS5x9": {
                           "enabled": false
                         },
                         "hideui:IXwZI": {
-                          "width": 16
+                          "opacity": 1
                         },
                         "hideui:o6XLUj": {
                           "enabled": true,
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:yfur4": {
                           "width": 20
@@ -16089,13 +16702,13 @@
                       "type": "ref",
                       "ref": "hideui:DLP27",
                       "name": "design/workspace-ux-prop…",
-                      "width": 292,
+                      "width": 284,
                       "height": 44,
                       "padding": [
                         0,
                         4,
                         0,
-                        16
+                        6
                       ],
                       "descendants": {
                         "hideui:VtSRn": {
@@ -16110,15 +16723,11 @@
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
                           "content": "5h",
-                          "enabled": true,
-                          "textGrowth": "fixed-width",
-                          "width": 24,
-                          "textAlign": "right"
+                          "enabled": true
                         },
                         "hideui:CgZj3": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": true,
-                          "opacity": 0
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
                           "fill": "$--agent-working"
@@ -16144,17 +16753,17 @@
                           "enabled": true
                         },
                         "hideui:QetL0": {
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:TS5x9": {
                           "enabled": false
                         },
                         "hideui:IXwZI": {
-                          "width": 16
+                          "opacity": 0
                         },
                         "hideui:o6XLUj": {
                           "enabled": true,
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:yfur4": {
                           "width": 20
@@ -16169,13 +16778,13 @@
                       "type": "ref",
                       "ref": "hideui:DLP27",
                       "name": "fix/registered-projects-only",
-                      "width": 292,
+                      "width": 284,
                       "height": 36,
                       "padding": [
                         0,
                         4,
                         0,
-                        16
+                        6
                       ],
                       "descendants": {
                         "hideui:VtSRn": {
@@ -16190,15 +16799,11 @@
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
                           "content": "1d",
-                          "enabled": true,
-                          "textGrowth": "fixed-width",
-                          "width": 24,
-                          "textAlign": "right"
+                          "enabled": true
                         },
                         "hideui:CgZj3": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": true,
-                          "opacity": 0
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
                           "fill": "$--agent-working"
@@ -16223,17 +16828,17 @@
                           "enabled": false
                         },
                         "hideui:QetL0": {
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:TS5x9": {
                           "enabled": false
                         },
                         "hideui:IXwZI": {
-                          "width": 16
+                          "opacity": 0
                         },
                         "hideui:o6XLUj": {
                           "enabled": false,
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:yfur4": {
                           "width": 20
@@ -16248,13 +16853,13 @@
                       "type": "ref",
                       "ref": "hideui:DLP27",
                       "name": "legacy-shell",
-                      "width": 292,
+                      "width": 284,
                       "height": 36,
                       "padding": [
                         0,
                         4,
                         0,
-                        16
+                        6
                       ],
                       "descendants": {
                         "hideui:VtSRn": {
@@ -16269,15 +16874,11 @@
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
                           "content": "",
-                          "enabled": true,
-                          "textGrowth": "fixed-width",
-                          "width": 24,
-                          "textAlign": "right"
+                          "enabled": false
                         },
                         "hideui:CgZj3": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": true,
-                          "opacity": 0
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
                           "fill": "$--agent-working"
@@ -16302,17 +16903,17 @@
                           "enabled": false
                         },
                         "hideui:QetL0": {
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:TS5x9": {
                           "enabled": true
                         },
                         "hideui:IXwZI": {
-                          "width": 16
+                          "opacity": 0
                         },
                         "hideui:o6XLUj": {
                           "enabled": false,
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:yfur4": {
                           "width": 20
@@ -16327,20 +16928,20 @@
                       "type": "ref",
                       "ref": "hideui:inactive-fold-row",
                       "name": "Inactive 14",
-                      "width": 292,
+                      "width": 284,
                       "padding": [
                         0,
+                        4,
                         0,
-                        0,
-                        38
+                        26
                       ],
                       "descendants": {
-                        "hideui:inactive-fold-chevron": {
-                          "fill": "$--muted-foreground"
-                        },
                         "hideui:inactive-fold-label": {
                           "fill": "$--subtle-foreground",
                           "content": "Inactive 14"
+                        },
+                        "hideui:inactive-fold-chevron": {
+                          "fill": "$--muted-foreground"
                         }
                       }
                     },
@@ -16349,19 +16950,9 @@
                       "type": "ref",
                       "ref": "hideui:qdhY0",
                       "name": "sasu",
-                      "width": 292,
+                      "width": 284,
                       "height": 36,
-                      "padding": [
-                        0,
-                        4,
-                        0,
-                        "$--spacing-md"
-                      ],
                       "descendants": {
-                        "hideui:iBYjj": {
-                          "fill": "$--muted-foreground",
-                          "icon": "chevron-right"
-                        },
                         "hideui:mIzlX": {
                           "fill": "$--subtle-foreground",
                           "icon": "folder-git-2"
@@ -16374,10 +16965,12 @@
                           "fill": "$--muted-foreground",
                           "content": "3 agents · 50m"
                         },
-                        "hideui:hm1SG": {
-                          "width": 24,
-                          "height": 24,
-                          "opacity": 0
+                        "hideui:iBYjj": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
+                        },
+                        "hideui:wgtfo": {
+                          "opacity": 1
                         }
                       }
                     },
@@ -16386,26 +16979,30 @@
                       "type": "ref",
                       "ref": "hideui:inactive-fold-row",
                       "name": "Inactive projects 3",
-                      "width": 292,
+                      "width": 284,
                       "padding": [
                         0,
+                        4,
                         0,
-                        0,
-                        14
+                        8
                       ],
                       "descendants": {
-                        "hideui:inactive-fold-chevron": {
-                          "fill": "$--muted-foreground"
-                        },
                         "hideui:inactive-fold-label": {
                           "fill": "$--subtle-foreground",
                           "content": "Inactive projects 3"
+                        },
+                        "hideui:inactive-fold-chevron": {
+                          "fill": "$--muted-foreground"
                         }
                       }
                     }
                   ],
                   "width": 292,
-                  "layout": "vertical"
+                  "layout": "vertical",
+                  "padding": [
+                    0,
+                    4
+                  ]
                 },
                 {
                   "type": "frame",
@@ -16617,19 +17214,9 @@
                       "type": "ref",
                       "ref": "hideui:qdhY0",
                       "name": "All projects",
-                      "width": 292,
+                      "width": 284,
                       "height": 36,
-                      "padding": [
-                        0,
-                        4,
-                        0,
-                        "$--spacing-md"
-                      ],
                       "descendants": {
-                        "hideui:iBYjj": {
-                          "fill": "$--muted-foreground",
-                          "opacity": 0
-                        },
                         "hideui:mIzlX": {
                           "fill": "$--subtle-foreground",
                           "icon": "layout-grid"
@@ -16642,9 +17229,10 @@
                           "fill": "$--muted-foreground",
                           "content": "12 projects"
                         },
-                        "hideui:hm1SG": {
-                          "width": 24,
-                          "height": 24,
+                        "hideui:iBYjj": {
+                          "fill": "$--muted-foreground"
+                        },
+                        "hideui:wgtfo": {
                           "opacity": 0
                         }
                       }
@@ -16665,12 +17253,12 @@
                           "fontWeight": "600"
                         }
                       ],
-                      "width": 292,
+                      "width": 284,
                       "padding": [
                         "$--spacing-sm",
-                        "$--spacing-md",
+                        "$--spacing-sm",
                         "$--spacing-xxs",
-                        "$--spacing-md"
+                        "$--spacing-sm"
                       ]
                     },
                     {
@@ -16678,13 +17266,13 @@
                       "type": "ref",
                       "ref": "hideui:DLP27",
                       "name": "team-notes",
-                      "width": 292,
+                      "width": 284,
                       "height": 44,
                       "padding": [
                         0,
                         4,
                         0,
-                        16
+                        -12
                       ],
                       "descendants": {
                         "hideui:VtSRn": {
@@ -16701,12 +17289,10 @@
                           "fill": "$--muted-foreground",
                           "content": "1 agent · 2h",
                           "enabled": true,
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body"
+                          "fontFamily": "$--font-ui"
                         },
                         "hideui:CgZj3": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": true,
+                          "fill": "$--muted-foreground",
                           "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
@@ -16743,17 +17329,17 @@
                           "enabled": true
                         },
                         "hideui:QetL0": {
-                          "width": 272
+                          "width": 292
                         },
                         "hideui:TS5x9": {
                           "enabled": false
                         },
                         "hideui:IXwZI": {
-                          "width": 16
+                          "opacity": 1
                         },
                         "hideui:o6XLUj": {
                           "enabled": true,
-                          "width": 272
+                          "width": 292
                         },
                         "hideui:yfur4": {
                           "width": 20
@@ -16779,12 +17365,12 @@
                           "fontWeight": "600"
                         }
                       ],
-                      "width": 292,
+                      "width": 284,
                       "padding": [
                         "$--spacing-sm",
-                        "$--spacing-md",
+                        "$--spacing-sm",
                         "$--spacing-xxs",
-                        "$--spacing-md"
+                        "$--spacing-sm"
                       ]
                     },
                     {
@@ -16792,20 +17378,10 @@
                       "type": "ref",
                       "ref": "hideui:qdhY0",
                       "name": "herdr-ide",
-                      "width": 292,
+                      "width": 284,
                       "height": 36,
-                      "padding": [
-                        0,
-                        4,
-                        0,
-                        "$--spacing-md"
-                      ],
                       "fill": "$--secondary",
                       "descendants": {
-                        "hideui:iBYjj": {
-                          "fill": "$--muted-foreground",
-                          "icon": "chevron-down"
-                        },
                         "hideui:mIzlX": {
                           "fill": "$--subtle-foreground",
                           "icon": "folder-git-2"
@@ -16818,277 +17394,539 @@
                           "fill": "$--muted-foreground",
                           "content": "11 agents · now"
                         },
-                        "hideui:hm1SG": {
-                          "width": 24,
-                          "height": 24,
+                        "hideui:iBYjj": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-down"
+                        },
+                        "hideui:wgtfo": {
                           "opacity": 0
                         }
                       }
                     },
                     {
-                      "id": "psb-c2-d",
-                      "type": "ref",
-                      "ref": "hideui:DLP27",
-                      "name": "main",
-                      "width": 292,
-                      "height": 36,
-                      "padding": [
-                        0,
-                        4,
-                        0,
-                        16
-                      ],
-                      "descendants": {
-                        "hideui:VtSRn": {
-                          "fill": "$--subtle-foreground",
-                          "icon": "house"
-                        },
-                        "hideui:q91d7": {
-                          "fill": "$--foreground",
-                          "content": "main",
-                          "fontWeight": "500"
-                        },
-                        "hideui:TuosT": {
-                          "fill": "$--muted-foreground",
-                          "content": "now",
-                          "enabled": true,
-                          "textGrowth": "fixed-width",
-                          "width": 24,
-                          "textAlign": "right"
-                        },
-                        "hideui:CgZj3": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": true,
-                          "icon": "chevron-down"
-                        },
-                        "hideui:J5xdha": {
-                          "fill": "$--agent-working",
-                          "enabled": true
-                        },
-                        "hideui:G3d9T": {
-                          "stroke": "$--muted-foreground",
-                          "enabled": false
-                        },
-                        "hideui:aFPLo": {
-                          "fill": "$--warning",
-                          "enabled": false
-                        },
-                        "hideui:N7YbJ": {
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-codex.png",
-                            "mode": "fit"
-                          }
-                        },
-                        "hideui:fklVZ": {
-                          "fill": "$--background",
-                          "enabled": false
-                        },
-                        "hideui:ExMsH": {
-                          "fill": "$--subtle-foreground",
-                          "content": "+1",
-                          "enabled": true
-                        },
-                        "hideui:D37Vr": {
-                          "fill": "$--muted-foreground",
-                          "enabled": false
-                        },
-                        "hideui:QetL0": {
-                          "width": 272
-                        },
-                        "hideui:TS5x9": {
-                          "enabled": false
-                        },
-                        "hideui:IXwZI": {
-                          "width": 16
-                        },
-                        "hideui:o6XLUj": {
-                          "enabled": false,
-                          "width": 272
-                        },
-                        "hideui:yfur4": {
-                          "width": 20
-                        },
-                        "hideui:FtZyp": {
-                          "enabled": true
-                        }
-                      }
-                    },
-                    {
                       "type": "frame",
-                      "id": "psb-a1-d",
-                      "name": "Agent row",
+                      "id": "psb-g-main-d",
+                      "name": "Opened checkout",
                       "children": [
                         {
-                          "type": "frame",
-                          "id": "psb-a1-d-mark",
-                          "name": "Status mark",
-                          "children": [
-                            {
-                              "type": "ellipse",
-                              "id": "psb-a1-d-mark-dot",
-                              "name": "Dot",
-                              "width": 7,
-                              "height": 7,
-                              "fill": "$--agent-working"
-                            }
+                          "id": "psb-c2-d",
+                          "type": "ref",
+                          "ref": "hideui:DLP27",
+                          "name": "main",
+                          "width": 284,
+                          "height": 36,
+                          "padding": [
+                            0,
+                            4,
+                            0,
+                            6
                           ],
-                          "width": 12,
-                          "height": 12,
-                          "layout": "horizontal",
-                          "justifyContent": "center",
-                          "alignItems": "center"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "psb-a1-d-art",
-                          "name": "Provider",
-                          "children": [],
-                          "width": 16,
-                          "height": 16,
-                          "cornerRadius": "$--radius-xs",
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-codex.png",
-                            "mode": "fit"
-                          }
-                        },
-                        {
-                          "type": "text",
-                          "id": "psb-a1-d-title",
-                          "name": "S5.5 PRD 초안 정리",
-                          "content": "S5.5 PRD 초안 정리",
-                          "fill": "$--subtle-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
-                          "fontWeight": "400"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "psb-a1-d-gap",
-                          "name": "Spacer",
-                          "children": [],
-                          "width": "fill_container",
-                          "height": 1
-                        },
-                        {
-                          "type": "text",
-                          "id": "psb-a1-d-age",
-                          "name": "3m",
-                          "content": "3m",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
-                        }
-                      ],
-                      "width": 292,
-                      "layout": "horizontal",
-                      "gap": "$--spacing-xs",
-                      "alignItems": "center",
-                      "padding": [
-                        "$--spacing-xs",
-                        "$--spacing-md",
-                        "$--spacing-xs",
-                        58
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "psb-a2-d",
-                      "name": "Agent row",
-                      "children": [
-                        {
-                          "type": "frame",
-                          "id": "psb-a2-d-mark",
-                          "name": "Status mark",
-                          "children": [
-                            {
-                              "type": "ellipse",
-                              "id": "psb-a2-d-mark-ring",
-                              "name": "Ring",
-                              "width": 7,
-                              "height": 7,
+                          "descendants": {
+                            "hideui:VtSRn": {
+                              "fill": "$--subtle-foreground",
+                              "icon": "house"
+                            },
+                            "hideui:q91d7": {
+                              "fill": "$--foreground",
+                              "content": "main",
+                              "fontWeight": "500"
+                            },
+                            "hideui:TuosT": {
+                              "fill": "$--muted-foreground",
+                              "content": "now",
+                              "enabled": true
+                            },
+                            "hideui:CgZj3": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-down"
+                            },
+                            "hideui:J5xdha": {
+                              "fill": "$--agent-working",
+                              "enabled": true
+                            },
+                            "hideui:G3d9T": {
                               "stroke": "$--muted-foreground",
-                              "strokeWidth": 1,
-                              "strokeAlignment": "inner"
+                              "enabled": false
+                            },
+                            "hideui:aFPLo": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:N7YbJ": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-codex.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "hideui:fklVZ": {
+                              "fill": "$--background",
+                              "enabled": false
+                            },
+                            "hideui:ExMsH": {
+                              "fill": "$--subtle-foreground",
+                              "content": "+3",
+                              "enabled": true
+                            },
+                            "hideui:D37Vr": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:QetL0": {
+                              "width": 274
+                            },
+                            "hideui:TS5x9": {
+                              "enabled": false
+                            },
+                            "hideui:IXwZI": {
+                              "opacity": 0
+                            },
+                            "hideui:o6XLUj": {
+                              "enabled": false,
+                              "width": 274
+                            },
+                            "hideui:yfur4": {
+                              "width": 20
+                            },
+                            "hideui:FtZyp": {
+                              "enabled": true
                             }
-                          ],
-                          "width": 12,
-                          "height": 12,
-                          "layout": "horizontal",
-                          "justifyContent": "center",
-                          "alignItems": "center"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "psb-a2-d-art",
-                          "name": "Provider",
-                          "children": [],
-                          "width": 16,
-                          "height": 16,
-                          "cornerRadius": "$--radius-xs",
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-claude.png",
-                            "mode": "fit"
                           }
                         },
                         {
-                          "type": "text",
-                          "id": "psb-a2-d-title",
+                          "id": "psb-a1-d",
+                          "type": "ref",
+                          "ref": "hideui:sidebar-agent-row",
+                          "name": "사이드바 가독성 개선",
+                          "width": 284,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            48
+                          ],
+                          "descendants": {
+                            "hideui:sar-dot": {
+                              "fill": "$--agent-working",
+                              "enabled": true
+                            },
+                            "hideui:sar-ring": {
+                              "stroke": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-glyph": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-title": {
+                              "fill": "$--subtle-foreground",
+                              "content": "사이드바 가독성 개선"
+                            },
+                            "hideui:sar-branch": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-branch-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-device": {
+                              "stroke": "$--border",
+                              "enabled": false
+                            },
+                            "hideui:sar-device-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-badge": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-badge-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-elapsed": {
+                              "fill": "$--muted-foreground",
+                              "content": "1m"
+                            },
+                            "hideui:sar-chevron": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-down"
+                            },
+                            "hideui:sar-line": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-place": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-provider": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "hideui:sar-fold": {
+                              "enabled": true,
+                              "opacity": 0
+                            }
+                          }
+                        },
+                        {
+                          "id": "psb-a1c1-d",
+                          "type": "ref",
+                          "ref": "hideui:sidebar-agent-row",
+                          "name": "컴포넌트 구조 검토",
+                          "width": 284,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            66
+                          ],
+                          "descendants": {
+                            "hideui:sar-dot": {
+                              "fill": "$--agent-working",
+                              "enabled": true
+                            },
+                            "hideui:sar-ring": {
+                              "stroke": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-glyph": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-title": {
+                              "fill": "$--subtle-foreground",
+                              "content": "컴포넌트 구조 검토"
+                            },
+                            "hideui:sar-branch": {
+                              "fill": "$--secondary",
+                              "enabled": true
+                            },
+                            "hideui:sar-branch-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": "feat/ui"
+                            },
+                            "hideui:sar-device": {
+                              "stroke": "$--border",
+                              "enabled": false
+                            },
+                            "hideui:sar-device-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-badge": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-badge-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-elapsed": {
+                              "fill": "$--muted-foreground",
+                              "content": "42s"
+                            },
+                            "hideui:sar-chevron": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-right"
+                            },
+                            "hideui:sar-line": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-place": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-provider": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-codex.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "hideui:sar-fold": {
+                              "enabled": false
+                            }
+                          }
+                        },
+                        {
+                          "id": "psb-a1c2-d",
+                          "type": "ref",
+                          "ref": "hideui:sidebar-agent-row",
+                          "name": "한글 가독성 확인",
+                          "width": 284,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            66
+                          ],
+                          "descendants": {
+                            "hideui:sar-dot": {
+                              "fill": "$--agent-working",
+                              "enabled": false
+                            },
+                            "hideui:sar-ring": {
+                              "stroke": "$--muted-foreground",
+                              "enabled": true
+                            },
+                            "hideui:sar-glyph": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-title": {
+                              "fill": "$--subtle-foreground",
+                              "content": "한글 가독성 확인"
+                            },
+                            "hideui:sar-branch": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-branch-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-device": {
+                              "stroke": "$--border",
+                              "enabled": false
+                            },
+                            "hideui:sar-device-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-badge": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-badge-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-elapsed": {
+                              "fill": "$--muted-foreground",
+                              "content": "38s"
+                            },
+                            "hideui:sar-chevron": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-right"
+                            },
+                            "hideui:sar-line": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-place": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-provider": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "hideui:sar-fold": {
+                              "enabled": false
+                            }
+                          }
+                        },
+                        {
+                          "id": "psb-a2-d",
+                          "type": "ref",
+                          "ref": "hideui:sidebar-agent-row",
                           "name": "후속 UX 계획 인터뷰",
-                          "content": "후속 UX 계획 인터뷰",
-                          "fill": "$--subtle-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
-                          "fontWeight": "400"
+                          "width": 284,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            48
+                          ],
+                          "descendants": {
+                            "hideui:sar-dot": {
+                              "fill": "$--agent-working",
+                              "enabled": true
+                            },
+                            "hideui:sar-ring": {
+                              "stroke": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-glyph": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-title": {
+                              "fill": "$--subtle-foreground",
+                              "content": "후속 UX 계획 인터뷰"
+                            },
+                            "hideui:sar-branch": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-branch-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-device": {
+                              "stroke": "$--border",
+                              "enabled": false
+                            },
+                            "hideui:sar-device-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-badge": {
+                              "fill": "$--secondary",
+                              "enabled": true
+                            },
+                            "hideui:sar-badge-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": "?1 ●1"
+                            },
+                            "hideui:sar-elapsed": {
+                              "fill": "$--muted-foreground",
+                              "content": "2m"
+                            },
+                            "hideui:sar-chevron": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-right"
+                            },
+                            "hideui:sar-line": {
+                              "fill": "$--warning",
+                              "enabled": false
+                            },
+                            "hideui:sar-place": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-provider": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "hideui:sar-fold": {
+                              "enabled": true,
+                              "opacity": 1
+                            }
+                          }
                         },
                         {
-                          "type": "frame",
-                          "id": "psb-a2-d-gap",
-                          "name": "Spacer",
-                          "children": [],
-                          "width": "fill_container",
-                          "height": 1
-                        },
-                        {
-                          "type": "text",
-                          "id": "psb-a2-d-age",
-                          "name": "1h",
-                          "content": "1h",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
+                          "id": "psb-a3-d",
+                          "type": "ref",
+                          "ref": "hideui:sidebar-agent-row",
+                          "name": "배포 전 확인",
+                          "width": 284,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            48
+                          ],
+                          "descendants": {
+                            "hideui:sar-dot": {
+                              "fill": "$--agent-working",
+                              "enabled": false
+                            },
+                            "hideui:sar-ring": {
+                              "stroke": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-glyph": {
+                              "fill": "$--warning",
+                              "enabled": true,
+                              "content": "?"
+                            },
+                            "hideui:sar-title": {
+                              "fill": "$--foreground",
+                              "content": "배포 전 확인",
+                              "fontWeight": "500"
+                            },
+                            "hideui:sar-branch": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-branch-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-device": {
+                              "stroke": "$--border",
+                              "enabled": false
+                            },
+                            "hideui:sar-device-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-badge": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-badge-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-elapsed": {
+                              "fill": "$--muted-foreground",
+                              "content": "30s"
+                            },
+                            "hideui:sar-chevron": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-right"
+                            },
+                            "hideui:sar-line": {
+                              "fill": "$--warning",
+                              "enabled": true,
+                              "content": "프로덕션 배포 전에 변경 내용을 확인해 주세요"
+                            },
+                            "hideui:sar-place": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-provider": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "hideui:sar-fold": {
+                              "enabled": false
+                            }
+                          }
                         }
                       ],
-                      "width": 292,
-                      "layout": "horizontal",
-                      "gap": "$--spacing-xs",
-                      "alignItems": "center",
-                      "padding": [
-                        "$--spacing-xs",
-                        "$--spacing-md",
-                        "$--spacing-xs",
-                        58
-                      ]
+                      "width": 284,
+                      "layout": "vertical",
+                      "fill": "$--muted",
+                      "cornerRadius": "$--radius-sm"
                     },
                     {
                       "id": "psb-c3-d",
                       "type": "ref",
                       "ref": "hideui:DLP27",
                       "name": "quick/155-browser-display",
-                      "width": 292,
+                      "width": 284,
                       "height": 44,
                       "padding": [
                         0,
                         4,
                         0,
-                        16
+                        6
                       ],
                       "descendants": {
                         "hideui:VtSRn": {
@@ -17103,14 +17941,10 @@
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
                           "content": "40m",
-                          "enabled": true,
-                          "textGrowth": "fixed-width",
-                          "width": 24,
-                          "textAlign": "right"
+                          "enabled": true
                         },
                         "hideui:CgZj3": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": true,
+                          "fill": "$--muted-foreground",
                           "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
@@ -17148,17 +17982,17 @@
                           "enabled": true
                         },
                         "hideui:QetL0": {
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:TS5x9": {
                           "enabled": false
                         },
                         "hideui:IXwZI": {
-                          "width": 16
+                          "opacity": 1
                         },
                         "hideui:o6XLUj": {
                           "enabled": true,
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:yfur4": {
                           "width": 20
@@ -17173,13 +18007,13 @@
                       "type": "ref",
                       "ref": "hideui:DLP27",
                       "name": "quick/154-search-palette",
-                      "width": 292,
+                      "width": 284,
                       "height": 44,
                       "padding": [
                         0,
                         4,
                         0,
-                        16
+                        6
                       ],
                       "descendants": {
                         "hideui:VtSRn": {
@@ -17194,14 +18028,10 @@
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
                           "content": "1h",
-                          "enabled": true,
-                          "textGrowth": "fixed-width",
-                          "width": 24,
-                          "textAlign": "right"
+                          "enabled": true
                         },
                         "hideui:CgZj3": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": true,
+                          "fill": "$--muted-foreground",
                           "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
@@ -17239,17 +18069,17 @@
                           "enabled": true
                         },
                         "hideui:QetL0": {
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:TS5x9": {
                           "enabled": false
                         },
                         "hideui:IXwZI": {
-                          "width": 16
+                          "opacity": 1
                         },
                         "hideui:o6XLUj": {
                           "enabled": true,
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:yfur4": {
                           "width": 20
@@ -17264,13 +18094,13 @@
                       "type": "ref",
                       "ref": "hideui:DLP27",
                       "name": "electron-shortcut-bindings",
-                      "width": 292,
+                      "width": 284,
                       "height": 44,
                       "padding": [
                         0,
                         4,
                         0,
-                        16
+                        6
                       ],
                       "descendants": {
                         "hideui:VtSRn": {
@@ -17285,14 +18115,10 @@
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
                           "content": "2h",
-                          "enabled": true,
-                          "textGrowth": "fixed-width",
-                          "width": 24,
-                          "textAlign": "right"
+                          "enabled": true
                         },
                         "hideui:CgZj3": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": true,
+                          "fill": "$--muted-foreground",
                           "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
@@ -17329,17 +18155,17 @@
                           "enabled": true
                         },
                         "hideui:QetL0": {
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:TS5x9": {
                           "enabled": false
                         },
                         "hideui:IXwZI": {
-                          "width": 16
+                          "opacity": 1
                         },
                         "hideui:o6XLUj": {
                           "enabled": true,
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:yfur4": {
                           "width": 20
@@ -17354,13 +18180,13 @@
                       "type": "ref",
                       "ref": "hideui:DLP27",
                       "name": "design/workspace-ux-prop…",
-                      "width": 292,
+                      "width": 284,
                       "height": 44,
                       "padding": [
                         0,
                         4,
                         0,
-                        16
+                        6
                       ],
                       "descendants": {
                         "hideui:VtSRn": {
@@ -17375,15 +18201,11 @@
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
                           "content": "5h",
-                          "enabled": true,
-                          "textGrowth": "fixed-width",
-                          "width": 24,
-                          "textAlign": "right"
+                          "enabled": true
                         },
                         "hideui:CgZj3": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": true,
-                          "opacity": 0
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
                           "fill": "$--agent-working"
@@ -17409,17 +18231,17 @@
                           "enabled": true
                         },
                         "hideui:QetL0": {
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:TS5x9": {
                           "enabled": false
                         },
                         "hideui:IXwZI": {
-                          "width": 16
+                          "opacity": 0
                         },
                         "hideui:o6XLUj": {
                           "enabled": true,
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:yfur4": {
                           "width": 20
@@ -17434,13 +18256,13 @@
                       "type": "ref",
                       "ref": "hideui:DLP27",
                       "name": "fix/registered-projects-only",
-                      "width": 292,
+                      "width": 284,
                       "height": 36,
                       "padding": [
                         0,
                         4,
                         0,
-                        16
+                        6
                       ],
                       "descendants": {
                         "hideui:VtSRn": {
@@ -17455,15 +18277,11 @@
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
                           "content": "1d",
-                          "enabled": true,
-                          "textGrowth": "fixed-width",
-                          "width": 24,
-                          "textAlign": "right"
+                          "enabled": true
                         },
                         "hideui:CgZj3": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": true,
-                          "opacity": 0
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
                           "fill": "$--agent-working"
@@ -17488,17 +18306,17 @@
                           "enabled": false
                         },
                         "hideui:QetL0": {
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:TS5x9": {
                           "enabled": false
                         },
                         "hideui:IXwZI": {
-                          "width": 16
+                          "opacity": 0
                         },
                         "hideui:o6XLUj": {
                           "enabled": false,
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:yfur4": {
                           "width": 20
@@ -17513,13 +18331,13 @@
                       "type": "ref",
                       "ref": "hideui:DLP27",
                       "name": "legacy-shell",
-                      "width": 292,
+                      "width": 284,
                       "height": 36,
                       "padding": [
                         0,
                         4,
                         0,
-                        16
+                        6
                       ],
                       "descendants": {
                         "hideui:VtSRn": {
@@ -17534,15 +18352,11 @@
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
                           "content": "",
-                          "enabled": true,
-                          "textGrowth": "fixed-width",
-                          "width": 24,
-                          "textAlign": "right"
+                          "enabled": false
                         },
                         "hideui:CgZj3": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": true,
-                          "opacity": 0
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
                           "fill": "$--agent-working"
@@ -17567,17 +18381,17 @@
                           "enabled": false
                         },
                         "hideui:QetL0": {
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:TS5x9": {
                           "enabled": true
                         },
                         "hideui:IXwZI": {
-                          "width": 16
+                          "opacity": 0
                         },
                         "hideui:o6XLUj": {
                           "enabled": false,
-                          "width": 272
+                          "width": 274
                         },
                         "hideui:yfur4": {
                           "width": 20
@@ -17592,20 +18406,20 @@
                       "type": "ref",
                       "ref": "hideui:inactive-fold-row",
                       "name": "Inactive 14",
-                      "width": 292,
+                      "width": 284,
                       "padding": [
                         0,
+                        4,
                         0,
-                        0,
-                        38
+                        26
                       ],
                       "descendants": {
-                        "hideui:inactive-fold-chevron": {
-                          "fill": "$--muted-foreground"
-                        },
                         "hideui:inactive-fold-label": {
                           "fill": "$--subtle-foreground",
                           "content": "Inactive 14"
+                        },
+                        "hideui:inactive-fold-chevron": {
+                          "fill": "$--muted-foreground"
                         }
                       }
                     },
@@ -17614,19 +18428,9 @@
                       "type": "ref",
                       "ref": "hideui:qdhY0",
                       "name": "sasu",
-                      "width": 292,
+                      "width": 284,
                       "height": 36,
-                      "padding": [
-                        0,
-                        4,
-                        0,
-                        "$--spacing-md"
-                      ],
                       "descendants": {
-                        "hideui:iBYjj": {
-                          "fill": "$--muted-foreground",
-                          "icon": "chevron-right"
-                        },
                         "hideui:mIzlX": {
                           "fill": "$--subtle-foreground",
                           "icon": "folder-git-2"
@@ -17639,10 +18443,12 @@
                           "fill": "$--muted-foreground",
                           "content": "3 agents · 50m"
                         },
-                        "hideui:hm1SG": {
-                          "width": 24,
-                          "height": 24,
-                          "opacity": 0
+                        "hideui:iBYjj": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
+                        },
+                        "hideui:wgtfo": {
+                          "opacity": 1
                         }
                       }
                     },
@@ -17651,26 +18457,30 @@
                       "type": "ref",
                       "ref": "hideui:inactive-fold-row",
                       "name": "Inactive projects 3",
-                      "width": 292,
+                      "width": 284,
                       "padding": [
                         0,
+                        4,
                         0,
-                        0,
-                        14
+                        8
                       ],
                       "descendants": {
-                        "hideui:inactive-fold-chevron": {
-                          "fill": "$--muted-foreground"
-                        },
                         "hideui:inactive-fold-label": {
                           "fill": "$--subtle-foreground",
                           "content": "Inactive projects 3"
+                        },
+                        "hideui:inactive-fold-chevron": {
+                          "fill": "$--muted-foreground"
                         }
                       }
                     }
                   ],
                   "width": 292,
-                  "layout": "vertical"
+                  "layout": "vertical",
+                  "padding": [
+                    0,
+                    4
+                  ]
                 },
                 {
                   "type": "frame",

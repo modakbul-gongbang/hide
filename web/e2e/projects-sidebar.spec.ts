@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { screenshot } from "./wire";
+import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sidebarOverflow, sidebarRowsFit } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -32,7 +32,7 @@ async function prompt(herdr: HerdrFixture, pane: string): Promise<void> {
 }
 
 /** A Herdr workspace at `cwd`, with a fake `claude` agent titled `task` unless it is null. */
-async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string | null): Promise<string> {
+async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string | null, elapsed?: string): Promise<string> {
   const created = herdr.run(["workspace", "create", "--cwd", cwd, "--label", path.basename(cwd), "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]) as {
     result: { root_pane: { pane_id: string } };
   };
@@ -40,7 +40,8 @@ async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string | null
   await prompt(herdr, pane);
   if (task) {
     herdr.run(["agent", "start", `agent-${path.basename(cwd)}`, "--kind", "claude", "--pane", pane]);
-    execFileSync(herdr.bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `task=${task}`], { env: herdr.env, timeout: 30_000 });
+    const tokens = ["--token", `task=${task}`, ...(elapsed ? ["--token", `elapsed=${elapsed}`] : [])];
+    execFileSync(herdr.bin, ["pane", "report-metadata", pane, "--source", "e2e", ...tokens], { env: herdr.env, timeout: 30_000 });
   }
   return pane;
 }
@@ -49,6 +50,14 @@ async function open(page: Page, daemon: Daemon): Promise<void> {
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
   await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
   await page.locator('[data-sidebar-mode="projects"]').click();
+}
+
+/** Whether the project row's Overview button, its click target and focus ring, fills the row's whole height. */
+async function projectButtonFills(page: Page): Promise<boolean> {
+  return page.locator("[data-project-row]").first().evaluate((button) => {
+    const row = button.parentElement!.getBoundingClientRect();
+    return Math.abs(button.getBoundingClientRect().height - row.height) < 0.5;
+  });
 }
 
 async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
@@ -81,18 +90,20 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     const notes = path.join(herdr.root, "notes");
     fs.mkdirSync(notes);
 
-    await workspaceAt(herdr, repo, "메인 체크아웃 정리");
-    const rowsPane = await workspaceAt(herdr, worktree, "사이드바 행 구현");
+    const mainPane = await workspaceAt(herdr, repo, "메인 체크아웃 정리", "12m");
+    const rowsPane = await workspaceAt(herdr, worktree, "사이드바 행 구현", "4m");
     const notesPane = await workspaceAt(herdr, notes, "회의록 요약 정리");
 
     daemon = await startHided(herdr, "projects-sidebar");
+    const last = new Map<string, Record<string, unknown>>();
+    const sent = countSent(page, last);
     await open(page, daemon);
 
     const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]", { hasText: /^repo/ }) });
     const projectToggle = project.locator("[data-project-toggle]");
     await expect(projectToggle).toHaveAttribute("aria-expanded", "true");
     const primary = project.locator("[data-checkout-row]", { hasText: /^main/ });
-    const feature = project.locator("[data-checkout-row]", { hasText: "feature/sidebar-rows" });
+    const feature = project.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="feature/sidebar-rows"]`) });
     await expect(primary.locator("[data-checkout]")).toHaveAttribute("data-checkout-kind", "primary");
     await expect(feature.locator("[data-checkout]")).toHaveAttribute("data-checkout-kind", "branch");
     // The primary checkout leads its project although the worktree moved later.
@@ -108,6 +119,58 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     await expect(feature.locator('[data-checkout-agents="1"]')).toBeVisible();
     await expect(feature.locator("[data-purpose]")).toHaveText("Projects 탭 행 다시 그리기");
     await screenshot(page, "projects-sidebar-closed");
+
+    // sidebar-readability B2, B4, B7: the controls sit on the right in slots
+    // kept at rest. A folded chevron is always shown, an unfolded one waits for
+    // the pointer; the age stays beside the menu; and hover, keyboard focus,
+    // an open menu or a selection move neither the name, the age, the row's
+    // height nor the row after it.
+    const primaryRow = primary.locator("[data-checkout]").locator("xpath=..");
+    const primaryParts = [primary.getByText("main", { exact: true }), primary.locator("[data-checkout-age]")];
+    const primaryToggle = primary.locator("[data-checkout-toggle]");
+    const primaryMenu = primary.locator("button[data-checkout-menu]");
+    const beforeLooking = new Map(sent);
+    await rest(page);
+    const atRest = await rowGeometry(primaryRow, feature, primaryParts);
+    expect(await projectButtonFills(page)).toBe(true);
+    await expect(primaryToggle).toHaveCSS("opacity", "1");
+    await expect(primaryMenu).toHaveCSS("opacity", "0");
+    await expect(projectToggle).toHaveCSS("opacity", "0");
+    const activity = project.locator("[data-project-activity]");
+    expect((await projectToggle.boundingBox())!.x).toBeGreaterThan((await activity.boundingBox())!.x);
+    await project.locator("[data-project-row]").hover();
+    await expect(projectToggle).toHaveCSS("opacity", "1");
+    await primaryRow.hover();
+    await expect(primaryMenu).toHaveCSS("opacity", "1");
+    expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(atRest);
+    await rest(page);
+    await keyboardFocus(page, primary.locator("[data-checkout]"));
+    await expect(primaryMenu).toHaveCSS("opacity", "1");
+    expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(atRest);
+    await rest(page);
+    await primaryMenu.click();
+    await expect(page.getByRole("menu", { name: "main actions" })).toBeVisible();
+    await expect(primary.locator("[data-checkout-age]")).toHaveCSS("opacity", "1");
+    expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(atRest);
+    await screenshot(page, "projects-sidebar-menu-open");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu", { name: "main actions" })).toHaveCount(0);
+    // An unfolded chevron stays shown while its row's menu is open, with the
+    // pointer and focus gone from the row.
+    await project.locator("button[data-project-menu]").click();
+    const projectMenu = page.getByRole("menu", { name: /actions$/ });
+    await expect(projectMenu).toBeVisible();
+    await page.mouse.move(900, 600);
+    await expect(projectToggle).toHaveCSS("opacity", "1");
+    await page.keyboard.press("Escape");
+    await expect(projectMenu).toHaveCount(0);
+    // Looking at a row sends nothing: hover, focus and an open menu are the list's own.
+    await page.waitForTimeout(300);
+    expect([...sent].filter(([kind, count]) => count !== (beforeLooking.get(kind) ?? 0)).map(([kind]) => kind)).toEqual([]);
+    await primary.locator("[data-checkout]").click();
+    await expect(primary.locator("[data-checkout]")).toHaveAttribute("aria-current", "true");
+    await rest(page);
+    expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(atRest);
 
     // The chevron opens the agent rows, which take line two's place.
     await featureToggle.click();
@@ -138,8 +201,61 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     await expect(feature.locator("[data-checkout]")).not.toHaveAttribute("aria-current", "true");
     await folderToggle.click();
     await expect(folder.locator(`[data-checkout-agents-open] [data-pane="${notesPane}"]`)).toBeVisible();
+    // B7: an agent that reported no elapsed time draws none rather than a made-up 0s.
+    await expect(folder.locator(`[data-pane="${notesPane}"] [data-agent-elapsed]`)).toHaveCount(0);
+    await expect(feature.locator(`[data-pane="${rowsPane}"] [data-agent-elapsed]`)).toHaveText("4m");
     await folderToggle.click();
     await expect(folder.locator("[data-checkout-agents-open]")).toHaveCount(0);
+
+    // sidebar-readability B12, B13, B9: a parent in Projects folds its
+    // children with the core's lineage state, the one Agents folds by. The
+    // worktree's agent becomes the primary agent's child: folded by default,
+    // the parent carries the badge and an always-shown chevron; unfolding is
+    // one agent_tree_toggle and nothing else, the child is drawn under its
+    // parent, and its own checkout still lists it.
+    execFileSync(herdr.bin, ["pane", "report-metadata", rowsPane, "--source", "e2e-lineage", "--token", `parent_pane=${mainPane}`], { env: herdr.env, timeout: 30_000 });
+    await primaryToggle.click();
+    const parentRow = primary.locator(`[data-checkout-agents-open] [data-pane="${mainPane}"]`);
+    await expect(parentRow.locator("[data-descendant-badge]")).toHaveAttribute("data-descendant-badge", "1", { timeout: 20_000 });
+    const lineageToggle = parentRow.locator(`[data-agent-tree-toggle="${mainPane}"]`);
+    await expect(lineageToggle).toHaveAttribute("aria-expanded", "false");
+    await rest(page);
+    await expect(lineageToggle).toHaveCSS("opacity", "1");
+    await expect(primary.locator(`[data-checkout-agents-open] [data-pane="${rowsPane}"]`)).toHaveCount(0);
+    const beforeFold = new Map(sent);
+    await lineageToggle.click();
+    await expect.poll(() => (sent.get("agent_tree_toggle") ?? 0) - (beforeFold.get("agent_tree_toggle") ?? 0)).toBe(1);
+    expect(last.get("agent_tree_toggle")?.pane_id).toBe(mainPane);
+    const childUnderParent = primary.locator(`[data-checkout-agents-open] [data-pane="${rowsPane}"]`);
+    await expect(childUnderParent).toHaveAttribute("data-depth", "1", { timeout: 15_000 });
+    await expect(parentRow.locator("[data-descendant-badge]")).toHaveCount(0);
+    await expect(feature.locator(`[data-checkout-agents-open] [data-pane="${rowsPane}"]`)).toHaveAttribute("data-depth", "0");
+    // Checked once the list has redrawn, so a frame sent behind the toggle has arrived too.
+    expect([...sent].filter(([kind, count]) => count !== (beforeFold.get(kind) ?? 0)).map(([kind]) => kind)).toEqual(["agent_tree_toggle"]);
+    await screenshot(page, "projects-sidebar-lineage-open");
+    // The same fold in Agents: the child is drawn under its parent there too.
+    await page.locator('[data-sidebar-mode="agents"]').click();
+    await expect(page.locator(`[data-agent-list] [data-pane="${rowsPane}"]`)).toHaveAttribute("data-depth", "1");
+    await expect(page.locator(`[data-agent-list] [data-pane="${mainPane}"] [data-agent-place]`)).toHaveText("repo › main");
+    await page.locator('[data-sidebar-mode="projects"]').click();
+
+    // Folding changes nothing but the list (B9): no focus, open, read, start
+    // or close event, and the center keeps the Workspace it showed.
+    const screenBefore = await page.locator("[data-workspace-screen]").count();
+    const quiet = new Map(sent);
+    await lineageToggle.click();
+    await expect(childUnderParent).toHaveCount(0, { timeout: 15_000 });
+    await lineageToggle.click();
+    await expect(childUnderParent).toHaveAttribute("data-depth", "1", { timeout: 15_000 });
+    await primaryToggle.click();
+    await primaryToggle.click();
+    await projectToggle.click();
+    await projectToggle.click();
+    await expect(projectToggle).toHaveAttribute("aria-expanded", "true");
+    const moved = [...sent].filter(([kind, count]) => count !== (quiet.get(kind) ?? 0)).map(([kind]) => kind);
+    expect(moved.filter((kind) => !["agent_tree_toggle", "ui_state_update", "ui_state_update.usage_hint"].includes(kind))).toEqual([]);
+    expect(await page.locator("[data-workspace-screen]").count()).toBe(screenBefore);
+    await expect(folderRow).toHaveAttribute("aria-current", "true");
 
     // Folding the project hides its checkouts; both folds survive a reload.
     await projectToggle.click();
@@ -150,6 +266,31 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     await expect(project.locator("[data-checkout]")).toHaveCount(0);
     await projectToggle.click();
     await expect(featureToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(primaryToggle).toHaveAttribute("aria-expanded", "true");
+    // The lineage fold is the core's too: left unfolded above, it is still unfolded.
+    await expect(primary.locator(`[data-checkout-agents-open] [data-pane="${mainPane}"] [data-agent-tree-toggle]`)).toHaveAttribute("aria-expanded", "true");
+    await expect(primary.locator(`[data-checkout-agents-open] [data-pane="${rowsPane}"]`)).toHaveAttribute("data-depth", "1");
+    // B25: every level open, at the design width and the app's minimum, nothing runs sideways.
+    for (const width of ["240px", "var(--size-sidebar-min)"]) expect(await sidebarOverflow(page, width)).toEqual([]);
+    await sidebarOverflow(page, "");
+
+    // B4 in Agents: a quiet row and the row after it stay put through hover,
+    // keyboard focus and selection.
+    await page.locator('[data-sidebar-mode="agents"]').click();
+    const quietRows = page.locator("[data-agent-list] li[data-pane]:not(:has([data-agent-line])):has([data-agent-elapsed])");
+    const [agentRow, nextRow] = [quietRows.nth(0), quietRows.nth(1)];
+    const agentParts = [agentRow.locator("[data-agent-title]"), agentRow.locator("[data-agent-elapsed]")];
+    await rest(page);
+    const agentAtRest = await rowGeometry(agentRow, nextRow, agentParts);
+    await agentRow.hover();
+    expect(await rowGeometry(agentRow, nextRow, agentParts)).toEqual(agentAtRest);
+    await keyboardFocus(page, agentRow.locator("[data-agent-open]"));
+    expect(await rowGeometry(agentRow, nextRow, agentParts)).toEqual(agentAtRest);
+    await agentRow.locator("[data-agent-open]").click();
+    await expect(agentRow.locator("[data-agent-open]")).toHaveAttribute("aria-current", "true");
+    await rest(page);
+    expect(await rowGeometry(agentRow, nextRow, agentParts)).toEqual(agentAtRest);
+    await page.locator('[data-sidebar-mode="projects"]').click();
     await expect(folderToggle).toHaveAttribute("aria-expanded", "false");
 
     for (const theme of ["light", "dark"] as const) {
@@ -159,6 +300,58 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
       await page.locator("[data-project-list]").hover({ position: { x: 1, y: 1 } });
       await screenshot(page, `projects-sidebar-${theme}`);
     }
+
+    // B26: at the largest interface font the rows still hold their text and
+    // hover still moves nothing.
+    await page.keyboard.press("Alt+Comma");
+    await page.locator('[data-settings-tab="appearance"]').click();
+    const fontSize = page.locator('[data-font-size="true"] [role="slider"]');
+    await fontSize.focus();
+    await page.keyboard.press("End");
+    await expect(fontSize).toHaveAttribute("aria-valuenow", "17");
+    await page.keyboard.press("Escape");
+    await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue("--interface-scale"))).not.toBe("");
+    await rest(page);
+    expect(await sidebarRowsFit(page)).toEqual([]);
+    expect(await projectButtonFills(page)).toBe(true);
+    const largeAtRest = await rowGeometry(primaryRow, feature, primaryParts);
+    await primaryRow.hover();
+    expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(largeAtRest);
+    await rest(page);
+    await keyboardFocus(page, primary.locator("[data-checkout]"));
+    expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(largeAtRest);
+    await rest(page);
+    await screenshot(page, "projects-sidebar-large-font");
+    await page.locator('[data-sidebar-mode="agents"]').click();
+    await rest(page);
+    expect(await sidebarRowsFit(page)).toEqual([]);
+    const largeAgentAtRest = await rowGeometry(agentRow, nextRow, agentParts);
+    await agentRow.hover();
+    expect(await rowGeometry(agentRow, nextRow, agentParts)).toEqual(largeAgentAtRest);
+    await keyboardFocus(page, agentRow.locator("[data-agent-open]"));
+    expect(await rowGeometry(agentRow, nextRow, agentParts)).toEqual(largeAgentAtRest);
+    await rest(page);
+    await screenshot(page, "agents-sidebar-large-font");
+    await page.locator('[data-sidebar-mode="projects"]').click();
+
+    // B3: on an input with no hover, the controls that wait for the pointer are always shown.
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 1 });
+    await open(page, daemon);
+    expect(await page.evaluate(() => matchMedia("(hover: none)").matches)).toBe(true);
+    await rest(page);
+    await expect(projectToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(projectToggle).toHaveCSS("opacity", "1");
+    await expect(primaryMenu).toHaveCSS("opacity", "1");
+    await expect(lineageToggle).toHaveCSS("opacity", "1");
+    await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false });
+
+    // B20: before the first snapshot the list says it is connecting, not that it is empty.
+    await page.goto("about:blank");
+    await page.goto(`${daemon.origin}/#token=refused`);
+    await expect(page.locator("[data-sidebar-loading]")).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator("[data-projects-empty]")).toHaveCount(0);
   } finally {
     await daemon?.stop();
     await herdr.stop();

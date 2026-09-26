@@ -2,7 +2,7 @@
 // the screenshot that writes only when a run directory was named, and the
 // way into a Workspace from the Main a first run opens on.
 
-import { expect, type Page, type WebSocket } from "@playwright/test";
+import { expect, type Locator, type Page, type WebSocket } from "@playwright/test";
 import path from "node:path";
 
 /**
@@ -87,4 +87,110 @@ export async function screenshot(page: Page, name: string): Promise<unknown> {
   if (!dir) return;
   await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
   return page.screenshot({ path: path.join(dir, `${name}.png`) });
+}
+
+/**
+ * What must not move when a row changes state (PRD sidebar-readability B2,
+ * B4): the row's height, where the row after it starts, and the left edge of
+ * each named part (the title, the time). Rounded to the device pixel, since a
+ * sub-pixel difference is not a visible move.
+ */
+export async function rowGeometry(row: Locator, next: Locator, parts: Locator[]): Promise<number[]> {
+  const box = await row.boundingBox();
+  const after = await next.boundingBox();
+  if (!box || !after) throw new Error("a measured row is not on screen");
+  const xs: number[] = [];
+  for (const part of parts) {
+    const partBox = await part.boundingBox();
+    if (!partBox) throw new Error("a measured part is not on screen");
+    xs.push(Math.round(partBox.x));
+  }
+  return [Math.round(box.height), Math.round(after.y), ...xs];
+}
+
+/** Puts the pointer on the canvas and drops keyboard focus, so no row is hovered or focused. */
+export async function rest(page: Page): Promise<void> {
+  await page.mouse.move(900, 600);
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+}
+
+/**
+ * Keyboard focus on a control, the way Tab puts it there: a key press first,
+ * so the browser draws `:focus-visible` rather than treating it as a click's focus.
+ */
+export async function keyboardFocus(page: Page, control: Locator): Promise<void> {
+  await page.keyboard.press("Shift");
+  await control.focus();
+  expect(await control.evaluate((element) => element.matches(":focus-visible"))).toBe(true);
+}
+
+/**
+ * The sidebar at a given width, and whether anything in it overflows
+ * sideways: the list scrolling horizontally, or a row's time or control
+ * running past the row's right edge (PRD sidebar-readability B25).
+ */
+export async function sidebarOverflow(page: Page, width: string): Promise<string[]> {
+  return page.evaluate((value) => {
+    const nav = document.querySelector<HTMLElement>("nav[data-sidebar]");
+    if (!nav) return ["no sidebar"];
+    nav.style.width = value;
+    const problems: string[] = [];
+    for (const list of Array.from(document.querySelectorAll<HTMLElement>("[data-agent-list], [data-project-list]"))) {
+      if (list.scrollWidth > list.clientWidth) problems.push(`list scrolls sideways ${list.scrollWidth} > ${list.clientWidth}`);
+    }
+    for (const row of Array.from(document.querySelectorAll<HTMLElement>("[data-pane], [data-checkout-row] > *, [data-project] > *"))) {
+      const right = row.getBoundingClientRect().right;
+      for (const part of Array.from(row.querySelectorAll<HTMLElement>("[data-agent-elapsed], [data-checkout-age], [data-project-activity], button"))) {
+        if (part.getBoundingClientRect().right > right + 0.5) problems.push(`${part.textContent ?? part.tagName} passes its row`);
+      }
+    }
+    return problems;
+  }, width);
+}
+
+/**
+ * Whether every sidebar row still holds its text at the interface font size
+ * in force (PRD sidebar-readability B26): no text runs past the bottom of
+ * any box around it up to its list item, which is where a fixed-height row
+ * spills, unless that box clips it, and no two of them overlap, which is how
+ * a spill shows on screen. A clipping box's own glyphs are judged by eye.
+ */
+export async function sidebarRowsFit(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const problems: string[] = [];
+    // Every element in the lists that holds text itself (names, lines, places,
+    // times, chips), every icon, and every status and provider mark, so a
+    // line drawn only in marks is measured too.
+    const parts = Array.from(document.querySelectorAll<HTMLElement>("nav[data-sidebar] :is([data-agent-list], [data-project-list]) *")).filter(
+      (part) =>
+        part.getClientRects().length > 0 &&
+        (part.matches("svg, [data-mark], [data-agent-mark]") || Array.from(part.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())),
+    );
+    const name = (part: Element) => part.textContent?.trim() || part.getAttribute("data-mark") || part.getAttribute("data-agent-mark") || part.getAttribute("class") || part.tagName;
+    // What of a part can show: a box that clips its overflow (a badge, a
+    // truncated label) is the visible edge of the text inside it.
+    const shown = new Map<HTMLElement, DOMRect>();
+    for (const part of parts) {
+      const rect = DOMRect.fromRect(part.getBoundingClientRect());
+      for (let box = part.parentElement; box && box.tagName !== "NAV"; box = box.parentElement) {
+        const edge = box.getBoundingClientRect().bottom;
+        if (rect.bottom > edge + 0.5) {
+          if (getComputedStyle(box).overflowY === "visible") problems.push(`${name(part)} spills below its ${box.tagName.toLowerCase()}`);
+          else rect.height = Math.max(0, edge - rect.top);
+        }
+        if (box.tagName === "LI") break;
+      }
+      shown.set(part, rect);
+    }
+    const boxes = [...shown];
+    for (const [i, [a, ra]] of boxes.entries()) {
+      for (const [b, rb] of boxes.slice(i + 1)) {
+        if (a.contains(b) || b.contains(a)) continue;
+        const across = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
+        const down = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
+        if (across > 1 && down > 1) problems.push(`${name(a)} overlaps ${name(b)}`);
+      }
+    }
+    return problems;
+  });
 }
