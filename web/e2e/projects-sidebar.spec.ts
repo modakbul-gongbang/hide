@@ -52,6 +52,14 @@ async function open(page: Page, daemon: Daemon): Promise<void> {
   await page.locator('[data-sidebar-mode="projects"]').click();
 }
 
+/** Whether the project row's Overview button, its click target and focus ring, fills the row's whole height. */
+async function projectButtonFills(page: Page): Promise<boolean> {
+  return page.locator("[data-project-row]").first().evaluate((button) => {
+    const row = button.parentElement!.getBoundingClientRect();
+    return Math.abs(button.getBoundingClientRect().height - row.height) < 0.5;
+  });
+}
+
 async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await page.keyboard.press("Alt+Comma");
   await expect(page.locator('[data-settings="true"]')).toBeVisible();
@@ -124,6 +132,7 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     const beforeLooking = new Map(sent);
     await rest(page);
     const atRest = await rowGeometry(primaryRow, feature, primaryParts);
+    expect(await projectButtonFills(page)).toBe(true);
     await expect(primaryToggle).toHaveCSS("opacity", "1");
     await expect(primaryMenu).toHaveCSS("opacity", "0");
     await expect(projectToggle).toHaveCSS("opacity", "0");
@@ -305,6 +314,7 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     await expect.poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue("--interface-scale"))).not.toBe("");
     await rest(page);
     expect(await sidebarRowsFit(page)).toEqual([]);
+    expect(await projectButtonFills(page)).toBe(true);
     const largeAtRest = await rowGeometry(primaryRow, feature, primaryParts);
     await primaryRow.hover();
     expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(largeAtRest);

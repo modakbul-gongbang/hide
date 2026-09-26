@@ -158,9 +158,12 @@ export async function sidebarOverflow(page: Page, width: string): Promise<string
 export async function sidebarRowsFit(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     const problems: string[] = [];
-    // Every element in the lists that holds text itself: names, lines, places, times, chips.
+    // Every element in the lists that holds text itself (names, lines, places,
+    // times, chips) and every icon, so a line of marks alone is measured too.
     const parts = [...document.querySelectorAll<HTMLElement>("nav[data-sidebar] :is([data-agent-list], [data-project-list]) *")].filter(
-      (part) => part.getClientRects().length > 0 && [...part.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim()),
+      (part) =>
+        part.getClientRects().length > 0 &&
+        (part.tagName === "svg" || [...part.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())),
     );
     // What of a part can show: a box that clips its overflow (a badge, a
     // truncated label) is the visible edge of the text inside it.

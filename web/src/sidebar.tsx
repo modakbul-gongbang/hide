@@ -502,7 +502,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
               type="button"
               data-project-row={workspace.id}
               aria-current={selected ? "page" : undefined}
-              className="flex h-full min-w-0 flex-1 items-center gap-sm rounded-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+              className="flex min-w-0 flex-1 self-stretch items-center gap-sm rounded-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
               onClick={() => useUiStore.getState().setScreen({ kind: "overview", projectId: workspace.id })}
             >
               <ProjectIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
