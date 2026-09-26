@@ -410,7 +410,7 @@ The overlay ("Recent Panels", ⌃Tab / ⌃⇧Tab in the desktop app and the Swif
 A second cycle ("Recent Projects", ⌥Tab / ⌥⇧Tab) scopes to projects globally and restores each project's last used surface.
 Committing a row brings its surface forward in its own project and checkout, switching the Workspace when needed, as one event; a display's View area shows if only Agents showed, and the keyboard lands in it.
 On the web a surface is in use where the keyboard is: the focused checkout's active display while the keyboard is in its View area (or only Views show), else its visible Herdr tab; a commit's intermediate frames are not visits.
-The web shell's Recent Panels holds this machine's surfaces only: a device's tab or display cannot be brought forward from the web shell yet, so no row stands for one, and while a device is in front nothing of this machine's counts as in use.
+The web shell's Recent Panels order holds this machine's surfaces only: a device's tab or display cannot be brought forward from another context in the web shell yet, so no row stands for one; while a device is in front, nothing of this machine's counts as in use, and Recent Panels walks that device's visible checkout's Herdr tabs, the shown one first.
 Holding the chord's modifier previews; releasing it commits; Escape keeps the original selection; a menu action commits immediately.
 Reopen Closed Tab is disabled when the session-local recent-close stack is empty or a restore is already running, and restoration works regardless of which surface currently owns focus.
 Restoration is one action with no confirmation: an in-flight pane shows inline progress, and a restore without a target pane shows a compact inline warning.

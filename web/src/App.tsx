@@ -68,7 +68,13 @@ export function App() {
     const observeFocus = (event: FocusEvent) => {
       if (event.target instanceof Element && event.target.closest("[data-agent-area], [data-view-area]")) observeRecent(useShellStore.getState().rest, true);
     };
-    const endCommit = () => expectSurface(null);
+    // A chord the shell answered (the next cycle) and a bare modifier are
+    // not the operator acting on the surface a commit is bringing forward.
+    const endCommit = (event: Event) => {
+      if (event.defaultPrevented) return;
+      if (event instanceof KeyboardEvent && ["Control", "Alt", "Shift", "Meta"].includes(event.key)) return;
+      expectSurface(null);
+    };
     window.addEventListener("focusin", observeFocus);
     window.addEventListener("pointerdown", endCommit, true);
     window.addEventListener("keydown", endCommit, true);

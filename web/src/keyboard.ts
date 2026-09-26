@@ -12,8 +12,8 @@
 
 import type { Actions } from "./actions";
 import { hostBridge, hostKind } from "./host";
-import { availableSurfaces, currentSurface, observeProject, observeSurfaces, panelItem, projectItem, reconcileCycle, recentProjectOrder, recentSurfaces, type CycleItem } from "./recent";
-import { contextWorkspaces, remoteContext } from "./remote";
+import { availableSurfaces, currentSurface, observeProject, observeSurfaces, panelItem, placeLabel, projectItem, reconcileCycle, recentProjectOrder, recentSurfaces, type CycleItem } from "./recent";
+import { contextWorkspaces, remoteContext, remoteView } from "./remote";
 import { hostRegistry, matchHost, REGISTRY, storedBindings, type CommandId } from "./shortcuts";
 import { editorFor, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
@@ -25,9 +25,38 @@ import { drawnViews, viewAreaInUse } from "./viewFocus";
  * index 0 is the one in use and one chord lands on the one before it.
  */
 export function panelCycle(rest: SnapshotRest | null): Cycle | null {
+  if (remoteContext(rest)) return deviceTabCycle(rest);
   const items = recentSurfaces()
     .map((surface) => panelItem(rest, surface))
     .filter((item): item is CycleItem => item !== null);
+  return items.length > 1 ? { kind: "panels", items, index: 0 } : null;
+}
+
+/**
+ * While a device is in front, its visible checkout's Herdr tabs, the one it
+ * shows first: the web shell cannot bring a device's surface forward from
+ * anywhere else yet, so Recent Panels there stays within that checkout.
+ */
+function deviceTabCycle(rest: SnapshotRest | null): Cycle | null {
+  const view = remoteView(remoteContext(rest)?.session ?? null);
+  const checkout = view?.checkout;
+  if (!checkout) return null;
+  const workspace = contextWorkspaces(rest).find((row) => row.id === checkout.workspace_id);
+  const tabs = checkout.tabs.filter((tab) => tab.id);
+  const shown = view.tab?.id ?? checkout.active_tab_id;
+  const ordered = [...tabs.filter((tab) => tab.id === shown), ...tabs.filter((tab) => tab.id !== shown)];
+  const detail = `${workspace ? placeLabel(workspace, checkout) : checkout.label} · Terminal`;
+  const items: CycleItem[] = ordered.map((tab) => ({
+    key: tab.id!,
+    title: tab.label ?? tab.id!,
+    detail,
+    kind: "herdr",
+    agent: null,
+    surface: null,
+    deviceTabId: tab.id!,
+    workspaceId: checkout.workspace_id,
+    checkoutId: checkout.id,
+  }));
   return items.length > 1 ? { kind: "panels", items, index: 0 } : null;
 }
 
@@ -57,10 +86,13 @@ export function observeRecent(rest: SnapshotRest | null, moved: boolean) {
 
 /** The held cycle once the session changed under it: see `reconcileCycle`. */
 export function reconcileHeldCycle(cycle: Cycle, rest: SnapshotRest | null): Cycle | null {
+  const deviceTabs = remoteView(remoteContext(rest)?.session ?? null)?.checkout?.tabs;
   const alive =
-    cycle.kind === "panels"
-      ? new Set(availableSurfaces(rest, recentSurfaces()).map((surface) => surface.key))
-      : new Set(contextWorkspaces(rest).map((workspace) => workspace.id));
+    cycle.kind === "projects"
+      ? new Set(contextWorkspaces(rest).map((workspace) => workspace.id))
+      : remoteContext(rest)
+        ? new Set((deviceTabs ?? []).map((tab) => tab.id ?? ""))
+        : new Set(availableSurfaces(rest, recentSurfaces()).map((surface) => surface.key));
   const kept = reconcileCycle(cycle.items, cycle.index, (item) => alive.has(item.key));
   return kept && kept.items.length > 1 ? { ...cycle, ...kept } : null;
 }
@@ -222,6 +254,7 @@ export function installKeyboard(actions: Actions): () => void {
     const chosen = cycle.items[cycle.index];
     if (!chosen || cycle.index === 0) return;
     if (chosen.surface) actions.openSurface(chosen.surface);
+    else if (chosen.deviceTabId) actions.focusTab(chosen.deviceTabId);
     else actions.focusCheckout(chosen.workspaceId, chosen.checkoutId);
   };
 

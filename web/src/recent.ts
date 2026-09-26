@@ -180,8 +180,10 @@ export type CycleItem = {
   kind: SurfaceKind | "project";
   /** The one agent a tab holds, drawn with its status mark. */
   agent: Pick<AgentRow, "symbol" | "status_label" | "demand" | "activity" | "emphasized" | "waiting_on_descendants"> | null;
-  /** The surface a commit brings forward, or null for a project with none to restore. */
+  /** The surface a commit brings forward, or null for a project with none to restore and for a device's tab. */
   surface: Surface | null;
+  /** A tab of the device in front, which that device's Herdr focuses. */
+  deviceTabId?: string;
   workspaceId: string;
   checkoutId: string;
 };
