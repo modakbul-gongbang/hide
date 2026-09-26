@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { enterWorkspace, screenshot } from "./wire";
+import { enterWorkspace, screenshot, showExplorer } from "./wire";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -135,6 +135,7 @@ test("an editor open during a theme switch is drawn like one opened after it", a
     daemon = await startHided(herdr, "editor-theme");
     await open(page, daemon);
     await enterWorkspace(page, "demo");
+    await showExplorer(page);
 
     // CodeMirror scopes its dark and light base styles by a class on the
     // editor. The switch swaps that class on the open editor, and what it

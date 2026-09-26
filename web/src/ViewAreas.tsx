@@ -86,6 +86,10 @@ type Tree = {
   focus: (displayId: string) => void;
   startResize: (box: DividerBox, event: React.PointerEvent<HTMLElement>) => void;
   menu: (displayId: string) => MenuEntry<ViewMenuId>[];
+  /** What the side panel's strip carries at its right end, drawn in the top right area's tab bar. */
+  trailing: React.ReactNode;
+  /** The area whose tab bar ends at the strip's right end. */
+  trailingArea: string | null;
 };
 
 const TreeContext = createContext<Tree | null>(null);
@@ -97,25 +101,40 @@ function useTree(): Tree {
 }
 
 /**
- * The front Workspace's View areas. With no display they are drawn only while
- * a file of this checkout is opening; otherwise the Workspace body leaves
- * them out (`drawnMode`).
+ * The front Workspace's View areas, in the side panel. With no display they
+ * are drawn only while a file of this checkout is opening; otherwise the
+ * panel holds its tools or its empty state (`panelFrame`). `trailing` is what
+ * the panel's strip carries at its right end when no tool column is there to
+ * carry it.
  */
-export function ViewAreas({ actions }: { actions: Actions }) {
+export function ViewAreas({ actions, trailing = null }: { actions: Actions; trailing?: React.ReactNode }) {
   const view = useShellStore((s) => workspaceViewOf(s.rest));
   if (!view) return null;
   const layout = view.layout;
   if (!layout) {
     return <AreaEmpty state="view-layout-missing" text="This Hide core publishes no View areas, so no file or diff can be shown here." />;
   }
-  if (layout.display_count === 0) return <AreaEmpty state="view-opening" text="Opening…" />;
+  if (layout.display_count === 0) {
+    return (
+      <>
+        {trailing ? <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center justify-end bg-card">{trailing}</div> : null}
+        <AreaEmpty state="view-opening" text="Opening…" />
+      </>
+    );
+  }
   // One tree per Workspace: a front that moves to another Workspace ends a
   // drag, a divider drag or a menu begun on this one, whose ids (a1, d2, s1)
   // name other views there (contract 4.1, B8).
-  return <ViewTree key={workspaceKey({ device_id: view.device_id, path: view.path })} layout={layout} deviceId={view.device_id} path={view.path} actions={actions} />;
+  return <ViewTree key={workspaceKey({ device_id: view.device_id, path: view.path })} layout={layout} deviceId={view.device_id} path={view.path} trailing={trailing} actions={actions} />;
 }
 
-function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnapshot; deviceId: string; path: string; actions: Actions }) {
+/** The area at the tree's top right: the second half of a side-by-side split, the first of a stacked one. */
+function topRightArea(node: ViewNode): string {
+  if ("area" in node) return node.area.id;
+  return topRightArea(node.split.axis === "row" ? node.split.second : node.split.first);
+}
+
+function ViewTree({ layout, deviceId, path, trailing, actions }: { layout: ViewLayoutSnapshot; deviceId: string; path: string; trailing: React.ReactNode; actions: Actions }) {
   const workspace = useMemo(() => ({ device_id: deviceId, path }), [deviceId, path]);
   const key = workspaceKey(workspace);
   const [body, setBody] = useState<HTMLDivElement | null>(null);
@@ -343,6 +362,8 @@ function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnaps
     focus,
     startResize,
     menu: (displayId) => displayMenu(layout, geometry, sizes, displayId),
+    trailing,
+    trailingArea: trailing ? (single ? (shownArea?.id ?? null) : topRightArea(layout.root)) : null,
   };
 
   return (
@@ -566,6 +587,7 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: ViewAreaSn
           }
         />
       ) : null}
+      {tree.trailingArea === area.id ? tree.trailing : null}
     </div>
   );
 }

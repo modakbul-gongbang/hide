@@ -73,11 +73,13 @@ describe("search entries", () => {
 });
 
 describe("workspace commands", () => {
-  const rest = { workspace_view: { device_id: "local", path: "/repo", mode: "together", explorer: true, changes: false, agent_share: 0.5 } } as unknown as SnapshotRest;
+  const rest = { workspace_view: { device_id: "local", path: "/repo", panel: "open", pinned: false, explorer: true, changes: false, views_over_share: 0.6 } } as unknown as SnapshotRest;
   const wide = { drawn: null, placement: "column" } as const;
 
-  it("offers the other layouts by the menu's names and each tool by what it would do", () => {
-    expect(searchEntries(rest, wide).map((entry) => entry.title)).toEqual(["Layout: Agents only", "Layout: Views only", "Hide Explorer", "Show History"]);
+  it("offers the side panel's other states, its pin, and each tool by what it would do (issue 170)", () => {
+    expect(searchEntries(rest, wide).map((entry) => entry.title)).toEqual(["Close side panel", "Expand side panel", "Pin side panel", "Hide Explorer", "Show History"]);
+    const closed = { workspace_view: { ...(rest.workspace_view as object), panel: "closed", pinned: true } } as unknown as SnapshotRest;
+    expect(searchEntries(closed, wide).map((entry) => entry.title)).toEqual(["Open side panel", "Expand side panel", "Unpin side panel", "Show Explorer", "Show History"]);
   });
 
   it("offers a tool a narrow window's closed overlay keeps out of sight as one to show (S7 B12)", () => {

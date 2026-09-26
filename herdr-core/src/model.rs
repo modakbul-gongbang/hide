@@ -165,17 +165,21 @@ impl<T: Serialize> Serialize for Edited<T> {
     }
 }
 
-/// What the front Workspace shows: its areas, its tools, the boundary
-/// between the areas and its View area tree. The editor's `active_tab_id` is
-/// the document of the active area's active display.
+/// What the front Workspace shows: its side panel, the panel's tools and
+/// width, and its View area tree. The editor's `active_tab_id` is the
+/// document of the active area's active display.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WorkspaceViewSnapshot {
     pub device_id: String,
     pub path: String,
-    pub mode: crate::workspace_views::ViewMode,
+    /// Whether and how the side panel shows (issue 170).
+    pub panel: crate::workspace_views::PanelState,
+    /// The panel docked beside the agents rather than over them.
+    pub pinned: bool,
     pub explorer: bool,
     pub changes: bool,
-    pub agent_share: f32,
+    /// The open panel's width, as a share of the Workspace body's.
+    pub views_over_share: f32,
     /// Whether this is the Workspace the operator last chose, now or before a
     /// restart, which the shell opens on; any other front starts on Main
     /// (D-11).

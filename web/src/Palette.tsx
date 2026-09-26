@@ -183,7 +183,8 @@ function SearchPalette({ actions }: { actions: Actions }) {
     if (!entry || entry.unavailable) return;
     useUiStore.getState().closeOverlay();
     if (entry.command) {
-      if ("layout" in entry.command) actions.setLayout(entry.command.layout);
+      if ("panel" in entry.command) actions.setPanel(entry.command.panel);
+      else if ("pinned" in entry.command) actions.setPanelPinned(entry.command.pinned);
       else if ("tool" in entry.command) actions.setTool(entry.command.tool, entry.command.visible);
       else if ("view" in entry.command) actions.runViewCommand(entry.command.view);
       else actions.openFilePaletteBeside();

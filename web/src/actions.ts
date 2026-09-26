@@ -23,7 +23,7 @@ import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import type { OpenTarget } from "./navigation";
 import { expectSurface, type Surface } from "./recent";
-import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
+import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, inPlace as inPlaceEvent, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
 import {
   catalogWorkspaces,
   deviceOfCheckout,
@@ -56,7 +56,6 @@ import {
   menuEdge,
   neighbourArea,
   resizeTarget,
-  shownTools,
   viewCommands,
   viewLayoutPayload,
   workspaceKey,
@@ -66,7 +65,7 @@ import {
   type ViewMenuId,
   type ViewWorkspace,
 } from "./viewLayout";
-import { workspaceViewOf, type ViewMode } from "./workspace";
+import { workspaceViewOf, type PanelState, type WorkspaceView } from "./workspace";
 
 /** The `device_id` an event carries: none for this machine, which the core takes as the default. */
 function deviceField(device: string): { device_id?: string } {
@@ -162,14 +161,15 @@ export function createActions(dispatch: DispatchFn) {
     ui().setScreen({ kind: "workspace" });
     const targetId = remoteTargetOfPane(rest(), targetPaneId);
     if (targetId) {
+      // Chips, Returns and Opens sit in the Agent area on screen, beside the side panel (issue 170).
       dispatch({
         schema_version: 2,
         kind: "remote_control",
-        payload: { target_id: targetId, request_id: requestId, report_pane_focus_outcome: true, action: "focus_pane", pane_id: targetPaneId },
+        payload: { target_id: targetId, request_id: requestId, report_pane_focus_outcome: true, in_place: true, action: "focus_pane", pane_id: targetPaneId },
       });
       return;
     }
-    dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: targetPaneId, origin: "operator", request_id: requestId } });
+    dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: targetPaneId, origin: "operator", request_id: requestId, in_place: true } });
   };
 
   /** The id of the core's task slot now, so a request can tell its own answer from an older one. */
@@ -252,42 +252,41 @@ export function createActions(dispatch: DispatchFn) {
   };
 
   /**
-   * The front Workspace's layout and tools (S6 D-03, D-05): one
+   * The front Workspace's side panel and tools (S6 D-05, issue 170): one
    * `workspace_view` event naming only what changes. The core keeps them per
    * Workspace, so another Workspace is never touched.
    */
-  const setWorkspaceView = (patch: { mode?: ViewMode; explorer?: boolean; changes?: boolean; agent_share?: number; reveal?: string }) => {
+  const setWorkspaceView = (patch: { panel?: PanelState; pinned?: boolean; explorer?: boolean; changes?: boolean; views_over_share?: number; reveal?: string }) => {
     if (!workspaceViewOf(rest())) return diagnostic("workspace_view: no Workspace in front");
     dispatch({ schema_version: 2, kind: "workspace_view", payload: patch });
   };
 
   /**
-   * Shows one tool (B10). The operator asked for it, so a narrow window's
-   * overlay opens (S7 B12); nothing is sent when the core already stores it
-   * shown, since the overlay closing never stored it hidden.
+   * Shows one tool (B10). The operator asked for it, so a narrow panel's
+   * overlay opens (S7 B12), and a closed panel opens with it (issue 170, the
+   * core's rule); nothing is sent when the open panel already shows it, since
+   * the overlay closing never stored it hidden.
    */
+  /** A narrow panel's overlay opens for the tool asked for, including with the panel that the same event opens. */
+  const askForTools = (view: WorkspaceView) => {
+    ui().openTools();
+    if (view.panel === "closed") ui().askTools();
+  };
+
   const showTool = (tool: "explorer" | "changes") => {
     const view = workspaceViewOf(rest());
     if (!view) return diagnostic("workspace_view: no Workspace in front");
-    ui().openTools();
-    if (!(tool === "explorer" ? view.explorer : view.changes)) setWorkspaceView(tool === "explorer" ? { explorer: true } : { changes: true });
+    askForTools(view);
+    if (view.panel === "closed" || !(tool === "explorer" ? view.explorer : view.changes)) setWorkspaceView(tool === "explorer" ? { explorer: true } : { changes: true });
   };
 
   const showExplorerPanel = () => showTool("explorer");
 
-  /**
-   * ⌘⇧B: hides the Workspace tools when any shows, else shows them. Tools a
-   * narrow window's closed overlay keeps out of sight are not showing, so the
-   * key opens the overlay on the tools the core stores rather than storing
-   * them hidden (S7 B12, B13).
-   */
+  /** ⌘⇧B: closes the side panel when it shows, expanded or not, else opens it at its width (issue 170). */
   const toggleRightPanel = () => {
     const view = workspaceViewOf(rest());
-    if (!view) return diagnostic("toggle tools: no Workspace in front");
-    const shown = shownTools(view, ui().toolsPlacement);
-    if (shown.explorer || shown.changes) return setWorkspaceView({ explorer: false, changes: false });
-    if (view.explorer || view.changes) return ui().openTools();
-    showTool("explorer");
+    if (!view) return diagnostic("toggle side panel: no Workspace in front");
+    setWorkspaceView({ panel: view.panel === "closed" ? "open" : "closed" });
   };
 
   /**
@@ -334,9 +333,6 @@ export function createActions(dispatch: DispatchFn) {
     const here = explorerHere();
     if (!here) return diagnostic(`${what}: no focused checkout`);
     revealAncestors(path);
-    // A file asked for is what the operator works on next, so a window too
-    // narrow for Agents and Views together shows the Views (S7 B13).
-    ui().setWorkingRegion("views");
     dispatch({
       schema_version: 2,
       kind: "file_open",
@@ -492,7 +488,7 @@ export function createActions(dispatch: DispatchFn) {
   /**
    * `changes_select` for a History row of the checkout in front (S4, S7
    * contract 4.2): the core places a diff by the rules a file open follows,
-   * so a window too narrow for Agents and Views together shows the Views.
+   * so a closed side panel opens to show it (issue 170).
    */
   const selectChangeIn = (path: string, committed: boolean, preview: boolean, beside: boolean) => {
     const here = explorerContext(rest()).checkout;
@@ -503,7 +499,6 @@ export function createActions(dispatch: DispatchFn) {
     }
     const group = committed ? changes.committed : changes.entries;
     if (!group.some((entry) => entry.path === path)) return diagnostic("changes_select: row is no longer available");
-    ui().setWorkingRegion("views");
     dispatch({ schema_version: 2, kind: "changes_select", payload: { path, committed, preview, ...(beside ? { beside: true } : {}) } });
   };
 
@@ -641,7 +636,8 @@ export function createActions(dispatch: DispatchFn) {
 
   /** Shows the Explorer with a file's row unfolded and selected; nothing is opened. */
   const revealInExplorer = (path: string) => {
-    ui().openTools();
+    const view = workspaceViewOf(rest());
+    if (view) askForTools(view);
     setWorkspaceView({ explorer: true, reveal: path });
     ui().setExplorerSelection(path);
   };
@@ -882,8 +878,6 @@ export function createActions(dispatch: DispatchFn) {
     /** An agent chosen on an Overview or in the Agents list: its Workspace and pane (B12). */
     openAgent(paneId: string) {
       beginOpening({ paneId });
-      // An agent asked for is what a window too narrow for both regions shows (S7 B13).
-      ui().setWorkingRegion("agents");
       const target = remoteTargetOfPane(rest(), paneId) ?? "local";
       const forward = (rest()?.navigator?.focused_device_id ?? "local") !== target;
       if (target !== "local") {
@@ -944,10 +938,13 @@ export function createActions(dispatch: DispatchFn) {
       });
     },
 
-    focusTab(tabId: string) {
+    /** `inPlace`: chosen in the Agent area's own tab strip, beside the side panel, which stays up (issue 170). */
+    focusTab(tabId: string, inPlace = false) {
       if (remoteContext(rest())) {
         const host = remoteHost("Switching tab");
-        if (host) sendRemote(host.targetId, { action: "focus_tab", tab_id: tabId });
+        if (!host) return;
+        const event = remoteControl(host.targetId, { action: "focus_tab", tab_id: tabId });
+        dispatch(inPlace ? inPlaceEvent(event) : event);
         return;
       }
       const here = current();
@@ -955,7 +952,7 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({
         schema_version: 2,
         kind: "focus_tab",
-        payload: { workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, tab_id: tabId },
+        payload: { workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, tab_id: tabId, ...(inPlace ? { in_place: true } : {}) },
       });
     },
 
@@ -1175,16 +1172,22 @@ export function createActions(dispatch: DispatchFn) {
 
     setWorkspaceView,
 
-    setLayout(mode: ViewMode) {
-      setWorkspaceView({ mode });
+    /** The side panel closed, open or expanded; none of them closes a view (issue 170). */
+    setPanel(panel: PanelState) {
+      setWorkspaceView({ panel });
+    },
+
+    /** Docks the side panel beside the agents, or floats it over them again: one terminal resize either way. */
+    setPanelPinned(pinned: boolean) {
+      setWorkspaceView({ pinned });
     },
 
     revealInExplorer,
 
     /**
      * Explorer and Changes open and close independently (B10). Showing a tool
-     * a narrow window's overlay kept out of sight opens the overlay without
-     * an event when the core already stores it shown (S7 B12, B13).
+     * a narrow panel's overlay kept out of sight opens the overlay without an
+     * event when the open panel already stores it shown (S7 B12, B13).
      */
     setTool(tool: "explorer" | "changes", visible: boolean) {
       if (visible) return showTool(tool);
@@ -1316,7 +1319,6 @@ export function createActions(dispatch: DispatchFn) {
     openBrowser(url: string, workspace?: ViewWorkspace) {
       const target = workspace ?? frontViewWorkspace();
       if (!target) return diagnostic("browser_open: no Workspace in front");
-      ui().setWorkingRegion("views");
       dispatch({ schema_version: 2, kind: "browser_open", payload: { url, workspace: { device_id: target.device_id, path: target.path } } });
     },
 
@@ -1324,7 +1326,6 @@ export function createActions(dispatch: DispatchFn) {
     openInBrowser(path: string) {
       const target = frontViewWorkspace();
       if (!target) return diagnostic("browser_open: no Workspace in front");
-      ui().setWorkingRegion("views");
       dispatch({ schema_version: 2, kind: "browser_open", payload: { url: fileUrl(path), workspace: { device_id: target.device_id, path: target.path } } });
     },
 

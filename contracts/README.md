@@ -31,7 +31,7 @@ The core is the writer of those strings and the shell decodes them strictly, so 
 `herdr-core/src/model.rs` tests that every variant of each enum serializes to the listed value and nothing else; `SnapshotWireEnumTests` in the shell tests that each listed value decodes and that the Swift enum has no extra case.
 Add the variant to this file in the same change as the Rust variant and the Swift case; either test fails until all three agree.
 
-`workspace_view.mode` (`agents`, `together`, `views`) is not listed: the core writes `workspace_view` only for a shell with separate View areas, which today is the web shell, and omits it from the Swift snapshot, so no strict decoder reads it.
+`workspace_view.panel` (`closed`, `open`, `expanded`) is not listed: the core writes `workspace_view` only for a shell with separate View areas, which today is the web shell, and omits it from the Swift snapshot, so no strict decoder reads it.
 The View area tree inside it (PRD S7) takes the same exception for the same reason: a split's `axis` (`row`, `column`), a display's `kind` (`file`, `diff`) and a display's `state` (`open`, `opening`, `waiting`, `unavailable`).
 List them here, with Swift cases, in the change that lets the Swift shell draw separate areas.
 

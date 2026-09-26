@@ -7,7 +7,6 @@
 // values, so every rule is testable without a page; nothing here dispatches.
 
 import type { ViewAreaSnapshot, ViewDisplaySnapshot, ViewLayoutSnapshot, ViewNode, ViewSplitSnapshot } from "./snapshot";
-import type { ViewMode } from "./workspace";
 
 export type Rect = { x: number; y: number; width: number; height: number };
 export type Point = { x: number; y: number };
@@ -356,7 +355,7 @@ export function splitEligibility(
  * empty Views it opens in the empty area; from the only area with a view
  * it makes a new area on the right, so that area has to hold two minimums
  * side by side, exactly as Split right does. While the View areas are not
- * drawn (Agents only) their room is unknown, and the core's caps decide.
+ * drawn (the side panel closed) their room is unknown, and the core's caps decide.
  */
 export function besideUnavailable(
   layout: ViewLayoutSnapshot | null | undefined,
@@ -689,35 +688,11 @@ function moved(before: number, after: number): number | null {
   return Math.abs(after - before) < 1e-6 ? null : after;
 }
 
-// --- narrow windows ----------------------------------------------------------
+// --- narrow panels -----------------------------------------------------------
 
 /**
- * What a narrow Workspace body shows (A7, B12, B13), decided from its width
- * alone and never stored: the tools become an overlay when the work area
- * cannot keep its minimum beside the tool column, and Agents and Views show
- * one at a time when both minimums do not fit even without the tools. An
- * unmeasured body (0) is neither.
- */
-export function narrowWorkspace(input: {
-  bodyWidth: number;
-  mode: ViewMode;
-  areaMin: number;
-  panelMin: number;
-  divider: number;
-}): { toolsOverlay: boolean; singleRegion: boolean } {
-  const { bodyWidth, mode, areaMin, panelMin, divider } = input;
-  if (bodyWidth <= 0) return { toolsOverlay: false, singleRegion: false };
-  const together = 2 * areaMin + divider;
-  const work = mode === "together" ? together : areaMin;
-  return {
-    toolsOverlay: bodyWidth < work + panelMin,
-    singleRegion: mode === "together" && bodyWidth < together,
-  };
-}
-
-/**
- * How the Workspace tools stand (B12, D-08): the `column` beside the working
- * regions while the window has room for it; in a narrower window an overlay
+ * How the Workspace tools stand (B12, D-08): the `column` beside the View
+ * areas while the side panel has room for it; in a narrower panel an overlay
  * that is `closed` until the operator asks for a tool and `open` until they
  * dismiss it, so it never opens by itself.
  */
@@ -734,12 +709,13 @@ export function placementForWidth(current: ToolsPlacement, narrow: boolean): Too
 }
 
 /**
- * The tools a Workspace shows now: the ones the core stores, except that a
- * narrow window's overlay shows them only while the operator has it open.
- * The stored tools never change for it, so widening brings the column back.
+ * The tools a Workspace shows now: the ones the core stores while its side
+ * panel shows, except that a narrow panel's overlay shows them only while the
+ * operator has it open. The stored tools never change for it, so widening
+ * brings the column back.
  */
-export function shownTools(stored: { explorer: boolean; changes: boolean }, placement: ToolsPlacement): { explorer: boolean; changes: boolean } {
-  const shown = placement !== "closed";
+export function shownTools(stored: { explorer: boolean; changes: boolean; panel: string }, placement: ToolsPlacement): { explorer: boolean; changes: boolean } {
+  const shown = stored.panel !== "closed" && placement !== "closed";
   return { explorer: stored.explorer && shown, changes: stored.changes && shown };
 }
 

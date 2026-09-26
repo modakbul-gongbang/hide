@@ -1,6 +1,6 @@
 //! The runtime side of per-Workspace presentation (PRD S6 D-04, D-05, D-08,
-//! D-10; S7): which areas the front Workspace shows, its tools, its View
-//! area tree, when that tree's documents are read back, and the file that
+//! D-10; S7; issue 170): how the front Workspace's side panel shows, its
+//! tools, its View area tree, when that tree's documents are read back, and the file that
 //! keeps it all. What the areas hold and how an open lands in them is
 //! `view_areas.rs`.
 //!
@@ -15,7 +15,7 @@ use serde::Deserialize;
 use super::view_areas::Reconciled;
 use super::*;
 use crate::model::WorkspaceViewSnapshot;
-use crate::workspace_views::{self, ViewMode, WorkspaceView, WorkspaceViews};
+use crate::workspace_views::{self, PanelState, WorkspaceView, WorkspaceViews};
 
 /// A Workspace's identity: the device and the checkout path.
 pub(super) type WorkspaceKey = (String, String);
@@ -69,10 +69,12 @@ pub(super) struct WorkspaceViewStore {
     save_worker: Option<thread::JoinHandle<()>>,
 }
 
-/// What an event asks of the front Workspace's areas once it has moved the
-/// screen: a document opened while only Agents show brings the View area
-/// back, and an agent opened while only Views show brings the Agent area
-/// back (D-08). Nothing else changes the mode on its own.
+/// What an event asks of the front Workspace's side panel once it has moved
+/// the screen (D-08, issue 170): a document opened while the panel is closed
+/// opens it, and an agent chosen from elsewhere uncovers the agents, closing
+/// a panel that floats over them and bringing an expanded pinned one back to
+/// its width, while one chosen where it shows beside the panel (`in_place`)
+/// changes nothing. Nothing else moves the panel on its own.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum AreaIntent {
     Views,
@@ -88,7 +90,8 @@ impl AreaIntent {
             // A deselect opens nothing.
             Event::ChangesSelect(payload) if payload.path.is_some() => Some(Self::Views),
             Event::RevealPath(_) => Some(Self::RevealInViews),
-            Event::FocusPane(_) | Event::FocusTab(_) => Some(Self::Agents),
+            Event::FocusPane(payload) if !payload.in_place => Some(Self::Agents),
+            Event::FocusTab(payload) if !payload.in_place => Some(Self::Agents),
             // A device focus lands where the device's Herdr moves, so
             // `request_remote_control` applies it to that Workspace.
             _ => None,
@@ -100,16 +103,23 @@ impl AreaIntent {
 /// presentation. Absent fields keep their value.
 #[derive(Debug, Deserialize)]
 pub(super) struct WorkspaceViewPayload {
+    /// `closed`, `open` or `expanded`.
     #[serde(default)]
-    pub(super) mode: Option<String>,
+    pub(super) panel: Option<String>,
+    #[serde(default)]
+    pub(super) pinned: Option<bool>,
+    /// A tool shown while the panel is closed opens the panel with it,
+    /// unless the payload names the panel too.
     #[serde(default)]
     pub(super) explorer: Option<bool>,
     #[serde(default)]
     pub(super) changes: Option<bool>,
+    /// The open panel's width, as a share of the Workspace body's.
     #[serde(default)]
-    pub(super) agent_share: Option<f32>,
+    pub(super) views_over_share: Option<f32>,
     /// A file of the front Workspace to reveal: the Explorer shows with the
     /// file's folders unfolded, in the same event, and nothing is opened.
+    /// Like any tool shown, it opens a closed panel.
     #[serde(default)]
     pub(super) reveal: Option<String>,
 }
@@ -301,23 +311,27 @@ impl Runtime {
             return;
         };
         let entry = store.views.entry(&key.0, &key.1);
-        let before = (entry.mode, entry.explorer);
+        let before = (entry.panel, entry.explorer);
         match intent {
             AreaIntent::Views | AreaIntent::RevealInViews => {
-                if entry.mode == ViewMode::Agents {
-                    entry.mode = ViewMode::Together;
+                if entry.panel == PanelState::Closed {
+                    entry.panel = PanelState::Open;
                 }
                 if intent == AreaIntent::RevealInViews {
                     entry.explorer = true;
                 }
             }
+            // A pinned panel sits beside the agents, so only its expansion
+            // covers them.
             AreaIntent::Agents => {
-                if entry.mode == ViewMode::Views {
-                    entry.mode = ViewMode::Together;
-                }
+                entry.panel = match (entry.panel, entry.pinned) {
+                    (PanelState::Expanded, true) => PanelState::Open,
+                    (_, true) => entry.panel,
+                    (_, false) => PanelState::Closed,
+                };
             }
         }
-        if before != (entry.mode, entry.explorer) {
+        if before != (entry.panel, entry.explorer) {
             self.persist_workspace_views();
         }
     }
@@ -331,14 +345,16 @@ impl Runtime {
             );
             return true;
         }
-        let mode = match payload.mode.as_deref() {
+        let panel = match payload.panel.as_deref() {
             None => None,
-            Some(value) => match ViewMode::parse(value) {
-                Some(mode) => Some(mode),
+            Some(value) => match PanelState::parse(value) {
+                Some(panel) => Some(panel),
                 None => {
                     self.set_error(
-                        "workspace_view.unknown_mode",
-                        format!("{value} is not a layout; expected agents, together or views"),
+                        "workspace_view.unknown_panel",
+                        format!(
+                            "{value} is not a side panel state; expected closed, open or expanded"
+                        ),
                         false,
                     );
                     return true;
@@ -367,8 +383,18 @@ impl Runtime {
         let store = self.workspace_views.as_mut().expect("checked above");
         let entry = store.views.entry(&key.0, &key.1);
         let before = entry.clone();
-        if let Some(mode) = mode {
-            entry.mode = mode;
+        let shows_tool = payload.explorer == Some(true)
+            || payload.changes == Some(true)
+            || payload.reveal.is_some();
+        match panel {
+            Some(panel) => entry.panel = panel,
+            None if shows_tool && entry.panel == PanelState::Closed => {
+                entry.panel = PanelState::Open;
+            }
+            None => {}
+        }
+        if let Some(pinned) = payload.pinned {
+            entry.pinned = pinned;
         }
         if let Some(explorer) = payload.explorer {
             entry.explorer = explorer;
@@ -376,8 +402,8 @@ impl Runtime {
         if let Some(changes) = payload.changes {
             entry.changes = changes;
         }
-        if let Some(share) = payload.agent_share {
-            entry.agent_share = workspace_views::clamp_agent_share(share);
+        if let Some(share) = payload.views_over_share {
+            entry.views_over_share = workspace_views::clamp_views_over_share(share);
         }
         let revealed = payload
             .reveal
@@ -514,21 +540,25 @@ impl Runtime {
         let published = front.zip(view).map(|(key, view)| WorkspaceViewSnapshot {
             device_id: view.device_id.clone(),
             path: view.path.clone(),
-            mode: view.mode,
+            panel: view.panel,
+            pinned: view.pinned,
             explorer: view.explorer,
             changes: view.changes,
-            agent_share: view.agent_share,
+            views_over_share: view.views_over_share,
             resumed: Some(key) == store.resumable.as_ref(),
             layout: self.view_layout_snapshot(key, &view.layout),
         });
         self.snapshot.workspace_view = published;
         // The one global panel every existing reader gates on (the Changes
         // reader, the device Explorer watch) follows the front Workspace's
-        // tools, so those readers keep one owner (A5). The Explorer wins the
-        // section while both show, because its decorations need Changes too.
+        // tools while its side panel shows them, so those readers keep one
+        // owner (A5) and read nothing for a closed panel. The Explorer wins
+        // the section while both show, because its decorations need Changes
+        // too.
         if let Some(view) = self.snapshot.workspace_view.as_ref() {
             let (explorer, changes) = (view.explorer, view.changes);
-            self.snapshot.ui_state.right_panel_visible = explorer || changes;
+            self.snapshot.ui_state.right_panel_visible =
+                view.panel.is_shown() && (explorer || changes);
             if explorer {
                 self.snapshot.ui_state.right_panel_section = RightPanelSection::Explorer;
             } else if changes {

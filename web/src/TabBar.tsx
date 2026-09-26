@@ -101,7 +101,7 @@ export function AgentTabBar({ checkout, activeTabId, agents, device = false, act
               active={entry.source_id === activeTabId}
               closing={closingSuffix(entry.source_id, "tab.close", operations)}
               closeLabel={`Close tab ${entry.label}`}
-              onSelect={() => actions.focusTab(entry.source_id)}
+              onSelect={() => actions.focusTab(entry.source_id, true)}
               onClose={() => actions.closeTab(entry.source_id)}
               {...drag(entry)}
             />

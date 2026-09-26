@@ -134,15 +134,16 @@ function rest(focusedDevice: string, state = "connected"): SnapshotRest {
 }
 
 /** The device Workspace in front, its one area showing a device file. */
-function deviceViews(mode: WorkspaceView["mode"]): WorkspaceView {
+function deviceViews(panel: WorkspaceView["panel"]): WorkspaceView {
   const notes = { id: "d2", tab_id: "file:studio:/home/remote/app/notes.md", path: "/home/remote/app/notes.md", label: "notes.md", kind: "file" as const, committed: null, preview: false, state: "open" as const, reason: null };
   return {
     device_id: "studio",
     path: "/home/remote/app",
-    mode,
+    panel,
+    pinned: false,
     explorer: false,
     changes: false,
-    agent_share: 0.5,
+    views_over_share: 0.6,
     layout: { root: { area: { id: "a1", active: "d2", displays: [notes] } }, active_area: "a1", limits: { areas: 6, depth: 3, displays: 64 }, display_count: 1 },
   };
 }
@@ -233,10 +234,10 @@ describe("commands with an SSH device selected", () => {
     expect(useUiStore.getState().notice?.text).toContain("Studio Mac is not connected");
   });
 
-  it("closes the device Workspace's active view with the close chord while only its Views show, connected or not", () => {
+  it("closes the device Workspace's active view with the close chord while its side panel is expanded, connected or not", () => {
     for (const state of ["connected", "stale"]) {
       useUiStore.setState({ notice: null, pendingClose: null });
-      seed({ ...rest("studio", state), workspace_view: deviceViews("views") });
+      seed({ ...rest("studio", state), workspace_view: deviceViews("expanded") });
       const { sent, actions } = recorder();
       actions.closeTab();
       expect(sent).toHaveLength(1);
@@ -249,8 +250,8 @@ describe("commands with an SSH device selected", () => {
     }
   });
 
-  it("closes the device's Herdr tab with the close chord while its Workspace shows only agents", () => {
-    seed({ ...rest("studio"), workspace_view: deviceViews("agents") });
+  it("closes the device's Herdr tab with the close chord while its side panel is closed", () => {
+    seed({ ...rest("studio"), workspace_view: deviceViews("closed") });
     const { sent, actions } = recorder();
     actions.closeTab();
     expect(sent).toHaveLength(0);

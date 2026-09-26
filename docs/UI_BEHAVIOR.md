@@ -8,17 +8,40 @@ Where a rule is currently native-only, its Swift owner is named below; a web own
 
 ## Web Workspace
 
-The web shell's Workspace screen follows the approved S6 proposal, and its View areas follow the approved boards of PRD S7 (`agents/prd/workspace-views-layout/prd.md`).
+The web shell's Workspace screen follows the approved S6 proposal, its View areas follow the approved boards of PRD S7 (`agents/prd/workspace-views-layout/prd.md`), and its side panel follows the operator's decisions on issue 170.
 Web owner: `web/src/WorkspaceScreen.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, `web/src/viewLayout.ts`, `web/src/viewDrag.ts`, `web/src/viewFocus.ts`.
 
-The toolbar reads left to right: the path back (`All projects / Project / Workspace`, naming the device when it is not this Mac), the layout switch, then the two tool toggles.
-The layout switch offers three adjacent choices in one group - Agents only, Agents and Views, Views only - with the chosen one visually distinct from the others; the same three names appear in its menu and as palette commands, and each choice's tooltip is its accessible name.
+The toolbar reads left to right: the path back (`All projects / Project / Workspace`, naming the device when it is not this Mac), the side panel toggle, then the two tool toggles.
+The side panel toggle is drawn pressed while the panel shows, and ⌘⇧B does the same; while the panel is closed with views open, it carries a badge with their count, also given as its accessible description.
+The toggle, Pin, and Expand each keep one accessible name and say their state as pressed or not; their tooltips say what a press does.
 Explorer and History are independent toggles that open and close on their own, drawn pressed while shown; with both shown they share the tool column, Explorer above History, each with its own close.
-A right-click or the menu key on the toolbar offers the layouts, each tool, Copy Workspace path, and Open Project Overview.
-
-Agents and Views sit side by side, each region with its own tabs, and a boundary between them drags with a guide line and lands once on release.
+Pressing a tool toggle while the panel is closed opens the panel with that tool.
+A right-click or the menu key on the toolbar offers the three panel states (Side panel closed, open, and expanded), Pin or Unpin side panel, each tool, Copy Workspace path, and Open Project Overview; the palette offers the other two states and Pin or Unpin as commands.
 An empty Agent area offers New tab.
-Changing the layout only changes space: it closes no tab, document, or pane, and choosing Views only never makes a split; a split comes only from a split command or a drop on an edge.
+
+### The side panel
+
+The Workspace body holds the Agent area, always the body's full width, and the side panel on its right edge, over the agents.
+The panel is closed, open at its width, or expanded over the whole body; the state is stored per Workspace and survives a restart, and a Workspace seen for the first time starts closed.
+Open, the panel floats over the right part of the Agent area, marked by its left border and resize edge rather than a shadow, and the Agent area keeps its full size underneath, so opening, closing, resizing and expanding the panel never resizes a terminal.
+The pane header actions and the right part of an agent's lines under an open panel stay under it; Pin is the remedy.
+Pin docks the panel instead: the agents end at its left edge and their terminals resize once to fit, and Unpin gives them the body's width back.
+Pin is not a fourth state: it is stored per Workspace with the width, and a pinned panel still closes, opens, and expands, its agents keeping their docked width under an expanded panel so expanding and restoring resize nothing.
+The panel's left edge is a divider like the others: accent-colored on hover and keyboard focus, a guide line while dragging that lands once on release, one step per arrow key while focused, and neither the panel nor the agents to its left narrower than the area minimum; the width is the Workspace's share of the body and survives a restart.
+The agents left of the panel are live: clicking a pane or a tab there focuses it and typing goes to it while the panel stays up, and chords such as ⌘F and ⌥W act where the keyboard is, the panel's View area or the pane.
+While an expanded panel covers them, the agents take no pointer or keyboard, so Tab never walks into a terminal out of sight.
+
+The panel's top row holds the View tabs with their kind marks and, at its right end, the panel actions: New tab (the file palette), Pin, Expand (only while a view is open), and Hide.
+Below it the View areas sit on the left and the tool column (Explorer above History) on the right, the tool column's header sharing the tab strip's row.
+With stacked View areas each area keeps its own tab strip, and the top row holds the top area's tabs and the panel actions.
+With no view open and a tool shown, the panel is only as wide as the tool column, including after the last view closes; with no tool shown either, it says that no file or diff is open, with Show Explorer and Open file.
+Only views expand: an expanded panel with no view open is drawn at its width, so the agents stay in reach.
+
+Opening a file, a diff, or a page while the panel is closed opens it, with the active View area focused; revealing a file also shows the Explorer.
+Choosing an agent or a tab from the sidebar, the palette, or a tab cycle closes an unpinned panel and brings a pinned expanded panel back to its width, so the chosen agent is in sight; a pinned open panel stays, and a choice made in the Agent area on screen beside the panel moves nothing.
+Closing the panel closes no view, document, or pane, and the keyboard goes back to the focused pane.
+Changing the panel's state only changes space, and expanding never makes a split; a split comes only from a split command or a drop on an edge.
+Inside the panel the View areas behave as they do anywhere else: tabs, splits, preview, dirty state and browser displays, each page inside the panel's bounds.
 
 An Agent tab carries its provider's mark (Claude, Codex) or a neutral terminal mark for any other kind, and never replaces Herdr's own tab name; its tooltip and accessible name carry the kind, the full name, and the agent's state.
 A View tab carries the file-type mark, and a diff tab the comparison mark, so a kind is never told by color alone.
@@ -28,7 +51,7 @@ Closing a view is always called Close view, distinct from moving a file to the T
 
 ### View areas
 
-The Views region holds one or more View areas, each with its own tab bar above its own view, split left/right or up/down as often as the limits allow.
+The side panel holds one or more View areas, each with its own tab bar above its own view, split left/right or up/down as often as the limits allow.
 A split divides one area in two along one axis, and either half can split again along either axis, so every arrangement of side-by-side and stacked areas is a tree of halves.
 One area is active: the next file opens there, the palette and the keyboard act on it, and only its active view's tab carries the accent indicator.
 Every other area still shows its own active view's tab, with a primary title and no indicator, so the operator sees what each area holds and which one is in charge.
@@ -38,7 +61,7 @@ The divider between two areas turns accent-colored on hover and keyboard focus, 
 A focused divider moves with the arrow keys along its axis, one step and one change per press.
 No area gets narrower or shorter than its minimum, a divider stops where either neighbour would, and each side of a split keeps between 15 and 85 percent of it.
 An area whose last view leaves disappears, and its neighbour takes the space.
-When the last view of the whole Views region closes, one empty area stays and says that no file or diff is open, with Show Explorer when the Explorer is hidden and Open file; the layout does not change on its own.
+When the last view closes, the View areas leave the panel as the side panel section says, and the panel's state does not change on its own.
 
 A Workspace holds at most 6 View areas, no area sits more than 3 splits deep, and at most 64 views are open at once.
 A split past the area or depth limit is refused with its reason, and an open past the view limit says so and keeps every currently open view as it was.
@@ -50,7 +73,7 @@ A single click on an Explorer file or a History row opens it in the active area'
 Each area has at most one preview, and a click never touches another area or a pinned view.
 A double-click on the row or the tab, Keep open, or the first edit pins the preview where it is; because the first edit pins, a document that is dirty, saving, or whose save failed is never a preview in any area that shows it.
 Opening a file that is already shown moves to its view instead of adding a tab, choosing the one used last when several views show it.
-Opening a file from Agents only switches to Agents and Views and focuses the active View area.
+Opening a file while the side panel is closed opens the panel first.
 Diffs are placed by the same rules.
 
 Open to the side (from the Explorer's file menu, a History row's menu, or the palette) is the only way to show one file twice.
@@ -89,9 +112,10 @@ A view whose file is being read shows `Opening…`.
 A restored view whose device or root is not ready says what it waits for (such as `Waiting for <device> to connect`) and reads its file by itself once that is ready.
 A view whose file cannot be read shows why, with Close view and Retry, and its tab title reads as struck through; either action acts on that view alone and leaves the active area where it was.
 Each state belongs to its view alone, so one missing file never blanks another view or area.
-After a restart the app reopens the last Workspace as it was left: its areas and their sizes, each area's tabs in order with its preview, pinned views, and active view, the active area, the layout, and the tools; unsaved text returns from the browser's drafts, and Herdr's current tabs and panes are used as they are.
+After a restart the app reopens the last Workspace as it was left: its areas and their sizes, each area's tabs in order with its preview, pinned views, and active view, the active area, the side panel's state, width and Pin, and the tools; unsaved text returns from the browser's drafts, and Herdr's current tabs and panes are used as they are.
 A first run, or a last Workspace that no longer exists, starts on All projects.
 A layout file that cannot be read is kept aside and the app starts on All projects, where the operator picks a Workspace and continues with a new layout.
+A Workspace stored before the side panel, with a layout instead of a panel state, restarts into the nearest panel state: Agents only as a closed panel (an open one when its View areas floated over the agents), Agents and Views as a pinned open panel as wide as its View region was, and Views only as an expanded panel.
 
 ### Browser displays
 
@@ -107,10 +131,10 @@ In a plain browser tab the view reads `Pages open in the hide desktop app.` with
 
 ### Narrow windows
 
-When the window cannot give the working regions their minimum beside the tool column, Explorer and History open as a temporary overlay above the working regions instead of a column; Escape or a click outside closes it and returns focus to the toggle that opened it.
-When Agents and Views cannot both have their minimum width side by side, the region used last fills the width and an explicit switch leads to the other.
+When the body cannot give the agents their minimum beside the open panel, the panel takes the whole body as if expanded, and a pinned panel floats there instead of docking; it is still pinned, so choosing an agent leaves it up, and the toggle or ⌘⇧B closes it.
+When the panel cannot give a View area its minimum beside the tool column, Explorer and History open as a temporary overlay inside the panel instead of a column, closed until a toggle asks for one, including the press that opened a closed panel; Escape or a click outside closes it and returns focus to the toggle that opened it.
 When the View areas cannot all have their minimum, only the active area shows, with an area switcher to the others.
-Widening the window brings back the chosen layout, the area sizes, and the tool column, because none of these narrow arrangements is stored or sent to the core.
+Widening the window brings back the panel's stored state, width and Pin, the area sizes, and the tool column, because none of these narrow arrangements is stored or sent to the core.
 
 ### Library masters
 
@@ -120,7 +144,7 @@ The browser display's toolbar and its loading, load failed, and plain browser ta
 
 ### Agent panes and the Agents explorer
 
-Several View areas leave the Agent side as it was already drawn: the layout switch, the independent tool toggles, and the child chips below behave the same with one area or six.
+Several View areas leave the Agent side as it was already drawn: the side panel toggle, the independent tool toggles, and the child chips below behave the same with one area or six.
 
 A pane whose agent delegated work shows every direct child on one row under its header, each chip a status mark, the provider mark, and a capped title; the row scrolls sideways instead of growing, and a pane with no children has no row.
 Its library masters are `Component / Pane child chip` and `Component / Pane child row`; the native pane header keeps its first child and `+N` until the native shell changes.
