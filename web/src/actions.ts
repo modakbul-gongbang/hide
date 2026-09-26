@@ -35,6 +35,7 @@ import {
   type EditorDocumentSnapshot,
   type EditorTabSnapshot,
   type Tab,
+  type Workspace,
 } from "./snapshot";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
@@ -1073,6 +1074,21 @@ export function createActions(dispatch: DispatchFn) {
 
     toggleInactiveProjects(deviceId: string) {
       dispatch({ schema_version: 2, kind: "inactive_projects_toggle", payload: { device_id: deviceId } });
+    },
+
+    /** Folds or unfolds a project's checkouts in the Projects list; the core keeps the choice and says it back as `expanded`. */
+    toggleProjectCheckouts(workspace: Workspace) {
+      const collapsed = new Set(rest()?.ui_state?.collapsed_workspace_ids ?? []);
+      if (workspace.expanded === false) collapsed.delete(workspace.id);
+      else collapsed.add(workspace.id);
+      updateUiState({ collapsed_workspace_ids: [...collapsed].sort() });
+    },
+
+    /** Opens or closes the agent rows under a checkout in the Projects list; the core keeps the choice. */
+    toggleCheckoutAgents(checkoutId: string) {
+      const collapsed = new Set(rest()?.ui_state?.collapsed_checkout_ids ?? []);
+      if (!collapsed.delete(checkoutId)) collapsed.add(checkoutId);
+      updateUiState({ collapsed_checkout_ids: [...collapsed].sort() });
     },
 
     toggleLeftSidebar() {
