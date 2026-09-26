@@ -14,24 +14,58 @@ import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import { HIDE_CLI, hostLog, isolate, launch, type Isolated } from "./fixture";
 
+const HOOK_CLI = path.join(path.dirname(HIDE_CLI), "hide-agent-hooks");
+
 test.describe.configure({ timeout: 180_000 });
 test.skip(!process.env.HIDE_E2E_SSH_PORT, "an isolated SSH server is required");
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 
-async function commandFromPane(herdr: HerdrFixture, run: Isolated, bridge: string, args: string[], label: string) {
+function changedCheckout(herdr: HerdrFixture, filename: string): string {
+  const checkout = path.join(herdr.root, "fixture");
+  const file = path.join(checkout, filename);
+  fs.writeFileSync(file, "Baseline\n");
+  for (const args of [["init", "-q"], ["add", filename], ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "commit", "-qm", "Fixture baseline"]]) {
+    const result = spawnSync("git", ["-C", checkout, ...args], { encoding: "utf8", timeout: 10_000 });
+    expect(result.status, result.stderr).toBe(0);
+  }
+  fs.appendFileSync(file, "Changed\n");
+  return file;
+}
+
+async function commandFromPane(herdr: HerdrFixture, run: Isolated, bridge: string | null, args: string[], label: string) {
   const result = path.join(herdr.root, `${label}.json`);
   const exit = path.join(herdr.root, `${label}.exit`);
-  const command = `HIDE_WORKSPACE_BRIDGE_DIR=${quote(bridge)} HIDE_STATE_DIR=${quote(path.join(run.root, "remote-cli-state"))} ${[HIDE_CLI, ...args].map(quote).join(" ")} > ${quote(result)}; printf '%s' "$?" > ${quote(exit)}\n`;
+  const variables = bridge
+    ? `HIDE_WORKSPACE_BRIDGE_DIR=${quote(bridge)} HIDE_STATE_DIR=${quote(path.join(run.root, "remote-cli-state"))}`
+    : `HIDE_STATE_DIR=${quote(run.env.HIDE_STATE_DIR!)}`;
+  const command = `${variables} ${[HIDE_CLI, ...args].map(quote).join(" ")} > ${quote(result)}; printf '%s' "$?" > ${quote(exit)}\n`;
   const sent = spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0], command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
   expect(sent.status, sent.stderr).toBe(0);
   await expect.poll(() => fs.existsSync(exit), { timeout: 30_000 }).toBe(true);
   return { status: Number(fs.readFileSync(exit, "utf8")), answer: JSON.parse(fs.readFileSync(result, "utf8").trim().split("\n").at(-1) || "{}") as Record<string, unknown> };
 }
 
+async function hookFromPane(herdr: HerdrFixture, stateDir: string, bridge: string | null, runtime: "claude-code" | "codex", label: string) {
+  const result = path.join(herdr.root, `${label}.json`);
+  const exit = path.join(herdr.root, `${label}.exit`);
+  const variables = [
+    `HIDE_STATE_DIR=${quote(stateDir)}`,
+    ...(bridge ? [`HIDE_WORKSPACE_BRIDGE_DIR=${quote(bridge)}`] : []),
+  ];
+  const command = `printf '{}' | ${variables.join(" ")} ${quote(HOOK_CLI)} hook --runtime ${runtime} --event SessionStart --memory-injection --source hide-subagents@5 > ${quote(result)}; printf '%s' "$?" > ${quote(exit)}\n`;
+  const sent = spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0], command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
+  expect(sent.status, sent.stderr).toBe(0);
+  await expect.poll(() => fs.existsSync(exit), { timeout: 30_000 }).toBe(true);
+  const output = JSON.parse(fs.readFileSync(result, "utf8")) as { hookSpecificOutput: { additionalContext: string } };
+  return { status: Number(fs.readFileSync(exit, "utf8")), context: output.hookSpecificOutput.additionalContext };
+}
+
 test("remote pane CLI reaches its own Workspace over SSH and leaves the local Workspace in front", async () => {
   const local = await startHerdr({ agents: false });
   const remote = await startHerdr({ agents: false });
+  const localFile = changedCheckout(local, "local-change.md");
+  const remoteFile = changedCheckout(remote, "보고서-mixed-2026.md");
   const run = isolate(local, "ssh");
   const bridge = fs.mkdtempSync("/tmp/hide-wc-");
   const helper = path.join(run.root, "remote-helper");
@@ -58,6 +92,31 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     ({ app } = await launch(run.env));
     const page = await app.firstWindow();
     await enterWorkspace(page, "fixture");
+    for (const [args, label] of [
+      [["workspace", "info"], "local-info"],
+      [["file", "open", localFile], "local-file"],
+      [["diff", "open", localFile], "local-diff"],
+    ] as const) {
+      const result = await commandFromPane(local, run, null, [...args], label);
+      expect(result.status, JSON.stringify(result.answer)).toBe(0);
+      expect(result.answer).toMatchObject({ ok: true, result: { context: { device_id: "local" } } });
+    }
+    for (const runtime of ["claude-code", "codex"] as const) {
+      const localContext = await hookFromPane(local, run.env.HIDE_STATE_DIR!, null, runtime, `local-${runtime}-hook`);
+      expect(localContext.status).toBe(0);
+      expect(localContext.context).toContain("Hide Workspace control is available for this connected pane");
+      expect(localContext.context).toContain("file open <path>");
+      expect(localContext.context).toContain("browser open <url-or-path>");
+      const remoteBeforeConnection = await hookFromPane(remote, path.join(run.root, "remote-cli-state"), bridge, runtime, `disconnected-${runtime}-hook`);
+      expect(remoteBeforeConnection.status).toBe(0);
+      expect(remoteBeforeConnection.context).not.toContain("Hide Workspace control is available");
+    }
+    const plain = spawnSync(HOOK_CLI, ["hook", "--runtime", "codex", "--event", "SessionStart", "--memory-injection", "--source", "hide-subagents@5"], {
+      env: { ...local.env, HERDR_PANE_ID: "", HIDE_STATE_DIR: run.env.HIDE_STATE_DIR! },
+      input: "{}", encoding: "utf8", timeout: 10_000,
+    });
+    expect(plain.status).toBe(0);
+    expect(plain.stdout).not.toContain("Hide Workspace control is available");
     const state = JSON.parse(fs.readFileSync(path.join(run.env.HIDE_STATE_DIR!, "hided.json"), "utf8")) as { port: number; token: string };
     await page.evaluate(async ({ port, token, socket }) => {
       await new Promise<void>((resolve, reject) => {
@@ -80,6 +139,22 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
       if (!fs.existsSync(bridge)) return 0;
       return fs.readdirSync(bridge).filter((name) => fs.existsSync(path.join(bridge, name, "bootstrap.sock"))).length;
     }, { timeout: 60_000 }).toBe(1);
+    for (const runtime of ["claude-code", "codex"] as const) {
+      const session = await hookFromPane(remote, path.join(run.root, "remote-cli-state"), bridge, runtime, `remote-${runtime}-hook`);
+      expect(session.status).toBe(0);
+      expect(session.context).toContain("Hide Workspace control is available for this connected pane");
+      expect(session.context).toContain("browser open <url-or-path>");
+      const reference = session.context.match(/HIDE_CAP_REF='([^']+)'/)?.[1];
+      expect(reference).toBeTruthy();
+      const detachedEnv: NodeJS.ProcessEnv = { ...run.env, HIDE_CAP_REF: reference! };
+      delete detachedEnv.HERDR_PANE_ID;
+      const detached = spawnSync(HIDE_CLI, ["workspace", "info"], {
+        env: detachedEnv,
+        encoding: "utf8", timeout: 10_000,
+      });
+      expect(detached.status, `${detached.stderr} ${detached.stdout}`).toBe(0);
+      expect(JSON.parse(detached.stdout)).toMatchObject({ ok: true, result: { context: { device_id: "ssh-e2e" } } });
+    }
     const ready = fs.readFileSync(daemonLog, "utf8").split("\n").filter(Boolean)
       .map((line) => JSON.parse(line) as { kind?: string; remote_port?: number })
       .findLast((line) => line.kind === "route.ready");
@@ -94,21 +169,38 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     const info = await commandFromPane(remote, run, bridge, ["workspace", "info"], "remote-info");
     expect(info.status, JSON.stringify(info.answer)).toBe(0);
     expect(info.answer).toMatchObject({ ok: true, result: { context: { device_id: "ssh-e2e", checkout_path: fs.realpathSync(path.join(remote.root, "fixture")) } } });
-    const file = path.join(remote.root, "fixture", "remote-proof.txt");
-    fs.writeFileSync(file, "Remote proof\n");
-    const opened = await commandFromPane(remote, run, bridge, ["file", "open", file], "remote-file");
+    const opened = await commandFromPane(remote, run, bridge, ["file", "open", remoteFile], "remote-file");
     expect(opened.status, JSON.stringify(opened.answer)).toBe(0);
     expect(opened.answer).toMatchObject({ ok: true, result: { context: { device_id: "ssh-e2e" }, changed: true } });
+    const requestId = opened.answer.request_id as string;
+    expect(requestId).toMatch(/^\d+-[A-Za-z0-9]+$/);
+    const repeated = await commandFromPane(remote, run, bridge, ["file", "open", remoteFile, "--request-id", requestId], "remote-file-repeat");
+    expect(repeated.status).toBe(0);
+    expect(repeated.answer).toEqual(opened.answer);
+    const diff = await commandFromPane(remote, run, bridge, ["diff", "open", remoteFile], "remote-diff");
+    expect(diff.status, JSON.stringify(diff.answer)).toBe(0);
+    expect(diff.answer).toMatchObject({ ok: true, result: { context: { device_id: "ssh-e2e" }, changed: true } });
     const views = await commandFromPane(remote, run, bridge, ["view", "list"], "remote-views");
     expect(views.status, JSON.stringify(views.answer)).toBe(0);
-    const rows = ((views.answer.result as { views: { target: string }[] }).views);
-    expect(rows.some((view) => view.target === fs.realpathSync(file))).toBe(true);
+    const rows = ((views.answer.result as { views: { view_id: string; area_id: string; kind: string; target: string }[] }).views);
+    const fileView = rows.find((view) => view.target === fs.realpathSync(remoteFile) && view.kind === "file");
+    const diffView = rows.find((view) => view.target === fs.realpathSync(remoteFile) && view.kind === "diff");
+    expect(fileView).toBeTruthy();
+    expect(diffView).toBeTruthy();
+    expect((await commandFromPane(remote, run, bridge, ["view", "select", fileView!.view_id], "remote-select")).status).toBe(0);
+    const split = await commandFromPane(remote, run, bridge, ["view", "split", diffView!.view_id, "--area", fileView!.area_id, "--edge", "right"], "remote-split");
+    expect(split.status, JSON.stringify(split.answer)).toBe(0);
+    const secondArea = (split.answer.result as { area_id: string }).area_id;
+    expect(secondArea).not.toBe(fileView!.area_id);
+    expect((await commandFromPane(remote, run, bridge, ["view", "move", fileView!.view_id, "--area", secondArea, "--index", "0"], "remote-move")).status).toBe(0);
+    expect((await commandFromPane(remote, run, bridge, ["view", "close", diffView!.view_id], "remote-diff-close")).status).toBe(0);
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     expect(await page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen")).not.toContain("ssh-e2e");
 
     devServer = http.createServer((request, response) => {
       const body = request.url === "/remote.html"
         ? `<!doctype html><title>Remote dev</title><h1 id="origin">Remote dev</h1><p id="live">waiting</p><script>new WebSocket('ws://' + location.host + '/live').onmessage = e => document.getElementById('live').textContent = e.data</script>`
+        : request.url === "/child.html" ? "<!doctype html><title>Remote child</title><h1>Remote child</h1>"
         : null;
       response.writeHead(body ? 200 : 404, { "content-type": "text/html; charset=utf-8" });
       response.end(body ?? "missing");
@@ -151,9 +243,32 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
       return { url: contents.getURL(), live: await contents.executeJavaScript("document.getElementById('live')?.textContent") as string };
     });
     await expect.poll(async () => (await native())?.live, { timeout: 30_000 }).toBe("remote-live");
+    const devViewId = (openedDev.answer.result as { view_id: string }).view_id;
+    const status = await commandFromPane(remote, run, bridge, ["view", "status", devViewId], "remote-dev-status");
+    expect(status.status, JSON.stringify(status.answer)).toBe(0);
+    expect(status.answer).toMatchObject({ ok: true, view: { page: { state: "loaded" } } });
+    const waited = await commandFromPane(remote, run, bridge, ["browser", "open", `http://localhost:${remotePort}/remote.html`, "--wait"], "remote-dev-wait");
+    expect(waited.status, JSON.stringify(waited.answer)).toBe(0);
+    expect(waited.answer).toMatchObject({ ok: true, page: { state: "loaded" } });
+    await expect.poll(async () => (await native())?.live, { timeout: 20_000 }).toBe("remote-live");
     const routed = (await native())!.url;
     expect(new URL(routed).port).not.toBe(String(remotePort));
     expect(new URL(routed).hostname).toBe("localhost");
+    await app.evaluate(async ({ BrowserWindow }) => {
+      const child = BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>
+        (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote dev");
+      if (!child) throw new Error("Remote page is missing for its popup");
+      await (child as unknown as { webContents: Electron.WebContents }).webContents.executeJavaScript("window.open('/child.html', '_blank')");
+    });
+    let popupId: string | undefined;
+    let popupAttempts = 0;
+    await expect.poll(async () => {
+      const listed = await commandFromPane(remote, run, bridge, ["view", "list"], `remote-popup-${++popupAttempts}`);
+      const views = (listed.answer.result as { views: { view_id: string; target: string }[] }).views;
+      popupId = views.find((view) => view.target === `http://localhost:${remotePort}/child.html`)?.view_id;
+      return Boolean(popupId);
+    }, { timeout: 15_000 }).toBe(true);
+    expect((await commandFromPane(remote, run, bridge, ["view", "close", popupId!], "remote-popup-close")).status).toBe(0);
 
     const checkout = path.join(remote.root, "fixture");
     const html = path.join(checkout, "remote-preview.html");
@@ -230,6 +345,9 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
       try { await fetch(ownedUrl, { signal: AbortSignal.timeout(500) }); return false; }
       catch { return true; }
     }, { timeout: 10_000 }).toBe(true);
+    const noRenderer = await hookFromPane(remote, path.join(run.root, "remote-cli-state"), bridge, "codex", "remote-no-renderer-hook");
+    expect(noRenderer.status).toBe(0);
+    expect(noRenderer.context).not.toContain("Hide Workspace control is available");
   } catch (error) {
     console.log(hostLog(run.env).map((line) => JSON.stringify(line)).join("\n"));
     console.log(fs.readFileSync(daemonLog, "utf8"));

@@ -220,7 +220,7 @@ export class BrowserViews {
     contents.on("focus", () => this.emit({ kind: "focus", workspace: page.workspace, id: page.id }));
     contents.setWindowOpenHandler(({ url }) => {
       // A new window is another browser display, which the core opens.
-      if (loadable(url) && url !== "about:blank") this.emit({ kind: "open", workspace: page.workspace, id: page.id, url });
+      if (loadable(url) && url !== "about:blank") this.emit({ kind: "open", workspace: page.workspace, id: page.id, url: this.sourceAddress(page, url) });
       else this.log.event("browser.window_open_refused", { protocol: protocolOf(url) });
       return { action: "deny" };
     });

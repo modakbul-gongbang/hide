@@ -520,7 +520,7 @@ mod tests {
             current_version: HOOK_VERSION,
             memory_compatibility: compatible(AgentRuntime::Codex, Path::new("/tmp")),
         };
-        assert_eq!(row.headline(), "Update required (v2, current v4)");
+        assert_eq!(row.headline(), "Update required (v2, current v5)");
         assert!(row.offers_install());
     }
 
@@ -621,7 +621,7 @@ mod tests {
                 minimum_version: "2.1.278".to_owned(),
             },
         };
-        assert_eq!(supported.headline(), "Installed (v4)");
+        assert_eq!(supported.headline(), "Installed (v5)");
         assert_eq!(unsupported.headline(), "Update required");
         assert!(!unsupported.offers_install());
     }

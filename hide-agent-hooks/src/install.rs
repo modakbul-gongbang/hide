@@ -329,7 +329,7 @@ fn hook_group(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> Value {
         "hooks": [{
             "type": "command",
             "command": command,
-            "timeout": 5,
+            "timeout": 8,
         }]
     })
 }
@@ -716,7 +716,7 @@ mod tests {
             .unwrap();
         assert!(session_start_command.contains("--runtime codex"));
         assert!(session_start_command.contains("--memory-injection"));
-        assert!(session_start_command.contains("--source hide-subagents@4"));
+        assert!(session_start_command.contains("--source hide-subagents@5"));
     }
 
     #[test]

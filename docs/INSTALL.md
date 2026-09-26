@@ -8,6 +8,7 @@ You can install a published release when one is available or build the same app 
 - An Apple Silicon Mac with macOS 14 or later.
 - Xcode Command Line Tools or full Xcode with Swift 6.
 - A current stable Rust toolchain with Rust 2024 edition support for source builds.
+- Node.js 22 and pnpm 10 for the bundled Workspace CLI's web assets in source builds.
 - Network access during the first source build for pinned Rust crates, Swift packages, and the pinned Herdr runtime asset.
 - Claude Code or Codex installed and signed in only if you want hide to launch that agent.
 
@@ -65,6 +66,7 @@ Clone the repository and build the release bundle:
 ```sh
 git clone https://github.com/modakbul-gongbang/hide.git
 cd hide
+pnpm install --frozen-lockfile
 ./scripts/build-app.sh
 ```
 
@@ -81,7 +83,8 @@ sudo /usr/bin/ditto --rsrc --extattr --qtn dist/hide.app /Applications/hide.app
 open /Applications/hide.app
 ```
 
-The build script compiles `herdr-core`, builds the Swift shell, copies the app icon and pet theme, downloads the pinned Herdr v0.9.1 arm64 binary when needed, verifies its version and SHA-256 digest, ad-hoc signs the bundle, and creates the release archive and checksum.
+The build script compiles `herdr-core`, the Workspace CLI and agent hook helper, builds the web assets and Swift shell, copies the app icon and pet theme, downloads the pinned Herdr v0.9.1 arm64 binary when needed, verifies its version and SHA-256 digest, ad-hoc signs the bundle, and creates the release archive and checksum.
+The bundled `Contents/MacOS/hide` is used by the SessionStart helper even when no separate `hide` command is on the shell's `PATH`.
 After a successful local build, `dist/` retains only that current Hide zip/checksum pair; published historical versions remain available from GitHub Releases, and unrelated local files are preserved.
 
 ## Verify the installed app

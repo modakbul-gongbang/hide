@@ -81,9 +81,6 @@ export function isHtmlFile(path: string): boolean {
   return /\.x?html?$/i.test(path);
 }
 
-/** Explorer can offer Browser for HTML on either the local or a connected device checkout. */
-export function browserOpenUnavailable(_device: string): string | null { return null; }
-
 /** How the host places each display: its rect, and whether the page itself shows there. */
 export function placements(rows: BrowserDisplayRow[], rects: ReadonlyMap<string, BrowserRect>, hidden: ReadonlySet<string>): BrowserPlacement[] {
   return rows.map((row) => {

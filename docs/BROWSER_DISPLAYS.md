@@ -30,6 +30,7 @@ The stamp is not saved; a relaunched page loads its address once when it is firs
 - Open in Browser in the Explorer's menu on an HTML file of a local or connected device checkout.
   The device host must have file access consent for a remote page to load.
 - A page that asks for a new window gets another browser display in the same Workspace.
+  A remote page's routed loopback address is translated back to its source device address before that request reaches the core.
 - The address field in the display's toolbar loads what was typed into that display.
 
 A display holds only an `http`, `https` or `file` address with something after the `//`, or `about:blank`, within 8 KiB; anything else is refused with its reason and nothing changes.
@@ -91,4 +92,4 @@ pnpm --dir desktop e2e
 It opens a page with `hide browser open`, checks the native view sits on its slot, types Hangul into the page, splits and resizes without a reload, freezes the pages under the palette, navigates and goes back, shows a failed load, opens an HTML file from the Explorer, refuses a file outside the checkout, ends a closed page's renderer, restores the page after a relaunch, and shows the notice in a plain browser tab.
 The test window sits behind the operator's windows, so it launches with `--disable-backgrounding-occluded-windows`, and captures of it are taken by window id.
 Keep screenshots and logs under local-only `agents/runs/`.
-`desktop/e2e/remote-workspace.spec.ts` additionally uses an isolated SSH server and two private Herdr servers to prove remote CLI origin, HTTP and WebSocket forwarding, relative HTML assets, traversal and symlink refusal, explicit reveal, and route cleanup on close and forced candidate exit.
+`desktop/e2e/remote-workspace.spec.ts` additionally uses an isolated SSH server and two private Herdr servers to prove remote CLI origin, HTTP and WebSocket forwarding, remote popup address ownership, relative HTML assets, traversal and symlink refusal, explicit reveal, and route cleanup on close and forced candidate exit.
