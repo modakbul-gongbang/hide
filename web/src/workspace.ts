@@ -18,6 +18,8 @@ export type WorkspaceView = {
   agent_share: number;
   /** Agents only with the View areas drawn over the Agent area (issue 170); absent from a core that predates it. */
   views_over_agents?: boolean;
+  /** The width of the View areas drawn over the agents, as a share of the Agent area's; absent from a core that predates it. */
+  views_over_share?: number;
   /** The Workspace the operator last chose, now or before a restart, so the page opens on it (D-11). */
   resumed?: boolean;
   /** The View areas (S7); absent only from a core that predates them. */
@@ -50,8 +52,9 @@ export function drawnMode(view: WorkspaceView, opening: boolean): ViewMode {
 /**
  * Whether the View areas are drawn over the Agent area (issue 170): Agents
  * only with the core's `views_over_agents` up, while they hold a display or a
- * file of this checkout is opening into them. The Agent area keeps its size
- * underneath, so no terminal resizes when they come or go.
+ * file of this checkout is opening into them. They float as a panel on the
+ * Agent area's right; the Agent area keeps its size underneath, so no
+ * terminal resizes when the panel comes, goes or is resized.
  */
 export function viewsOverAgents(view: WorkspaceView, opening: boolean): boolean {
   if (view.mode !== "agents" || !view.views_over_agents) return false;
@@ -120,6 +123,20 @@ export function tabIdentity(entry: StripTab, agent: AgentRow | null): string {
 export function agentWidth(share: number, total: number, minimum: number): number {
   if (total <= minimum * 2) return Math.round(total / 2);
   return Math.round(Math.min(Math.max(share * total, minimum), total - minimum));
+}
+
+/** The core's default for the panel's share, used until a core that predates it says otherwise. */
+export const DEFAULT_VIEWS_OVER_SHARE = 0.6;
+
+/**
+ * The share a panel whose left edge is dragged to `x` pixels from the Agent
+ * area's left edge stands for, the panel keeping `inset` from the right edge:
+ * neither the panel nor the agents left of it gets narrower than `minimum`,
+ * by the boundary's own rule (`agentWidth`).
+ */
+export function viewsOverShareAt(x: number, total: number, inset: number, minimum: number): number {
+  if (total <= 0) return DEFAULT_VIEWS_OVER_SHARE;
+  return agentWidth((total - inset - x) / total, total, minimum) / total;
 }
 
 /** The share a boundary dragged to `x` pixels from the body's left edge stands for. */

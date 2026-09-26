@@ -178,6 +178,9 @@ pub struct WorkspaceViewSnapshot {
     pub agent_share: f32,
     /// Agents only with the View areas drawn over the Agent area (issue 170).
     pub views_over_agents: bool,
+    /// The width of the View areas drawn over the agents, as a share of the
+    /// Agent area's.
+    pub views_over_share: f32,
     /// Whether this is the Workspace the operator last chose, now or before a
     /// restart, which the shell opens on; any other front starts on Main
     /// (D-11).

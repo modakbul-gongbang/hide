@@ -72,9 +72,10 @@ pub(super) struct WorkspaceViewStore {
 /// What an event asks of the front Workspace's areas once it has moved the
 /// screen: a document opened while only Agents show draws the View areas over
 /// the Agent area, which keeps its size so no terminal resizes (issue 170),
-/// and an agent chosen then takes them down again; an agent opened while only
-/// Views show brings the Agent area back beside them (D-08). Nothing else
-/// changes the areas on its own.
+/// and an agent chosen from elsewhere takes them down again, while one chosen
+/// where it shows beside them (`in_place`) leaves them up; an agent opened
+/// while only Views show brings the Agent area back beside them (D-08).
+/// Nothing else changes the areas on its own.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum AreaIntent {
     Views,
@@ -90,7 +91,8 @@ impl AreaIntent {
             // A deselect opens nothing.
             Event::ChangesSelect(payload) if payload.path.is_some() => Some(Self::Views),
             Event::RevealPath(_) => Some(Self::RevealInViews),
-            Event::FocusPane(_) | Event::FocusTab(_) => Some(Self::Agents),
+            Event::FocusPane(payload) if !payload.in_place => Some(Self::Agents),
+            Event::FocusTab(payload) if !payload.in_place => Some(Self::Agents),
             // A device focus lands where the device's Herdr moves, so
             // `request_remote_control` applies it to that Workspace.
             _ => None,
@@ -114,6 +116,10 @@ pub(super) struct WorkspaceViewPayload {
     /// that names a `mode` takes them down unless it also names this.
     #[serde(default)]
     pub(super) views_over_agents: Option<bool>,
+    /// The width of the View areas drawn over the agents, as a share of the
+    /// Agent area's.
+    #[serde(default)]
+    pub(super) views_over_share: Option<f32>,
     /// A file of the front Workspace to reveal: the Explorer shows with the
     /// file's folders unfolded, in the same event, and nothing is opened.
     #[serde(default)]
@@ -394,6 +400,9 @@ impl Runtime {
         if let Some(share) = payload.agent_share {
             entry.agent_share = workspace_views::clamp_agent_share(share);
         }
+        if let Some(share) = payload.views_over_share {
+            entry.views_over_share = workspace_views::clamp_views_over_share(share);
+        }
         let revealed = payload
             .reveal
             .is_some_and(|path| self.unfold_to(&key, &path));
@@ -571,6 +580,7 @@ impl Runtime {
             changes: view.changes,
             agent_share: view.agent_share,
             views_over_agents: view.views_over_agents,
+            views_over_share: view.views_over_share,
             resumed: Some(key) == store.resumable.as_ref(),
             layout: self.view_layout_snapshot(key, &view.layout),
         });

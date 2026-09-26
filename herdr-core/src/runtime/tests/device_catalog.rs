@@ -609,6 +609,7 @@ fn a_tab_in_a_device_registration_without_a_workspace_creates_one_there() {
             request_id: request.to_owned(),
             report_pane_focus_outcome: false,
             focus_device: false,
+            in_place: false,
             request: RemoteControlRequest::CreateTab {
                 workspace_id: workspace_id.to_owned(),
                 checkout_id: Some(format!("{workspace_id}#registered")),
@@ -987,6 +988,7 @@ fn a_device_agent_opened_from_views_only_brings_its_own_workspace_to_together() 
         request_id: "open-agent".to_owned(),
         report_pane_focus_outcome: false,
         focus_device: true,
+        in_place: false,
         request: RemoteControlRequest::FocusPane {
             pane_id: format!("remote:{TARGET}:pane:t3"),
         },
@@ -1036,6 +1038,7 @@ fn a_device_agent_opened_from_views_only_brings_its_own_workspace_to_together() 
         request_id: "open-workspace".to_owned(),
         report_pane_focus_outcome: false,
         focus_device: true,
+        in_place: false,
         request: RemoteControlRequest::FocusWorkspace {
             workspace_id: format!("remote:{TARGET}:workspace:w1"),
             checkout_id: Some(format!("remote:{TARGET}:checkout:w1")),
@@ -1053,6 +1056,7 @@ fn a_device_agent_opened_from_views_only_brings_its_own_workspace_to_together() 
         request_id: "refused".to_owned(),
         report_pane_focus_outcome: false,
         focus_device: true,
+        in_place: false,
         request: RemoteControlRequest::FocusWorkspace {
             workspace_id: format!("remote:{TARGET}:workspace:w2"),
             checkout_id: Some(format!("remote:{TARGET}:checkout:w2")),
@@ -1077,6 +1081,7 @@ fn a_device_agent_opened_from_views_only_brings_its_own_workspace_to_together() 
         request_id: "lost".to_owned(),
         report_pane_focus_outcome: false,
         focus_device: true,
+        in_place: false,
         request: RemoteControlRequest::FocusWorkspace {
             workspace_id: format!("remote:{TARGET}:workspace:w2"),
             checkout_id: Some(format!("remote:{TARGET}:checkout:w2")),
@@ -1101,6 +1106,7 @@ fn a_device_agent_opened_from_views_only_brings_its_own_workspace_to_together() 
         request_id: "removed".to_owned(),
         report_pane_focus_outcome: false,
         focus_device: true,
+        in_place: false,
         request: RemoteControlRequest::FocusWorkspace {
             workspace_id: format!("remote:{TARGET}:workspace:w1"),
             checkout_id: Some(format!("remote:{TARGET}:checkout:w1")),
@@ -1144,6 +1150,7 @@ fn a_refused_device_request_does_not_bring_the_device_forward() {
         request_id: "open-workspace".to_owned(),
         report_pane_focus_outcome: false,
         focus_device: true,
+        in_place: false,
         request: RemoteControlRequest::FocusWorkspace {
             workspace_id: format!("remote:{TARGET}:workspace:w1"),
             checkout_id: None,

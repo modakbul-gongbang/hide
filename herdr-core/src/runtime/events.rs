@@ -93,6 +93,11 @@ pub(super) struct FocusPaneRequestPayload {
     /// while another device is in front is one action (S6 B12, B21).
     #[serde(default)]
     pub(super) focus_device: bool,
+    /// Chosen where it is drawn, in the Agent area on screen: the areas stay
+    /// as they are, so the View areas drawn over the agents stay up
+    /// (issue 170). A choice from the sidebar, a palette or a cycle is not.
+    #[serde(default)]
+    pub(super) in_place: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -137,6 +142,11 @@ pub(super) struct FocusTabPayload {
     pub(super) workspace_id: String,
     pub(super) checkout_id: String,
     pub(super) tab_id: String,
+    /// Chosen where it is drawn, in the Agent area on screen: the areas stay
+    /// as they are, so the View areas drawn over the agents stay up
+    /// (issue 170). A choice from the sidebar, a palette or a cycle is not.
+    #[serde(default)]
+    pub(super) in_place: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -273,6 +283,11 @@ pub(super) struct RemoteControlPayload {
     /// or, refused, neither (S6 B21).
     #[serde(default)]
     pub(super) focus_device: bool,
+    /// Chosen where it is drawn, in the Agent area on screen: the areas stay
+    /// as they are, so the View areas drawn over the agents stay up
+    /// (issue 170). A choice from the sidebar, a palette or a cycle is not.
+    #[serde(default)]
+    pub(super) in_place: bool,
     #[serde(flatten)]
     pub(super) request: RemoteControlRequest,
 }

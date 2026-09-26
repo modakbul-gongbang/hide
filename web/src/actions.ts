@@ -22,7 +22,7 @@ import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./setting
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
 import type { OpenTarget } from "./navigation";
-import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
+import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, inPlace as inPlaceEvent, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
 import {
   catalogWorkspaces,
   deviceOfCheckout,
@@ -161,14 +161,15 @@ export function createActions(dispatch: DispatchFn) {
     ui().setScreen({ kind: "workspace" });
     const targetId = remoteTargetOfPane(rest(), targetPaneId);
     if (targetId) {
+      // Chips, Returns and Opens sit in the Agent area on screen (issue 170).
       dispatch({
         schema_version: 2,
         kind: "remote_control",
-        payload: { target_id: targetId, request_id: requestId, report_pane_focus_outcome: true, action: "focus_pane", pane_id: targetPaneId },
+        payload: { target_id: targetId, request_id: requestId, report_pane_focus_outcome: true, in_place: true, action: "focus_pane", pane_id: targetPaneId },
       });
       return;
     }
-    dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: targetPaneId, origin: "operator", request_id: requestId } });
+    dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: targetPaneId, origin: "operator", request_id: requestId, in_place: true } });
   };
 
   /** The id of the core's task slot now, so a request can tell its own answer from an older one. */
@@ -255,7 +256,7 @@ export function createActions(dispatch: DispatchFn) {
    * `workspace_view` event naming only what changes. The core keeps them per
    * Workspace, so another Workspace is never touched.
    */
-  const setWorkspaceView = (patch: { mode?: ViewMode; explorer?: boolean; changes?: boolean; agent_share?: number; views_over_agents?: boolean; reveal?: string }) => {
+  const setWorkspaceView = (patch: { mode?: ViewMode; explorer?: boolean; changes?: boolean; agent_share?: number; views_over_agents?: boolean; views_over_share?: number; reveal?: string }) => {
     if (!workspaceViewOf(rest())) return diagnostic("workspace_view: no Workspace in front");
     dispatch({ schema_version: 2, kind: "workspace_view", payload: patch });
   };
@@ -921,10 +922,13 @@ export function createActions(dispatch: DispatchFn) {
       });
     },
 
-    focusTab(tabId: string) {
+    /** `inPlace`: chosen in the Agent area's own tab strip, so the View areas over the agents stay up (issue 170). */
+    focusTab(tabId: string, inPlace = false) {
       if (remoteContext(rest())) {
         const host = remoteHost("Switching tab");
-        if (host) sendRemote(host.targetId, { action: "focus_tab", tab_id: tabId });
+        if (!host) return;
+        const event = remoteControl(host.targetId, { action: "focus_tab", tab_id: tabId });
+        dispatch(inPlace ? inPlaceEvent(event) : event);
         return;
       }
       const here = current();
@@ -932,7 +936,7 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({
         schema_version: 2,
         kind: "focus_tab",
-        payload: { workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, tab_id: tabId },
+        payload: { workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, tab_id: tabId, ...(inPlace ? { in_place: true } : {}) },
       });
     },
 

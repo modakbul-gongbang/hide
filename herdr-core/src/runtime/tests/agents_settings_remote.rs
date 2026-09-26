@@ -51,6 +51,7 @@ fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
         request_id: "request-2".to_owned(),
         report_pane_focus_outcome: false,
         focus_device: false,
+        in_place: false,
         request: RemoteControlRequest::CreateTab {
             workspace_id: projected_workspace_id.to_owned(),
             checkout_id: None,
@@ -754,6 +755,7 @@ fn remote_pane_focus_uses_its_existing_request_outcome() {
         request_id: request_id.to_owned(),
         report_pane_focus_outcome: true,
         focus_device: false,
+        in_place: false,
         request: RemoteControlRequest::FocusPane {
             pane_id: projected_pane_id.clone(),
         },
@@ -773,6 +775,7 @@ fn remote_pane_focus_uses_its_existing_request_outcome() {
         request_id: "ordinary-remote-focus".to_owned(),
         report_pane_focus_outcome: false,
         focus_device: false,
+        in_place: false,
         request: RemoteControlRequest::FocusPane {
             pane_id: projected_pane_id.clone(),
         },

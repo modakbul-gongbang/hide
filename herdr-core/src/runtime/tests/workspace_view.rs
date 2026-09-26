@@ -198,6 +198,14 @@ fn views_over_the_agents_come_down_and_back_without_closing_a_view() {
         "w-order:t2",
     )));
     assert!(over(&runtime));
+    // A tab chosen where it shows, beside the View areas, leaves them up.
+    let mut in_place: serde_json::Value =
+        serde_json::from_slice(&focus_tab_event(&checkout_id, "w-order:t2")).unwrap();
+    in_place["payload"]["in_place"] = serde_json::json!(true);
+    runtime.dispatch_json(&serde_json::to_vec(&in_place).unwrap());
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert!(over(&runtime), "a choice among the visible agents");
+    // One chosen from elsewhere takes them down.
     runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2"));
     assert_eq!(runtime.snapshot.status.last_error, None);
     assert_eq!((mode(&runtime), over(&runtime)), (ViewMode::Agents, false));
@@ -207,12 +215,28 @@ fn views_over_the_agents_come_down_and_back_without_closing_a_view() {
         "taking them down closes no view"
     );
 
-    layout(&mut runtime, serde_json::json!({"views_over_agents": true}));
+    layout(
+        &mut runtime,
+        serde_json::json!({"views_over_agents": true, "views_over_share": 0.45}),
+    );
     assert_eq!((mode(&runtime), over(&runtime)), (ViewMode::Agents, true));
     let (saved, _) = crate::workspace_views::load(&state, 0);
     assert!(
-        saved.workspaces.iter().any(|view| view.views_over_agents),
-        "the file keeps them up"
+        saved
+            .workspaces
+            .iter()
+            .any(|view| view.views_over_agents && view.views_over_share == 0.45),
+        "the file keeps them up at their width"
+    );
+    layout(&mut runtime, serde_json::json!({"views_over_share": 3.0}));
+    assert_eq!(
+        runtime
+            .snapshot
+            .workspace_view
+            .as_ref()
+            .unwrap()
+            .views_over_share,
+        crate::workspace_views::MAX_VIEWS_OVER_SHARE
     );
     layout(&mut runtime, serde_json::json!({"mode": "agents"}));
     assert!(!over(&runtime), "choosing Agents only takes them down");

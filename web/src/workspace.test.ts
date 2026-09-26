@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRow, Checkout, StripTab, Tab } from "./snapshot";
-import { agentEntries, agentWidth, canShowViewsOverAgents, drawnMode, shareAt, tabAgent, tabIdentity, viewsOverAgents, type WorkspaceView } from "./workspace";
+import { agentEntries, agentWidth, canShowViewsOverAgents, drawnMode, shareAt, tabAgent, tabIdentity, viewsOverAgents, viewsOverShareAt, type WorkspaceView } from "./workspace";
 
 const strip: StripTab[] = [
   { id: "herdr:1", kind: "herdr", source_id: "t1", label: "1", preview: false },
@@ -87,5 +87,14 @@ describe("the View areas over the agents", () => {
     const opening = view("agents", true, 0);
     expect(viewsOverAgents(opening, true)).toBe(true);
     expect(canShowViewsOverAgents(opening, true)).toBe(true);
+  });
+});
+
+describe("the panel's width", () => {
+  it("follows its left edge, keeping itself and the agents left of it at their minimum", () => {
+    expect(viewsOverShareAt(392, 1000, 8, 320)).toBeCloseTo(0.6);
+    expect(viewsOverShareAt(900, 1000, 8, 320)).toBeCloseTo(0.32);
+    expect(viewsOverShareAt(10, 1000, 8, 320)).toBeCloseTo(0.68);
+    expect(viewsOverShareAt(10, 0, 8, 320)).toBe(0.6);
   });
 });

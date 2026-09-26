@@ -38,6 +38,14 @@ pub const MIN_AGENT_SHARE: f32 = 0.2;
 pub const MAX_AGENT_SHARE: f32 = 0.8;
 pub const DEFAULT_AGENT_SHARE: f32 = 0.5;
 
+/// The width of the View areas drawn over the agents, as a share of the Agent
+/// area's (issue 170). The bounds leave the panel and the agents to its left
+/// readable, like the boundary's; the shell also enforces a pixel minimum for
+/// both while it draws.
+pub const MIN_VIEWS_OVER_SHARE: f32 = 0.2;
+pub const MAX_VIEWS_OVER_SHARE: f32 = 0.8;
+pub const DEFAULT_VIEWS_OVER_SHARE: f32 = 0.6;
+
 /// Which working areas a Workspace shows. Changing it only changes space:
 /// no tab, document or pane is closed and no split is made (D-03). A new
 /// Workspace starts with its agents alone, since it has no View yet; a file
@@ -89,6 +97,8 @@ pub struct WorkspaceView {
     /// Agents only and only while the View areas have something to show.
     #[serde(default)]
     pub views_over_agents: bool,
+    #[serde(default = "default_views_over_share")]
+    pub views_over_share: f32,
     #[serde(default)]
     pub last_used_unix_ms: u64,
     #[serde(default)]
@@ -103,6 +113,10 @@ fn default_agent_share() -> f32 {
     DEFAULT_AGENT_SHARE
 }
 
+fn default_views_over_share() -> f32 {
+    DEFAULT_VIEWS_OVER_SHARE
+}
+
 impl WorkspaceView {
     pub fn new(device_id: &str, path: &str) -> Self {
         Self {
@@ -113,6 +127,7 @@ impl WorkspaceView {
             changes: false,
             agent_share: DEFAULT_AGENT_SHARE,
             views_over_agents: false,
+            views_over_share: DEFAULT_VIEWS_OVER_SHARE,
             last_used_unix_ms: 0,
             layout: Layout::default(),
         }
@@ -134,6 +149,14 @@ pub fn clamp_agent_share(value: f32) -> f32 {
         value.clamp(MIN_AGENT_SHARE, MAX_AGENT_SHARE)
     } else {
         DEFAULT_AGENT_SHARE
+    }
+}
+
+pub fn clamp_views_over_share(value: f32) -> f32 {
+    if value.is_finite() {
+        value.clamp(MIN_VIEWS_OVER_SHARE, MAX_VIEWS_OVER_SHARE)
+    } else {
+        DEFAULT_VIEWS_OVER_SHARE
     }
 }
 
@@ -259,6 +282,7 @@ impl V1View {
             changes: self.changes,
             agent_share: self.agent_share,
             views_over_agents: false,
+            views_over_share: DEFAULT_VIEWS_OVER_SHARE,
             last_used_unix_ms: self.last_used_unix_ms,
             layout,
         }
@@ -344,6 +368,9 @@ fn settle(
     let mut repairs = Vec::new();
     for view in &mut workspaces {
         view.agent_share = clamp_agent_share(view.agent_share);
+        view.views_over_share = clamp_views_over_share(view.views_over_share);
+        // Only Agents only draws the View areas over the agents.
+        view.views_over_agents &= view.mode == ViewMode::Agents;
         for note in view.layout.repair() {
             repairs.push(format!("{} on {}: {note}", view.path, view.device_id));
         }
@@ -614,5 +641,8 @@ mod tests {
         assert_eq!(clamp_agent_share(0.01), MIN_AGENT_SHARE);
         assert_eq!(clamp_agent_share(f32::NAN), DEFAULT_AGENT_SHARE);
         assert_eq!(clamp_agent_share(0.95), MAX_AGENT_SHARE);
+        assert_eq!(clamp_views_over_share(0.01), MIN_VIEWS_OVER_SHARE);
+        assert_eq!(clamp_views_over_share(f32::NAN), DEFAULT_VIEWS_OVER_SHARE);
+        assert_eq!(clamp_views_over_share(0.95), MAX_VIEWS_OVER_SHARE);
     }
 }

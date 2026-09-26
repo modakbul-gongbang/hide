@@ -20,14 +20,14 @@ import { Tools } from "./Tools";
 import { useUiStore, type WorkingRegion } from "./ui";
 import { ViewAreas } from "./ViewAreas";
 import { narrowWorkspace, shownTools } from "./viewLayout";
-import { LAYOUTS, agentEntries, agentWidth, canShowViewsOverAgents, drawnMode, layoutLabel, shareAt, viewsOverAgents, workspaceViewOf, type ViewMode } from "./workspace";
+import { DEFAULT_VIEWS_OVER_SHARE, LAYOUTS, agentEntries, agentWidth, canShowViewsOverAgents, drawnMode, layoutLabel, shareAt, viewsOverAgents, viewsOverShareAt, workspaceViewOf, type ViewMode } from "./workspace";
 import { hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
 
 // A Workspace (PRD S6 D-01..D-05, B4-B11; S7 B12, B13): one checkout's Agent
 // area (its Herdr tabs and their panes) and View areas (its files and diffs),
-// side by side, one at a time, or in Agents only drawn over the Agent area
-// (issue 170), with its tools beside them. The layout, the
+// side by side, one at a time, or in Agents only floating as a panel over the
+// Agent area's right side (issue 170), with its tools beside them. The layout, the
 // tools and the boundary are the core's, per Workspace; this draws them and
 // sends one event per operator choice. A hidden area is unmounted, never
 // closed: its terminals park and stay fed, and its tabs stay in the core.
@@ -77,7 +77,7 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
     <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={`Workspace ${checkout.branch ?? checkout.label}`} data-workspace-screen={checkout.id} data-layout={view.mode} data-views-over-agents={over}>
       <WorkspaceToolbar checkout={checkout} mode={view.mode} over={canShowViewsOverAgents(view, opening) ? over : null} explorer={explorer} changes={changes} singleRegion={narrow.singleRegion} actions={actions} />
       <div ref={setBody} className="relative flex min-h-0 flex-1" data-workspace-body={narrow.toolsOverlay ? "narrow" : "wide"}>
-        <Areas checkout={checkout} mode={mode} over={over} share={view.agent_share} single={narrow.singleRegion} actions={actions} />
+        <Areas checkout={checkout} mode={mode} over={over} share={view.agent_share} overShare={view.views_over_share ?? DEFAULT_VIEWS_OVER_SHARE} single={narrow.singleRegion} actions={actions} />
         <Tools explorer={explorer} changes={changes} overlay={narrow.toolsOverlay} actions={actions} />
       </div>
     </section>
@@ -292,11 +292,13 @@ function areaMinimum(): number {
  * a guide line as it is dragged and sends one `workspace_view` share on
  * release, so a drag never resizes the terminals on every pointer event.
  * `single` is a Together window too narrow for both: it shows the working
- * region the operator was last in (S7 B13). `over` draws the View areas over
- * an Agent area that keeps its full size and takes no input meanwhile, so an
- * agent nobody can see is never typed into (issue 170).
+ * region the operator was last in (S7 B13). `over` floats the View areas as a
+ * panel on the right of an Agent area that keeps its full size underneath and
+ * stays live beside it; the panel's left edge resizes it by the same rules,
+ * `overShare` of the Agent area's width, and never moves a terminal
+ * (issue 170).
  */
-function Areas({ checkout, mode, over, share, single, actions }: { checkout: Checkout; mode: ViewMode; over: boolean; share: number; single: boolean; actions: Actions }) {
+function Areas({ checkout, mode, over, share, overShare, single, actions }: { checkout: Checkout; mode: ViewMode; over: boolean; share: number; overShare: number; single: boolean; actions: Actions }) {
   const region = useUiStore((s) => s.workingRegion);
   const body = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(0);
@@ -310,9 +312,11 @@ function Areas({ checkout, mode, over, share, single, actions }: { checkout: Che
     return () => observer.disconnect();
   }, []);
   const minimum = useMemo(() => areaMinimum(), []);
-  // Covering the Agent area makes it inert, which takes the keyboard from its
-  // terminal; uncovering gives it back to the pane the core has focused, as a
-  // closing sheet does, so no focus is reported for it.
+  // The panel's gap from the Agent area's top, right and bottom edges.
+  const inset = useMemo(() => tokenPx("--spacing-sm"), []);
+  // A panel that goes away with the keyboard inside it leaves no focus; it
+  // goes back to the pane the core has focused, as after a closing sheet, so
+  // no focus is reported for it.
   const wasOver = useRef(over);
   useEffect(() => {
     if (wasOver.current && !over) {
@@ -326,7 +330,11 @@ function Areas({ checkout, mode, over, share, single, actions }: { checkout: Che
   // The region the operator works in is the one a narrow Together keeps.
   const workIn = (next: WorkingRegion) => () => useUiStore.getState().setWorkingRegion(next);
   const agentPx = agents && views && width > 0 ? agentWidth(share, width, minimum) : null;
-  const drag = (event: React.PointerEvent<HTMLDivElement>) => {
+  const panelPx = over && width > 0 ? agentWidth(overShare, width, minimum) : null;
+  // A boundary drag: `shareOf` reads a share off the pointer's offset from the
+  // body's left edge, `guideAt` places the guide line for it, and `land`
+  // sends it once on release.
+  const dragBoundary = (event: React.PointerEvent<HTMLDivElement>, shareOf: (x: number, total: number) => number, guideAt: (share: number, total: number) => number, land: (share: number) => void) => {
     const element = body.current;
     if (!element) return;
     event.preventDefault();
@@ -334,7 +342,7 @@ function Areas({ checkout, mode, over, share, single, actions }: { checkout: Che
     const total = element.clientWidth;
     const target = event.currentTarget;
     target.setPointerCapture(event.pointerId);
-    const move = (next: PointerEvent) => setGuide(shareAt(next.clientX - left, total, minimum) * total);
+    const move = (next: PointerEvent) => setGuide(guideAt(shareOf(next.clientX - left, total), total));
     const end = () => {
       target.removeEventListener("pointermove", move);
       target.removeEventListener("pointerup", up);
@@ -344,8 +352,7 @@ function Areas({ checkout, mode, over, share, single, actions }: { checkout: Che
     };
     const up = (next: PointerEvent) => {
       end();
-      const nextShare = shareAt(next.clientX - left, total, minimum);
-      if (Math.abs(nextShare - share) > 0.001) actions.setWorkspaceView({ agent_share: nextShare });
+      land(shareOf(next.clientX - left, total));
     };
     // A drag the system cancels lands nothing and leaves no guide behind.
     target.addEventListener("pointermove", move);
@@ -353,6 +360,24 @@ function Areas({ checkout, mode, over, share, single, actions }: { checkout: Che
     target.addEventListener("pointercancel", end);
     target.addEventListener("lostpointercapture", end);
   };
+  const drag = (event: React.PointerEvent<HTMLDivElement>) =>
+    dragBoundary(
+      event,
+      (x, total) => shareAt(x, total, minimum),
+      (next, total) => next * total,
+      (next) => {
+        if (Math.abs(next - share) > 0.001) actions.setWorkspaceView({ agent_share: next });
+      },
+    );
+  const dragPanel = (event: React.PointerEvent<HTMLDivElement>) =>
+    dragBoundary(
+      event,
+      (x, total) => viewsOverShareAt(x, total, inset, minimum),
+      (next, total) => total - inset - agentWidth(next, total, minimum),
+      (next) => {
+        if (Math.abs(next - overShare) > 0.001) actions.setWorkspaceView({ views_over_share: next });
+      },
+    );
   return (
     // While both areas show they ask for two minimums, and the tools column
     // gives way first, down to its own minimum (B6): its shrink weight is far
@@ -367,7 +392,6 @@ function Areas({ checkout, mode, over, share, single, actions }: { checkout: Che
           className={`flex min-h-0 min-w-0 flex-col ${agentPx === null ? "flex-1" : "shrink-0"}`}
           style={agentPx === null ? undefined : { width: agentPx }}
           data-agent-area="true"
-          inert={over}
           onPointerDownCapture={workIn("agents")}
           onFocusCapture={workIn("agents")}
         >
@@ -401,11 +425,39 @@ function Areas({ checkout, mode, over, share, single, actions }: { checkout: Che
         </div>
       ) : null}
       {over ? (
-        <div className="absolute inset-0 z-10 flex min-h-0 min-w-0 flex-col bg-background" data-view-area="true" data-views-over-agents="true">
+        // Popover elevation: it floats over agents that stay live to its left.
+        <div
+          className="absolute bottom-sm right-sm top-sm z-10 flex min-h-0 min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-popover shadow-lg"
+          style={{ width: panelPx ?? `${overShare * 100}%` }}
+          data-view-area="true"
+          data-views-over-agents="true"
+          onPointerDownCapture={workIn("views")}
+          onFocusCapture={workIn("views")}
+        >
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize the View areas over the agents"
+            aria-valuenow={Math.round(overShare * 100)}
+            aria-valuemin={20}
+            aria-valuemax={80}
+            tabIndex={0}
+            data-views-over-divider="true"
+            className="absolute inset-y-0 left-0 z-20 w-[var(--size-resize-handle)] cursor-col-resize outline-none hover:bg-primary focus-visible:bg-primary"
+            onPointerDown={dragPanel}
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+              event.preventDefault();
+              // Left widens the panel, as its edge moves left.
+              const step = event.key === "ArrowLeft" ? 0.05 : -0.05;
+              const next = width > 0 ? agentWidth(overShare + step, width, minimum) / width : overShare;
+              if (Math.abs(next - overShare) > 0.001) actions.setWorkspaceView({ views_over_share: next });
+            }}
+          />
           <ViewAreas actions={actions} />
         </div>
       ) : null}
-      {guide !== null ? <div className="pointer-events-none absolute inset-y-0 w-[var(--size-resize-handle)] bg-primary" style={{ left: guide }} data-area-guide="true" /> : null}
+      {guide !== null ? <div className="pointer-events-none absolute inset-y-0 z-30 w-[var(--size-resize-handle)] bg-primary" style={{ left: guide }} data-area-guide="true" /> : null}
     </div>
   );
 }

@@ -454,6 +454,7 @@ impl Runtime {
             } if self.separate_view_areas() => self.workspace_key(workspace_id, checkout_id),
             _ => agents_area_key.clone(),
         };
+        let payload_in_place = payload.in_place;
         let action = match payload.request {
             RemoteControlRequest::FocusPane { .. } => {
                 RemoteControlAction::Pane(PaneControlAction::Focus {
@@ -744,8 +745,8 @@ impl Runtime {
         if focus_device && !self.device_in_front(&target_id) {
             self.bring_device_forward(target_id.clone());
         }
-        if let Some(key) = agents_area_key {
-            self.apply_area_intent_to(&key, AreaIntent::Agents);
+        if let Some(key) = agents_area_key.as_ref().filter(|_| !payload_in_place) {
+            self.apply_area_intent_to(key, AreaIntent::Agents);
         }
         if let Some(key) = chosen_key {
             self.choose_when_in_front(&target_id, &dispatched_request_id, key);
