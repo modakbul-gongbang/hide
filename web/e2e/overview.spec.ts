@@ -162,7 +162,9 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     // Header facts (B2): four worktrees; no open PR, as GitHub answered; the
     // size the Overview asked the core to measure; the merged worktree,
     // which opens the Done column.
-    await expect(page.locator('[data-stat="worktrees"]')).toHaveText(/4 worktrees/);
+    // The worktree with no Herdr workspace can be listed after the ones Herdr
+    // reports; a slow runner showed three at five seconds.
+    await expect(page.locator('[data-stat="worktrees"]')).toHaveText(/4 worktrees/, { timeout: 20_000 });
     await expect(page.locator('[data-stat="open-prs"]')).toHaveText("0 open PRs", { timeout: 20_000 });
     await expect(page.locator('[data-stat="disk"]')).toHaveText(/^\d+(\.\d)? (B|KB|MB|GB)$/, { timeout: 30_000 });
     await expect(page.locator('[data-stat="merged"]')).toHaveText("1 merged → 정리", { timeout: 20_000 });
