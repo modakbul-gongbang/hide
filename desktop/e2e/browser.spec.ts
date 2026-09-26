@@ -185,9 +185,14 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   const pageB = await viewOf(`${origin}/b.html`);
   await expect.poll(async () => (await viewOf(`${origin}/a.html`)).visible).toBe(false);
 
-  // Two View areas side by side need the Workspace's width: the Views take
-  // it all and the Explorer steps aside until it is used below.
-  await page.locator('[data-panel-expand="off"]').click();
+  // Two View areas side by side need the Workspace's width: the side panel
+  // is expanded over it and the Explorer steps aside until it is used below.
+  // In this window the panel already covers the body, so its Expand is not
+  // drawn; the palette stores the state for when the Explorer leaves.
+  await page.keyboard.press("Meta+KeyK");
+  await page.keyboard.type("Expand side panel");
+  await page.locator('[data-palette-row="command:panel:expanded"]').click();
+  await expect(page.locator("[data-palette-input]")).toHaveCount(0);
   await page.locator('[data-tool-toggle="explorer"][aria-pressed="true"]').click();
   await expect(page.locator('[data-tool-toggle="explorer"]')).toHaveAttribute("aria-pressed", "false");
 
