@@ -20,6 +20,7 @@ use crate::pane_auth::Reference;
 use crate::state_file::SCHEMA_VERSION;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
+const REMOTE_BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(25);
 
 /// An auto-bootstrapped direct CLI owns its reference even if transport fails.
 pub struct OneShotReference(pub PathBuf);
@@ -125,8 +126,8 @@ fn bootstrap_remote(env: &Env, request: &Value) -> Result<Option<PathBuf>, Strin
         if seen > 16 {
             return Err("bridge_limit".to_owned());
         }
-        let _ = stream.set_read_timeout(Some(TIMEOUT));
-        let _ = stream.set_write_timeout(Some(TIMEOUT));
+        let _ = stream.set_read_timeout(Some(REMOTE_BOOTSTRAP_TIMEOUT));
+        let _ = stream.set_write_timeout(Some(REMOTE_BOOTSTRAP_TIMEOUT));
         if writeln!(stream, "{request}").is_err() {
             reason = Some("bridge_unavailable".to_owned());
             continue;
@@ -294,40 +295,30 @@ async fn exchange(
             if value["type"] != "workspace_result" || value["request_id"] != request_id {
                 return Err("invalid_response".to_owned());
             }
+            socket
+                .send(Message::Text(
+                    json!({"type":"workspace_claim"}).to_string().into(),
+                ))
+                .await
+                .map_err(|_| "hide_unavailable".to_owned())?;
+            match socket.next().await {
+                Some(Ok(Message::Text(reply)))
+                    if serde_json::from_str::<Value>(&reply)
+                        .ok()
+                        .is_some_and(|answer| answer["type"] == "workspace_claimed") => {}
+                _ => return Err("credential_expired".to_owned()),
+            }
             let marker = path.with_extension("claimed");
-            let created = match OpenOptions::new()
+            match OpenOptions::new()
                 .write(true)
                 .create_new(true)
                 .mode(0o600)
                 .open(&marker)
             {
-                Ok(_) => true,
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
                 Err(_) => return Err("reference_unavailable".to_owned()),
-            };
-            let confirmed = async {
-                socket
-                    .send(Message::Text(
-                        json!({"type":"workspace_claim"}).to_string().into(),
-                    ))
-                    .await
-                    .map_err(|_| "hide_unavailable".to_owned())?;
-                match socket.next().await {
-                    Some(Ok(Message::Text(reply)))
-                        if serde_json::from_str::<Value>(&reply)
-                            .ok()
-                            .is_some_and(|answer| answer["type"] == "workspace_claimed") =>
-                    {
-                        Ok(())
-                    }
-                    _ => Err("credential_expired".to_owned()),
-                }
             }
-            .await;
-            if confirmed.is_err() && created {
-                let _ = fs::remove_file(marker);
-            }
-            confirmed?;
             Ok(value)
         }
         Some(Ok(Message::Close(_))) => Err("credential_rejected".to_owned()),

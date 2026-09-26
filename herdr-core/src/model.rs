@@ -3271,7 +3271,6 @@ pub struct RestWire<'a> {
     pub recent_closed: &'a RecentClosedSnapshot,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_view: &'a Option<WorkspaceViewSnapshot>,
-    #[serde(skip_serializing_if = "<[BrowserViewInventoryRow]>::is_empty")]
     pub browser_views: &'a [BrowserViewInventoryRow],
 }
 

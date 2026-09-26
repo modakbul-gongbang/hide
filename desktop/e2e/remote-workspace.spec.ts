@@ -299,7 +299,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     await expect.poll(async () => (await native())?.live, { timeout: 20_000 }).toBe("remote-live");
     const routed = (await native())!.url;
     expect(new URL(routed).port).not.toBe(String(remotePort));
-    expect(new URL(routed).hostname).toBe("localhost");
+    expect(new URL(routed).hostname).toBe("127.0.0.1");
     await app.evaluate(async ({ BrowserWindow }, sourcePort) => {
       const child = BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>
         (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote dev"
@@ -320,7 +320,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     let decoyReads = 0;
     collisionServer = http.createServer((request, response) => {
       const body = request.url === "/collision.html"
-        ? `<!doctype html><title>Remote collision</title><h1 id="origin">remote-device</h1><p id="asset">pending</p><p id="fetch">pending</p><p id="live">pending</p><script src="http://localhost:${(collisionServer!.address() as AddressInfo).port}/asset.js"></script><script>fetch('http://localhost:${(collisionServer!.address() as AddressInfo).port}/data').then(r => r.text()).then(t => document.getElementById('fetch').textContent = t); new WebSocket('ws://localhost:${(collisionServer!.address() as AddressInfo).port}/live').onmessage = e => document.getElementById('live').textContent = e.data</script>`
+        ? `<!doctype html><title>Remote collision</title><h1 id="origin">remote-device</h1><p id="asset">pending</p><p id="fetch">pending</p><p id="mapped">pending</p><p id="live">pending</p><script src="http://localhost:${(collisionServer!.address() as AddressInfo).port}/asset.js"></script><script>fetch('http://localhost:${(collisionServer!.address() as AddressInfo).port}/data').then(r => r.text()).then(t => document.getElementById('fetch').textContent = t); fetch('http://[::ffff:127.0.0.1]:${(collisionServer!.address() as AddressInfo).port}/data').then(r => r.text()).then(t => document.getElementById('mapped').textContent = t); new WebSocket('ws://localhost:${(collisionServer!.address() as AddressInfo).port}/live').onmessage = e => document.getElementById('live').textContent = e.data</script>`
         : request.url === "/asset.js" ? "document.getElementById('asset').textContent = 'remote-script'"
         : request.url === "/data" ? "remote-fetch" : null;
       response.writeHead(body ? 200 : 404, { "content-type": request.url === "/asset.js" ? "text/javascript" : "text/html", "access-control-allow-origin": "*" });
@@ -346,8 +346,8 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     await expect.poll(async () => app!.evaluate(async ({ BrowserWindow }) => {
       const child = BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>
         (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote collision") as { webContents: Electron.WebContents } | undefined;
-      return child?.webContents.executeJavaScript("({ origin: document.getElementById('origin')?.textContent, asset: document.getElementById('asset')?.textContent, fetch: document.getElementById('fetch')?.textContent, live: document.getElementById('live')?.textContent })");
-    }), { timeout: 30_000 }).toEqual({ origin: "remote-device", asset: "remote-script", fetch: "remote-fetch", live: "remote-ws" });
+      return child?.webContents.executeJavaScript("({ origin: document.getElementById('origin')?.textContent, asset: document.getElementById('asset')?.textContent, fetch: document.getElementById('fetch')?.textContent, mapped: document.getElementById('mapped')?.textContent, live: document.getElementById('live')?.textContent })");
+    }), { timeout: 30_000 }).toEqual({ origin: "remote-device", asset: "remote-script", fetch: "remote-fetch", mapped: "remote-fetch", live: "remote-ws" });
     expect(decoyReads).toBe(0);
     expect((await commandFromPane(remote, run, bridge, ["view", "close", (collision.answer.result as { view_id: string }).view_id], "remote-collision-close")).status).toBe(0);
 
@@ -438,6 +438,47 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
         catch { return true; }
       }, { timeout: 10_000 }).toBe(true);
     }
+    expect((await commandFromPane(local, run, null, ["view", "close", (localBrowser.answer.result as { view_id: string }).view_id], "local-dev-close")).status).toBe(0);
+    await expect.poll(async () => app!.evaluate(async ({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows()[0]?.contentView.children.filter((entry) =>
+        ["Remote dev", "Remote HTML"].includes((entry as { webContents?: Electron.WebContents }).webContents?.getTitle() ?? "")).length ?? 0
+    ), { timeout: 15_000 }).toBe(0);
+    const upperAddress = `FILE://${fs.realpathSync(html)}`;
+    const upper = await commandFromPane(remote, run, bridge, ["browser", "open", upperAddress, "--reveal"], "remote-uppercase-file");
+    expect(upper.status, JSON.stringify(upper.answer)).toBe(0);
+    const upperViews = await commandFromPane(remote, run, bridge, ["view", "list"], "remote-uppercase-list");
+    expect((upperViews.answer.result as { views: { target: string }[] }).views.some((view) => view.target === upperAddress)).toBe(true);
+    await expect.poll(async () => app!.evaluate(async ({ BrowserWindow }) => {
+      const child = BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>
+        (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote HTML") as { webContents: Electron.WebContents } | undefined;
+      return child?.webContents.executeJavaScript("document.cookie") as Promise<string> | undefined;
+    }), { timeout: 20_000 }).toBe("");
+    await app.evaluate(async ({ BrowserWindow }) => {
+      const child = BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>
+        (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote HTML") as { webContents: Electron.WebContents } | undefined;
+      if (!child) throw new Error("Uppercase FILE page is missing");
+      await child.webContents.executeJavaScript("window.open('https://example.test/leak', '_blank'); location.href = 'https://example.test/leak'");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    const afterFilePopup = await commandFromPane(remote, run, bridge, ["view", "list"], "remote-uppercase-popup-check");
+    expect(afterFilePopup.status).toBe(0);
+    expect((afterFilePopup.answer.result as { views: { target: string }[] }).views.some((view) => view.target.includes("example.test"))).toBe(false);
+    expect((await commandFromPane(remote, run, bridge, ["view", "close", (upper.answer.result as { view_id: string }).view_id], "remote-uppercase-close")).status).toBe(0);
+    const mapped = await commandFromPane(remote, run, bridge, ["browser", "open", `http://[::ffff:127.0.0.1]:${remotePort}/remote.html`], "remote-mapped-loopback");
+    expect(mapped.status, JSON.stringify(mapped.answer)).toBe(0);
+    await expect.poll(async () => app!.evaluate(async ({ BrowserWindow }) => {
+      const child = BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>
+        (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote dev") as { webContents: Electron.WebContents } | undefined;
+      return child?.webContents.getURL() ?? null;
+    }), { timeout: 20_000 }).not.toBeNull();
+    const mappedRoute = await app.evaluate(async ({ BrowserWindow }) => {
+      const child = BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>
+        (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote dev") as { webContents: Electron.WebContents } | undefined;
+      return child?.webContents.getURL() ?? "";
+    });
+    expect(new URL(mappedRoute).hostname).toBe("127.0.0.1");
+    expect(new URL(mappedRoute).port).not.toBe(String(remotePort));
+    expect((await commandFromPane(remote, run, bridge, ["view", "close", (mapped.answer.result as { view_id: string }).view_id], "remote-mapped-close")).status).toBe(0);
     await page.evaluate(async ({ port, token }) => {
       await new Promise<void>((resolve, reject) => {
         const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);

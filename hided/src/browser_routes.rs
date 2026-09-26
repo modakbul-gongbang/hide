@@ -209,14 +209,13 @@ impl BrowserRoutes {
             .map_err(|_| "route_failed")?
             .map_err(|_| "route_failed")?;
             let url = format!(
-                "{}://{}:{}{}",
+                "{}://{}{}",
                 if source.url.starts_with("https:") {
                     "https"
                 } else {
                     "http"
                 },
-                host,
-                forward.port(),
+                forward.local_addr(),
                 tail
             );
             (url, RouteKind::Http(forward))
@@ -517,10 +516,15 @@ mod tests {
             "http://127.0.0.2:5173/",
             "http://[::1]:5173/",
             "http://[0:0:0:0:0:0:0:1]:5173/",
+            "http://[::ffff:127.0.0.1]:5173/",
         ] {
             let (port, host, _) = loopback_target(address).expect(address);
             assert_eq!(port, 5173);
             assert!(crate::browser_cli::loopback_ip(&host).is_some());
         }
+        assert_eq!(
+            crate::browser_cli::loopback_ip("[::ffff:127.0.0.1]"),
+            Some(IpAddr::V4(Ipv4Addr::LOCALHOST))
+        );
     }
 }

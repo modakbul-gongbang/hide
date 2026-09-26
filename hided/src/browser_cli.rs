@@ -71,11 +71,14 @@ pub(crate) fn loopback_ip(host: &str) -> Option<IpAddr> {
         .strip_prefix('[')
         .and_then(|part| part.strip_suffix(']'))
         .unwrap_or(host);
-    bracketless
-        .parse::<Ipv6Addr>()
-        .ok()
-        .filter(Ipv6Addr::is_loopback)
-        .map(IpAddr::V6)
+    let address = bracketless.parse::<Ipv6Addr>().ok()?;
+    if address.is_loopback() {
+        return Some(IpAddr::V6(address));
+    }
+    address
+        .to_ipv4()
+        .filter(Ipv4Addr::is_loopback)
+        .map(IpAddr::V4)
 }
 
 #[cfg(test)]

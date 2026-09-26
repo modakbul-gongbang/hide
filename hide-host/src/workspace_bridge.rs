@@ -3,6 +3,7 @@
 //! The invoking pane is attested from the socket's kernel peer PID; the local
 //! daemon owns the capability and answers over this exec channel.
 
+use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
@@ -19,9 +20,16 @@ use serde_json::{Value, json};
 use crate::pane_peer;
 
 const HERDR_TIMEOUT: Duration = Duration::from_secs(2);
-const CLIENT_TIMEOUT: Duration = Duration::from_secs(8);
+const CLIENT_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_CONTROL_LINE: u64 = 4096;
 const UNCLAIMED_LIFETIME: Duration = Duration::from_secs(30);
+const REFERENCE_LIFETIME: Duration = Duration::from_secs(8 * 60 * 60);
+
+struct IssuedReference {
+    token: String,
+    created: Instant,
+    holder: Option<(i32, u64)>,
+}
 
 #[derive(Deserialize)]
 pub struct Init {
@@ -130,29 +138,63 @@ fn answer_client(stream: &mut UnixStream, result: Result<PathBuf, String>) -> io
     writeln!(stream, "{answer}")
 }
 
-fn sweep_unclaimed(dir: &Path) -> io::Result<()> {
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if let Some(nonce) = name.strip_suffix(".json") {
-            if nonce.len() != 32 || !nonce.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-                continue;
-            }
-            if path.with_extension("claimed").exists() {
-                continue;
-            }
-            let metadata = fs::symlink_metadata(&path)?;
-            if metadata.is_file()
-                && metadata.modified()?.elapsed().unwrap_or_default() >= UNCLAIMED_LIFETIME
-            {
-                fs::remove_file(path)?;
-            }
-        } else if name.ends_with(".claimed") && !path.with_extension("json").exists() {
-            fs::remove_file(path)?;
+fn remove_if_present(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn receive_reply(replies: &mpsc::Receiver<Value>, id: u64) -> Result<Value, &'static str> {
+    let deadline = Instant::now() + CLIENT_TIMEOUT;
+    loop {
+        let remaining = deadline
+            .checked_duration_since(Instant::now())
+            .ok_or("bridge_unavailable")?;
+        let answer = replies
+            .recv_timeout(remaining)
+            .map_err(|_| "bridge_unavailable")?;
+        match answer["id"].as_u64() {
+            Some(answer_id) if answer_id < id => continue,
+            Some(answer_id) if answer_id == id => return Ok(answer),
+            _ => return Err("invalid_response"),
         }
+    }
+}
+
+fn sweep_references(
+    issued: &Mutex<HashMap<PathBuf, IssuedReference>>,
+    output: &Mutex<impl Write>,
+) -> io::Result<()> {
+    let mut revoked = Vec::new();
+    {
+        let mut issued = issued
+            .lock()
+            .map_err(|_| io::Error::other("bridge reference lock poisoned"))?;
+        let stale = issued
+            .iter()
+            .filter_map(|(path, reference)| {
+                let present = path.is_file();
+                let expired = reference.created.elapsed() >= REFERENCE_LIFETIME
+                    || (!path.with_extension("claimed").is_file()
+                        && reference.created.elapsed() >= UNCLAIMED_LIFETIME);
+                let holder_gone = reference
+                    .holder
+                    .is_some_and(|(pid, started)| pane_peer::process_start(pid) != Some(started));
+                (!present || expired || holder_gone).then_some(path.clone())
+            })
+            .collect::<Vec<_>>();
+        for path in stale {
+            remove_if_present(&path)?;
+            remove_if_present(&path.with_extension("claimed"))?;
+            if let Some(reference) = issued.remove(&path) {
+                revoked.push(reference.token);
+            }
+        }
+    }
+    for token in revoked {
+        write_line(output, json!({"type":"revoke","token":token}))?;
     }
     Ok(())
 }
@@ -164,6 +206,7 @@ fn serve_client(
     dir: &Path,
     output: &Mutex<impl Write>,
     replies: &Mutex<mpsc::Receiver<Value>>,
+    issued: &Mutex<HashMap<PathBuf, IssuedReference>>,
 ) {
     let mut issued_token = None;
     let result: Result<PathBuf, String> = (|| {
@@ -188,6 +231,14 @@ fn serve_client(
         if !pane_peer::descends_from(peer, identity.shell_pid) {
             return Err("caller_not_in_pane".to_owned());
         }
+        let holder = if request.one_shot {
+            Some((
+                peer,
+                pane_peer::process_start(peer).ok_or("caller_unavailable")?,
+            ))
+        } else {
+            None
+        };
         write_line(
             output,
             json!({
@@ -198,14 +249,7 @@ fn serve_client(
             }),
         )
         .map_err(|_| "bridge_unavailable")?;
-        let answer = replies
-            .lock()
-            .map_err(|_| "bridge_unavailable")?
-            .recv_timeout(CLIENT_TIMEOUT)
-            .map_err(|_| "bridge_unavailable")?;
-        if answer["id"].as_u64() != Some(id) {
-            return Err("invalid_response".to_owned());
-        }
+        let answer = receive_reply(&*replies.lock().map_err(|_| "bridge_unavailable")?, id)?;
         if answer["ok"] != true {
             return Err(answer["reason"]
                 .as_str()
@@ -235,6 +279,14 @@ fn serve_client(
             let _ = fs::remove_file(&path);
             return Err("reference_unavailable".to_owned());
         }
+        issued.lock().map_err(|_| "bridge_unavailable")?.insert(
+            path.clone(),
+            IssuedReference {
+                token: token.to_owned(),
+                created: Instant::now(),
+                holder,
+            },
+        );
         Ok(path)
     })();
     let delivered = answer_client(&mut stream, result.clone()).is_ok();
@@ -243,6 +295,9 @@ fn serve_client(
             let _ = fs::remove_file(path);
         }
         if let Some(token) = issued_token {
+            if let Ok(mut issued) = issued.lock() {
+                issued.retain(|_, reference| reference.token != token);
+            }
             let _ = write_line(output, json!({"type":"revoke","id":id,"token":token}));
         }
     }
@@ -278,6 +333,7 @@ pub fn serve(mut input: impl BufRead + Send, output: impl Write + Send) -> io::R
     write_line(&output, json!({"type":"ready","socket":socket}))?;
     let (sender, receiver) = mpsc::sync_channel::<Value>(1);
     let replies = Mutex::new(receiver);
+    let issued = Mutex::new(HashMap::new());
     let closed = AtomicBool::new(false);
     let next_id = AtomicU64::new(1);
     let busy = AtomicBool::new(false);
@@ -311,17 +367,18 @@ pub fn serve(mut input: impl BufRead + Send, output: impl Write + Send) -> io::R
                     let id = next_id.fetch_add(1, Ordering::Relaxed);
                     let output = &output;
                     let replies = &replies;
+                    let issued = &issued;
                     let busy = &busy;
                     let init = &init;
                     let dir_path = dir.path();
                     scope.spawn(move || {
-                        serve_client(stream, id, init, dir_path, output, replies);
+                        serve_client(stream, id, init, dir_path, output, replies, issued);
                         busy.store(false, Ordering::Release);
                     });
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                     if last_sweep.elapsed() >= Duration::from_secs(5) {
-                        sweep_unclaimed(dir.path())?;
+                        sweep_references(&issued, &output)?;
                         last_sweep = Instant::now();
                     }
                     std::thread::sleep(Duration::from_millis(20));
@@ -338,21 +395,90 @@ mod tests {
     use super::*;
 
     #[test]
-    fn expired_unclaimed_reference_is_removed_but_a_claimed_session_remains() {
+    fn expired_unclaimed_reference_is_revoked_but_a_claimed_session_remains() {
         let dir = tempfile::tempdir().unwrap();
         let abandoned = dir.path().join(format!("{}.json", "a".repeat(32)));
         let claimed = dir.path().join(format!("{}.json", "b".repeat(32)));
         fs::write(&abandoned, "abandoned").unwrap();
         fs::write(&claimed, "claimed").unwrap();
         fs::write(claimed.with_extension("claimed"), "").unwrap();
-        let old = std::time::SystemTime::now() - UNCLAIMED_LIFETIME - Duration::from_secs(1);
-        fs::File::open(&abandoned)
-            .unwrap()
-            .set_modified(old)
-            .unwrap();
-        fs::File::open(&claimed).unwrap().set_modified(old).unwrap();
-        sweep_unclaimed(dir.path()).unwrap();
+        let issued = Mutex::new(HashMap::from([
+            (
+                abandoned.clone(),
+                IssuedReference {
+                    token: "a".to_owned(),
+                    created: Instant::now() - UNCLAIMED_LIFETIME - Duration::from_secs(1),
+                    holder: None,
+                },
+            ),
+            (
+                claimed.clone(),
+                IssuedReference {
+                    token: "b".to_owned(),
+                    created: Instant::now() - UNCLAIMED_LIFETIME - Duration::from_secs(1),
+                    holder: None,
+                },
+            ),
+        ]));
+        let output = Mutex::new(Vec::new());
+        sweep_references(&issued, &output).unwrap();
         assert!(!abandoned.exists());
         assert!(claimed.exists());
+        assert!(
+            String::from_utf8(output.into_inner().unwrap())
+                .unwrap()
+                .contains("\"token\":\"a\"")
+        );
+    }
+
+    #[test]
+    fn deleted_reference_and_late_reply_do_not_keep_a_grant_or_poison_the_next_request() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(format!("{}.json", "c".repeat(32)));
+        let issued = Mutex::new(HashMap::from([(
+            path.clone(),
+            IssuedReference {
+                token: "c".to_owned(),
+                created: Instant::now(),
+                holder: None,
+            },
+        )]));
+        let output = Mutex::new(Vec::new());
+        sweep_references(&issued, &output).unwrap();
+        assert!(
+            String::from_utf8(output.into_inner().unwrap())
+                .unwrap()
+                .contains("\"token\":\"c\"")
+        );
+
+        let (sender, receiver) = mpsc::channel();
+        sender.send(json!({"id":1,"ok":true})).unwrap();
+        sender.send(json!({"id":2,"ok":true})).unwrap();
+        assert_eq!(receive_reply(&receiver, 2).unwrap()["id"], 2);
+    }
+
+    #[test]
+    fn a_killed_one_shot_caller_loses_its_claimed_reference() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(format!("{}.json", "d".repeat(32)));
+        fs::write(&path, "reference").unwrap();
+        fs::write(path.with_extension("claimed"), "").unwrap();
+        let issued = Mutex::new(HashMap::from([(
+            path.clone(),
+            IssuedReference {
+                token: "d".to_owned(),
+                created: Instant::now(),
+                holder: Some((i32::MAX, 1)),
+            },
+        )]));
+        let output = Mutex::new(Vec::new());
+        sweep_references(&issued, &output).unwrap();
+        assert!(!path.exists());
+        assert!(!path.with_extension("claimed").exists());
+        assert!(
+            String::from_utf8(output.into_inner().unwrap())
+                .unwrap()
+                .contains("\"token\":\"d\"")
+        );
     }
 }

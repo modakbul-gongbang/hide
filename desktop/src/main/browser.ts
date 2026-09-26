@@ -178,7 +178,7 @@ export class BrowserViews {
   }
 
   private partitionFor(workspace: string, url: string): string {
-    const kind = url.startsWith("file:") ? "file" : "web";
+    const kind = isFileAddress(url) ? "file" : "web";
     return `persist:hide-browser-${createHash("sha256").update(`${workspace}\u0000${kind}`).digest("hex").slice(0, 32)}`;
   }
 
@@ -244,7 +244,7 @@ export class BrowserViews {
     contents.on("focus", () => this.emit({ kind: "focus", workspace: page.workspace, id: page.id }));
     contents.setWindowOpenHandler(({ url }) => {
       // A new window is another browser display, which the core opens.
-      if (page.route?.source_url.startsWith("file:") && remoteRequest(page.route, url).cancel) {
+      if (page.route && isFileAddress(page.route.source_url) && remoteRequest(page.route, url).cancel) {
         this.log.event("browser.window_open_refused", { reason: "remote_file_boundary" });
         return { action: "deny" };
       }
@@ -253,7 +253,7 @@ export class BrowserViews {
       return { action: "deny" };
     });
     const guard = (event: { preventDefault(): void }, url: string) => {
-      if (page.route?.source_url.startsWith("file:") && remoteRequest(page.route, url).cancel) {
+      if (page.route && isFileAddress(page.route.source_url) && remoteRequest(page.route, url).cancel) {
         event.preventDefault();
         this.log.event("browser.navigation_refused", { reason: "remote_file_boundary" });
         return;
@@ -334,4 +334,8 @@ function protocolOf(url: string): string {
   } catch {
     return "unparsable";
   }
+}
+
+function isFileAddress(url: string): boolean {
+  return protocolOf(url) === "file:";
 }

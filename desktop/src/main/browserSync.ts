@@ -93,7 +93,9 @@ export function remoteRequest(route: { url: string; source_url: string }, raw: s
     const source = new URL(route.source_url);
     if (source.protocol === "file:") return address.origin === local.origin && address.protocol === local.protocol ? {} : { cancel: true };
     const host = address.hostname.toLowerCase().replace(/\.$/, "");
-    const loopback = host === "localhost" || host === "0.0.0.0" || host === "[::1]" || /^127\./.test(host);
+    const mapped = /^\[::(?:(?:ffff:)?([0-9a-f]{1,4}):([0-9a-f]{1,4}))\]$/.exec(host);
+    const embeddedLoopback = mapped ? Number.parseInt(mapped[1]!, 16) >> 8 === 127 : false;
+    const loopback = host === "localhost" || host === "0.0.0.0" || host === "[::1]" || /^127\./.test(host) || embeddedLoopback;
     if (route.url === route.source_url) return loopback ? { cancel: true } : {};
     if (address.origin === local.origin || (address.protocol === "ws:" && local.protocol === "http:" && address.host === local.host) || (address.protocol === "wss:" && local.protocol === "https:" && address.host === local.host)) return {};
     if (!loopback) return {};

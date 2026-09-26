@@ -2410,19 +2410,17 @@ impl RusshRemoteClient {
                     false,
                 )
             })?;
-        let port = listener
-            .local_addr()
-            .map_err(|error| {
-                remote_error(
-                    "workspace-browser-forward",
-                    &self.host.host_id,
-                    RemoteStage::Tunnel,
-                    error,
-                    true,
-                    false,
-                )
-            })?
-            .port();
+        let local_addr = listener.local_addr().map_err(|error| {
+            remote_error(
+                "workspace-browser-forward",
+                &self.host.host_id,
+                RemoteStage::Tunnel,
+                error,
+                true,
+                false,
+            )
+        })?;
+        let port = local_addr.port();
         let session = self
             .runtime
             .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?;
@@ -2493,7 +2491,7 @@ impl RusshRemoteClient {
         });
         Ok(RemoteLocalForward {
             runtime: Arc::clone(&self.runtime),
-            port,
+            local_addr,
             stop: Mutex::new(Some(stop)),
             task: Mutex::new(Some(task)),
             failure,
@@ -3594,7 +3592,7 @@ pub struct RemoteWorkspaceForward {
 
 pub struct RemoteLocalForward {
     runtime: Arc<Runtime>,
-    port: u16,
+    local_addr: SocketAddr,
     stop: Mutex<Option<oneshot::Sender<()>>>,
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     failure: Arc<Mutex<Option<String>>>,
@@ -3602,7 +3600,10 @@ pub struct RemoteLocalForward {
 
 impl RemoteLocalForward {
     pub fn port(&self) -> u16 {
-        self.port
+        self.local_addr.port()
+    }
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
     }
     pub fn failure(&self) -> Option<String> {
         self.failure.lock().ok().and_then(|slot| slot.clone())

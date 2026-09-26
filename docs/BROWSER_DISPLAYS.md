@@ -15,6 +15,7 @@ There is no Herdr browser pane and no chromux profile behind it, and nothing is 
 | The desktop app | The pages: one `WebContentsView` per display it was asked to show, their navigation, route requests, and their lifetime | `desktop/src/main/browser.ts`, `desktop/src/main/browserSync.ts`, `desktop/src/main/host.ts`, `desktop/src/preload/index.ts` |
 
 The core never loads a page and the desktop app never decides which displays exist.
+The core's Browser View inventory is sent as an empty array when the last page closes, so the native host removes that page even when no other Browser View remains.
 A display's `load` stamp is how the core asks for a load: the host loads the display's address again whenever the stamp is newer than the one it last applied, so opening an address the Workspace already shows focuses that display and loads it again rather than adding a second one.
 The stamp is not saved; a relaunched page loads its address once when it is first shown.
 
@@ -50,7 +51,8 @@ The channel pins the checkout root, refuses traversal and links outside that roo
 The route serves the opened HTML plus at most 128 declared relative stylesheets, images, scripts, and CSS image or font URLs.
 It refuses undeclared checkout files, including same-directory secrets, and sends a restrictive content security policy that prevents a remote HTML preview from contacting another origin.
 The native page receives a random loopback route for its own View and load stamp; the route URL does not replace the remote address stored in the core or shown in the toolbar.
-Remote `localhost`, `localhost.`, IPv4 `127/8`, and IPv6 loopback HTTP, HTTPS, and WebSocket traffic instead uses a dedicated SSH local forward to that device's loopback port.
+Remote `localhost`, `localhost.`, IPv4 `127/8`, IPv6 loopback, and IPv4-mapped IPv6 loopback HTTP, HTTPS, and WebSocket traffic instead uses a dedicated SSH local forward to that device's loopback port.
+The native route uses the forward's actual bound local address; the remote source address remains in the Browser toolbar.
 Absolute loopback subrequests from a forwarded page use that View's forward when their scheme and source port match; other loopback requests are refused instead of reaching this Mac.
 If the SSH route fails, the page shows the failure; it never tries the same port on this Mac.
 Each native route is bounded, belongs to the desktop process that requested it, and closes when its View closes, its device disconnects, or that process exits.

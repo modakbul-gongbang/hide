@@ -44,11 +44,13 @@ describe("what the shell may ask of the browser views (issue 155)", () => {
   });
 
   it("keeps absolute remote loopback requests on the View's SSH route", () => {
-    const route = { source_url: "http://127.0.0.2:5173/app", url: "http://127.0.0.2:63001/app" };
-    expect(remoteRequest(route, "http://localhost:5173/app.js")).toEqual({ redirectURL: "http://127.0.0.2:63001/app.js" });
-    expect(remoteRequest(route, "ws://localhost:5173/live")).toEqual({ redirectURL: "ws://127.0.0.2:63001/live" });
+    const route = { source_url: "http://127.0.0.2:5173/app", url: "http://127.0.0.1:63001/app" };
+    expect(remoteRequest(route, "http://localhost:5173/app.js")).toEqual({ redirectURL: "http://127.0.0.1:63001/app.js" });
+    expect(remoteRequest(route, "ws://localhost:5173/live")).toEqual({ redirectURL: "ws://127.0.0.1:63001/live" });
     expect(remoteRequest(route, "http://localhost:9000/private")).toEqual({ cancel: true });
-    expect(remoteRequest(route, "http://127.0.0.2:63001/app.js")).toEqual({});
+    expect(remoteRequest(route, "http://127.0.0.1:63001/app.js")).toEqual({});
+    expect(remoteRequest(route, "http://[::ffff:127.0.0.1]:5173/app.js")).toEqual({ redirectURL: "http://127.0.0.1:63001/app.js" });
+    expect(remoteRequest(route, "http://[::ffff:127.0.0.1]:9000/private")).toEqual({ cancel: true });
     expect(remoteRequest({ source_url: "http://127.1:5173/", url: "http://127.1:5173/" }, "http://127.1:5173/")).toEqual({ cancel: true });
     expect(remoteRequest({ source_url: "file:///checkout/page.html", url: "http://127.0.0.1:63002/secret/page.html" }, "https://example.com/leak")).toEqual({ cancel: true });
   });

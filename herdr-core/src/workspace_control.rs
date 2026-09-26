@@ -270,7 +270,10 @@ impl ActionSource {
 
 /// Decode a file URL without accepting an authority or an encoded NUL.
 pub fn local_file_path(url: &str) -> Option<String> {
-    let rest = url.strip_prefix("file://")?;
+    if !url.get(..7)?.eq_ignore_ascii_case("file://") {
+        return None;
+    }
+    let rest = &url[7..];
     let (host, located) = rest.split_at(rest.find('/')?);
     if !(host.is_empty() || host.eq_ignore_ascii_case("localhost")) {
         return None;
@@ -280,4 +283,22 @@ pub fn local_file_path(url: &str) -> Option<String> {
         .decode_utf8()
         .ok()?;
     (decoded.starts_with('/') && !decoded.contains('\0')).then(|| decoded.into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::local_file_path;
+
+    #[test]
+    fn file_address_scheme_is_case_insensitive_at_the_workspace_boundary() {
+        assert_eq!(
+            local_file_path("FILE:///checkout/page.html"),
+            Some("/checkout/page.html".to_owned())
+        );
+        assert_eq!(
+            local_file_path("FiLe://localhost/checkout/page.html"),
+            Some("/checkout/page.html".to_owned())
+        );
+        assert_eq!(local_file_path("FILE://elsewhere/checkout/page.html"), None);
+    }
 }
