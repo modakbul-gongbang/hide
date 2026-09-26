@@ -1,6 +1,8 @@
 // Real SSH-origin Workspace CLI acceptance. Run with an isolated sshd whose
 // port, key and known_hosts are supplied in HIDE_E2E_SSH_*; the two Herdr
 // servers, daemon, helper install and desktop profile remain private.
+// HIDE_E2E_SSH_PID plus HIDE_E2E_SSH_CONFIG enable the stalled-handshake
+// check only for an identified, test-owned sshd listener.
 
 import { expect, test } from "@playwright/test";
 import { spawn, spawnSync } from "node:child_process";
@@ -514,6 +516,50 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
       });
     }, state);
     await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen")).not.toContain("ssh-e2e");
+    if (process.env.HIDE_E2E_SSH_PID && process.env.HIDE_E2E_SSH_CONFIG) {
+      const sshPid = Number(process.env.HIDE_E2E_SSH_PID);
+      const sshCommand = spawnSync("ps", ["-p", String(sshPid), "-o", "command="], { encoding: "utf8" });
+      expect(sshCommand.status).toBe(0);
+      expect(sshCommand.stdout).toContain(process.env.HIDE_E2E_SSH_CONFIG);
+      expect(sshCommand.stdout).toContain("[listener]");
+      const routeBody = (id: string, load: number) => JSON.stringify({
+        device_id: "ssh-e2e", checkout_path: fs.realpathSync(path.join(remote.root, "fixture")),
+        id, load, owner_pid: app!.process().pid,
+      });
+      const active = await commandFromPane(remote, run, bridge, ["browser", "open", `http://localhost:${remotePort}/active.html`], "remote-active-open");
+      expect(active.status, JSON.stringify(active.answer)).toBe(0);
+      const activeView = active.answer.result as { view_id: string; load: number };
+      const activeResponse = await fetch(`http://127.0.0.1:${state.port}/browser-route`, {
+        method: "POST", headers: { Authorization: `Bearer ${state.token}`, "Content-Type": "application/json" },
+        body: routeBody(activeView.view_id, activeView.load),
+      });
+      expect(activeResponse.status).toBe(200);
+      const activeRoute = await activeResponse.json() as { url: string };
+      const stalled = await commandFromPane(remote, run, bridge, ["browser", "open", `http://localhost:${remotePort}/stall.html`], "remote-stalled-open");
+      expect(stalled.status, JSON.stringify(stalled.answer)).toBe(0);
+      const stalledView = stalled.answer.result as { view_id: string; load: number };
+      process.kill(sshPid, "SIGSTOP");
+      let pending: Promise<Response> | undefined;
+      try {
+        pending = fetch(`http://127.0.0.1:${state.port}/browser-route`, {
+          method: "POST", headers: { Authorization: `Bearer ${state.token}`, "Content-Type": "application/json" },
+          body: routeBody(stalledView.view_id, stalledView.load),
+        });
+        expect(await Promise.race([pending.then(() => "completed"), new Promise((resolve) => setTimeout(() => resolve("pending"), 250))])).toBe("pending");
+        const released = await fetch(`http://127.0.0.1:${state.port}/browser-route`, {
+          method: "DELETE", headers: { Authorization: `Bearer ${state.token}`, "Content-Type": "application/json" },
+          body: routeBody(activeView.view_id, activeView.load),
+          signal: AbortSignal.timeout(2_500),
+        });
+        expect(released.status).toBe(204);
+        await expect.poll(() => canBindLoopback(Number(new URL(activeRoute.url).port), "127.0.0.1"), { timeout: 2_500 }).toBe(true);
+      } finally {
+        process.kill(sshPid, "SIGCONT");
+      }
+      expect((await pending!).status).toBe(200);
+      expect((await commandFromPane(remote, run, bridge, ["view", "close", activeView.view_id], "remote-active-close")).status).toBe(0);
+      expect((await commandFromPane(remote, run, bridge, ["view", "close", stalledView.view_id], "remote-stalled-close")).status).toBe(0);
+    }
     expect((await commandFromPane(remote, run, bridge, ["view", "close", htmlId], "remote-html-close")).status).toBe(0);
     expect((await commandFromPane(remote, run, bridge, ["view", "close", devId], "remote-dev-close")).status).toBe(0);
     await expect.poll(async () => app!.evaluate(async ({ BrowserWindow }, ids) =>

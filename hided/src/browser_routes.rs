@@ -20,7 +20,7 @@ use herdr_core::workspace_control::BrowserRouteSource;
 use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
 use serde::Serialize;
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, Notify, Semaphore, oneshot};
+use tokio::sync::{Mutex, Notify, Semaphore, oneshot, watch};
 
 use crate::browser_assets::{self, Asset};
 use crate::core::CoreHandle;
@@ -51,6 +51,42 @@ struct Route {
     kind: RouteKind,
 }
 
+type RouteResult = Result<Resolved, &'static str>;
+
+enum RouteEntry {
+    Pending {
+        owner_started: u64,
+        source: BrowserRouteSource,
+        result: watch::Sender<Option<RouteResult>>,
+    },
+    Ready(Route),
+}
+
+impl RouteEntry {
+    fn source(&self) -> &BrowserRouteSource {
+        match self {
+            Self::Pending { source, .. } => source,
+            Self::Ready(route) => &route.source,
+        }
+    }
+
+    fn owner_started(&self) -> u64 {
+        match self {
+            Self::Pending { owner_started, .. } => *owner_started,
+            Self::Ready(route) => route.owner_started,
+        }
+    }
+
+    fn close(self) {
+        match self {
+            Self::Pending { result, .. } => {
+                result.send_replace(Some(Err("view_unavailable")));
+            }
+            Self::Ready(route) => route.close(),
+        }
+    }
+}
+
 impl Route {
     fn close(self) {
         match self.kind {
@@ -62,7 +98,7 @@ impl Route {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 pub struct Resolved {
     pub url: String,
     pub source_url: String,
@@ -71,7 +107,7 @@ pub struct Resolved {
 
 pub struct BrowserRoutes {
     core: Arc<CoreHandle>,
-    routes: Mutex<HashMap<Key, Route>>,
+    routes: Mutex<HashMap<Key, RouteEntry>>,
 }
 
 impl BrowserRoutes {
@@ -83,7 +119,7 @@ impl BrowserRoutes {
     }
 
     pub async fn resolve(
-        &self,
+        self: &Arc<Self>,
         device: String,
         checkout: String,
         view: String,
@@ -114,22 +150,62 @@ impl BrowserRoutes {
             });
         }
         let mut routes = self.routes.lock().await;
-        if let Some(route) = routes.get(&key)
-            && route.source == source
-            && route.owner_started == owner_started
+        if let Some(entry) = routes.get(&key)
+            && entry.source() == &source
+            && entry.owner_started() == owner_started
         {
-            return Ok(Resolved {
-                url: route.url.clone(),
-                source_url: source.url,
-                load,
-            });
+            match entry {
+                RouteEntry::Ready(route) => {
+                    return Ok(Resolved {
+                        url: route.url.clone(),
+                        source_url: source.url,
+                        load,
+                    });
+                }
+                RouteEntry::Pending { result, .. } => {
+                    let waiting = result.subscribe();
+                    drop(routes);
+                    return wait_for_route(waiting).await;
+                }
+            }
         }
-        if let Some(old) = routes.remove(&key) {
-            old.close();
-        }
+        let old = routes.remove(&key);
         if routes.len() >= MAX_ROUTES {
+            drop(routes);
+            if let Some(old) = old {
+                old.close();
+            }
             return Err("browser_route_limit");
         }
+        let (result, waiting) = watch::channel(None);
+        routes.insert(
+            key.clone(),
+            RouteEntry::Pending {
+                owner_started,
+                source: source.clone(),
+                result: result.clone(),
+            },
+        );
+        drop(routes);
+        if let Some(old) = old {
+            old.close();
+        }
+        let routes = Arc::clone(self);
+        tokio::spawn(async move {
+            let built = routes.build_route(&key, &source, owner_started).await;
+            routes
+                .finish_route(key, source, owner_started, result, built)
+                .await;
+        });
+        wait_for_route(waiting).await
+    }
+
+    async fn build_route(
+        &self,
+        key: &Key,
+        source: &BrowserRouteSource,
+        owner_started: u64,
+    ) -> Result<Option<Route>, &'static str> {
         let core = Arc::clone(&self.core);
         let device = key.device.clone();
         let route = tokio::task::spawn_blocking(move || {
@@ -209,34 +285,104 @@ impl BrowserRoutes {
             })
             .await
             .map_err(|_| "route_failed")?
-            .map_err(|_| "route_failed")?;
+            .map_err(|error| {
+                eprintln!(
+                    "{}",
+                    serde_json::json!({"component":"browser_routes","kind":"forward.failed","reason":error.to_string()})
+                );
+                "route_failed"
+            })?;
             let url = forwarded_url(&scheme, &host, forward.local_addr(), &tail);
             (url, RouteKind::Http(forward))
         } else {
-            return Ok(Resolved {
-                url: source.url.clone(),
-                source_url: source.url,
-                load,
-            });
+            return Ok(None);
         };
-        routes.insert(
-            key,
-            Route {
-                owner_started,
-                source: source.clone(),
-                url: url.clone(),
-                kind,
-            },
-        );
-        eprintln!(
-            "{}",
-            serde_json::json!({"component":"browser_routes","kind":"route.ready","device_id":source.device_id,"load":load})
-        );
-        Ok(Resolved {
+        Ok(Some(Route {
+            owner_started,
+            source: source.clone(),
             url,
-            source_url: source.url,
-            load,
-        })
+            kind,
+        }))
+    }
+
+    async fn finish_route(
+        &self,
+        key: Key,
+        source: BrowserRouteSource,
+        owner_started: u64,
+        result: watch::Sender<Option<RouteResult>>,
+        built: Result<Option<Route>, &'static str>,
+    ) {
+        let current = if built.is_ok() && process_start(key.owner_pid) == Some(owner_started) {
+            let core = Arc::clone(&self.core);
+            let query = key.clone();
+            let load = source.load;
+            tokio::task::spawn_blocking(move || {
+                core.browser_route_source(&query.device, &query.checkout, &query.view, load)
+                    .ok()
+                    .flatten()
+            })
+            .await
+            .ok()
+            .flatten()
+            .as_ref()
+                == Some(&source)
+        } else {
+            false
+        };
+        let mut routes = self.routes.lock().await;
+        let reserved = matches!(routes.get(&key), Some(RouteEntry::Pending { result: pending, .. }) if pending.same_channel(&result));
+        if !reserved {
+            drop(routes);
+            if let Ok(Some(route)) = built {
+                route.close();
+            }
+            eprintln!(
+                "{}",
+                serde_json::json!({"component":"browser_routes","kind":"route.discarded","reason":"reservation_superseded","device_id":source.device_id,"load":source.load})
+            );
+            return;
+        }
+        let outcome = match (current, built) {
+            (true, Ok(Some(route))) => {
+                let resolved = Resolved {
+                    url: route.url.clone(),
+                    source_url: source.url.clone(),
+                    load: source.load,
+                };
+                routes.insert(key, RouteEntry::Ready(route));
+                eprintln!(
+                    "{}",
+                    serde_json::json!({"component":"browser_routes","kind":"route.ready","device_id":source.device_id,"load":source.load})
+                );
+                Ok(resolved)
+            }
+            (true, Ok(None)) => {
+                routes.remove(&key);
+                Ok(Resolved {
+                    url: source.url.clone(),
+                    source_url: source.url,
+                    load: source.load,
+                })
+            }
+            (false, Ok(Some(route))) => {
+                routes.remove(&key);
+                drop(routes);
+                route.close();
+                result.send_replace(Some(Err("view_unavailable")));
+                return;
+            }
+            (_, Err(reason)) => {
+                routes.remove(&key);
+                Err(reason)
+            }
+            (false, Ok(None)) => {
+                routes.remove(&key);
+                Err("view_unavailable")
+            }
+        };
+        drop(routes);
+        result.send_replace(Some(outcome));
     }
 
     pub async fn release(
@@ -254,12 +400,17 @@ impl BrowserRoutes {
             view: view.to_owned(),
         };
         let mut routes = self.routes.lock().await;
-        if routes
+        let removed = if routes
             .get(&key)
-            .is_some_and(|route| route.source.load == load)
-            && let Some(route) = routes.remove(&key)
+            .is_some_and(|entry| entry.source().load == load)
         {
-            route.close();
+            routes.remove(&key)
+        } else {
+            None
+        };
+        drop(routes);
+        if let Some(entry) = removed {
+            entry.close();
         }
     }
 
@@ -278,7 +429,9 @@ impl BrowserRoutes {
                     .lock()
                     .await
                     .iter()
-                    .map(|(key, route)| (key.clone(), route.source.clone(), route.owner_started))
+                    .map(|(key, entry)| {
+                        (key.clone(), entry.source().clone(), entry.owner_started())
+                    })
                     .collect();
                 for (key, source, owner_started) in candidates {
                     let load = source.load;
@@ -310,10 +463,26 @@ impl BrowserRoutes {
                     }
                 }
             }
-            for (_, route) in routes.routes.lock().await.drain() {
-                route.close();
+            let remaining: Vec<_> = routes
+                .routes
+                .lock()
+                .await
+                .drain()
+                .map(|(_, entry)| entry)
+                .collect();
+            for entry in remaining {
+                entry.close();
             }
         });
+    }
+}
+
+async fn wait_for_route(mut result: watch::Receiver<Option<RouteResult>>) -> RouteResult {
+    loop {
+        if let Some(outcome) = result.borrow_and_update().clone() {
+            return outcome;
+        }
+        result.changed().await.map_err(|_| "route_failed")?;
     }
 }
 

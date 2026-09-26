@@ -2295,24 +2295,37 @@ impl RusshRemoteClient {
             keepalive_interval: Some(Duration::from_secs(5)),
             ..client::Config::default()
         };
-        let mut session = client::connect(
-            Arc::new(config),
-            (self.host.hostname.as_str(), self.host.port),
-            handler,
-        )
+        tokio::time::timeout(SSH_OPERATION_TIMEOUT, async {
+            let mut session = client::connect(
+                Arc::new(config),
+                (self.host.hostname.as_str(), self.host.port),
+                handler,
+            )
+            .await
+            .map_err(|error| {
+                remote_error(
+                    "remote-connect",
+                    &self.host.host_id,
+                    RemoteStage::Ssh,
+                    error,
+                    true,
+                    false,
+                )
+            })?;
+            authenticate(&mut session, &self.host).await?;
+            Ok(session)
+        })
         .await
-        .map_err(|error| {
+        .map_err(|_| {
             remote_error(
                 "remote-connect",
                 &self.host.host_id,
                 RemoteStage::Ssh,
-                error,
+                "SSH connection or authentication timed out",
                 true,
                 false,
             )
-        })?;
-        authenticate(&mut session, &self.host).await?;
-        Ok(session)
+        })?
     }
 
     pub fn start_reverse_browser_bridge(
@@ -2403,6 +2416,12 @@ impl RusshRemoteClient {
         } else {
             IpAddr::V4(Ipv4Addr::LOCALHOST)
         };
+        // A pending route must not reserve a local port before SSH connects:
+        // its View can close while the remote handshake is still waiting.
+        let session = Arc::new(
+            self.runtime
+                .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?,
+        );
         let listeners = self.runtime.block_on(async {
             for _ in 0..16 {
                 let primary = TcpListener::bind(SocketAddr::new(local_ip, 0)).await?;
@@ -2427,6 +2446,17 @@ impl RusshRemoteClient {
             ))
         });
         let (listener, ipv6_listener, local_addr) = listeners.map_err(|error| {
+            let _ = self.runtime.block_on(async {
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    session.disconnect(
+                        Disconnect::ByApplication,
+                        "browser forward bind failed",
+                        "en",
+                    ),
+                )
+                .await
+            });
             remote_error(
                 "workspace-browser-forward",
                 &self.host.host_id,
@@ -2437,10 +2467,6 @@ impl RusshRemoteClient {
             )
         })?;
         let port = local_addr.port();
-        let session = Arc::new(
-            self.runtime
-                .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?,
-        );
         let session_task = Arc::clone(&session);
         let failure = Arc::new(Mutex::new(None));
         let failure_task = Arc::clone(&failure);
