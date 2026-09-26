@@ -21,7 +21,7 @@
 use serde::Deserialize;
 
 use super::documents::OpenRequestFields;
-use super::workspace_view::{WorkspaceKey, file_label};
+use super::workspace_view::{AreaIntent, WorkspaceKey, file_label};
 use super::*;
 use crate::model::{
     BrowserOpenReceiptSnapshot, ViewAreaSnapshot, ViewDisplaySnapshot, ViewDisplayState,
@@ -350,6 +350,50 @@ impl Runtime {
             .views
             .get(&key.0, &key.1)
             .map(|view| &view.layout)
+    }
+
+    /// Whether the Workspace of a checkout holds `display_id`, before a
+    /// `focus_checkout` that names it moves anything.
+    pub(super) fn view_display_known(
+        &self,
+        workspace_id: &str,
+        checkout_id: &str,
+        display_id: &str,
+    ) -> Result<(), LayoutError> {
+        if !self.separate_view_areas() {
+            return Err(LayoutError::UnknownDisplay(display_id.to_owned()));
+        }
+        self.workspace_key(workspace_id, checkout_id)
+            .and_then(|key| self.view_layout_of(&key))
+            .and_then(|layout| layout.display(display_id))
+            .map(|_| ())
+            .ok_or_else(|| LayoutError::UnknownDisplay(display_id.to_owned()))
+    }
+
+    /// A display of the checkout just brought forward takes its View area,
+    /// shown with the Agent area if only Agents showed (D-08). Returns
+    /// whether the layout changed.
+    pub(super) fn focus_view_display_of(
+        &mut self,
+        workspace_id: &str,
+        checkout_id: &str,
+        display_id: &str,
+    ) -> bool {
+        let Some(key) = self.workspace_key(workspace_id, checkout_id) else {
+            return false;
+        };
+        self.apply_area_intent_to(&key, AreaIntent::Views);
+        match self.change_view_layout(&key, |layout, stamp| {
+            layout
+                .focus(display_id, stamp)
+                .map(|changed| (changed, changed))
+        }) {
+            Ok(changed) => changed,
+            Err(error) => {
+                self.set_error(error.kind(), error.message(), false);
+                true
+            }
+        }
     }
 
     /// Applies one change to a Workspace's layout, created when the file has

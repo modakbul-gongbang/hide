@@ -6,6 +6,7 @@ import { create } from "zustand";
 import type { Relation } from "./lineage";
 import type { Opening } from "./navigation";
 import type { SettingsTab } from "./settings";
+import type { CycleItem } from "./recent";
 import { placementForWidth, type ToolsPlacement, type ViewFocusRequest, type ViewWorkspace } from "./viewLayout";
 
 export type { ToolsPlacement, ViewFocusRequest } from "./viewLayout";
@@ -81,10 +82,10 @@ export type WorkspaceDialog =
   | { kind: "delete_worktree"; workspaceId: string; checkoutId: string }
   | { kind: "remove_project"; workspaceId: string };
 
-/** A held-modifier cycle over recent tabs or projects; committed when ⌥ is released. */
+/** A held-modifier cycle over Recent Panels or Recent Projects; committed when the modifier is released. */
 export type Cycle = {
-  kind: "tabs" | "projects";
-  items: { id: string; label: string; detail: string; workspaceId: string }[];
+  kind: "panels" | "projects";
+  items: CycleItem[];
   index: number;
 };
 

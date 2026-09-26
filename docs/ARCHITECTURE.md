@@ -393,7 +393,8 @@ The reconcile holds the display cap too: such a tab of a Workspace that already 
 With the regions separate, choosing an Agent tab no longer takes the editor off screen: `editor.active_tab_id` is the document of the active area's active display, null while that display is not open (`front_active_view_tab` in `runtime/view_areas.rs`, applied by the reconcile), where before every terminal choice deactivated it.
 The core also owns when the hidden area comes back (D-08): an explicit file open, reveal or History selection from Agents only switches to Agents and Views, and an explicit agent or tab choice from Views only does the same; a status change, a hover or a menu opening moves nothing, and a refused event moves nothing either.
 A device agent or tab chosen through `remote_control` brings the Agent area back on the Workspace that holds it, resolved from the device session in the same event, because the device's front moves only when its Herdr answers.
-Choosing a Workspace or an agent on another device than the one in front is one event: `focus_checkout`, `focus_pane` and `remote_control` carry `focus_device`, and the core brings that device forward only when it accepts the request, so a refusal leaves the device in front where it was.
+Choosing a Workspace or an agent on another device than the one in front is one event: `focus_checkout`, `focus_tab`, `focus_pane` and `remote_control` carry `focus_device`, and the core brings that device forward only when it accepts the request, so a refusal leaves the device in front where it was.
+A Recent Panels commit of a display in another checkout is one `focus_checkout` naming it by `display_id`: the core checks the display is in that checkout's Workspace before moving anything, brings the checkout forward, shows its View area if only Agents showed, and makes the display the one in use; an unknown display refuses the whole event with `view_layout.unknown_display`.
 
 The snapshot's `workspace_view.layout` is the front Workspace's tree with its `active_area`, `limits` and `display_count`, each display carrying its `tab_id`, `label`, `kind`, `committed`, `preview` and `state` with an optional `reason`; `editor.tabs` still lists every document.
 A restored Workspace's tree, ratios, tab order, preview flags, active displays, active area, mode and tools are published the first time it is in front in a process, before any file is read, so the layout appears whole rather than tab by tab.
@@ -629,8 +630,8 @@ The e2e covers each path alone (a Playwright chord, a main-process menu click, o
 | Close tab | ⌘W | ⌥W (moved) | ⌘W |
 | Reopen closed tab | ⌘⇧T | ⌥⇧T (moved) | ⌘⇧T |
 | New workspace | ⌘⇧N | ⌥⇧N (moved) | ⌘⇧N |
-| Next / previous recent tab | ⌃Tab / ⌃⇧Tab | ⌥` / ⌥⇧` (moved) | ⌃Tab / ⌃⇧Tab, committed on releasing ⌃ |
-| Next / previous recent project | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab |
+| Next / previous recent panel (Recent Panels) | ⌃Tab / ⌃⇧Tab | ⌥` / ⌥⇧` (moved) | ⌃Tab / ⌃⇧Tab, committed on releasing ⌃ |
+| Next / previous recent project (Recent Projects) | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab |
 | Search, Open file, Toggle right panel | ⌘K, ⌘P, ⌘⇧B | same chords; ⌘K and ⌘P answered by the palettes | same chords |
 | Project home | ⌘⇧H | same chord; opens the front checkout's Project Overview | same chord |
 | Save file | ⌘S | ⌘S | ⌘S |
