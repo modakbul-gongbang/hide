@@ -36,14 +36,14 @@
       }
     },
     "workspaceAction": {
-      "description": "One pane-scoped View transition. Repeating the same request ID and command returns its recorded result within the ten-minute retry window.",
+      "description": "One pane-scoped document or View transition. Repeating the same request ID and command returns its recorded result within the ten-minute retry window.",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "request_id", "command"],
       "properties": {
         "type": { "const": "workspace_action" },
         "request_id": { "$ref": "#/$defs/workspaceRequestId" },
-        "command": { "$ref": "#/$defs/workspaceViewCommand" }
+        "command": { "$ref": "#/$defs/workspaceCommand" }
       }
     },
     "workspaceRequestId": {
@@ -52,9 +52,11 @@
       "maxLength": 64,
       "pattern": "^[0-9]+-[A-Za-z0-9_-]+$"
     },
-    "workspaceViewCommand": {
+    "workspaceCommand": {
       "oneOf": [
-        { "type": "object", "additionalProperties": false, "required": ["action", "view_id"], "properties": { "action": { "const": "select" }, "view_id": { "type": "string" } } },
+        { "type": "object", "additionalProperties": false, "required": ["action", "path", "beside", "reveal"], "properties": { "action": { "const": "open_file" }, "path": { "type": "string" }, "beside": { "type": "boolean" }, "reveal": { "type": "boolean" } } },
+        { "type": "object", "additionalProperties": false, "required": ["action", "path", "beside", "reveal"], "properties": { "action": { "const": "open_diff" }, "path": { "type": "string" }, "beside": { "type": "boolean" }, "reveal": { "type": "boolean" } } },
+        { "type": "object", "additionalProperties": false, "required": ["action", "view_id", "reveal"], "properties": { "action": { "const": "select" }, "view_id": { "type": "string" }, "reveal": { "type": "boolean" } } },
         { "type": "object", "additionalProperties": false, "required": ["action", "view_id"], "properties": { "action": { "const": "close" }, "view_id": { "type": "string" } } },
         { "type": "object", "additionalProperties": false, "required": ["action", "view_id", "area_id", "edge"], "properties": { "action": { "const": "split" }, "view_id": { "type": "string" }, "area_id": { "type": "string" }, "edge": { "enum": ["left", "right", "up", "down"] } } },
         { "type": "object", "additionalProperties": false, "required": ["action", "view_id", "area_id", "index"], "properties": { "action": { "const": "move" }, "view_id": { "type": "string" }, "area_id": { "type": "string" }, "index": { "type": "integer", "minimum": 0 } } }

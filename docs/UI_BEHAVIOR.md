@@ -27,6 +27,8 @@ A dirty view shows a warning-colored mark after its title.
 Closing a view is always called Close view, distinct from moving a file to the Trash and from closing a pane or tab.
 When a connected pane selects, splits, moves, or closes a View through `hide view`, the same View layout rules apply to that pane's Workspace even while another Workspace is in front.
 These commands do not move the keyboard target; a close that would lose the last View of an unsaved document reports the refusal and keeps the draft.
+`hide file open` and `hide diff open` put the calling pane's file or changed-file diff into its own Workspace without selecting that Workspace by default.
+An explicit local `--reveal` brings that Workspace and the opened View forward.
 
 ### View areas
 

@@ -6,10 +6,23 @@
 export type HidedWebSocketContract =
   Handshake | ServerFrame | ClientEvent | WorkspaceQuery | WorkspaceAction | WorkspaceResult;
 export type WorkspaceRequestId = string;
-export type WorkspaceViewCommand =
+export type WorkspaceCommand =
+  | {
+      action: "open_file";
+      path: string;
+      beside: boolean;
+      reveal: boolean;
+    }
+  | {
+      action: "open_diff";
+      path: string;
+      beside: boolean;
+      reveal: boolean;
+    }
   | {
       action: "select";
       view_id: string;
+      reveal: boolean;
     }
   | {
       action: "close";
@@ -74,12 +87,12 @@ export interface WorkspaceQuery {
   query: "info" | "view_list";
 }
 /**
- * One pane-scoped View transition. Repeating the same request ID and command returns its recorded result within the ten-minute retry window.
+ * One pane-scoped document or View transition. Repeating the same request ID and command returns its recorded result within the ten-minute retry window.
  */
 export interface WorkspaceAction {
   type: "workspace_action";
   request_id: WorkspaceRequestId;
-  command: WorkspaceViewCommand;
+  command: WorkspaceCommand;
 }
 /**
  * A pane-scoped request outcome. A successful action result includes context, request_id, changed, view_id, and optionally area_id; a refusal names reason and next_action.

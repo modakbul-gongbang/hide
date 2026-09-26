@@ -994,7 +994,8 @@ fn pane_close_preserves_a_dirty_last_view_after_closing_its_twin() {
                 pane_id,
                 &expected,
                 &first_id,
-                Action::Close { view_id: first }
+                Action::Close { view_id: first },
+                Ok(None),
             )
             .unwrap()
             .changed
@@ -1009,7 +1010,8 @@ fn pane_close_preserves_a_dirty_last_view_after_closing_its_twin() {
                 &second_id,
                 Action::Close {
                     view_id: second.clone()
-                }
+                },
+                Ok(None),
             )
             .unwrap_err()
             .reason,

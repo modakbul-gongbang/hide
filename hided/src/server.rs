@@ -547,6 +547,27 @@ async fn scoped_client_loop(
                                     })?
                                 }
                                 ScopedRequest::Action(action) => {
+                                    let preparation = core
+                                        .workspace_prepare_action(
+                                            &cap.context.device_id,
+                                            &cap.pane_id,
+                                            &cap.context,
+                                            &command_request_id,
+                                            &action,
+                                        )
+                                        .map_err(|refusal| (refusal.reason, refusal.next_action))?;
+                                    let material = match preparation {
+                                        herdr_core::workspace_control::ActionPreparation::Cached(result) => {
+                                            let result = result.map_err(|refusal| (refusal.reason, refusal.next_action))?;
+                                            return serde_json::to_value(result).map_err(|_| {
+                                                ("result_encoding_failed", "Reconnect Hide and retry")
+                                            });
+                                        }
+                                        herdr_core::workspace_control::ActionPreparation::Ready => Ok(None),
+                                        herdr_core::workspace_control::ActionPreparation::Read(source) => {
+                                            source.read().map(Some)
+                                        }
+                                    };
                                     let result = core
                                         .workspace_action(
                                             &cap.context.device_id,
@@ -554,6 +575,7 @@ async fn scoped_client_loop(
                                             &cap.context,
                                             &command_request_id,
                                             action,
+                                            material,
                                         )
                                         .map_err(|refusal| (refusal.reason, refusal.next_action))?;
                                     if result.context != cap.context {

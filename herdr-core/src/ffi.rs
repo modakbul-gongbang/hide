@@ -371,6 +371,25 @@ impl HerdrCore {
 
     /// A pane-scoped View action runs as one core transition. The daemon
     /// attests the caller, and the core rechecks current membership.
+    pub fn workspace_control_prepare_action(
+        &self,
+        device_id: &str,
+        pane_id: &str,
+        expected: &crate::workspace_control::Context,
+        request_id: &str,
+        action: &crate::workspace_control::Action,
+    ) -> Result<crate::workspace_control::ActionPreparation, crate::workspace_control::Refusal>
+    {
+        if !check_owner_thread(self, "workspace_control_prepare_action") {
+            return Err(crate::workspace_control::Refusal {
+                reason: "core_unavailable",
+                next_action: "Reconnect Hide and retry",
+            });
+        }
+        lock_recover(&self.runtime)
+            .workspace_control_prepare_action(device_id, pane_id, expected, request_id, action)
+    }
+
     pub fn workspace_control_action(
         &self,
         device_id: &str,
@@ -378,6 +397,10 @@ impl HerdrCore {
         expected: &crate::workspace_control::Context,
         request_id: &str,
         action: crate::workspace_control::Action,
+        material: Result<
+            Option<crate::workspace_control::ActionMaterial>,
+            crate::workspace_control::Refusal,
+        >,
     ) -> Result<crate::workspace_control::ActionResult, crate::workspace_control::Refusal> {
         if !check_owner_thread(self, "workspace_control_action") {
             return Err(crate::workspace_control::Refusal {
@@ -386,7 +409,7 @@ impl HerdrCore {
             });
         }
         let result = lock_recover(&self.runtime)
-            .workspace_control_action(device_id, pane_id, expected, request_id, action);
+            .workspace_control_action(device_id, pane_id, expected, request_id, action, material);
         if result.as_ref().is_ok_and(|result| result.changed) {
             notify_change(self);
         }

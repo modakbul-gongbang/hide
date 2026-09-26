@@ -5,7 +5,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use herdr_core::host_access::HostChannel;
-use herdr_core::workspace_control::{Action, ActionResult, Context, Query, QueryResult, Refusal};
+use herdr_core::workspace_control::{
+    Action, ActionMaterial, ActionPreparation, ActionResult, Context, Query, QueryResult, Refusal,
+};
 use herdr_core::{Core, CoreOptions};
 use tokio::sync::broadcast;
 
@@ -38,7 +40,16 @@ enum Command {
         expected: Context,
         request_id: String,
         action: Action,
+        material: Box<Result<Option<ActionMaterial>, Refusal>>,
         reply: Sender<Result<ActionResult, Refusal>>,
+    },
+    WorkspacePrepare {
+        device_id: String,
+        pane_id: String,
+        expected: Context,
+        request_id: String,
+        action: Action,
+        reply: Sender<Result<ActionPreparation, Refusal>>,
     },
     Snapshot {
         have_revision: u64,
@@ -139,6 +150,7 @@ impl CoreHandle {
         expected: &Context,
         request_id: &str,
         action: Action,
+        material: Result<Option<ActionMaterial>, Refusal>,
     ) -> Result<ActionResult, Refusal> {
         let (reply, rx) = mpsc::channel();
         self.commands
@@ -148,6 +160,35 @@ impl CoreHandle {
                 expected: expected.clone(),
                 request_id: request_id.to_owned(),
                 action,
+                material: Box::new(material),
+                reply,
+            })
+            .map_err(|_| Refusal {
+                reason: "core_unavailable",
+                next_action: "Reconnect Hide and retry",
+            })?;
+        rx.recv().map_err(|_| Refusal {
+            reason: "core_unavailable",
+            next_action: "Reconnect Hide and retry",
+        })?
+    }
+
+    pub fn workspace_prepare_action(
+        &self,
+        device_id: &str,
+        pane_id: &str,
+        expected: &Context,
+        request_id: &str,
+        action: &Action,
+    ) -> Result<ActionPreparation, Refusal> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::WorkspacePrepare {
+                device_id: device_id.to_owned(),
+                pane_id: pane_id.to_owned(),
+                expected: expected.clone(),
+                request_id: request_id.to_owned(),
+                action: action.clone(),
                 reply,
             })
             .map_err(|_| Refusal {
@@ -236,6 +277,7 @@ fn owner_loop(
                 expected,
                 request_id,
                 action,
+                material,
                 reply,
             } => {
                 let _ = reply.send(core.workspace_control_action(
@@ -244,6 +286,23 @@ fn owner_loop(
                     &expected,
                     &request_id,
                     action,
+                    *material,
+                ));
+            }
+            Command::WorkspacePrepare {
+                device_id,
+                pane_id,
+                expected,
+                request_id,
+                action,
+                reply,
+            } => {
+                let _ = reply.send(core.workspace_control_prepare_action(
+                    &device_id,
+                    &pane_id,
+                    &expected,
+                    &request_id,
+                    &action,
                 ));
             }
             Command::Snapshot {

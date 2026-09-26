@@ -2,7 +2,10 @@
 
 use super::Runtime;
 use crate::view_layout::DisplayKind;
-use crate::workspace_control::{Action, ActionResult, Context, Query, QueryResult, Refusal, View};
+use crate::workspace_control::{
+    Action, ActionMaterial, ActionPreparation, ActionResult, ActionSource, Context, Query,
+    QueryResult, Refusal, View,
+};
 
 const ACTION_RESULTS_KEPT: usize = 128;
 const ACTION_RETRY_WINDOW_MS: u64 = 10 * 60 * 1000;
@@ -18,14 +21,14 @@ pub(super) struct RecordedAction {
 }
 
 impl Runtime {
-    pub fn workspace_control_action(
+    fn check_action_request(
         &mut self,
         device_id: &str,
         pane_id: &str,
         expected: &Context,
         request_id: &str,
-        action: Action,
-    ) -> Result<ActionResult, Refusal> {
+        action: &Action,
+    ) -> Result<(Context, Option<Result<ActionResult, Refusal>>), Refusal> {
         // Membership is checked on every call, including a retry. A cached
         // answer must never keep a moved or closed pane authorized.
         let context = self
@@ -64,12 +67,12 @@ impl Runtime {
                 && record.pane_id == pane_id
                 && record.request_id == request_id
         }) {
-            return if record.context != context {
+            let cached = if record.context != context {
                 Err(Refusal {
                     reason: "pane_changed",
                     next_action: "Reconnect the pane and run hide workspace info again",
                 })
-            } else if record.action == action {
+            } else if &record.action == action {
                 record.result.clone()
             } else {
                 Err(Refusal {
@@ -77,6 +80,7 @@ impl Runtime {
                     next_action: "Use a new request ID for a different action",
                 })
             };
+            return Ok((context, Some(cached)));
         }
         if self.workspace_actions.len() >= ACTION_RESULTS_KEPT {
             return Err(Refusal {
@@ -84,15 +88,83 @@ impl Runtime {
                 next_action: "Wait for earlier requests to expire, then retry",
             });
         }
-        let key = (context.device_id.clone(), context.checkout_path.clone());
-        self.reconcile_view_displays();
-        let result = self.apply_workspace_action(&key, &context, request_id, &action);
+        Ok((context, None))
+    }
+
+    pub fn workspace_control_prepare_action(
+        &mut self,
+        device_id: &str,
+        pane_id: &str,
+        expected: &Context,
+        request_id: &str,
+        action: &Action,
+    ) -> Result<ActionPreparation, Refusal> {
+        let (context, cached) =
+            self.check_action_request(device_id, pane_id, expected, request_id, action)?;
+        if let Some(cached) = cached {
+            return Ok(ActionPreparation::Cached(cached));
+        }
+        let (path, file) = match action {
+            Action::OpenFile { path, .. } => (path, true),
+            Action::OpenDiff { path, .. } => (path, false),
+            _ => return Ok(ActionPreparation::Ready),
+        };
+        if !std::path::Path::new(path).is_absolute() {
+            return Err(Refusal {
+                reason: "invalid_path",
+                next_action: "Resolve the path from the caller's cwd and retry",
+            });
+        }
+        let already_open = file
+            && self.snapshot.editor.tabs.iter().any(|tab| {
+                tab.workspace_id == context.workspace_id
+                    && tab.checkout_id == context.checkout_id
+                    && tab.path == *path
+                    && tab.kind == crate::model::EditorTabKind::File
+                    && tab.unavailable_reason.is_none()
+            });
+        let (root, channel) = self
+            .document_source(&context.workspace_id, &context.checkout_id)
+            .map_err(|_| Refusal {
+                reason: "host_unavailable",
+                next_action: "Reconnect the device and check file access consent, then retry",
+            })?;
+        let source = if file {
+            ActionSource::file(root, channel, path.clone(), already_open)
+        } else {
+            ActionSource::diff(root, channel, path.clone())
+        };
+        Ok(ActionPreparation::Read(source))
+    }
+
+    pub fn workspace_control_action(
+        &mut self,
+        device_id: &str,
+        pane_id: &str,
+        expected: &Context,
+        request_id: &str,
+        action: Action,
+        material: Result<Option<ActionMaterial>, Refusal>,
+    ) -> Result<ActionResult, Refusal> {
+        let (context, cached) =
+            self.check_action_request(device_id, pane_id, expected, request_id, &action)?;
+        if let Some(cached) = cached {
+            return cached;
+        }
+        let result = match material {
+            Ok(material) => {
+                let key = (context.device_id.clone(), context.checkout_path.clone());
+                self.reconcile_view_displays();
+                self.apply_workspace_action(&key, &context, request_id, &action, material)
+            }
+            Err(refusal) => Err(refusal),
+        };
         self.workspace_actions.push_back(RecordedAction {
             device_id: device_id.to_owned(),
             pane_id: pane_id.to_owned(),
             context,
             request_id: request_id.to_owned(),
-            at: now,
+            at: super::unix_milliseconds(),
             action,
             result: result.clone(),
         });
@@ -105,10 +177,159 @@ impl Runtime {
         context: &Context,
         request_id: &str,
         action: &Action,
+        material: Option<ActionMaterial>,
     ) -> Result<ActionResult, Refusal> {
+        if let Action::OpenFile {
+            path: _,
+            beside,
+            reveal,
+        }
+        | Action::OpenDiff {
+            path: _,
+            beside,
+            reveal,
+        } = action
+        {
+            if *reveal && context.device_id != "local" {
+                return Err(Refusal {
+                    reason: "reveal_unavailable",
+                    next_action: "Open without --reveal and select the remote Workspace in Hide",
+                });
+            }
+            let Some(material) = material else {
+                return Err(Refusal {
+                    reason: "read_missing",
+                    next_action: "Retry the command with the same request ID",
+                });
+            };
+            let path = &material.path;
+            let is_file = matches!(action, Action::OpenFile { .. });
+            if !self.admit_view_open(
+                key,
+                path,
+                if is_file {
+                    DisplayKind::File
+                } else {
+                    DisplayKind::Diff
+                },
+                if is_file { None } else { Some(false) },
+                false,
+                *beside,
+            ) {
+                return Err(Refusal {
+                    reason: "view_limit",
+                    next_action: "Close an unused View or area and retry",
+                });
+            }
+            let before_generation = self
+                .workspace_views
+                .as_ref()
+                .map(|store| store.generation)
+                .unwrap_or_default();
+            let tab_id = if is_file {
+                let existing = self.snapshot.editor.tabs.iter().find(|tab| {
+                    tab.workspace_id == context.workspace_id
+                        && tab.checkout_id == context.checkout_id
+                        && tab.kind == crate::model::EditorTabKind::File
+                        && tab.path == *path
+                        && tab.unavailable_reason.is_none()
+                });
+                if let Some(existing) = existing {
+                    existing.id.clone()
+                } else {
+                    let Some((document, place)) = material.file else {
+                        return Err(Refusal {
+                            reason: "read_missing",
+                            next_action: "Retry the command with the same request ID",
+                        });
+                    };
+                    let tab_id =
+                        self.new_file_tab_id(&context.workspace_id, &context.checkout_id, path);
+                    self.insert_file_tab(
+                        super::editor::PreparedFileTab::Read {
+                            tab_id: tab_id.clone(),
+                            document: Box::new(document),
+                            place,
+                        },
+                        &context.workspace_id,
+                        &context.checkout_id,
+                        path,
+                        false,
+                    )
+                    .ok_or(Refusal {
+                        reason: "file_unavailable",
+                        next_action: "Retry after refreshing the Workspace",
+                    })?
+                }
+            } else {
+                let tab_id =
+                    Self::diff_tab_id(&context.workspace_id, &context.checkout_id, path, false);
+                if !self.snapshot.editor.tabs.iter().any(|tab| tab.id == tab_id) {
+                    self.insert_diff_tab(
+                        &context.workspace_id,
+                        &context.checkout_id,
+                        path,
+                        false,
+                        false,
+                    );
+                }
+                tab_id
+            };
+            self.place_document(key, &tab_id, false, *beside, None);
+            let view_id = self
+                .view_layout_of(key)
+                .and_then(|layout| layout.active_area().active.clone())
+                .ok_or(Refusal {
+                    reason: "view_placement_failed",
+                    next_action: "Run hide view list to inspect the Workspace and retry",
+                })?;
+            if !self.view_layout_of(key).is_some_and(|layout| {
+                layout.display(&view_id).is_some_and(|display| {
+                    display.shows(
+                        path,
+                        if is_file {
+                            DisplayKind::File
+                        } else {
+                            DisplayKind::Diff
+                        },
+                        if is_file { None } else { Some(false) },
+                    )
+                })
+            }) {
+                return Err(Refusal {
+                    reason: "view_placement_failed",
+                    next_action: "Run hide view list to inspect the Workspace and retry",
+                });
+            }
+            let area_id = self
+                .view_layout_of(key)
+                .map(|layout| layout.active_area().id.clone());
+            if *reveal {
+                self.bring_device_forward("local".to_owned());
+                self.focus_checkout(&context.workspace_id, &context.checkout_id);
+            }
+            return Ok(ActionResult {
+                context: context.clone(),
+                request_id: request_id.to_owned(),
+                changed: *reveal
+                    || self
+                        .workspace_views
+                        .as_ref()
+                        .is_some_and(|store| store.generation != before_generation),
+                view_id,
+                area_id,
+            });
+        }
         let (view_id, changed, area_id) = match action {
-            Action::Select { view_id } => {
-                let changed = self
+            Action::OpenFile { .. } | Action::OpenDiff { .. } => unreachable!("handled above"),
+            Action::Select { view_id, reveal } => {
+                if *reveal && context.device_id != "local" {
+                    return Err(Refusal {
+                        reason: "reveal_unavailable",
+                        next_action: "Select without --reveal and switch to the remote Workspace in Hide",
+                    });
+                }
+                let selected = self
                     .change_view_layout(key, |layout, stamp| {
                         layout
                             .focus(view_id, stamp)
@@ -119,7 +340,11 @@ impl Runtime {
                     .view_layout_of(key)
                     .and_then(|layout| layout.area_of(view_id))
                     .map(|area| area.id.clone());
-                (view_id.clone(), changed, area)
+                if *reveal {
+                    self.bring_device_forward("local".to_owned());
+                    self.focus_checkout(&context.workspace_id, &context.checkout_id);
+                }
+                (view_id.clone(), selected || *reveal, area)
             }
             Action::Split {
                 view_id,
@@ -299,16 +524,25 @@ impl Runtime {
                 })
                 .collect()
         });
+        let mut capabilities = vec![
+            "workspace.info",
+            "view.list",
+            "view.select",
+            "view.split",
+            "view.move",
+            "view.close",
+        ];
+        if context.device_id == "local"
+            || self
+                .device_hosts
+                .get(&context.device_id)
+                .is_some_and(|host| matches!(host.phase, super::hosts::HostPhase::Ready { .. }))
+        {
+            capabilities.extend(["file.open", "diff.open"]);
+        }
         Ok(QueryResult {
             context,
-            capabilities: vec![
-                "workspace.info",
-                "view.list",
-                "view.select",
-                "view.split",
-                "view.move",
-                "view.close",
-            ],
+            capabilities,
             views,
         })
     }

@@ -270,6 +270,9 @@ Pane-scoped `hide view select`, `split`, `move`, and `close` resolve the live de
 They leave keyboard pane focus alone; a last View holding an unsaved document refuses close, while a second View of the same document may close by itself.
 One request ID carries an action result for up to ten minutes, and the 128-result cap refuses new commands instead of evicting an answer that a retry may need; a second intent uses a new ID.
 The CLI returns the request ID on uncertain transport outcomes so the caller can retry that same action or inspect `hide view list`.
+Pane-scoped file and working-diff opens resolve a caller-cwd path on the calling machine, then use the checkout's existing host channel to read a document or Git status off the core lock.
+The core rechecks pane membership when it places the result into that checkout's View tree; a missing file, unavailable host, unchanged diff, or layout refusal has a request-scoped CLI outcome.
+An open without `--reveal` leaves the front Workspace and keyboard pane alone, and a local open with `--reveal` brings its checkout and chosen View forward.
 Client frames are core events (`schema_version`, `kind`, `payload`).
 HTTP is static assets and `GET /health` (`pid`, `version`, `schema_version`, `clients`).
 No HTTP request dispatches a core event.

@@ -1,5 +1,5 @@
 use super::*;
-use crate::workspace_control::{Action, Edge, Query};
+use crate::workspace_control::{Action, ActionPreparation, Edge, Query};
 
 fn action_id(suffix: &str) -> String {
     format!("{}-{suffix}", unix_milliseconds())
@@ -242,11 +242,18 @@ fn background_view_commands_preserve_front_focus_and_retried_split_converges() {
     };
     let retry_id = action_id("retry-split");
     let first = runtime
-        .workspace_control_action("local", "pane-b", &expected, &retry_id, action.clone())
+        .workspace_control_action(
+            "local",
+            "pane-b",
+            &expected,
+            &retry_id,
+            action.clone(),
+            Ok(None),
+        )
         .unwrap();
     assert!(first.changed);
     let retry = runtime
-        .workspace_control_action("local", "pane-b", &expected, &retry_id, action)
+        .workspace_control_action("local", "pane-b", &expected, &retry_id, action, Ok(None))
         .unwrap();
     assert_eq!(retry, first);
     assert_eq!(
@@ -265,7 +272,8 @@ fn background_view_commands_preserve_front_focus_and_retried_split_converges() {
                 &retry_id,
                 Action::Close {
                     view_id: view_id.clone()
-                }
+                },
+                Ok(None),
             )
             .unwrap_err()
             .reason,
@@ -279,8 +287,10 @@ fn background_view_commands_preserve_front_focus_and_retried_split_converges() {
                 &other,
                 &action_id("wrong-workspace"),
                 Action::Select {
-                    view_id: view_id.clone()
-                }
+                    view_id: view_id.clone(),
+                    reveal: false,
+                },
+                Ok(None),
             )
             .unwrap_err()
             .reason,
@@ -310,6 +320,7 @@ fn background_view_commands_preserve_front_focus_and_retried_split_converges() {
                     area_id: "a1".into(),
                     edge: Edge::Right,
                 },
+                Ok(None),
             )
             .unwrap_err()
             .reason,
@@ -345,14 +356,22 @@ fn close_of_an_already_closed_view_returns_a_no_change_result() {
                 "pane-b",
                 &expected,
                 &action_id("close-1"),
-                action.clone()
+                action.clone(),
+                Ok(None),
             )
             .unwrap()
             .changed
     );
     assert!(
         !runtime
-            .workspace_control_action("local", "pane-b", &expected, &action_id("close-2"), action)
+            .workspace_control_action(
+                "local",
+                "pane-b",
+                &expected,
+                &action_id("close-2"),
+                action,
+                Ok(None)
+            )
             .unwrap()
             .changed
     );
@@ -364,4 +383,241 @@ fn close_of_an_already_closed_view_returns_a_no_change_result() {
             .next()
             .is_none()
     );
+}
+
+#[test]
+fn selecting_a_hidden_view_reveals_only_when_requested() {
+    let (mut runtime, _dir) = caller_fixture();
+    let key = ("local", "/checkouts/b");
+    let layout = &mut runtime
+        .workspace_views
+        .as_mut()
+        .unwrap()
+        .views
+        .entry(key.0, key.1)
+        .layout;
+    let display = layout.new_browser_display("https://example.org", 1);
+    let view_id = display.id.clone();
+    layout.insert("a1", display, 1).unwrap();
+    let expected = runtime
+        .workspace_control_query("local", "pane-b", Query::Info)
+        .unwrap()
+        .context;
+    let before = runtime.snapshot.navigator.focused_workspace_id.clone();
+    runtime
+        .workspace_control_action(
+            "local",
+            "pane-b",
+            &expected,
+            &action_id("select-hidden"),
+            Action::Select {
+                view_id: view_id.clone(),
+                reveal: false,
+            },
+            Ok(None),
+        )
+        .unwrap();
+    assert_eq!(runtime.snapshot.navigator.focused_workspace_id, before);
+    runtime
+        .workspace_control_action(
+            "local",
+            "pane-b",
+            &expected,
+            &action_id("select-reveal"),
+            Action::Select {
+                view_id,
+                reveal: true,
+            },
+            Ok(None),
+        )
+        .unwrap();
+    assert_eq!(
+        runtime.snapshot.navigator.focused_workspace_id.as_deref(),
+        Some("workspace-b")
+    );
+}
+
+#[test]
+fn file_open_reads_outside_the_runtime_then_places_once_in_the_callers_workspace() {
+    let (mut runtime, dir) = caller_fixture();
+    let root = dir.path().to_string_lossy().into_owned();
+    runtime.snapshot.navigator.workspaces[1].path = root.clone();
+    runtime.snapshot.navigator.workspaces[1].checkouts[0].path = root.clone();
+    let path = dir.path().join("보고서.md");
+    std::fs::write(&path, "hello\n").unwrap();
+    let expected = runtime
+        .workspace_control_query("local", "pane-b", Query::Info)
+        .unwrap()
+        .context;
+    let before = runtime.snapshot.navigator.focused_workspace_id.clone();
+    let action = Action::OpenFile {
+        path: path.to_string_lossy().into_owned(),
+        beside: false,
+        reveal: false,
+    };
+    let id = action_id("file-open");
+    let ActionPreparation::Read(source) = runtime
+        .workspace_control_prepare_action("local", "pane-b", &expected, &id, &action)
+        .unwrap()
+    else {
+        panic!("file needs a host read")
+    };
+    let material = source.read().unwrap();
+    let first = runtime
+        .workspace_control_action(
+            "local",
+            "pane-b",
+            &expected,
+            &id,
+            action.clone(),
+            Ok(Some(material)),
+        )
+        .unwrap();
+    assert!(first.changed);
+    assert_eq!(first.context.checkout_path, root);
+    assert_eq!(runtime.snapshot.navigator.focused_workspace_id, before);
+    let views = runtime
+        .workspace_control_query("local", "pane-b", Query::ViewList)
+        .unwrap()
+        .views
+        .unwrap();
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].view_id, first.view_id);
+    assert_eq!(views[0].target, path.to_string_lossy());
+    std::fs::remove_file(&path).unwrap();
+    let ActionPreparation::Cached(Ok(retried)) = runtime
+        .workspace_control_prepare_action("local", "pane-b", &expected, &id, &action)
+        .unwrap()
+    else {
+        panic!("retry should return its recorded result without rereading")
+    };
+    assert_eq!(retried, first);
+
+    let reveal = Action::OpenFile {
+        path: path.to_string_lossy().into_owned(),
+        beside: false,
+        reveal: true,
+    };
+    let reveal_id = action_id("reveal-open-file");
+    let ActionPreparation::Read(source) = runtime
+        .workspace_control_prepare_action("local", "pane-b", &expected, &reveal_id, &reveal)
+        .unwrap()
+    else {
+        panic!("a new intent checks its source")
+    };
+    let material = source.read().unwrap();
+    runtime
+        .workspace_control_action(
+            "local",
+            "pane-b",
+            &expected,
+            &reveal_id,
+            reveal,
+            Ok(Some(material)),
+        )
+        .unwrap();
+    assert_eq!(
+        runtime.snapshot.navigator.focused_workspace_id.as_deref(),
+        Some("workspace-b")
+    );
+}
+
+#[test]
+fn diff_open_requires_a_real_working_tree_change() {
+    let (mut runtime, dir) = caller_fixture();
+    let root = dir.path().to_string_lossy().into_owned();
+    runtime.snapshot.navigator.workspaces[1].path = root.clone();
+    runtime.snapshot.navigator.workspaces[1].checkouts[0].path = root;
+    let path = dir.path().join("memo.md");
+    std::fs::write(&path, "baseline\n").unwrap();
+    let git = |args: &[&str]| {
+        assert!(
+            std::process::Command::new("git")
+                .arg("-C")
+                .arg(dir.path())
+                .args(args)
+                .status()
+                .unwrap()
+                .success()
+        );
+    };
+    git(&["init", "-q"]);
+    git(&["add", "memo.md"]);
+    git(&[
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "commit",
+        "-qm",
+        "baseline",
+    ]);
+    let expected = runtime
+        .workspace_control_query("local", "pane-b", Query::Info)
+        .unwrap()
+        .context;
+    let action = Action::OpenDiff {
+        path: path.to_string_lossy().into_owned(),
+        beside: false,
+        reveal: false,
+    };
+    let clean_id = action_id("clean");
+    let ActionPreparation::Read(source) = runtime
+        .workspace_control_prepare_action("local", "pane-b", &expected, &clean_id, &action)
+        .unwrap()
+    else {
+        panic!("diff needs a Git read")
+    };
+    let Err(refusal) = source.read() else {
+        panic!("unchanged file must have no diff")
+    };
+    assert_eq!(refusal.reason, "diff_unchanged");
+    assert_eq!(
+        runtime
+            .workspace_control_action(
+                "local",
+                "pane-b",
+                &expected,
+                &clean_id,
+                action.clone(),
+                Err(refusal),
+            )
+            .unwrap_err()
+            .reason,
+        "diff_unchanged"
+    );
+    std::fs::write(&path, "changed\n").unwrap();
+    let ActionPreparation::Cached(Err(retried)) = runtime
+        .workspace_control_prepare_action("local", "pane-b", &expected, &clean_id, &action)
+        .unwrap()
+    else {
+        panic!("the failed intent must keep its refusal")
+    };
+    assert_eq!(retried.reason, "diff_unchanged");
+    let id = action_id("changed");
+    let ActionPreparation::Read(source) = runtime
+        .workspace_control_prepare_action("local", "pane-b", &expected, &id, &action)
+        .unwrap()
+    else {
+        panic!("diff needs a Git read")
+    };
+    let material = source.read().unwrap();
+    let result = runtime
+        .workspace_control_action(
+            "local",
+            "pane-b",
+            &expected,
+            &id,
+            action,
+            Ok(Some(material)),
+        )
+        .unwrap();
+    let views = runtime
+        .workspace_control_query("local", "pane-b", Query::ViewList)
+        .unwrap()
+        .views
+        .unwrap();
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].view_id, result.view_id);
+    assert_eq!(views[0].kind, "diff");
 }

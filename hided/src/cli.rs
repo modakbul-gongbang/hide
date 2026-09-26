@@ -12,6 +12,7 @@ use crate::state_file::{self, DaemonState};
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum CommandKind {
+    Help,
     Open,
     /// `hide connect`: `open` without the browser, answered as one JSON line
     /// for a host that loads the shell itself (the desktop app).
@@ -44,6 +45,7 @@ const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--pane <pan
 pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
     let mut iter = args.iter().skip(1);
     match iter.next().map(String::as_str) {
+        Some("help" | "--help" | "-h") if iter.next().is_none() => Ok(CommandKind::Help),
         None | Some("open") => Ok(CommandKind::Open),
         Some("connect") => Ok(CommandKind::Connect),
         Some("status") => {
@@ -62,13 +64,63 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
             (Some("info"), None) => Ok(CommandKind::WorkspaceInfo),
             _ => Err("usage: hide workspace info".to_owned()),
         },
+        Some("file") => parse_open(iter, true),
+        Some("diff") => parse_open(iter, false),
         Some("view") => parse_view(iter),
         Some(other) => Err(format!("unknown command: {other}")),
     }
 }
 
+fn parse_open<'a>(
+    mut iter: impl Iterator<Item = &'a String>,
+    file: bool,
+) -> Result<CommandKind, String> {
+    let usage = if file {
+        "usage: hide file open <path> [--beside] [--reveal] [--request-id <id>]"
+    } else {
+        "usage: hide diff open <path> [--beside] [--reveal] [--request-id <id>]"
+    };
+    if iter.next().map(String::as_str) != Some("open") {
+        return Err(usage.to_owned());
+    }
+    let path = iter
+        .next()
+        .filter(|path| !path.is_empty() && !path.starts_with('-'))
+        .ok_or(usage)?;
+    let (mut beside, mut reveal, mut request_id) = (false, false, None);
+    while let Some(option) = iter.next() {
+        match option.as_str() {
+            "--beside" if !beside => beside = true,
+            "--reveal" if !reveal => reveal = true,
+            "--request-id" if request_id.is_none() => {
+                request_id = Some(
+                    iter.next()
+                        .filter(|id| !id.is_empty() && !id.starts_with('-'))
+                        .ok_or(usage)?
+                        .clone(),
+                );
+            }
+            _ => return Err(usage.to_owned()),
+        }
+    }
+    let action = if file {
+        Action::OpenFile {
+            path: path.clone(),
+            beside,
+            reveal,
+        }
+    } else {
+        Action::OpenDiff {
+            path: path.clone(),
+            beside,
+            reveal,
+        }
+    };
+    Ok(CommandKind::WorkspaceAction { action, request_id })
+}
+
 fn parse_view<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandKind, String> {
-    let usage = "usage: hide view list | select|close <view-id> [--request-id <id>] | split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>] | move <view-id> --area <area-id> --index <n> [--request-id <id>]";
+    let usage = "usage: hide view list | select <view-id> [--reveal] [--request-id <id>] | close <view-id> [--request-id <id>] | split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>] | move <view-id> --area <area-id> --index <n> [--request-id <id>]";
     let verb = iter.next().map(String::as_str).ok_or(usage)?;
     if verb == "list" {
         return if iter.next().is_none() {
@@ -86,7 +138,12 @@ fn parse_view<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandK
     let mut edge = None;
     let mut index = None;
     let mut request_id = None;
+    let mut reveal = false;
     while let Some(option) = iter.next() {
+        if option == "--reveal" && !reveal {
+            reveal = true;
+            continue;
+        }
         let value = iter.next().ok_or(usage)?;
         if value.is_empty() || value.starts_with('-') {
             return Err(usage.to_owned());
@@ -111,17 +168,17 @@ fn parse_view<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandK
     }
     let action = match verb {
         "select" if area_id.is_none() && edge.is_none() && index.is_none() => {
-            Action::Select { view_id }
+            Action::Select { view_id, reveal }
         }
-        "close" if area_id.is_none() && edge.is_none() && index.is_none() => {
+        "close" if area_id.is_none() && edge.is_none() && index.is_none() && !reveal => {
             Action::Close { view_id }
         }
-        "split" if index.is_none() => Action::Split {
+        "split" if index.is_none() && !reveal => Action::Split {
             view_id,
             area_id: area_id.ok_or(usage)?,
             edge: edge.ok_or(usage)?,
         },
-        "move" if edge.is_none() => Action::Move {
+        "move" if edge.is_none() && !reveal => Action::Move {
             view_id,
             area_id: area_id.ok_or(usage)?,
             index: index.ok_or(usage)?,
@@ -151,14 +208,38 @@ fn parse_browser<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Comma
 }
 
 pub fn run(kind: CommandKind) -> Result<(), String> {
-    let env = env::load().map_err(|errors| {
-        errors
-            .iter()
-            .map(|error| format!("{}: {}", error.key, error.kind))
-            .collect::<Vec<_>>()
-            .join("\n")
-    })?;
+    if kind == CommandKind::Help {
+        println!(
+            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide view list\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nEach Workspace command requires a live Hide renderer and an attested Herdr pane; it never starts Hide."
+        );
+        return Ok(());
+    }
+    let env = match env::load() {
+        Ok(env) => env,
+        Err(_errors)
+            if matches!(
+                &kind,
+                CommandKind::WorkspaceBootstrap
+                    | CommandKind::WorkspaceInfo
+                    | CommandKind::ViewList
+                    | CommandKind::WorkspaceAction { .. }
+            ) =>
+        {
+            return workspace_refusal(
+                "environment_invalid",
+                "Check Hide environment settings and retry",
+            );
+        }
+        Err(errors) => {
+            return Err(errors
+                .iter()
+                .map(|error| format!("{}: {}", error.key, error.kind))
+                .collect::<Vec<_>>()
+                .join("\n"));
+        }
+    };
     match kind {
+        CommandKind::Help => unreachable!("handled above"),
         CommandKind::Open => open(&env),
         CommandKind::Connect => connect_json(&env),
         CommandKind::Status { json: true } => status_json(&env),
@@ -181,6 +262,37 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
 }
 
 fn workspace_action(env: &Env, action: Action, request_id: Option<&str>) -> Result<(), String> {
+    let action = match action {
+        Action::OpenFile {
+            path,
+            beside,
+            reveal,
+        } => Action::OpenFile {
+            path: match absolute_caller_path(&path) {
+                Ok(path) => path,
+                Err(reason) => {
+                    return workspace_refusal(&reason, "Check the current directory and retry");
+                }
+            },
+            beside,
+            reveal,
+        },
+        Action::OpenDiff {
+            path,
+            beside,
+            reveal,
+        } => Action::OpenDiff {
+            path: match absolute_caller_path(&path) {
+                Ok(path) => path,
+                Err(reason) => {
+                    return workspace_refusal(&reason, "Check the current directory and retry");
+                }
+            },
+            beside,
+            reveal,
+        },
+        other => other,
+    };
     let request_id = match request_id {
         Some(id) if crate::workspace_cli::valid_request_id(id) => id.to_owned(),
         Some(_) => {
@@ -196,7 +308,7 @@ fn workspace_action(env: &Env, action: Action, request_id: Option<&str>) -> Resu
     };
     let (reference, ephemeral) = match workspace_reference(env) {
         Ok(reference) => reference,
-        Err(reason) => return workspace_action_refusal(&request_id, &reason),
+        Err(reason) => return workspace_action_before_send_refusal(&request_id, &reason),
     };
     let _reference_owner =
         ephemeral.then(|| crate::workspace_cli::OneShotReference(reference.clone()));
@@ -215,6 +327,37 @@ fn workspace_action(env: &Env, action: Action, request_id: Option<&str>) -> Resu
     }
 }
 
+fn workspace_action_before_send_refusal(request_id: &str, reason: &str) -> Result<(), String> {
+    println!(
+        "{}",
+        serde_json::json!({
+            "ok": false,
+            "request_id": request_id,
+            "reason": reason,
+            "applied": "not_applied",
+            "next_action": "Open Hide, reconnect this pane, and retry the same command",
+        })
+    );
+    Err(reason.to_owned())
+}
+
+fn absolute_caller_path(path: &str) -> Result<String, String> {
+    use std::path::{Component, PathBuf};
+    let cwd = std::env::current_dir().map_err(|_| "cwd_unavailable".to_owned())?;
+    let input = PathBuf::from(path);
+    let mut normalized = PathBuf::new();
+    for component in cwd.join(input).components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            other => normalized.push(other.as_os_str()),
+        }
+    }
+    Ok(normalized.to_string_lossy().into_owned())
+}
+
 fn workspace_action_refusal(request_id: &str, reason: &str) -> Result<(), String> {
     let applied = if matches!(
         reason,
@@ -231,7 +374,7 @@ fn workspace_action_refusal(request_id: &str, reason: &str) -> Result<(), String
             "request_id": request_id,
             "reason": reason,
             "applied": applied,
-            "next_action": format!("Run hide view list to inspect the current state, or retry the same command with --request-id {request_id}"),
+            "next_action": format!("Reconnect Hide, inspect hide view list, or retry the same command with --request-id {request_id}"),
         })
     );
     Err(reason.to_owned())
@@ -695,6 +838,37 @@ mod tests {
             ])
             .is_err()
         );
+    }
+
+    #[test]
+    fn file_and_diff_open_parse_scoped_paths_and_reject_target_overrides() {
+        let parse = |line: &[&str]| {
+            parse_args(&line.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>())
+        };
+        assert_eq!(
+            parse(&["hide", "file", "open", "src/lib.rs", "--beside"]),
+            Ok(CommandKind::WorkspaceAction {
+                action: Action::OpenFile {
+                    path: "src/lib.rs".into(),
+                    beside: true,
+                    reveal: false,
+                },
+                request_id: None,
+            })
+        );
+        assert_eq!(
+            parse(&["hide", "diff", "open", "src/lib.rs", "--reveal"]),
+            Ok(CommandKind::WorkspaceAction {
+                action: Action::OpenDiff {
+                    path: "src/lib.rs".into(),
+                    beside: false,
+                    reveal: true,
+                },
+                request_id: None,
+            })
+        );
+        assert!(parse(&["hide", "file", "open", "src/lib.rs", "--workspace", "other"]).is_err());
+        assert!(parse(&["hide", "diff", "open", "src/lib.rs", "--beside", "--beside"]).is_err());
     }
 
     #[test]
