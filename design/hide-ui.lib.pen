@@ -7012,7 +7012,7 @@
               "fill": "$--muted-foreground",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "FoldRow in sidebar.tsx: the Inactive and Inactive projects folds. The label reads at the level’s glyph column and the chevron stands in the rows’ fold slot on the right, with the menu’s lane kept, so it lines up with the project and checkout rows.",
+              "content": "FoldRow in sidebar.tsx: the Inactive and Inactive projects folds. The label reads at the level’s glyph column and the chevron stands in the rows’ fold slot on the right, so it lines up with the project, checkout and agent rows.",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-subhead",
               "fontWeight": "normal"
@@ -7090,13 +7090,6 @@
                       "fill": "$--muted-foreground"
                     }
                   ]
-                },
-                {
-                  "type": "frame",
-                  "id": "inactive-fold-menu-lane",
-                  "name": "Menu lane",
-                  "width": 24,
-                  "height": 24
                 }
               ],
               "cornerRadius": "$--radius-sm"
@@ -12239,7 +12232,7 @@
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "sidebar.tsx WorkspaceRows: the project glyph, name and activity read on the left; the fold and the ⋯ menu sit on the right in slots kept at rest, so the name and the activity never move. A folded chevron is always shown; an unfolded one, like the menu, shows under the pointer, with keyboard focus in the row, while its menu is open, and always on an input with no hover. The name opens the Overview.",
+          "content": "sidebar.tsx WorkspaceRows: the project glyph, name and activity read on the left; the fold sits on the right in a slot kept at rest, a step after the activity, so the name and the activity never move and the activity ends on the column every row's time ends on. A folded chevron is always shown; an unfolded one shows under the pointer, with keyboard focus in the row, while its menu is open, and always on an input with no hover. The name opens the Overview; a right-click, or the menu key or ⇧F10 on the focused row, opens the row's menu, which nothing on the row stands for.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -12299,52 +12292,44 @@
               "height": 1
             },
             {
-              "type": "text",
-              "id": "nZkan",
-              "name": "Agent count and activity",
-              "fill": "$--muted-foreground",
-              "content": "3 agents · 50m",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal"
-            },
-            {
               "type": "frame",
-              "id": "wgtfo",
-              "name": "Fold slot",
-              "width": 16,
-              "height": 24,
-              "justifyContent": "center",
+              "id": "project-row-end",
+              "name": "Row end",
+              "gap": "$--spacing-xs",
               "alignItems": "center",
               "children": [
                 {
-                  "type": "icon",
-                  "id": "iBYjj",
-                  "name": "Chevron",
-                  "width": 12,
-                  "height": 12,
-                  "icon": "chevron-right",
-                  "library": "lucide",
-                  "fill": "$--muted-foreground"
+                  "type": "text",
+                  "id": "nZkan",
+                  "name": "Agent count and activity",
+                  "fill": "$--muted-foreground",
+                  "content": "3 agents · 50m",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal"
+                },
+                {
+                  "type": "frame",
+                  "id": "wgtfo",
+                  "name": "Fold slot",
+                  "width": 16,
+                  "height": 24,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "iBYjj",
+                      "name": "Chevron",
+                      "width": 12,
+                      "height": 12,
+                      "icon": "chevron-right",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    }
+                  ]
                 }
               ]
-            },
-            {
-              "id": "hm1SG",
-              "type": "ref",
-              "ref": "Nyvom",
-              "name": "Overflow menu",
-              "width": 24,
-              "height": 24,
-              "opacity": 0,
-              "descendants": {
-                "ZIZFR": {
-                  "icon": "ellipsis",
-                  "fill": "$--muted-foreground",
-                  "width": 14,
-                  "height": 14
-                }
-              }
             }
           ]
         },
@@ -12439,9 +12424,6 @@
               "descendants": {
                 "iBYjj": {
                   "icon": "chevron-down"
-                },
-                "hm1SG": {
-                  "opacity": 1
                 }
               }
             }
@@ -12477,9 +12459,6 @@
               "descendants": {
                 "iBYjj": {
                   "icon": "chevron-down"
-                },
-                "hm1SG": {
-                  "opacity": 1
                 }
               }
             }
@@ -12513,10 +12492,6 @@
               "descendants": {
                 "iBYjj": {
                   "icon": "chevron-down"
-                },
-                "hm1SG": {
-                  "opacity": 1,
-                  "fill": "$--secondary"
                 }
               }
             }
@@ -13742,7 +13717,7 @@
               "fill": "$--subtle-foreground",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "sidebar.tsx CheckoutRowView: the kind glyph, the name and the last-commit age read on the left of fixed slots for the fold and the ⋯ menu, so the age stays beside an open menu and nothing moves on hover. The fold is drawn only while agents run there, folded always shown and unfolded under the pointer; line two names the agents and the purpose while they are folded. An opened checkout and its agent rows share one small group fill.",
+              "content": "sidebar.tsx CheckoutRowView: the kind glyph and the name read on the left; the last-commit age and the fold slot end the row, a step apart, so the age ends on the column every row's time ends on and nothing moves on hover or while the right-click menu is open. The fold is drawn only while agents run there, folded always shown and unfolded under the pointer; line two names the agents and the purpose while they are folded. An opened checkout and its agent rows share one small group fill.",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "normal"
@@ -13776,6 +13751,8 @@
               "layout": "vertical",
               "gap": "$--spacing-xxs",
               "padding": [
+                0,
+                "$--spacing-xs",
                 0,
                 "$--spacing-sm"
               ],
@@ -13837,52 +13814,44 @@
                       "height": 1
                     },
                     {
-                      "type": "text",
-                      "id": "TuosT",
-                      "name": "Last commit age",
-                      "fill": "$--muted-foreground",
-                      "content": "4h",
-                      "fontFamily": "$--font-mono",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "normal"
-                    },
-                    {
                       "type": "frame",
-                      "id": "IXwZI",
-                      "name": "Fold slot",
-                      "justifyContent": "center",
+                      "id": "checkout-row-end",
+                      "name": "Row end",
+                      "gap": "$--spacing-xs",
                       "alignItems": "center",
                       "children": [
                         {
-                          "type": "icon",
-                          "id": "CgZj3",
-                          "name": "Chevron",
-                          "width": 12,
-                          "height": 12,
-                          "icon": "chevron-right",
-                          "library": "lucide",
-                          "fill": "$--muted-foreground"
-                        }
-                      ],
-                      "width": 16,
-                      "height": 24
-                    },
-                    {
-                      "id": "checkout-row-menu",
-                      "type": "ref",
-                      "ref": "Nyvom",
-                      "name": "Overflow menu",
-                      "width": 24,
-                      "height": 24,
-                      "opacity": 0,
-                      "descendants": {
-                        "ZIZFR": {
-                          "icon": "ellipsis",
+                          "type": "text",
+                          "id": "TuosT",
+                          "name": "Last commit age",
                           "fill": "$--muted-foreground",
-                          "width": 14,
-                          "height": 14
+                          "content": "4h",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "IXwZI",
+                          "name": "Fold slot",
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "CgZj3",
+                              "name": "Chevron",
+                              "width": 12,
+                              "height": 12,
+                              "icon": "chevron-right",
+                              "library": "lucide",
+                              "fill": "$--muted-foreground"
+                            }
+                          ],
+                          "width": 16,
+                          "height": 24
                         }
-                      }
+                      ]
                     }
                   ]
                 },
@@ -14188,11 +14157,7 @@
               "name": "Row / Hover",
               "fill": "$--accent",
               "height": 44,
-              "descendants": {
-                "checkout-row-menu": {
-                  "opacity": 1
-                }
-              }
+              "descendants": {}
             }
           ]
         },
@@ -14224,11 +14189,7 @@
               "strokeWidth": 1,
               "strokeAlignment": "inner",
               "height": 44,
-              "descendants": {
-                "checkout-row-menu": {
-                  "opacity": 1
-                }
-              }
+              "descendants": {}
             }
           ]
         },
@@ -14258,12 +14219,7 @@
               "name": "Row / Menu open",
               "fill": "$--accent",
               "height": 44,
-              "descendants": {
-                "checkout-row-menu": {
-                  "opacity": 1,
-                  "fill": "$--secondary"
-                }
-              }
+              "descendants": {}
             }
           ]
         },
@@ -14422,7 +14378,7 @@
           "id": "sidebar-agent-row-spec",
           "name": "Spec",
           "fill": "$--subtle-foreground",
-          "content": "sidebar-agent-row.tsx SidebarAgentRow, in Agents and under a checkout in Projects: the status mark, the provider, the title, a branch chip only for a child whose checkout differs from its parent, the device chip, the descendant badge while folded, the elapsed time that is always shown, and the fold only on a parent. A request or news has its own line from the start, a quiet sentence is only in the tooltip, and Agents adds a fixed context line. Hover, focus and selection change a fill and a ring, never a height.",
+          "content": "sidebar-agent-row.tsx SidebarAgentRow, in Agents and under a checkout in Projects: the status mark, the provider, the title, a branch chip only for a child whose checkout differs from its parent, the device chip, the descendant badge while folded, the elapsed time that is always shown, and the fold slot every row keeps, its chevron drawn only on a parent, so every row's time and chevron share one column each. A request or news has its own line from the start, a quiet sentence is only in the tooltip, and Agents adds a fixed context line. Hover, focus and selection change a fill and a ring, never a height.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal",
@@ -14638,7 +14594,6 @@
                       "type": "frame",
                       "id": "sar-fold",
                       "name": "Fold slot",
-                      "enabled": false,
                       "width": 16,
                       "height": 24,
                       "justifyContent": "center",
@@ -14654,7 +14609,8 @@
                           "library": "lucide",
                           "fill": "$--muted-foreground"
                         }
-                      ]
+                      ],
+                      "opacity": 0
                     }
                   ]
                 },
@@ -15104,7 +15060,7 @@
                   "content": "?1 ●1"
                 },
                 "sar-fold": {
-                  "enabled": true
+                  "opacity": 1
                 },
                 "sar-elapsed": {
                   "content": "2m"
@@ -15153,7 +15109,6 @@
                   "fill": "$--foreground"
                 },
                 "sar-fold": {
-                  "enabled": true,
                   "opacity": 0
                 },
                 "sar-chevron": {

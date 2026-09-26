@@ -314,17 +314,19 @@ function screenLineRow(id, {label, meta, status, width = 260}) {
   return themedXref(id, 'jJJqB', label, {width}, {hJDwP: {content: label}, xT4J9: {content: meta}, e44ufH: {content: status}});
 }
 
-// All projects' own list (MainScreen.tsx) has no fold and no row menu, so the
-// Project row's two right slots are not drawn there.
+// All projects' own list (MainScreen.tsx) has no fold, so the Project row's
+// fold slot is not drawn there.
 function screenProjectRow(id, {name, agents, width = 292}) {
-  return themedXref(id, 'qdhY0', name, {width}, {JkPyX: {content: name}, nZkan: {content: agents}, wgtfo: {enabled: false}, hm1SG: {enabled: false}});
+  return themedXref(id, 'qdhY0', name, {width}, {JkPyX: {content: name}, nZkan: {content: agents}, wgtfo: {enabled: false}});
 }
 
 // sidebar-agent-row.tsx's SidebarAgentRow, from the library's Sidebar agent row:
 // line one is the marks, the title, the chips, the badge, the elapsed time and a
 // parent's fold; a request or news has its own line and Agents adds the context
-// line. `inset` is where the marks start, `fold` is null on a row with no
-// children, and `unfolded` draws a parent's chevron in its slot at rest.
+// line. `inset` is where the marks start. Every row keeps the fold slot, so its
+// time ends on the column every sidebar row's time ends on; `fold` is `folded`
+// on a parent whose chevron shows at rest, and `unfolded` or null leaves the
+// slot empty at rest.
 function screenSidebarAgentRow(id, {title, symbol = '●', color = '$--agent-working', provider = 'claude', age, line, lineFill = '$--warning', place, device, branch, badge, fold = null, bright = false, selected = false, inset = 4, width = 268}) {
   return themedXref(id, 'sidebar-agent-row', title, {width, padding: ['$--spacing-xs', '$--spacing-xs', '$--spacing-xs', inset], ...(selected ? {fill: '$--secondary'} : {})}, {
     ...markOverrides({dot: 'sar-dot', ring: 'sar-ring', glyph: 'sar-glyph'}, symbol, color),
@@ -339,7 +341,7 @@ function screenSidebarAgentRow(id, {title, symbol = '●', color = '$--agent-wor
     'sar-branch-label': {content: branch ?? ''},
     'sar-badge': badge ? {enabled: true} : {enabled: false},
     'sar-badge-label': {content: badge ?? ''},
-    'sar-fold': fold ? {enabled: true, opacity: fold === 'unfolded' ? 0 : 1} : {enabled: false},
+    'sar-fold': {opacity: fold === 'folded' ? 1 : 0},
     'sar-chevron': {icon: fold === 'unfolded' ? 'chevron-down' : 'chevron-right'},
   });
 }
@@ -972,7 +974,7 @@ function buildMenus() {
       notice,
     ])];
   }
-  return screenSheet('screen-menus', 'Screen / Menus and Overlays', 'entry-menu.tsx RowMenu/EntryContextMenu, DevicePicker.tsx, and the Explorer git-status notice: overlays shown anchored in their real screen context rather than the abstract System gallery.', build, build);
+  return screenSheet('screen-menus', 'Screen / Menus and Overlays', 'entry-menu.tsx EntryContextMenu, DevicePicker.tsx, and the Explorer git-status notice: overlays shown anchored in their real screen context rather than the abstract System gallery.', build, build);
 }
 
 // -- Screen / Projects Sidebar -------------------------------------------------
@@ -980,10 +982,11 @@ function buildMenus() {
 // The sidebar's Projects tab (sidebar.tsx, projects.ts), drawn from the library's
 // Project row, Checkout row, Sidebar agent row and Inactive Fold Row. The left
 // reads: a project's glyph at the row's inset, a checkout's glyph one lineage step
-// in, and an opened checkout's agent marks under the checkout name. The right
-// acts: every row keeps the same two slots, the fold then the ⋯, so names, ages
-// and activity never move; a folded chevron is drawn, an unfolded one and the ⋯
-// wait for the pointer. An opened checkout and its agents share a group fill.
+// in, and an opened checkout's agent marks under the checkout name. Every row
+// ends the same way: its time, then its fold slot, so names, ages and activity
+// never move and every time and chevron shares one column; a folded chevron is
+// drawn, an unfolded one waits for the pointer. A row's menu is a right-click,
+// with nothing drawn for it. An opened checkout and its agents share a group fill.
 function buildProjectsSidebar(tokens) {
   const width = num(tokens, '--size-sidebar-ideal');
   const xs = num(tokens, '--spacing-xs');
@@ -1030,8 +1033,8 @@ function buildProjectsSidebar(tokens) {
   // Line two is the checkout's agents (the representative's mark and provider,
   // +N for the rest) and its purpose, drawn only while the agent rows are closed.
   // Pen draws no ellipsis, so a long name or purpose is written already cut the
-  // way the row truncates it. The age is always drawn beside the ⋯, and a missing
-  // folder has none.
+  // way the row truncates it. The age is always drawn beside the fold slot, and a
+  // missing folder has none.
   function checkoutRow(id, {name, kind = 'branch', age, meta, purpose, agents, expanded = false, selected = false}) {
     const k = KIND[kind];
     const secondLine = !expanded && Boolean(purpose || agents);
@@ -1113,11 +1116,11 @@ function buildProjectsSidebar(tokens) {
         checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', agents: {status: 'working', more: 3, provider: 'codex'}, expanded: true}),
         // An unfolded parent: its chevron waits in the slot, its children follow.
         agentRow(`psb-a1-${s}`, {title: '사이드바 가독성 개선', status: 'working', age: '1m', fold: 'unfolded'}),
-        agentRow(`psb-a1c1-${s}`, {title: '컴포넌트 구조 검토', status: 'working', provider: 'codex', age: '42s', depth: 1, branch: 'feat/ui'}),
+        agentRow(`psb-a1c1-${s}`, {title: '컴포넌트 구…', status: 'working', provider: 'codex', age: '42s', depth: 1, branch: 'feat/ui'}),
         agentRow(`psb-a1c2-${s}`, {title: '한글 가독성 확인', status: 'seen', age: '38s', depth: 1}),
         // A folded parent waiting on its children: ring in Working, the badge, the chevron shown.
         agentRow(`psb-a2-${s}`, {title: '후속 UX 계획 인터뷰', status: 'working', age: '2m', badge: '?1 ●1', fold: 'folded'}),
-        agentRow(`psb-a3-${s}`, {title: '배포 전 확인', status: 'asking', age: '30s', line: '프로덕션 배포 전에 변경 내용을 확인해 주세요', bright: true}),
+        agentRow(`psb-a3-${s}`, {title: '배포 전 확인', status: 'asking', age: '30s', line: '프로덕션 배포 전에 변경 내용을 확인해…', bright: true}),
       ]),
       checkoutRow(`psb-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', agents: {status: 'asking'}, purpose: '#155 browser display (WebCon…'}),
       checkoutRow(`psb-c4-${s}`, {name: 'quick/154-search-palette', kind: 'draft', age: '1h', agents: {status: 'done'}, purpose: '#154 ⌘K search palette UI'}),
@@ -1144,7 +1147,7 @@ function buildProjectsSidebar(tokens) {
     ]);
     return [frame(`psb-sidebar-${s}`, 'Sidebar', {width, layout: 'vertical', fill: '$--sidebar', clip: true}, [header, list, footer])];
   }
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here herdr-ide on its Overview, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. The left reads and the right acts: every row keeps a fold slot and a ⋯ slot on its right, a folded chevron is drawn and an unfolded one, like the ⋯, waits for the pointer, so names, ages and activity never move. A project row opens the Overview; a checkout row opens the checkout and keeps its last-commit age, and its chevron, there only while agents run, opens their rows in place of line two, on one group fill. A parent agent folds its children with the same chevron and speaks for them with its badge. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.', build, build);
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here herdr-ide on its Overview, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every row, agent rows included, ends in its time and then a fold slot, so names, ages and activity never move and the times and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A project row opens the Overview; a checkout row opens the checkout and keeps its last-commit age, and its chevron, there only while agents run, opens their rows in place of line two, on one group fill. A parent agent folds its children with the same chevron and speaks for them with its badge. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.', build, build);
 }
 
 // -- assembly ---------------------------------------------------------------------

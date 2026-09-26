@@ -1653,7 +1653,7 @@
                       }
                     },
                     "hideui:sar-fold": {
-                      "enabled": false
+                      "opacity": 0
                     }
                   }
                 },
@@ -1736,7 +1736,7 @@
                       }
                     },
                     "hideui:sar-fold": {
-                      "enabled": false
+                      "opacity": 0
                     }
                   }
                 },
@@ -2081,9 +2081,6 @@
                     },
                     "hideui:wgtfo": {
                       "enabled": false
-                    },
-                    "hideui:hm1SG": {
-                      "enabled": false
                     }
                   }
                 },
@@ -2109,9 +2106,6 @@
                       "fill": "$--muted-foreground"
                     },
                     "hideui:wgtfo": {
-                      "enabled": false
-                    },
-                    "hideui:hm1SG": {
                       "enabled": false
                     }
                   }
@@ -2261,7 +2255,7 @@
                       }
                     },
                     "hideui:sar-fold": {
-                      "enabled": false
+                      "opacity": 0
                     }
                   }
                 },
@@ -2344,7 +2338,7 @@
                       }
                     },
                     "hideui:sar-fold": {
-                      "enabled": false
+                      "opacity": 0
                     }
                   }
                 },
@@ -2689,9 +2683,6 @@
                     },
                     "hideui:wgtfo": {
                       "enabled": false
-                    },
-                    "hideui:hm1SG": {
-                      "enabled": false
                     }
                   }
                 },
@@ -2717,9 +2708,6 @@
                       "fill": "$--muted-foreground"
                     },
                     "hideui:wgtfo": {
-                      "enabled": false
-                    },
-                    "hideui:hm1SG": {
                       "enabled": false
                     }
                   }
@@ -5720,7 +5708,7 @@
                               }
                             },
                             "hideui:sar-fold": {
-                              "enabled": false
+                              "opacity": 0
                             }
                           }
                         },
@@ -5803,7 +5791,7 @@
                               }
                             },
                             "hideui:sar-fold": {
-                              "enabled": false
+                              "opacity": 0
                             }
                           }
                         },
@@ -6768,7 +6756,7 @@
                               }
                             },
                             "hideui:sar-fold": {
-                              "enabled": false
+                              "opacity": 0
                             }
                           }
                         },
@@ -6851,7 +6839,7 @@
                               }
                             },
                             "hideui:sar-fold": {
-                              "enabled": false
+                              "opacity": 0
                             }
                           }
                         },
@@ -14878,8 +14866,8 @@
         {
           "type": "text",
           "id": "screen-menus-spec",
-          "name": "entry-menu.tsx RowMenu/Entry",
-          "content": "entry-menu.tsx RowMenu/EntryContextMenu, DevicePicker.tsx, and the Explorer git-status notice: overlays shown anchored in their real screen context rather than the abstract System gallery.",
+          "name": "entry-menu.tsx EntryContextM",
+          "content": "entry-menu.tsx EntryContextMenu, DevicePicker.tsx, and the Explorer git-status notice: overlays shown anchored in their real screen context rather than the abstract System gallery.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -15643,7 +15631,7 @@
           "type": "text",
           "id": "screen-projects-sidebar-spec",
           "name": "sidebar.tsx, projects.ts: th",
-          "content": "sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here herdr-ide on its Overview, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. The left reads and the right acts: every row keeps a fold slot and a ⋯ slot on its right, a folded chevron is drawn and an unfolded one, like the ⋯, waits for the pointer, so names, ages and activity never move. A project row opens the Overview; a checkout row opens the checkout and keeps its last-commit age, and its chevron, there only while agents run, opens their rows in place of line two, on one group fill. A parent agent folds its children with the same chevron and speaks for them with its badge. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.",
+          "content": "sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here herdr-ide on its Overview, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every row, agent rows included, ends in its time and then a fold slot, so names, ages and activity never move and the times and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A project row opens the Overview; a checkout row opens the checkout and keeps its last-commit age, and its chevron, there only while agents run, opens their rows in place of line two, on one group fill. A parent agent folds its children with the same chevron and speaks for them with its badge. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -16094,7 +16082,6 @@
                               }
                             },
                             "hideui:sar-fold": {
-                              "enabled": true,
                               "opacity": 0
                             }
                           }
@@ -16103,7 +16090,7 @@
                           "id": "psb-a1c1-l",
                           "type": "ref",
                           "ref": "hideui:sidebar-agent-row",
-                          "name": "컴포넌트 구조 검토",
+                          "name": "컴포넌트 구…",
                           "width": 284,
                           "padding": [
                             "$--spacing-xs",
@@ -16126,7 +16113,7 @@
                             },
                             "hideui:sar-title": {
                               "fill": "$--subtle-foreground",
-                              "content": "컴포넌트 구조 검토"
+                              "content": "컴포넌트 구…"
                             },
                             "hideui:sar-branch": {
                               "fill": "$--secondary",
@@ -16177,7 +16164,7 @@
                               }
                             },
                             "hideui:sar-fold": {
-                              "enabled": false
+                              "opacity": 0
                             }
                           }
                         },
@@ -16259,7 +16246,7 @@
                               }
                             },
                             "hideui:sar-fold": {
-                              "enabled": false
+                              "opacity": 0
                             }
                           }
                         },
@@ -16341,7 +16328,6 @@
                               }
                             },
                             "hideui:sar-fold": {
-                              "enabled": true,
                               "opacity": 1
                             }
                           }
@@ -16412,7 +16398,7 @@
                             "hideui:sar-line": {
                               "fill": "$--warning",
                               "enabled": true,
-                              "content": "프로덕션 배포 전에 변경 내용을 확인해 주세요"
+                              "content": "프로덕션 배포 전에 변경 내용을 확인해…"
                             },
                             "hideui:sar-place": {
                               "fill": "$--muted-foreground",
@@ -16427,7 +16413,7 @@
                               }
                             },
                             "hideui:sar-fold": {
-                              "enabled": false
+                              "opacity": 0
                             }
                           }
                         }
@@ -17572,7 +17558,6 @@
                               }
                             },
                             "hideui:sar-fold": {
-                              "enabled": true,
                               "opacity": 0
                             }
                           }
@@ -17581,7 +17566,7 @@
                           "id": "psb-a1c1-d",
                           "type": "ref",
                           "ref": "hideui:sidebar-agent-row",
-                          "name": "컴포넌트 구조 검토",
+                          "name": "컴포넌트 구…",
                           "width": 284,
                           "padding": [
                             "$--spacing-xs",
@@ -17604,7 +17589,7 @@
                             },
                             "hideui:sar-title": {
                               "fill": "$--subtle-foreground",
-                              "content": "컴포넌트 구조 검토"
+                              "content": "컴포넌트 구…"
                             },
                             "hideui:sar-branch": {
                               "fill": "$--secondary",
@@ -17655,7 +17640,7 @@
                               }
                             },
                             "hideui:sar-fold": {
-                              "enabled": false
+                              "opacity": 0
                             }
                           }
                         },
@@ -17737,7 +17722,7 @@
                               }
                             },
                             "hideui:sar-fold": {
-                              "enabled": false
+                              "opacity": 0
                             }
                           }
                         },
@@ -17819,7 +17804,6 @@
                               }
                             },
                             "hideui:sar-fold": {
-                              "enabled": true,
                               "opacity": 1
                             }
                           }
@@ -17890,7 +17874,7 @@
                             "hideui:sar-line": {
                               "fill": "$--warning",
                               "enabled": true,
-                              "content": "프로덕션 배포 전에 변경 내용을 확인해 주세요"
+                              "content": "프로덕션 배포 전에 변경 내용을 확인해…"
                             },
                             "hideui:sar-place": {
                               "fill": "$--muted-foreground",
@@ -17905,7 +17889,7 @@
                               }
                             },
                             "hideui:sar-fold": {
-                              "enabled": false
+                              "opacity": 0
                             }
                           }
                         }
