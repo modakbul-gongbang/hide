@@ -37,8 +37,11 @@ An ordinary Claude Code or Codex session started in a connected Herdr pane recei
 A plain terminal, disconnected pane, unavailable renderer, or unsupported Browser surface receives no Workspace capability claim.
 The guidance scopes every command to the calling pane's Workspace and lists only capabilities returned by the daemon; `hide workspace info` remains the live check and `hide --help` gives the full syntax.
 The hook creates an owner-only, finite-lived credential reference and includes its path as a shell environment prefix for the listed commands, so Codex tools detached into a shared app-server can still use the same pane-scoped capability.
+The path is a credential reference and should be handled as private session context, even though it contains no bearer bytes itself.
 The credential's bearer bytes and file contents never enter hook stdout, arguments, or the agent context, and each command rechecks pane membership and renderer availability.
 The SessionStart command hook has an eight-second timeout, including two bounded two-second CLI probes; a failed probe removes a newly created reference and leaves the existing purpose and Memory context intact.
+An issued credential remains unclaimed for at most 30 seconds until a CLI receives and acknowledges a Workspace response.
+The daemon removes expired unclaimed local references, and the SSH bridge removes expired unclaimed remote references; a failed bootstrap reply revokes its issuance.
 On `UserPromptSubmit`, it parses at most 256 KiB of runtime input, resolves the same durable Project identity as the app, and performs a read-only local lookup against the materialized active projection.
 The prompt text, up to two recent human topics, and current checkout metadata are search inputs only; the original prompt is never replaced.
 An item is eligible only after a lexical match, a bounded two- or three-character literal match, or meaningful path overlap below the Project root; extraction confidence never stands in for semantic similarity and only breaks ties after relevance.

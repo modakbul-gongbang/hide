@@ -56,6 +56,7 @@
       "oneOf": [
         { "type": "object", "additionalProperties": false, "required": ["action", "path", "beside", "reveal"], "properties": { "action": { "const": "open_file" }, "path": { "type": "string" }, "beside": { "type": "boolean" }, "reveal": { "type": "boolean" } } },
         { "type": "object", "additionalProperties": false, "required": ["action", "path", "beside", "reveal"], "properties": { "action": { "const": "open_diff" }, "path": { "type": "string" }, "beside": { "type": "boolean" }, "reveal": { "type": "boolean" } } },
+        { "type": "object", "additionalProperties": false, "required": ["action", "url", "reveal"], "properties": { "action": { "const": "open_browser" }, "url": { "type": "string" }, "reveal": { "type": "boolean" } } },
         { "type": "object", "additionalProperties": false, "required": ["action", "view_id", "reveal"], "properties": { "action": { "const": "select" }, "view_id": { "type": "string" }, "reveal": { "type": "boolean" } } },
         { "type": "object", "additionalProperties": false, "required": ["action", "view_id"], "properties": { "action": { "const": "close" }, "view_id": { "type": "string" } } },
         { "type": "object", "additionalProperties": false, "required": ["action", "view_id", "area_id", "edge"], "properties": { "action": { "const": "split" }, "view_id": { "type": "string" }, "area_id": { "type": "string" }, "edge": { "enum": ["left", "right", "up", "down"] } } },

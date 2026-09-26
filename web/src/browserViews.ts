@@ -146,6 +146,7 @@ type Front = { workspace: string; rows: BrowserDisplayRow[] };
 
 class BrowserSyncLoop {
   private front: Front | null = null;
+  private retained: { workspace: string; id: string }[] = [];
   private readonly slots = new Map<string, HTMLElement>();
   private readonly freezes = new Map<string, Freeze>();
   private readonly resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => this.schedule());
@@ -155,7 +156,7 @@ class BrowserSyncLoop {
 
   constructor(private readonly bridge: BrowserBridge) {}
 
-  setFront(front: Front | null): void {
+  setFront(front: Front | null, retained: { workspace: string; id: string }[]): void {
     if (front?.workspace !== this.front?.workspace) {
       this.freezes.clear();
       useBrowserStore.setState({ stills: {} });
@@ -168,6 +169,7 @@ class BrowserSyncLoop {
       });
     }
     this.front = front;
+    this.retained = retained;
     this.schedule();
   }
 
@@ -218,7 +220,7 @@ class BrowserSyncLoop {
       this.follow(row.id, covered, hidden.has(row.id));
       if (this.freezes.get(row.id) === "frozen") hidden.add(row.id);
     }
-    const sync: BrowserSync = front ? { workspace: front.workspace, displays: placements(front.rows, rects, hidden) } : { workspace: null, displays: [] };
+    const sync: BrowserSync = front ? { workspace: front.workspace, displays: placements(front.rows, rects, hidden), retained: this.retained } : { workspace: null, displays: [], retained: this.retained };
     const text = JSON.stringify(sync);
     if (text !== this.lastSent) {
       this.lastSent = text;
@@ -280,8 +282,9 @@ function syncLoop(): BrowserSyncLoop | null {
 }
 
 /** The front Workspace's browser displays, whenever the snapshot changes them. */
-export function syncBrowserFront(workspace: ViewWorkspace | null, layout: ViewLayoutSnapshot | null | undefined): void {
-  syncLoop()?.setFront(workspace ? { workspace: workspaceKey(workspace), rows: browserDisplays(layout) } : null);
+export function syncBrowserFront(workspace: ViewWorkspace | null, layout: ViewLayoutSnapshot | null | undefined, inventory: { device_id: string; path: string; view_id: string }[]): void {
+  syncLoop()?.setFront(workspace ? { workspace: workspaceKey(workspace), rows: browserDisplays(layout) } : null,
+    inventory.map((row) => ({ workspace: workspaceKey(row), id: row.view_id })));
 }
 
 /** A display's page slot: the host places the page over this element. */

@@ -65,6 +65,8 @@ pub struct ActionResult {
     pub view_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub area_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub load: Option<u64>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -89,6 +91,7 @@ pub struct View {
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct BrowserPage {
+    pub load: u64,
     pub state: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,

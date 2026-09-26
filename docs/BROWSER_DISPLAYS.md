@@ -10,7 +10,7 @@ There is no Herdr browser pane and no chromux profile behind it, and nothing is 
 | Owner | Holds | Code |
 | --- | --- | --- |
 | The core | Browser View layout, requested address and load stamp, and the native page's reported loading state | `herdr-core/src/view_layout.rs`, `herdr-core/src/runtime/view_areas.rs`, `herdr-core/src/runtime/workspace_control.rs` |
-| hided | The local `file:` event boundary, pane-scoped Browser CLI transport, and native routes into consented SSH devices | `hided/src/server.rs`, `hided/src/file_url.rs`, `hided/src/workspace_cli.rs`, `hided/src/browser_routes.rs` |
+| hided | The local `file:` event boundary, pane-scoped Browser CLI transport, and native routes into consented SSH devices | `hided/src/server.rs`, `hided/src/file_url.rs`, `hided/src/workspace_cli.rs`, `hided/src/browser_routes.rs`, `hided/src/browser_assets.rs` |
 | The web shell | Where each page sits, since only it has the geometry, the toolbar, the overlay freeze, and the notice in a plain browser tab | `web/src/BrowserDisplay.tsx`, `web/src/browserViews.ts`, `web/src/host.ts` |
 | The desktop app | The pages: one `WebContentsView` per display it was asked to show, their navigation, route requests, and their lifetime | `desktop/src/main/browser.ts`, `desktop/src/main/browserSync.ts`, `desktop/src/main/host.ts`, `desktop/src/preload/index.ts` |
 
@@ -23,8 +23,10 @@ The stamp is not saved; a relaunched page loads its address once when it is firs
 - `hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]` from a connected Herdr pane in the desktop app.
   The CLI resolves a relative file on the calling machine, gives loopback hosts `http` and other hosts `https`, and submits one pane-scoped action with no Workspace override.
   The core checks an HTML file against that pane's checkout on its own device and reads it outside the core lock before placing its Browser View.
-  The action result confirms View placement, while `hide view status <view-id>` returns `pending`, `loading`, `loaded`, `failed`, or `unsupported` for its native page.
-  `--wait` polls that state for at most ten seconds and returns a failure if the page fails or remains pending; it does not reveal a hidden View.
+  The action result confirms View placement, while `hide view status <view-id>` returns `pending`, `loading`, `loaded`, `failed`, `disconnected`, or `unsupported` for its native page.
+  `disconnected` means a native page existed for that load but was removed or its desktop renderer disconnected; `unsupported` means no desktop renderer was available for a pending page.
+  `--wait` polls that state for at most ten seconds and returns a failure if the page fails, disconnects, or remains pending; it does not reveal a hidden View.
+  The action receipt and page status carry the load stamp, so a concurrent reopen that supersedes the requested load returns `page_superseded` instead of the newer load's result.
   `--reveal` explicitly brings the caller's checkout and selected Browser View forward, including a connected SSH device.
   The CLI returns one JSON line, exits nonzero on refusal, and never starts Hide.
 - Open in Browser in the Explorer's menu on an HTML file of a local or connected device checkout.
@@ -43,10 +45,13 @@ It decodes the path, refuses one that names another host or does not decode (`in
 A refusal is a `path_refused` frame to that client and never reaches the core.
 
 A device file keeps its remote path through the UI boundary.
-The core confirms that the current View belongs to the connected device and checkout, and hided reads the HTML and each relative asset through that device's consented `hide-host` channel.
+The core confirms that the current View belongs to the connected device and checkout, and hided reads the HTML and its declared relative assets through that device's consented `hide-host` channel.
 The channel pins the checkout root, refuses traversal and links outside that root, and caps each response at 16 MiB.
+The route serves the opened HTML plus at most 128 declared relative stylesheets, images, scripts, and CSS image or font URLs.
+It refuses undeclared checkout files, including same-directory secrets, and sends a restrictive content security policy that prevents a remote HTML preview from contacting another origin.
 The native page receives a random loopback route for its own View and load stamp; the route URL does not replace the remote address stored in the core or shown in the toolbar.
-Remote `localhost` HTTP, HTTPS, and WebSocket traffic instead uses a dedicated SSH local forward to that device's loopback port.
+Remote `localhost`, `localhost.`, IPv4 `127/8`, and IPv6 loopback HTTP, HTTPS, and WebSocket traffic instead uses a dedicated SSH local forward to that device's loopback port.
+Absolute loopback subrequests from a forwarded page use that View's forward when their scheme and source port match; other loopback requests are refused instead of reaching this Mac.
 If the SSH route fails, the page shows the failure; it never tries the same port on this Mac.
 Each native route is bounded, belongs to the desktop process that requested it, and closes when its View closes, its device disconnects, or that process exits.
 
@@ -55,16 +60,18 @@ A `file:` page that moves to a file outside the checkouts keeps showing it in it
 
 ## The page and its limits
 
-Pages run in one persistent session partition, `persist:hide-browser`, apart from the shell's own session, with a sandboxed renderer, context isolation, no Node, and no preload, so nothing in a page reaches the `hideHost` bridge or the daemon's token.
+Pages run in persistent session partitions separated by Workspace and by web versus file preview, apart from the shell's own session, with a sandboxed renderer, context isolation, no Node, and no preload, so nothing in a page reaches the `hideHost` bridge or the daemon's token.
+This separation keeps localhost cookies of a local page, an SSH device, and a remote HTML preview from crossing those boundaries even when their host names are equal.
 A page gets no permission but writing the clipboard, because a prompt it would raise has nowhere to show; a download follows Chromium's default and is logged as `browser.download`.
 A page may navigate to `http`, `https`, `file` and `about:blank`; a `mailto:` link goes to the default mail app, and anything else is refused and logged with its scheme only.
 
-The shell tells the host, in one sync, every browser display of the Workspace in front and the rectangle its slot occupies now.
-A display the sync no longer names is closed, which ends its renderer process; a display of a Workspace not in front, or not shown in its area, is hidden and keeps its page, so moving a page between areas or Workspaces never reloads it.
+The shell tells the host, in one sync, every browser display of the Workspace in front, the rectangle its slot occupies now, and the core's retained Browser View inventory across all Workspaces.
+A display the inventory no longer names is closed, which ends its renderer process even when its Workspace is in the background.
+A retained display of a Workspace not in front, or not shown in its area, is hidden and keeps its page, so moving a page between areas or Workspaces never reloads it.
 At most 12 pages live at once (`MAX_LIVE_VIEWS`); past that, the page shown least recently among the hidden ones is closed and loads its address again when it is next shown.
 The host checks every field of a sync before it places anything and drops a message that fails whole; only the shell the daemon serves may send one.
 Native page reports carry the display's current load stamp, so a late report from a previous reload cannot mark the new request loaded.
-An evicted page reports its disappearance and returns to pending until shown again.
+An evicted page reports its disappearance as disconnected until shown again.
 
 ## Overlays
 
@@ -92,4 +99,4 @@ pnpm --dir desktop e2e
 It opens a page with `hide browser open`, checks the native view sits on its slot, types Hangul into the page, splits and resizes without a reload, freezes the pages under the palette, navigates and goes back, shows a failed load, opens an HTML file from the Explorer, refuses a file outside the checkout, ends a closed page's renderer, restores the page after a relaunch, and shows the notice in a plain browser tab.
 The test window sits behind the operator's windows, so it launches with `--disable-backgrounding-occluded-windows`, and captures of it are taken by window id.
 Keep screenshots and logs under local-only `agents/runs/`.
-`desktop/e2e/remote-workspace.spec.ts` additionally uses an isolated SSH server and two private Herdr servers to prove remote CLI origin, HTTP and WebSocket forwarding, remote popup address ownership, relative HTML assets, traversal and symlink refusal, explicit reveal, and route cleanup on close and forced candidate exit.
+`desktop/e2e/remote-workspace.spec.ts` additionally uses an isolated SSH server and two private Herdr servers to prove remote CLI origin, HTTP and WebSocket forwarding, absolute loopback subrequests, local and remote cookie separation, remote popup address ownership, relative HTML assets, refusal of undeclared files and external requests, explicit reveal, background View cleanup, and route cleanup on close and forced candidate exit.

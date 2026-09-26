@@ -31,7 +31,8 @@ pub fn live_context() -> Option<String> {
         .filter(|answer| answer["ok"] == true)
         .and_then(|answer| format_context(&program, &reference, &answer));
     if result.is_none() && created {
-        let _ = fs::remove_file(reference);
+        let _ = fs::remove_file(&reference);
+        let _ = fs::remove_file(reference.with_extension("claimed"));
     }
     result
 }

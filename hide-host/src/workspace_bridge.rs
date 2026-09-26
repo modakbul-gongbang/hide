@@ -10,7 +10,7 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, mpsc};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use hide_herdr_client::{UnixSocketConnector, request_with_connector};
 use serde::{Deserialize, Serialize};
@@ -21,6 +21,7 @@ use crate::pane_peer;
 const HERDR_TIMEOUT: Duration = Duration::from_secs(2);
 const CLIENT_TIMEOUT: Duration = Duration::from_secs(8);
 const MAX_CONTROL_LINE: u64 = 4096;
+const UNCLAIMED_LIFETIME: Duration = Duration::from_secs(30);
 
 #[derive(Deserialize)]
 pub struct Init {
@@ -121,12 +122,39 @@ fn write_line(output: &Mutex<impl Write>, value: Value) -> io::Result<()> {
     output.flush()
 }
 
-fn answer_client(stream: &mut UnixStream, result: Result<PathBuf, String>) {
+fn answer_client(stream: &mut UnixStream, result: Result<PathBuf, String>) -> io::Result<()> {
     let answer = match result {
         Ok(reference) => json!({"ok":true,"reference":reference}),
         Err(reason) => json!({"ok":false,"reason":reason}),
     };
-    let _ = writeln!(stream, "{answer}");
+    writeln!(stream, "{answer}")
+}
+
+fn sweep_unclaimed(dir: &Path) -> io::Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+            continue;
+        };
+        if let Some(nonce) = name.strip_suffix(".json") {
+            if nonce.len() != 32 || !nonce.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+                continue;
+            }
+            if path.with_extension("claimed").exists() {
+                continue;
+            }
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.is_file()
+                && metadata.modified()?.elapsed().unwrap_or_default() >= UNCLAIMED_LIFETIME
+            {
+                fs::remove_file(path)?;
+            }
+        } else if name.ends_with(".claimed") && !path.with_extension("json").exists() {
+            fs::remove_file(path)?;
+        }
+    }
+    Ok(())
 }
 
 fn serve_client(
@@ -137,6 +165,7 @@ fn serve_client(
     output: &Mutex<impl Write>,
     replies: &Mutex<mpsc::Receiver<Value>>,
 ) {
+    let mut issued_token = None;
     let result: Result<PathBuf, String> = (|| {
         let peer = pane_peer::peer_pid(&stream).ok_or("caller_unavailable")?;
         stream
@@ -187,6 +216,7 @@ fn serve_client(
             .as_str()
             .filter(|token| token.len() == 64 && token.bytes().all(|b| b.is_ascii_hexdigit()))
             .ok_or("invalid_response")?;
+        issued_token = Some(token.to_owned());
         let path = dir.join(format!("{}.json", request.nonce));
         let mut file = OpenOptions::new()
             .write(true)
@@ -207,7 +237,15 @@ fn serve_client(
         }
         Ok(path)
     })();
-    answer_client(&mut stream, result);
+    let delivered = answer_client(&mut stream, result.clone()).is_ok();
+    if !delivered || result.is_err() {
+        if let Ok(path) = result {
+            let _ = fs::remove_file(path);
+        }
+        if let Some(token) = issued_token {
+            let _ = write_line(output, json!({"type":"revoke","id":id,"token":token}));
+        }
+    }
 }
 
 pub fn serve(mut input: impl BufRead + Send, output: impl Write + Send) -> io::Result<()> {
@@ -243,6 +281,7 @@ pub fn serve(mut input: impl BufRead + Send, output: impl Write + Send) -> io::R
     let closed = AtomicBool::new(false);
     let next_id = AtomicU64::new(1);
     let busy = AtomicBool::new(false);
+    let mut last_sweep = Instant::now();
     std::thread::scope(|scope| {
         scope.spawn(|| {
             let mut line = String::new();
@@ -266,7 +305,7 @@ pub fn serve(mut input: impl BufRead + Send, output: impl Write + Send) -> io::R
             match listener.accept() {
                 Ok((mut stream, _)) => {
                     if busy.swap(true, Ordering::AcqRel) {
-                        answer_client(&mut stream, Err("bridge_busy".to_owned()));
+                        let _ = answer_client(&mut stream, Err("bridge_busy".to_owned()));
                         continue;
                     }
                     let id = next_id.fetch_add(1, Ordering::Relaxed);
@@ -281,6 +320,10 @@ pub fn serve(mut input: impl BufRead + Send, output: impl Write + Send) -> io::R
                     });
                 }
                 Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    if last_sweep.elapsed() >= Duration::from_secs(5) {
+                        sweep_unclaimed(dir.path())?;
+                        last_sweep = Instant::now();
+                    }
                     std::thread::sleep(Duration::from_millis(20));
                 }
                 Err(error) => return Err(error),
@@ -288,4 +331,28 @@ pub fn serve(mut input: impl BufRead + Send, output: impl Write + Send) -> io::R
         }
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn expired_unclaimed_reference_is_removed_but_a_claimed_session_remains() {
+        let dir = tempfile::tempdir().unwrap();
+        let abandoned = dir.path().join(format!("{}.json", "a".repeat(32)));
+        let claimed = dir.path().join(format!("{}.json", "b".repeat(32)));
+        fs::write(&abandoned, "abandoned").unwrap();
+        fs::write(&claimed, "claimed").unwrap();
+        fs::write(claimed.with_extension("claimed"), "").unwrap();
+        let old = std::time::SystemTime::now() - UNCLAIMED_LIFETIME - Duration::from_secs(1);
+        fs::File::open(&abandoned)
+            .unwrap()
+            .set_modified(old)
+            .unwrap();
+        fs::File::open(&claimed).unwrap().set_modified(old).unwrap();
+        sweep_unclaimed(dir.path()).unwrap();
+        assert!(!abandoned.exists());
+        assert!(claimed.exists());
+    }
 }

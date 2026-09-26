@@ -1304,10 +1304,6 @@ impl Runtime {
                 }));
                 return false;
             }
-            if present == Some(false) {
-                self.browser_pages.remove(&(key.0, key.1, display_id));
-                return false;
-            }
             if self.browser_pages.len() >= BROWSER_PAGE_REPORTS_KEPT
                 && !self.browser_pages.contains_key(&(
                     key.0.clone(),
@@ -1345,6 +1341,7 @@ impl Runtime {
                 (key.0.clone(), key.1.clone(), display_id.clone()),
                 super::workspace_control::ReportedBrowserPage {
                     load,
+                    present: present != Some(false),
                     loading,
                     failure: failure.map(|reason| reason.chars().take(300).collect()),
                 },

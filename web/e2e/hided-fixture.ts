@@ -26,7 +26,9 @@ export type Daemon = {
 
 /** `extraEnv` is laid over the daemon's environment; an undefined value leaves that variable unset. */
 export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride?: string, extraEnv: NodeJS.ProcessEnv = {}): Promise<Daemon> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `hide-e2e-${label}-`));
+  // The daemon places pane-bootstrap.sock below this directory. Keep the
+  // fixture root short enough for macOS's Unix socket path limit.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hde-"));
   const home = homeOverride ?? path.join(dir, "home");
   fs.mkdirSync(path.join(home, "projects", "alpha"), { recursive: true });
   fs.mkdirSync(path.join(home, "projects", ".hidden"), { recursive: true });

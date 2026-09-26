@@ -28,7 +28,12 @@ export type BrowserPlacement = {
  * that Workspace the list no longer names, hides the pages of any other,
  * and creates a page only once its display is on screen.
  */
-export type BrowserSync = { workspace: string | null; displays: BrowserPlacement[] };
+export type BrowserSync = {
+  workspace: string | null;
+  displays: BrowserPlacement[];
+  /** Core-owned inventory; a hidden native page absent here is closed. */
+  retained: { workspace: string; id: string }[];
+};
 
 export type BrowserCommand = "back" | "forward" | "reload" | "stop";
 

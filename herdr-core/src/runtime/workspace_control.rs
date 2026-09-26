@@ -12,6 +12,7 @@ const ACTION_RETRY_WINDOW_MS: u64 = 10 * 60 * 1000;
 
 pub(super) struct ReportedBrowserPage {
     pub load: u64,
+    pub present: bool,
     pub loading: bool,
     pub failure: Option<String>,
 }
@@ -330,6 +331,7 @@ impl Runtime {
                 changed: true,
                 view_id,
                 area_id,
+                load: Some(load),
             });
         }
         if let Action::OpenFile {
@@ -464,6 +466,7 @@ impl Runtime {
                         .is_some_and(|store| store.generation != before_generation),
                 view_id,
                 area_id,
+                load: None,
             });
         }
         let (view_id, changed, area_id) = match action {
@@ -526,6 +529,7 @@ impl Runtime {
                         changed: false,
                         view_id: view_id.clone(),
                         area_id: None,
+                        load: None,
                     });
                 };
                 let shared = self.view_layout_of(key).is_some_and(|layout| {
@@ -584,6 +588,7 @@ impl Runtime {
             changed,
             view_id,
             area_id,
+            load: None,
         })
     }
 
@@ -670,8 +675,10 @@ impl Runtime {
                                 ))
                                 .filter(|page| page.load == display.load);
                             crate::workspace_control::BrowserPage {
+                                load: display.load,
                                 state: match reported {
                                     None => "pending",
+                                    Some(page) if !page.present => "disconnected",
                                     Some(page) if page.failure.is_some() => "failed",
                                     Some(page) if page.loading => "loading",
                                     Some(_) => "loaded",

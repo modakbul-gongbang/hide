@@ -601,6 +601,14 @@ fn browser_load_status_tracks_the_current_load_and_retry_does_not_reload() {
     assert_eq!(page(&runtime).state, "loading");
     report(&mut runtime, load, false, None);
     assert_eq!(page(&runtime).state, "loaded");
+    let gone = serde_json::from_value(serde_json::json!({
+        "workspace":{"device_id":"local","path":expected.checkout_path},
+        "display_id":first.view_id,"url":"https://example.test/page","title":"Page",
+        "load":load,"present":false,
+    }))
+    .unwrap();
+    runtime.record_browser_state(gone);
+    assert_eq!(page(&runtime).state, "disconnected");
     runtime
         .workspace_control_action(
             "local",

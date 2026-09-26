@@ -1,5 +1,6 @@
 pub mod attachments;
 pub mod boundary;
+mod browser_assets;
 pub mod browser_cli;
 pub mod browser_routes;
 pub mod cli;

@@ -25,6 +25,7 @@ use crate::state_file::new_token;
 
 const MAX_CAPABILITIES: usize = 64;
 const CAPABILITY_LIFETIME: Duration = Duration::from_secs(8 * 60 * 60);
+const UNCLAIMED_LIFETIME: Duration = Duration::from_secs(30);
 const HERDR_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_PARENT_HOPS: usize = 32;
 const MAX_BOOTSTRAPS: usize = 8;
@@ -40,6 +41,7 @@ pub struct Capability {
     pub one_shot: bool,
     holder: Option<(i32, u64)>,
     created: Instant,
+    claimed: bool,
     path: PathBuf,
     remote: Option<RemoteCapability>,
 }
@@ -63,7 +65,9 @@ pub(crate) struct RemoteGrant {
 }
 
 fn entry_alive(entry: &Capability) -> bool {
-    if entry.created.elapsed() >= CAPABILITY_LIFETIME {
+    if entry.created.elapsed() >= CAPABILITY_LIFETIME
+        || (!entry.claimed && entry.created.elapsed() >= UNCLAIMED_LIFETIME)
+    {
         return false;
     }
     if let Some(remote) = &entry.remote {
@@ -79,6 +83,7 @@ fn entry_alive(entry: &Capability) -> bool {
 fn remove_local_reference(entry: &Capability) {
     if entry.remote.is_none() {
         let _ = fs::remove_file(&entry.path);
+        let _ = fs::remove_file(entry.path.with_extension("claimed"));
     }
 }
 
@@ -182,6 +187,7 @@ impl Registry {
                 one_shot: holder.is_some(),
                 holder,
                 created: Instant::now(),
+                claimed: false,
                 path: path.clone(),
                 remote: None,
             },
@@ -220,6 +226,7 @@ impl Registry {
                 one_shot: grant.one_shot,
                 holder: None,
                 created: Instant::now(),
+                claimed: false,
                 path: PathBuf::new(),
                 remote: Some(RemoteCapability {
                     bridge_id: grant.bridge_id,
@@ -253,6 +260,29 @@ impl Registry {
         {
             remove_local_reference(&entry);
         }
+    }
+
+    pub fn revoke_bridge_token(&self, bridge_id: &str, token: &str) {
+        if let Ok(mut entries) = self.entries.lock()
+            && entries
+                .get(token)
+                .and_then(|entry| entry.remote.as_ref())
+                .is_some_and(|remote| remote.bridge_id == bridge_id)
+        {
+            entries.remove(token);
+        }
+    }
+
+    pub fn claim(&self, token: &str) -> Result<(), &'static str> {
+        let mut entries = self.entries.lock().map_err(|_| "capability_unavailable")?;
+        let entry = entries.get_mut(token).ok_or("credential_expired")?;
+        if !entry_alive(entry) {
+            let stale = entries.remove(token).expect("entry exists");
+            remove_local_reference(&stale);
+            return Err("credential_expired");
+        }
+        entry.claimed = true;
+        Ok(())
     }
 
     pub fn validate(
@@ -593,12 +623,18 @@ pub async fn serve(
                     };
                     registry.issue(&attestation, &request.nonce, port, holder)
                 });
-            let answer = match result {
+            let answer = match &result {
                 Ok(path) => json!({"ok": true, "reference": path}),
                 Err(reason) => json!({"ok": false, "reason": reason}),
             };
             let mut stream = stream;
-            let _ = writeln!(stream, "{answer}");
+            if writeln!(stream, "{answer}").is_err()
+                && let Ok(path) = result
+                && let Ok(bytes) = fs::read(path)
+                && let Ok(reference) = serde_json::from_slice::<Reference>(&bytes)
+            {
+                registry.revoke(&reference.token);
+            }
         });
     }
 }
@@ -662,6 +698,46 @@ mod tests {
                 .issue(&attestation, nonce, 12345, None)
                 .unwrap_err(),
             "hide_unavailable"
+        );
+    }
+
+    #[test]
+    fn bootstrap_retries_do_not_fill_the_registry_when_no_client_claims() {
+        let directory = tempfile::tempdir().unwrap();
+        let registry = Registry::new(directory.path()).unwrap();
+        let pid = std::process::id() as i32;
+        let attestation = Attestation {
+            pane_id: "pane".to_owned(),
+            context: Context {
+                device_id: "local".to_owned(),
+                workspace_id: "workspace".to_owned(),
+                checkout_id: "checkout".to_owned(),
+                checkout_path: "/checkout".to_owned(),
+            },
+            terminal_id: "terminal".to_owned(),
+            shell_pid: pid,
+            shell_started: process_start(pid).unwrap(),
+        };
+        for attempt in 0..(MAX_CAPABILITIES * 2) {
+            let nonce = format!("{attempt:032x}");
+            let path = registry.issue(&attestation, &nonce, 12345, None).unwrap();
+            let reference: Reference = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+            registry
+                .entries
+                .lock()
+                .unwrap()
+                .get_mut(&reference.token)
+                .unwrap()
+                .created = Instant::now() - UNCLAIMED_LIFETIME;
+            registry.sweep();
+            assert!(!path.exists());
+        }
+        assert!(registry.entries.lock().unwrap().is_empty());
+        assert_eq!(
+            fs::read_dir(directory.path().join("pane-capabilities"))
+                .unwrap()
+                .count(),
+            0
         );
     }
 }

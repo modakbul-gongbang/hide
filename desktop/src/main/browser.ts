@@ -1,26 +1,26 @@
 // Browser displays (issue 155): one WebContentsView per browser display the
 // shell has shown, placed over the rect the shell reports through the
 // hideHost bridge. The core owns which displays exist and the URL each was
-// asked to load; this owns the pages. A page lives in one persistent session
-// partition with no preload and no Node, so nothing in it can reach the
+// asked to load; this owns the pages. A page lives in a Workspace-scoped
+// session partition with no preload and no Node, so nothing in it can reach the
 // shell's bridge or the daemon's token.
 //
 //   shown      -> created on first show, then placed and made visible
 //   not shown  -> hidden, still alive; a move between areas never reloads
-//   closed     -> the front Workspace's list no longer names it: destroyed,
+//   closed     -> the core's inventory no longer names it: destroyed,
 //                 which ends its renderer process
 //
 // A hidden page past `MAX_LIVE_VIEWS` is closed and loads again when shown.
 
 import { BrowserWindow, ipcMain, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type Session } from "electron";
+import { createHash } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { BrowserHostEvent, BrowserPageState, BrowserPlacement } from "../../../web/src/host";
 import { BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL } from "../channel";
-import { loadable, MAX_LIVE_VIEWS, overCap, parseCommand, parseSync, parseTarget, toBounds, viewKey } from "./browserSync";
+import { loadable, MAX_LIVE_VIEWS, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds, viewKey } from "./browserSync";
 import type { HostLog } from "./log";
 
-export const BROWSER_PARTITION = "persist:hide-browser";
 /** Page state reports coalesce to one per view in this window, so a title ticking every frame costs one event. */
 const REPORT_COALESCE_MS = 100;
 /** Chromium's code for a load a newer one replaced; not a failure. */
@@ -39,13 +39,14 @@ type Page = {
   state: BrowserPageState;
   report: NodeJS.Timeout | null;
   route: ResolvedPage | null;
+  partition: string;
 };
 
 export type ResolvedPage = { url: string; source_url: string; load: number };
 
 export class BrowserViews {
   private readonly pages = new Map<string, Page>();
-  private readonly session: Session;
+  private readonly configuredSessions = new Set<string>();
   private window: BrowserWindow | null = null;
 
   constructor(
@@ -55,17 +56,11 @@ export class BrowserViews {
     private readonly resolve: (workspace: string, id: string, load: number) => Promise<ResolvedPage>,
     private readonly release: (workspace: string, id: string, load: number) => void,
   ) {
-    this.session = session.fromPartition(BROWSER_PARTITION);
-    // A page gets no permission but writing the clipboard; a prompt it
-    // would raise has nowhere to show in a View area.
-    this.session.setPermissionRequestHandler((_contents, permission, callback) => callback(PAGE_PERMISSIONS.has(permission)));
-    this.session.setPermissionCheckHandler((_contents, permission) => PAGE_PERMISSIONS.has(permission));
-    this.session.on("will-download", (_event, item) => this.log.event("browser.download", { mime: item.getMimeType() }));
     ipcMain.on(BROWSER_SYNC_CHANNEL, (event, value: unknown) => {
       if (!this.trusted(event)) return this.log.event("browser.ipc_refused", { channel: "sync" });
       const sync = parseSync(value);
       if (!sync) return this.log.event("browser.sync_invalid", {});
-      this.sync(sync.workspace, sync.displays);
+      this.sync(sync.workspace, sync.displays, sync.retained);
     });
     ipcMain.handle(BROWSER_CAPTURE_CHANNEL, async (event, value: unknown) => {
       if (!this.trusted(event)) return null;
@@ -118,12 +113,12 @@ export class BrowserViews {
     return false;
   }
 
-  private sync(workspace: string | null, displays: BrowserPlacement[]): void {
+  private sync(workspace: string | null, displays: BrowserPlacement[], retained: { workspace: string; id: string }[]): void {
     const window = this.window;
     if (!window) return;
-    const listed = new Set(displays.map((display) => viewKey(workspace ?? "", display.id)));
+    const listed = new Set(retained.map((row) => viewKey(row.workspace, row.id)));
     for (const page of [...this.pages.values()]) {
-      if (page.workspace === workspace && !listed.has(page.key)) this.destroy(page, "closed");
+      if (!listed.has(page.key)) this.destroy(page, "closed");
       else if (page.workspace !== workspace) this.show(page, false);
     }
     const now = Date.now();
@@ -137,8 +132,13 @@ export class BrowserViews {
       }
       if (!page) page = this.create(window, workspace ?? "", display);
       else if (display.load > page.applied) {
-        page.applied = display.load;
-        this.load(page, display.url);
+        if (page.partition !== this.partitionFor(page.workspace, display.url)) {
+          this.destroy(page, "closed");
+          page = this.create(window, workspace ?? "", display);
+        } else {
+          page.applied = display.load;
+          this.load(page, display.url);
+        }
       }
       page.view.setBounds(toBounds(display.rect, zoom));
       this.show(page, display.visible);
@@ -151,8 +151,9 @@ export class BrowserViews {
   }
 
   private create(window: BrowserWindow, workspace: string, display: BrowserPlacement): Page {
+    const partition = this.partitionFor(workspace, display.url);
     const view = new WebContentsView({
-      webPreferences: { session: this.session, sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true },
+      webPreferences: { session: this.sessionFor(workspace, partition), sandbox: true, contextIsolation: true, nodeIntegration: false, webSecurity: true },
     });
     const page: Page = {
       key: viewKey(workspace, display.id),
@@ -165,6 +166,7 @@ export class BrowserViews {
       state: { url: display.url, title: "", loading: true, canGoBack: false, canGoForward: false, failure: null },
       report: null,
       route: null,
+      partition,
     };
     view.setVisible(false);
     window.contentView.addChildView(view);
@@ -173,6 +175,28 @@ export class BrowserViews {
     this.load(page, display.url);
     this.log.event("browser.view_created", { live: this.pages.size });
     return page;
+  }
+
+  private partitionFor(workspace: string, url: string): string {
+    const kind = url.startsWith("file:") ? "file" : "web";
+    return `persist:hide-browser-${createHash("sha256").update(`${workspace}\u0000${kind}`).digest("hex").slice(0, 32)}`;
+  }
+
+  private sessionFor(workspace: string, partition: string): Session {
+    const pageSession = session.fromPartition(partition);
+    if (this.configuredSessions.has(partition)) return pageSession;
+    this.configuredSessions.add(partition);
+    pageSession.setPermissionRequestHandler((_contents, permission, callback) => callback(PAGE_PERMISSIONS.has(permission)));
+    pageSession.setPermissionCheckHandler((_contents, permission) => PAGE_PERMISSIONS.has(permission));
+    pageSession.on("will-download", (_event, item) => this.log.event("browser.download", { mime: item.getMimeType() }));
+    if (!workspace.startsWith("local\u0000")) {
+      pageSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
+        const page = [...this.pages.values()].find((candidate) => candidate.view.webContents.id === details.webContentsId);
+        const outcome = page?.route ? remoteRequest(page.route, details.url) : { cancel: true };
+        callback(outcome);
+      });
+    }
+    return pageSession;
   }
 
   private load(page: Page, url: string): void {
@@ -220,11 +244,20 @@ export class BrowserViews {
     contents.on("focus", () => this.emit({ kind: "focus", workspace: page.workspace, id: page.id }));
     contents.setWindowOpenHandler(({ url }) => {
       // A new window is another browser display, which the core opens.
+      if (page.route?.source_url.startsWith("file:") && remoteRequest(page.route, url).cancel) {
+        this.log.event("browser.window_open_refused", { reason: "remote_file_boundary" });
+        return { action: "deny" };
+      }
       if (loadable(url) && url !== "about:blank") this.emit({ kind: "open", workspace: page.workspace, id: page.id, url: this.sourceAddress(page, url) });
       else this.log.event("browser.window_open_refused", { protocol: protocolOf(url) });
       return { action: "deny" };
     });
     const guard = (event: { preventDefault(): void }, url: string) => {
+      if (page.route?.source_url.startsWith("file:") && remoteRequest(page.route, url).cancel) {
+        event.preventDefault();
+        this.log.event("browser.navigation_refused", { reason: "remote_file_boundary" });
+        return;
+      }
       if (loadable(url)) return;
       event.preventDefault();
       const protocol = protocolOf(url);

@@ -27,6 +27,7 @@ pub struct OneShotReference(pub PathBuf);
 impl Drop for OneShotReference {
     fn drop(&mut self) {
         let _ = fs::remove_file(&self.0);
+        let _ = fs::remove_file(self.0.with_extension("claimed"));
     }
 }
 
@@ -197,6 +198,7 @@ pub fn request(path: &Path, query: &str) -> Result<Value, String> {
     let reference = read_reference(path)?;
     let request_id = fresh_request_id()?;
     run_exchange(
+        path,
         &reference,
         json!({"type":"workspace_query","request_id":request_id,"query":query}),
         &request_id,
@@ -209,6 +211,7 @@ pub fn request_action(path: &Path, action: Action, request_id: &str) -> Result<V
         return Err("invalid_request_id".to_owned());
     }
     run_exchange(
+        path,
         &reference,
         json!({"type":"workspace_action","request_id":request_id,"command":action}),
         request_id,
@@ -237,19 +240,25 @@ pub fn fresh_request_id() -> Result<String, String> {
     Ok(format!("{now}-{}", hex::encode(id)))
 }
 
-fn run_exchange(reference: &Reference, payload: Value, request_id: &str) -> Result<Value, String> {
+fn run_exchange(
+    path: &Path,
+    reference: &Reference,
+    payload: Value,
+    request_id: &str,
+) -> Result<Value, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|_| "request_unavailable".to_owned())?;
     runtime.block_on(async {
-        tokio::time::timeout(TIMEOUT, exchange(reference, payload, request_id))
+        tokio::time::timeout(TIMEOUT, exchange(path, reference, payload, request_id))
             .await
             .map_err(|_| "request_timeout".to_owned())?
     })
 }
 
 async fn exchange(
+    path: &Path,
     reference: &Reference,
     payload: Value,
     request_id: &str,
@@ -285,6 +294,40 @@ async fn exchange(
             if value["type"] != "workspace_result" || value["request_id"] != request_id {
                 return Err("invalid_response".to_owned());
             }
+            let marker = path.with_extension("claimed");
+            let created = match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&marker)
+            {
+                Ok(_) => true,
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+                Err(_) => return Err("reference_unavailable".to_owned()),
+            };
+            let confirmed = async {
+                socket
+                    .send(Message::Text(
+                        json!({"type":"workspace_claim"}).to_string().into(),
+                    ))
+                    .await
+                    .map_err(|_| "hide_unavailable".to_owned())?;
+                match socket.next().await {
+                    Some(Ok(Message::Text(reply)))
+                        if serde_json::from_str::<Value>(&reply)
+                            .ok()
+                            .is_some_and(|answer| answer["type"] == "workspace_claimed") =>
+                    {
+                        Ok(())
+                    }
+                    _ => Err("credential_expired".to_owned()),
+                }
+            }
+            .await;
+            if confirmed.is_err() && created {
+                let _ = fs::remove_file(marker);
+            }
+            confirmed?;
             Ok(value)
         }
         Some(Ok(Message::Close(_))) => Err("credential_rejected".to_owned()),

@@ -246,6 +246,12 @@ fn run_route(
             return Err(format!("reverse forward failed: {reason}"));
         }
         let frame = read_frame(&mut reader)?;
+        if frame["type"] == "revoke" {
+            if let Some(token) = frame["token"].as_str() {
+                context.registry.revoke_bridge_token(bridge_id, token);
+            }
+            continue;
+        }
         if frame["type"] != "attest" {
             return Err("unexpected remote bridge frame".to_owned());
         }

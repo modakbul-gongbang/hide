@@ -147,11 +147,12 @@ function AddressField({ address, onSubmit }: { address: string; onSubmit: (url: 
  */
 export function BrowserHost({ actions }: { actions: Actions }) {
   const view = useShellStore((s) => workspaceViewOf(s.rest));
+  const inventory = useShellStore((s) => s.rest?.browser_views);
   const front = view ? workspaceKey({ device_id: view.device_id, path: view.path }) : null;
   const layout = view?.layout ?? null;
   useEffect(() => {
-    syncBrowserFront(front ? parseWorkspaceKey(front) : null, layout);
-  }, [front, layout]);
+    syncBrowserFront(front ? parseWorkspaceKey(front) : null, layout, inventory ?? []);
+  }, [front, layout, inventory]);
 
   const latest = useRef(actions);
   latest.current = actions;

@@ -20,6 +20,11 @@ export type WorkspaceCommand =
       reveal: boolean;
     }
   | {
+      action: "open_browser";
+      url: string;
+      reveal: boolean;
+    }
+  | {
       action: "select";
       view_id: string;
       reveal: boolean;

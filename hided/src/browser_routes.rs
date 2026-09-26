@@ -22,6 +22,7 @@ use serde::Serialize;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, Notify, Semaphore, oneshot};
 
+use crate::browser_assets::{self, Asset};
 use crate::core::CoreHandle;
 use crate::pane_auth::process_start;
 use crate::state_file::new_token;
@@ -165,6 +166,8 @@ impl BrowserRoutes {
                 source: source.clone(),
                 channel: route.channel,
                 secret: secret.clone(),
+                entry: relative.clone(),
+                allowed: Arc::new(Mutex::new(HashMap::new())),
                 requests: Arc::new(Semaphore::new(MAX_FILE_REQUESTS)),
             };
             let app = Router::new().fallback(get(serve_file)).with_state(state);
@@ -193,11 +196,7 @@ impl BrowserRoutes {
             )
         } else if let Some((remote_port, host, tail)) = loopback_target(&source.url) {
             let client = Arc::clone(&route.client);
-            let remote_ip = if host == "[::1]" || host == "::1" {
-                IpAddr::V6(Ipv6Addr::LOCALHOST)
-            } else {
-                IpAddr::V4(Ipv4Addr::LOCALHOST)
-            };
+            let remote_ip = crate::browser_cli::loopback_ip(&host).ok_or("invalid_loopback")?;
             let remote = SocketAddr::new(remote_ip, remote_port);
             let alternate = (host == "localhost").then_some(SocketAddr::new(
                 IpAddr::V6(Ipv6Addr::LOCALHOST),
@@ -337,17 +336,13 @@ fn loopback_target(raw: &str) -> Option<(u16, String, String)> {
     }
     let authority = uri.authority()?;
     let host = authority.host().to_ascii_lowercase();
-    if !matches!(
-        host.as_str(),
-        "localhost" | "127.0.0.1" | "0.0.0.0" | "[::1]" | "::1"
-    ) {
-        return None;
-    }
+    crate::browser_cli::loopback_ip(&host)?;
     let port = authority
         .port_u16()
         .unwrap_or(if scheme == "https" { 443 } else { 80 });
     let local_host = match host.as_str() {
         "0.0.0.0" => "127.0.0.1",
+        "localhost." => "localhost",
         "::1" => "[::1]",
         _ => &host,
     };
@@ -368,6 +363,8 @@ struct FileRoute {
     source: BrowserRouteSource,
     channel: Arc<dyn HostChannel>,
     secret: String,
+    entry: String,
+    allowed: Arc<Mutex<HashMap<String, Asset>>>,
     requests: Arc<Semaphore>,
 }
 
@@ -384,6 +381,15 @@ async fn serve_file(State(route): State<FileRoute>, uri: Uri) -> Response {
     if hide_host::relative_path(&decoded).is_err() {
         return StatusCode::FORBIDDEN.into_response();
     }
+    let is_entry = decoded == route.entry;
+    let asset = if is_entry {
+        None
+    } else {
+        route.allowed.lock().await.get(decoded.as_ref()).copied()
+    };
+    if !is_entry && asset.is_none() {
+        return StatusCode::FORBIDDEN.into_response();
+    }
     let Ok(permit) = route.requests.clone().try_acquire_owned() else {
         return StatusCode::TOO_MANY_REQUESTS.into_response();
     };
@@ -393,6 +399,7 @@ async fn serve_file(State(route): State<FileRoute>, uri: Uri) -> Response {
     let owner_started = route.owner_started;
     let channel = Arc::clone(&route.channel);
     let decoded = decoded.into_owned();
+    let entry = route.entry.clone();
     let result = tokio::task::spawn_blocking(move || {
         let _permit = permit;
         if process_start(key.owner_pid) != Some(owner_started) {
@@ -433,18 +440,49 @@ async fn serve_file(State(route): State<FileRoute>, uri: Uri) -> Response {
                 break;
             }
         }
-        Ok::<_, &'static str>(bytes)
+        let additions = if is_entry {
+            browser_assets::html_assets(&entry, &bytes)
+        } else if asset == Some(Asset::Css) {
+            browser_assets::css_assets(&decoded, &bytes)
+        } else {
+            HashMap::new()
+        };
+        Ok::<_, &'static str>((bytes, additions))
     })
     .await;
     match result {
-        Ok(Ok(bytes)) => Response::builder()
+        Ok(Ok((bytes, additions))) => {
+            let mut allowed = route.allowed.lock().await;
+            if !is_entry
+                && allowed.len()
+                    + additions
+                        .keys()
+                        .filter(|path| !allowed.contains_key(*path))
+                        .count()
+                    > browser_assets::MAX_ASSETS
+            {
+                return StatusCode::TOO_MANY_REQUESTS.into_response();
+            }
+            if is_entry {
+                if additions.len() > browser_assets::MAX_ASSETS {
+                    return StatusCode::TOO_MANY_REQUESTS.into_response();
+                }
+                *allowed = additions;
+            } else {
+                allowed.extend(additions);
+            }
+            drop(allowed);
+            Response::builder()
             .status(StatusCode::OK)
             .header(
                 "content-type",
                 crate::server::mime_for(Path::new(&decoded_path_for_mime(uri.path()))),
             )
+            .header("x-content-type-options", "nosniff")
+            .header("content-security-policy", "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'none'; form-action 'none'; base-uri 'none'; object-src 'none'; frame-src 'none'")
             .body(Body::from(bytes))
-            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+        }
         Ok(Err(reason)) => {
             eprintln!(
                 "{}",
@@ -464,4 +502,25 @@ async fn serve_file(State(route): State<FileRoute>, uri: Uri) -> Response {
 
 fn decoded_path_for_mime(path: &str) -> String {
     percent_decode_str(path).decode_utf8_lossy().into_owned()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_admitted_loopback_address_has_an_ssh_target() {
+        for address in [
+            "http://localhost:5173/",
+            "http://localhost.:5173/",
+            "http://127.0.0.1:5173/",
+            "http://127.0.0.2:5173/",
+            "http://[::1]:5173/",
+            "http://[0:0:0:0:0:0:0:1]:5173/",
+        ] {
+            let (port, host, _) = loopback_target(address).expect(address);
+            assert_eq!(port, 5173);
+            assert!(crate::browser_cli::loopback_ip(&host).is_some());
+        }
+    }
 }

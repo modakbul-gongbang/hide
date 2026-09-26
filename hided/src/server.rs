@@ -640,7 +640,7 @@ async fn scoped_client_loop(
                                         if let Some(views) = &mut result.views {
                                             for view in views {
                                                 if let Some(page) = &mut view.page {
-                                                    page.state = "unsupported";
+                                                    page.state = if page.state == "pending" { "unsupported" } else { "disconnected" };
                                                     page.failure = None;
                                                 }
                                             }
@@ -721,9 +721,21 @@ async fn scoped_client_loop(
             json!({"type":"workspace_result","ok":false,"reason":"request_timeout","next_action":"Check Hide status and retry"})
         }
     };
-    let _ = socket
+    if socket
         .send(Message::Text(response.to_string().into()))
-        .await;
+        .await
+        .is_ok()
+    {
+        let claim = tokio::time::timeout(Duration::from_secs(2), socket.recv()).await;
+        if matches!(claim, Ok(Some(Ok(Message::Text(text)))) if text == r#"{"type":"workspace_claim"}"#)
+        {
+            let answer = match state.pane_capabilities.claim(&token) {
+                Ok(()) => json!({"type":"workspace_claimed"}),
+                Err(reason) => json!({"type":"workspace_claim_refused","reason":reason}),
+            };
+            let _ = socket.send(Message::Text(answer.to_string().into())).await;
+        }
+    }
     let _ = socket.send(Message::Close(None)).await;
     if one_shot {
         state.pane_capabilities.revoke(&token);

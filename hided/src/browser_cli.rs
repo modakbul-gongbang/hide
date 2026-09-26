@@ -1,6 +1,7 @@
 //! Resolve a browser CLI argument on the calling machine before submitting
 //! a pane-scoped Workspace action.
 
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::path::Path;
 /// What the argument asks to load: a URL with a scheme as written, a file or
 /// folder that exists as its `file:` URL, and anything else as a host, over
@@ -53,13 +54,28 @@ fn is_loopback(text: &str) -> bool {
     } else {
         text.split([':', '/', '?', '#']).next().unwrap_or("")
     };
-    let host = host.to_ascii_lowercase();
-    host == "localhost"
-        || host == "0.0.0.0"
-        || host == "[::1]"
-        || host.strip_prefix("127.").is_some_and(|rest| {
-            rest.split('.').count() == 3 && rest.split('.').all(|part| part.parse::<u8>().is_ok())
-        })
+    loopback_ip(host).is_some()
+}
+
+/// One classification for the CLI and SSH Browser route, so an admitted
+/// loopback address can never fall through to a Mac-local page load.
+pub(crate) fn loopback_ip(host: &str) -> Option<IpAddr> {
+    let host = host.trim_end_matches('.');
+    if host.eq_ignore_ascii_case("localhost") || host == "0.0.0.0" {
+        return Some(IpAddr::V4(Ipv4Addr::LOCALHOST));
+    }
+    if let Ok(address) = host.parse::<Ipv4Addr>() {
+        return address.is_loopback().then_some(IpAddr::V4(address));
+    }
+    let bracketless = host
+        .strip_prefix('[')
+        .and_then(|part| part.strip_suffix(']'))
+        .unwrap_or(host);
+    bracketless
+        .parse::<Ipv6Addr>()
+        .ok()
+        .filter(Ipv6Addr::is_loopback)
+        .map(IpAddr::V6)
 }
 
 #[cfg(test)]
@@ -85,6 +101,8 @@ mod tests {
             ("about:blank", "about:blank"),
             ("localhost:3000", "http://localhost:3000"),
             ("127.0.0.1:8080/docs", "http://127.0.0.1:8080/docs"),
+            ("127.0.0.2:8080/docs", "http://127.0.0.2:8080/docs"),
+            ("localhost.:3000", "http://localhost.:3000"),
             ("[::1]:5173", "http://[::1]:5173"),
             ("example.com", "https://example.com"),
             ("docs.rs/serde", "https://docs.rs/serde"),

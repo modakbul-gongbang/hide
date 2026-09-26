@@ -542,10 +542,20 @@ fn browser_open(
     let view_id = answer["result"]["view_id"]
         .as_str()
         .ok_or("invalid_response")?;
+    let requested_load = answer["result"]["load"]
+        .as_u64()
+        .ok_or("invalid_response")?;
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     loop {
         let status = view_status_value(env, view_id)?;
         let page = &status["view"]["page"];
+        if page["load"].as_u64() != Some(requested_load) {
+            println!(
+                "{}",
+                serde_json::json!({"ok":false,"request_id":answer["request_id"],"applied":"applied","reason":"page_superseded","view_id":view_id,"page":page,"next_action":"Run hide view status or open the page again with a new request ID"})
+            );
+            return Err("page_superseded".to_owned());
+        }
         match page["state"].as_str() {
             Some("loaded") => {
                 println!(
@@ -560,6 +570,13 @@ fn browser_open(
                     serde_json::json!({"ok":false,"request_id":answer["request_id"],"applied":"applied","reason":"page_failed","view_id":view_id,"page":page,"next_action":"Inspect the page failure and retry with a new request ID"})
                 );
                 return Err("page_failed".to_owned());
+            }
+            Some("disconnected" | "unsupported") => {
+                println!(
+                    "{}",
+                    serde_json::json!({"ok":false,"request_id":answer["request_id"],"applied":"applied","reason":"page_unavailable","view_id":view_id,"page":page,"next_action":"Reconnect the Hide desktop window and run hide view status again"})
+                );
+                return Err("page_unavailable".to_owned());
             }
             Some("pending" | "loading") => {}
             _ => {

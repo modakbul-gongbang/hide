@@ -86,6 +86,9 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
   fs.closeSync(daemonOutput);
   let app: Awaited<ReturnType<typeof launch>>["app"] | undefined;
   let devServer: http.Server | undefined;
+  let collisionServer: http.Server | undefined;
+  let decoyServer: http.Server | undefined;
+  let egressServer: http.Server | undefined;
   const upgraded = new Set<Duplex>();
   try {
     await expect.poll(() => run.hide(["status", "--json"]).stdout.includes('"running":true'), { timeout: 30_000 }).toBe(true);
@@ -235,14 +238,57 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     }, state);
     await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen"), { timeout: 20_000 }).toContain("ssh-e2e");
     await page.locator('[data-layout-choice="views"]').click();
-    const native = async () => app!.evaluate(async ({ BrowserWindow }) => {
+    const native = async () => app!.evaluate(async ({ BrowserWindow }, sourcePort) => {
       const child = BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>
-        (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote dev");
+        (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote dev"
+        && new URL((entry as unknown as { webContents: Electron.WebContents }).webContents.getURL()).port !== sourcePort);
       if (!child) return null;
       const contents = (child as unknown as { webContents: Electron.WebContents }).webContents;
       return { url: contents.getURL(), live: await contents.executeJavaScript("document.getElementById('live')?.textContent") as string };
-    });
+    }, String(remotePort));
     await expect.poll(async () => (await native())?.live, { timeout: 30_000 }).toBe("remote-live");
+    await app.evaluate(async ({ BrowserWindow }) => {
+      const contents = (BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>
+        (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote dev") as { webContents: Electron.WebContents } | undefined)?.webContents;
+      if (!contents) throw new Error("Remote page is missing for cookie isolation");
+      await contents.executeJavaScript("document.cookie = 'device=remote; path=/';");
+    });
+    const localBrowser = await commandFromPane(local, run, null, ["browser", "open", `http://localhost:${remotePort}/remote.html`], "local-dev-cookie");
+    expect(localBrowser.status).toBe(0);
+    await page.evaluate(async ({ port, token }) => {
+      await new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+        const timer = setTimeout(() => reject(new Error("local focus timed out")), 10_000);
+        ws.onerror = () => { clearTimeout(timer); reject(new Error("local focus socket failed")); };
+        ws.onopen = () => ws.send(JSON.stringify({ token, schema_version: 2 }));
+        ws.onmessage = () => {
+          ws.send(JSON.stringify({ schema_version: 2, kind: "focus_device", payload: { device_id: "local" } }));
+          clearTimeout(timer); ws.close(); resolve();
+        };
+      });
+    }, state);
+    await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen")).not.toContain("ssh-e2e");
+    expect((await commandFromPane(local, run, null, ["view", "select", (localBrowser.answer.result as { view_id: string }).view_id], "local-dev-select")).status).toBe(0);
+    await page.locator('[data-layout-choice="views"]').click();
+    await expect.poll(async () => app!.evaluate(async ({ BrowserWindow }) => {
+      const pages = BrowserWindow.getAllWindows()[0]?.contentView.children.filter((entry) =>
+        (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote dev") as unknown as { webContents: Electron.WebContents }[] | undefined;
+      if (pages?.length !== 2) return null;
+      return Promise.all(pages.map((entry) => entry.webContents.executeJavaScript("document.cookie") as Promise<string>));
+    }), { timeout: 20_000 }).toEqual(expect.arrayContaining(["device=remote", ""]));
+    await page.evaluate(async ({ port, token }) => {
+      await new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+        const timer = setTimeout(() => reject(new Error("remote focus timed out")), 10_000);
+        ws.onerror = () => { clearTimeout(timer); reject(new Error("remote focus socket failed")); };
+        ws.onopen = () => ws.send(JSON.stringify({ token, schema_version: 2 }));
+        ws.onmessage = () => {
+          ws.send(JSON.stringify({ schema_version: 2, kind: "focus_device", payload: { device_id: "ssh-e2e" } }));
+          clearTimeout(timer); ws.close(); resolve();
+        };
+      });
+    }, state);
+    await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen")).toContain("ssh-e2e");
     const devViewId = (openedDev.answer.result as { view_id: string }).view_id;
     const status = await commandFromPane(remote, run, bridge, ["view", "status", devViewId], "remote-dev-status");
     expect(status.status, JSON.stringify(status.answer)).toBe(0);
@@ -254,12 +300,13 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     const routed = (await native())!.url;
     expect(new URL(routed).port).not.toBe(String(remotePort));
     expect(new URL(routed).hostname).toBe("localhost");
-    await app.evaluate(async ({ BrowserWindow }) => {
+    await app.evaluate(async ({ BrowserWindow }, sourcePort) => {
       const child = BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>
-        (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote dev");
+        (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote dev"
+        && new URL((entry as unknown as { webContents: Electron.WebContents }).webContents.getURL()).port !== sourcePort);
       if (!child) throw new Error("Remote page is missing for its popup");
       await (child as unknown as { webContents: Electron.WebContents }).webContents.executeJavaScript("window.open('/child.html', '_blank')");
-    });
+    }, String(remotePort));
     let popupId: string | undefined;
     let popupAttempts = 0;
     await expect.poll(async () => {
@@ -270,11 +317,46 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     }, { timeout: 15_000 }).toBe(true);
     expect((await commandFromPane(remote, run, bridge, ["view", "close", popupId!], "remote-popup-close")).status).toBe(0);
 
+    let decoyReads = 0;
+    collisionServer = http.createServer((request, response) => {
+      const body = request.url === "/collision.html"
+        ? `<!doctype html><title>Remote collision</title><h1 id="origin">remote-device</h1><p id="asset">pending</p><p id="fetch">pending</p><p id="live">pending</p><script src="http://localhost:${(collisionServer!.address() as AddressInfo).port}/asset.js"></script><script>fetch('http://localhost:${(collisionServer!.address() as AddressInfo).port}/data').then(r => r.text()).then(t => document.getElementById('fetch').textContent = t); new WebSocket('ws://localhost:${(collisionServer!.address() as AddressInfo).port}/live').onmessage = e => document.getElementById('live').textContent = e.data</script>`
+        : request.url === "/asset.js" ? "document.getElementById('asset').textContent = 'remote-script'"
+        : request.url === "/data" ? "remote-fetch" : null;
+      response.writeHead(body ? 200 : 404, { "content-type": request.url === "/asset.js" ? "text/javascript" : "text/html", "access-control-allow-origin": "*" });
+      response.end(body ?? "missing");
+    });
+    collisionServer.on("upgrade", (request, socket) => {
+      const key = request.headers["sec-websocket-key"];
+      if (request.url !== "/live" || typeof key !== "string") return socket.destroy();
+      upgraded.add(socket);
+      socket.on("close", () => upgraded.delete(socket));
+      const accept = createHash("sha1").update(`${key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
+      socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+      const payload = Buffer.from("remote-ws");
+      socket.write(Buffer.concat([Buffer.from([0x81, payload.length]), payload]));
+    });
+    await new Promise<void>((resolve) => collisionServer!.listen(0, "::1", resolve));
+    const collisionPort = (collisionServer.address() as AddressInfo).port;
+    decoyServer = http.createServer((_request, response) => { decoyReads++; response.end("mac-decoy"); });
+    decoyServer.on("upgrade", (_request, socket) => { decoyReads++; socket.destroy(); });
+    await new Promise<void>((resolve) => decoyServer!.listen(collisionPort, "127.0.0.1", resolve));
+    const collision = await commandFromPane(remote, run, bridge, ["browser", "open", `http://[::1]:${collisionPort}/collision.html`], "remote-collision");
+    expect(collision.status, JSON.stringify(collision.answer)).toBe(0);
+    await expect.poll(async () => app!.evaluate(async ({ BrowserWindow }) => {
+      const child = BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>
+        (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote collision") as { webContents: Electron.WebContents } | undefined;
+      return child?.webContents.executeJavaScript("({ origin: document.getElementById('origin')?.textContent, asset: document.getElementById('asset')?.textContent, fetch: document.getElementById('fetch')?.textContent, live: document.getElementById('live')?.textContent })");
+    }), { timeout: 30_000 }).toEqual({ origin: "remote-device", asset: "remote-script", fetch: "remote-fetch", live: "remote-ws" });
+    expect(decoyReads).toBe(0);
+    expect((await commandFromPane(remote, run, bridge, ["view", "close", (collision.answer.result as { view_id: string }).view_id], "remote-collision-close")).status).toBe(0);
+
     const checkout = path.join(remote.root, "fixture");
     const html = path.join(checkout, "remote-preview.html");
     fs.writeFileSync(html, '<!doctype html><title>Remote HTML</title><link rel="stylesheet" href="style.css"><h1 id="proof">Remote HTML</h1><img id="pixel" src="pixel.png"><script src="preview.js"></script>');
     fs.writeFileSync(path.join(checkout, "style.css"), "#proof { color: rgb(12, 34, 56); }");
     fs.writeFileSync(path.join(checkout, "preview.js"), "document.getElementById('proof').dataset.script = 'remote-script'");
+    for (const name of [".env", "secret.txt", "secret.json", "secret.js"]) fs.writeFileSync(path.join(checkout, name), "private");
     fs.writeFileSync(path.join(checkout, "pixel.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR1sAAAAASUVORK5CYII=", "base64"));
     const outside = path.join(remote.root, "outside-secret.txt");
     fs.writeFileSync(outside, "outside");
@@ -290,6 +372,19 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     });
     await expect.poll(async () => (await preview())?.state, { timeout: 30_000 }).toEqual({ script: "remote-script", color: "rgb(12, 34, 56)", image: 1 });
     const previewUrl = (await preview())!.url;
+    for (const name of [".env", ".git/config", "secret.txt", "secret.json", "secret.js"]) {
+      expect((await fetch(new URL(name, previewUrl))).status, name).toBe(403);
+    }
+    let egressReads = 0;
+    egressServer = http.createServer((_request, response) => { egressReads++; response.end("received"); });
+    await new Promise<void>((resolve) => egressServer!.listen(0, "127.0.0.1", resolve));
+    await app.evaluate(async ({ BrowserWindow }, port) => {
+      const child = BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>
+        (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote HTML") as { webContents: Electron.WebContents } | undefined;
+      if (!child) throw new Error("Remote HTML page is missing for boundary check");
+      await child.webContents.executeJavaScript(`Promise.allSettled([fetch('secret.txt'), fetch('http://127.0.0.1:${port}/leak'), new Promise(resolve => { const image = new Image(); image.onload = resolve; image.onerror = resolve; image.src = 'http://127.0.0.1:${port}/pixel'; })])`);
+    }, (egressServer.address() as AddressInfo).port);
+    expect(egressReads).toBe(0);
     const captureDir = process.env.HIDE_E2E_SCREENSHOT_DIR;
     if (captureDir) {
       fs.mkdirSync(captureDir, { recursive: true });
@@ -312,8 +407,31 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     expect(traversal).toBe(403);
     const htmlId = (openedHtml.answer.result as { view_id: string }).view_id;
     const devId = (openedDev.answer.result as { view_id: string }).view_id;
+    const closingNativeIds = await app.evaluate(async ({ BrowserWindow }, urls) =>
+      BrowserWindow.getAllWindows()[0]?.contentView.children.flatMap((entry) => {
+        const contents = (entry as { webContents?: Electron.WebContents }).webContents;
+        return contents && urls.includes(contents.getURL()) ? [contents.id] : [];
+      }) ?? [], [previewUrl, routed]);
+    expect(closingNativeIds).toHaveLength(2);
+    await page.evaluate(async ({ port, token }) => {
+      await new Promise<void>((resolve, reject) => {
+        const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+        const timer = setTimeout(() => reject(new Error("local focus timed out")), 10_000);
+        ws.onerror = () => { clearTimeout(timer); reject(new Error("local focus socket failed")); };
+        ws.onopen = () => ws.send(JSON.stringify({ token, schema_version: 2 }));
+        ws.onmessage = () => {
+          ws.send(JSON.stringify({ schema_version: 2, kind: "focus_device", payload: { device_id: "local" } }));
+          clearTimeout(timer); ws.close(); resolve();
+        };
+      });
+    }, state);
+    await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen")).not.toContain("ssh-e2e");
     expect((await commandFromPane(remote, run, bridge, ["view", "close", htmlId], "remote-html-close")).status).toBe(0);
     expect((await commandFromPane(remote, run, bridge, ["view", "close", devId], "remote-dev-close")).status).toBe(0);
+    await expect.poll(async () => app!.evaluate(async ({ BrowserWindow }, ids) =>
+      BrowserWindow.getAllWindows()[0]?.contentView.children.some((entry) =>
+        ids.includes((entry as { webContents?: Electron.WebContents }).webContents?.id ?? -1)) ?? false, closingNativeIds
+    ), { timeout: 15_000 }).toBe(false);
     for (const url of [previewUrl, routed]) {
       await expect.poll(async () => {
         try { await fetch(url, { signal: AbortSignal.timeout(500) }); return false; }
@@ -356,6 +474,9 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     await app?.close().catch(() => undefined);
     for (const socket of upgraded) socket.destroy();
     await new Promise<void>((resolve) => devServer?.close(() => resolve()) ?? resolve());
+    await new Promise<void>((resolve) => collisionServer?.close(() => resolve()) ?? resolve());
+    await new Promise<void>((resolve) => decoyServer?.close(() => resolve()) ?? resolve());
+    await new Promise<void>((resolve) => egressServer?.close(() => resolve()) ?? resolve());
     run.cleanup();
     fs.rmSync(bridge, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     if (daemon.exitCode === null) daemon.kill("SIGTERM");
