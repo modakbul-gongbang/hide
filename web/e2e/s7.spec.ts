@@ -1443,7 +1443,7 @@ test("S6's layouts, tools, kind marks and the open from Agents only keep working
     await expect(area(page, 1)).toHaveAttribute("data-active-area", "true");
     expect(layouts()).toBe(layoutsBefore);
     // The diff shown over the agents is read like any diff on screen.
-    await expect(page.getByText("Reading the diff…")).toHaveCount(0, { timeout: 10_000 });
+    await expect(page.locator("[data-views-over-agents] .cm-content", { hasText: "+changed" })).toBeVisible({ timeout: 10_000 });
     await screenshot(page, "s7-s6-open-from-agents");
     expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {
