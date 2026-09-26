@@ -901,7 +901,9 @@ function buildMenus() {
 // Project row, Checkout row and Inactive Fold Row. One column of names: a
 // checkout's kind glyph sits under the project icon and its name under the
 // project name (md + lineage chevron + icon + two sm gaps), and an opened
-// checkout's agent rows put their status mark on that same column.
+// checkout's agent rows put their status mark on that same column. A checkout's
+// agent rows start closed; `main` is drawn opened as the example. A plain folder
+// (one checkout, no Git) is one Checkout row carrying the project's name.
 function buildProjectsSidebar(tokens) {
   const width = num(tokens, '--size-sidebar-ideal');
   // sidebar.tsx's ⋯ slot and trailing lanes: the menu takes the age's column on
@@ -923,10 +925,10 @@ function buildProjectsSidebar(tokens) {
     missing: {icon: 'git-branch', fill: '$--destructive'},
   };
 
-  function projectRow(id, {name, meta, expanded, git = true, hover = false}) {
+  function projectRow(id, {name, meta, expanded, hover = false}) {
     return themedXref(id, 'qdhY0', name, {width, height: num(tokens, '--size-control-regular'), padding: [0, trailing, 0, '$--spacing-md'], ...(hover ? {fill: '$--accent'} : {})}, {
       iBYjj: {icon: expanded ? 'chevron-down' : 'chevron-right'},
-      mIzlX: {icon: git ? 'folder-git-2' : 'folder'},
+      mIzlX: {icon: 'folder-git-2'},
       JkPyX: {content: name},
       nZkan: {content: meta},
       // The ⋯ keeps its column at rest and shows under the pointer.
@@ -938,7 +940,7 @@ function buildProjectsSidebar(tokens) {
   // +N for the rest) and its purpose, drawn only while the agent rows are closed.
   // Pen draws no ellipsis, so a long name or purpose is written already cut the
   // way the row truncates it.
-  function checkoutRow(id, {name, kind = 'branch', age, purpose, agents, expanded = false, selected = false}) {
+  function checkoutRow(id, {name, kind = 'branch', age, meta, purpose, agents, expanded = false, selected = false}) {
     const k = KIND[kind];
     const secondLine = !expanded && Boolean(purpose || agents);
     const summary = agents
@@ -955,16 +957,19 @@ function buildProjectsSidebar(tokens) {
     // both lines are sized here and the age lines up down the list.
     const inner = width - trailing - leading;
     return themedXref(id, 'DLP27', name, {
-      width, height: num(tokens, secondLine ? '--size-checkout-row-detailed' : '--size-checkout-row'),
+      width, height: num(tokens, secondLine ? '--size-checkout-row-detailed' : meta ? '--size-control-regular' : '--size-checkout-row'),
       padding: [0, trailing, 0, leading],
       ...(selected ? {fill: '$--secondary'} : {}),
     }, {
       QetL0: {width: inner},
       VtSRn: {icon: k.icon, fill: k.fill},
-      q91d7: {content: name, fontWeight: selected ? '600' : '500'},
+      q91d7: meta ? {content: name, fontSize: '$--text-title', fontWeight: '600'} : {content: name, fontWeight: selected ? '600' : '500'},
       TS5x9: {enabled: kind === 'missing'},
-      // The age column holds the ⋯ under the pointer, so it keeps its width with no age.
-      TuosT: {content: age ?? '', enabled: true, textGrowth: 'fixed-width', width: slot, textAlign: 'right'},
+      // The age column holds the ⋯ under the pointer, so it keeps its width with no
+      // age; a folder's activity stands in that column and grows to its left.
+      TuosT: meta
+        ? {content: meta, enabled: true, fontFamily: '$--font-ui', fontSize: '$--text-body'}
+        : {content: age ?? '', enabled: true, textGrowth: 'fixed-width', width: slot, textAlign: 'right'},
       IXwZI: {width: chevronLane},
       // The chevron keeps its slot on a row with no agents, so every age lines up.
       CgZj3: agents ? {enabled: true, icon: expanded ? 'chevron-down' : 'chevron-right'} : {enabled: true, opacity: 0},
@@ -973,6 +978,12 @@ function buildProjectsSidebar(tokens) {
       ...summary,
       D37Vr: purpose ? {content: purpose, enabled: true} : {enabled: false},
     });
+  }
+
+  // sidebar.tsx's FolderRowView: the project's name and activity on line one, in
+  // the checkout row's columns, and the checkout's agents and purpose on line two.
+  function folderRow(id, options) {
+    return checkoutRow(id, {...options, kind: 'folder'});
   }
 
   // agent-row.tsx's AgentRowItem at the name column: mark, provider, title, age.
@@ -1007,8 +1018,7 @@ function buildProjectsSidebar(tokens) {
     ]);
     const list = frame(`psb-list-${s}`, 'Projects list', {width, layout: 'vertical'}, [
       section(`psb-sec-pin-${s}`, 'PINNED · 1'),
-      projectRow(`psb-p-notes-${s}`, {name: 'team-notes', meta: '1 agent · 2h', expanded: true, git: false}),
-      checkoutRow(`psb-c-notes-${s}`, {name: 'team-notes', kind: 'folder', agents: {status: 'seen'}, purpose: '회의록 요약 정리'}),
+      folderRow(`psb-p-notes-${s}`, {name: 'team-notes', meta: '1 agent · 2h', agents: {status: 'seen'}, purpose: '회의록 요약 정리'}),
       section(`psb-sec-recent-${s}`, 'PROJECTS · RECENT ACTIVITY · 12'),
       projectRow(`psb-p-herdr-${s}`, {name: 'herdr-ide', meta: '11 agents · now', expanded: true, hover: true}),
       checkoutRow(`psb-c1-${s}`, {name: 'electron-shortcut-bindings', kind: 'open', age: '2h', agents: {status: 'working'}, purpose: 'Electron desktop host for the we…'}),

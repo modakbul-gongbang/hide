@@ -1771,9 +1771,16 @@ pub struct UiStateSnapshot {
     pub device_expanded_paths: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub collapsed_workspace_ids: Vec<String>,
-    /// Sidebar workspaces (checkout paths) whose agent rows are hidden.
+    /// Sidebar workspaces (checkout paths) whose agent rows the Swift shell
+    /// hides; absence is open. It stays the Swift shell's own preference
+    /// until S10 removes that shell; the web reads `expanded_checkout_ids`.
     #[serde(default)]
     pub collapsed_checkout_ids: Vec<String>,
+    /// Checkouts whose agent rows the web Projects list opened. Absence is
+    /// the default closed state, where the checkout's second line names its
+    /// agents, so an old store needs no migration.
+    #[serde(default)]
+    pub expanded_checkout_ids: Vec<String>,
     /// Projects whose Inactive checkout group the operator opened. Absence is
     /// the default collapsed state, so old stores need no migration.
     #[serde(default)]
@@ -1928,6 +1935,7 @@ impl Default for UiStateSnapshot {
             device_expanded_paths: BTreeMap::new(),
             collapsed_workspace_ids: Vec::new(),
             collapsed_checkout_ids: Vec::new(),
+            expanded_checkout_ids: Vec::new(),
             expanded_inactive_checkout_project_paths: Vec::new(),
             expanded_inactive_project_device_ids: Vec::new(),
             project_base_branches: BTreeMap::new(),

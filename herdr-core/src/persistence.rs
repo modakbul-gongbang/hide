@@ -31,6 +31,10 @@ struct StoredUiState {
     collapsed_workspace_ids: Vec<String>,
     #[serde(default)]
     collapsed_checkout_ids: Vec<String>,
+    /// The web Projects list's opened checkouts; absent in an older store,
+    /// which loads with every checkout closed.
+    #[serde(default)]
+    expanded_checkout_ids: Vec<String>,
     /// Project paths whose Inactive checkout row is open. The project path is
     /// stable across navigator rebuilds and matches the existing path-keyed
     /// expansion contract.
@@ -214,6 +218,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             device_expanded_paths: stored.device_expanded_paths,
             collapsed_workspace_ids: stored.collapsed_workspace_ids,
             collapsed_checkout_ids: stored.collapsed_checkout_ids,
+            expanded_checkout_ids: stored.expanded_checkout_ids,
             expanded_inactive_checkout_project_paths: stored
                 .expanded_inactive_checkout_project_paths,
             expanded_inactive_project_device_ids: stored.expanded_inactive_project_device_ids,
@@ -265,6 +270,7 @@ pub fn save(
         device_expanded_paths: state.device_expanded_paths.clone(),
         collapsed_workspace_ids: state.collapsed_workspace_ids.clone(),
         collapsed_checkout_ids: state.collapsed_checkout_ids.clone(),
+        expanded_checkout_ids: state.expanded_checkout_ids.clone(),
         expanded_inactive_checkout_project_paths: state
             .expanded_inactive_checkout_project_paths
             .clone(),
@@ -607,6 +613,7 @@ mod tests {
             expanded_paths: vec!["/repo/src".to_owned()],
             collapsed_workspace_ids: vec!["workspace:alpha".to_owned()],
             collapsed_checkout_ids: vec!["checkout:main".to_owned()],
+            expanded_checkout_ids: vec!["checkout:feature".to_owned()],
             ..UiStateSnapshot::default()
         };
 
@@ -618,6 +625,7 @@ mod tests {
         assert_eq!(restored.expanded_paths, ["/repo/src"]);
         assert_eq!(restored.collapsed_workspace_ids, ["workspace:alpha"]);
         assert_eq!(restored.collapsed_checkout_ids, ["checkout:main"]);
+        assert_eq!(restored.expanded_checkout_ids, ["checkout:feature"]);
 
         state.expanded_paths.push("/repo/tests".to_owned());
         save(&path, &state, &PaneTerminalSizes::new())

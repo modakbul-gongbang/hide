@@ -1105,11 +1105,11 @@ export function createActions(dispatch: DispatchFn) {
       updateUiState({ collapsed_workspace_ids: [...collapsed].sort() });
     },
 
-    /** Opens or closes the agent rows under a checkout in the Projects list; the core keeps the choice. */
+    /** Opens or closes the agent rows under a checkout in the Projects list; they start closed and the core keeps the choice. */
     toggleCheckoutAgents(checkoutId: string) {
-      const collapsed = new Set(rest()?.ui_state?.collapsed_checkout_ids ?? []);
-      if (!collapsed.delete(checkoutId)) collapsed.add(checkoutId);
-      updateUiState({ collapsed_checkout_ids: [...collapsed].sort() });
+      const expanded = new Set(rest()?.ui_state?.expanded_checkout_ids ?? []);
+      if (!expanded.delete(checkoutId)) expanded.add(checkoutId);
+      updateUiState({ expanded_checkout_ids: [...expanded].sort() });
     },
 
     toggleLeftSidebar() {

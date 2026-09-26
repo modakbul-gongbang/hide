@@ -2671,6 +2671,39 @@ fn tab_strip_reorder_a_drag_that_interleaves_two_workspaces_still_lands() {
     std::fs::remove_dir_all(&directory).ok();
 }
 
+/// The web Projects list's opened checkouts are its own: a save from the
+/// Swift shell, which carries only its own collapsed set, keeps them, and a
+/// web save changes them without touching the Swift shell's set.
+#[test]
+fn expanded_checkouts_survive_a_ui_state_update_that_omits_them() {
+    let mut runtime = runtime();
+    let update = |payload: serde_json::Value| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "ui_state_update",
+            "payload": payload
+        }))
+        .unwrap()
+    };
+    assert!(runtime.snapshot().ui_state.expanded_checkout_ids.is_empty());
+    assert!(runtime.dispatch_json(&update(serde_json::json!({
+        "expanded_paths": [],
+        "selected_path": null,
+        "selected_pane_id": null,
+        "collapsed_checkout_ids": ["checkout:swift"],
+        "expanded_checkout_ids": ["checkout:web"]
+    }))));
+    assert!(runtime.dispatch_json(&update(serde_json::json!({
+        "expanded_paths": [],
+        "selected_path": null,
+        "selected_pane_id": null,
+        "collapsed_checkout_ids": []
+    }))));
+    let state = &runtime.snapshot().ui_state;
+    assert_eq!(state.expanded_checkout_ids, ["checkout:web"]);
+    assert!(state.collapsed_checkout_ids.is_empty());
+}
+
 /// The web shell's chords are its own: a save from a shell that does not
 /// know them (the Swift shell, or any older payload) keeps them.
 #[test]

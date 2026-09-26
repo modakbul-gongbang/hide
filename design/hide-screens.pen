@@ -14288,43 +14288,6 @@
                     {
                       "id": "psb-p-notes-l",
                       "type": "ref",
-                      "ref": "hideui:qdhY0",
-                      "name": "team-notes",
-                      "width": 292,
-                      "height": 36,
-                      "padding": [
-                        0,
-                        4,
-                        0,
-                        "$--spacing-md"
-                      ],
-                      "descendants": {
-                        "hideui:iBYjj": {
-                          "fill": "$--muted-foreground",
-                          "icon": "chevron-down"
-                        },
-                        "hideui:mIzlX": {
-                          "fill": "$--subtle-foreground",
-                          "icon": "folder"
-                        },
-                        "hideui:JkPyX": {
-                          "fill": "$--foreground",
-                          "content": "team-notes"
-                        },
-                        "hideui:nZkan": {
-                          "fill": "$--muted-foreground",
-                          "content": "1 agent · 2h"
-                        },
-                        "hideui:hm1SG": {
-                          "width": 24,
-                          "height": 24,
-                          "opacity": 0
-                        }
-                      }
-                    },
-                    {
-                      "id": "psb-c-notes-l",
-                      "type": "ref",
                       "ref": "hideui:DLP27",
                       "name": "team-notes",
                       "width": 292,
@@ -14343,15 +14306,15 @@
                         "hideui:q91d7": {
                           "fill": "$--foreground",
                           "content": "team-notes",
-                          "fontWeight": "500"
+                          "fontSize": "$--text-title",
+                          "fontWeight": "600"
                         },
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
-                          "content": "",
+                          "content": "1 agent · 2h",
                           "enabled": true,
-                          "textGrowth": "fixed-width",
-                          "width": 24,
-                          "textAlign": "right"
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body"
                         },
                         "hideui:CgZj3": {
                           "fill": "$--subtle-foreground",
@@ -15467,43 +15430,6 @@
                     {
                       "id": "psb-p-notes-d",
                       "type": "ref",
-                      "ref": "hideui:qdhY0",
-                      "name": "team-notes",
-                      "width": 292,
-                      "height": 36,
-                      "padding": [
-                        0,
-                        4,
-                        0,
-                        "$--spacing-md"
-                      ],
-                      "descendants": {
-                        "hideui:iBYjj": {
-                          "fill": "$--muted-foreground",
-                          "icon": "chevron-down"
-                        },
-                        "hideui:mIzlX": {
-                          "fill": "$--subtle-foreground",
-                          "icon": "folder"
-                        },
-                        "hideui:JkPyX": {
-                          "fill": "$--foreground",
-                          "content": "team-notes"
-                        },
-                        "hideui:nZkan": {
-                          "fill": "$--muted-foreground",
-                          "content": "1 agent · 2h"
-                        },
-                        "hideui:hm1SG": {
-                          "width": 24,
-                          "height": 24,
-                          "opacity": 0
-                        }
-                      }
-                    },
-                    {
-                      "id": "psb-c-notes-d",
-                      "type": "ref",
                       "ref": "hideui:DLP27",
                       "name": "team-notes",
                       "width": 292,
@@ -15522,15 +15448,15 @@
                         "hideui:q91d7": {
                           "fill": "$--foreground",
                           "content": "team-notes",
-                          "fontWeight": "500"
+                          "fontSize": "$--text-title",
+                          "fontWeight": "600"
                         },
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
-                          "content": "",
+                          "content": "1 agent · 2h",
                           "enabled": true,
-                          "textGrowth": "fixed-width",
-                          "width": 24,
-                          "textAlign": "right"
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body"
                         },
                         "hideui:CgZj3": {
                           "fill": "$--subtle-foreground",

@@ -185,8 +185,10 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await expect(workspace).toBeVisible();
     await expect(page.locator(`[data-pane-view="${mainPane}"]`)).toHaveAttribute("data-focused", "true");
 
-    // A folder with agents shows only the ad hoc strip (B10).
-    await page.locator("[data-project-row]", { hasText: /^fixture/ }).click();
+    // A folder with agents shows only the ad hoc strip (B10). Its sidebar
+    // row opens its checkout, so its Overview is reached from Main.
+    await page.locator("[data-go-main]").click();
+    await page.locator("[data-main-project]", { hasText: /^fixture/ }).click();
     await expect(overview).toHaveAttribute("data-overview-state", "adhoc");
     await expect(page.locator("[data-overview-adhoc] [data-agent-open]")).toHaveCount(2);
     await expect(page.locator("[data-overview-column]")).toHaveCount(0);
@@ -194,7 +196,8 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
 
     // A project with no agent is the empty state with New agent; New agent
     // on a folder opens its Workspace (B3, B10).
-    await page.locator("[data-project-row]", { hasText: /^quiet/ }).click();
+    await page.locator("[data-go-main]").click();
+    await page.locator("[data-main-project]", { hasText: /^quiet/ }).click();
     await expect(overview).toHaveAttribute("data-overview-state", "empty");
     await expect(page.locator("[data-overview-empty]")).toBeVisible();
     await screenshot(page, "overview-empty-light");

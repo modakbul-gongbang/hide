@@ -754,8 +754,8 @@ export type SnapshotRest = {
     device_expanded_paths?: Record<string, string[]>;
     /** Projects whose checkouts the sidebar folds. */
     collapsed_workspace_ids?: string[];
-    /** Checkouts whose agent rows the sidebar folds; absence is open. */
-    collapsed_checkout_ids?: string[];
+    /** Checkouts whose agent rows the Projects list opened; absence is closed, where line two names the agents. */
+    expanded_checkout_ids?: string[];
     selected_path?: string | null;
     selected_pane_id?: string | null;
     accent_hex?: string;

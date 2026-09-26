@@ -203,7 +203,7 @@ GitHub's age appears only in the issue chip's tooltip, as the last successful re
 Merged and Seen columns start collapsed and list only their names while folded.
 The board scrolls horizontally below its column minimum, and titles wrap to two lines; branch labels truncate at the tail with the full text in a shared tooltip and accessibility help.
 
-On the web, the board is the Project Overview: the sidebar's project name, Main's project row, the palette and the Workspace toolbar menu open it, and ⌘⇧H opens it for the checkout in front.
+On the web, the board is the Project Overview: the sidebar's project name (a plain folder's one row opens its checkout instead), Main's project row, the palette and the Workspace toolbar menu open it, and ⌘⇧H opens it for the checkout in front.
 Escape, once no dialog or menu is open, returns to the Workspace in front, or to Main when there is none; an agent row opens its pane and a card header opens its checkout.
 The header carries the path back, the Tasks/Agents choice, the worktree count, the open pull-request count once GitHub has answered, main's distance behind origin only above zero, Sessions, and New agent.
 New agent opens the New worktree dialog on a Git project and the folder's Workspace otherwise.
@@ -316,7 +316,11 @@ Each checkout row shows a kind glyph, selected in priority order: the pull-reque
 Open, draft, merged, and closed pull requests keep their own lifecycle shapes and colors, stale GitHub data mutes only the icon, an unavailable GitHub lookup falls back to the branch glyph, and a missing folder colors its branch glyph as danger and omits the age.
 Workspaces with nested agent rows toggle disclosure across the whole row; workspaces without nested agent rows open on click.
 In the web shell a checkout row always opens its checkout: a trailing chevron, drawn only while agents run there, opens and closes their rows, and the row's `⋯` menu takes the last-commit age's place while the pointer is over the row.
+A web checkout's agent rows start closed, so its second line names them, and the checkouts the operator opens are kept in the core's ui state across launches; the Swift shell keeps its own disclosure until it is removed.
 A web project row folds its checkouts from its leading chevron, and the rest of the row opens the project's Overview; both folds are this machine's, so a selected SSH device's tree is drawn with nothing folded.
+A plain folder, a project that is not a Git repository and holds one checkout, is one web row instead of a project row over an identical checkout row.
+Its first line is the project's folder glyph, name and activity, set in the checkout row's columns with the activity where the age stands; its second line and trailing chevron are the checkout's.
+It has no fold of its own and keeps the fold's lane; the row opens the checkout and is marked while that checkout is in front, its menu lists the project's items and then the checkout's, and its Overview is reached from Main, the palette or the Workspace toolbar.
 While a checkout's agent rows are closed, its second line names them, the representative agent's mark and provider and `+N` for the rest, before the purpose; a checkout with neither, or one whose Git facts have not been read yet, is one line.
 Workspace disclosure persists across launches and hides only the nested agent rows, preserving selection, running panes, and raised attention rows.
 An agent row's title is its identity label at both densities: the rolling task, or the workspace label when no task exists; a Herdr agent name remains a control identifier and never becomes display copy.
