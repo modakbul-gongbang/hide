@@ -95,8 +95,19 @@ function HostedPage({ display, workspace, actions }: { display: ViewDisplaySnaps
  */
 function AddressField({ address, onSubmit }: { address: string; onSubmit: (url: string) => void }) {
   const [draft, setDraft] = useState<string | null>(null);
+  const field = useRef<HTMLInputElement>(null);
+  // Focus swaps the shown address for the whole one, which drops any
+  // selection; selecting in the commit that swaps it means the first key
+  // after focus replaces the address rather than landing after it.
+  const selectOnCommit = useRef(false);
+  useLayoutEffect(() => {
+    if (!selectOnCommit.current) return;
+    selectOnCommit.current = false;
+    field.current?.select();
+  });
   return (
     <Input
+      ref={field}
       mono
       className="h-(--size-control-sm) flex-1 text-caption"
       aria-label="Page address"
@@ -104,10 +115,9 @@ function AddressField({ address, onSubmit }: { address: string; onSubmit: (url: 
       autoComplete="off"
       value={draft ?? addressShown(address)}
       data-browser-address="true"
-      onFocus={(event) => {
-        const field = event.currentTarget;
+      onFocus={() => {
+        selectOnCommit.current = true;
         setDraft(address);
-        requestAnimationFrame(() => field.select());
       }}
       onChange={(event) => setDraft(event.currentTarget.value)}
       onBlur={() => setDraft(null)}
