@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronUpIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon, FolderIcon, TerminalIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./components/ui/alert-dialog";
@@ -8,28 +8,66 @@ import { Input } from "./components/ui/input";
 import { useShellStore } from "./store";
 import { focusTerminal } from "./terminals";
 import { useUiStore } from "./ui";
+import { markTone } from "./agentRow";
+import { StatusMark } from "./components/status-mark";
+import { Kbd } from "./components/ui/kbd";
+import { hostKind } from "./host";
+import { visibleWindow, type CycleItem } from "./recent";
+import { displayCommand, hostRegistry } from "./shortcuts";
+import { displayMark } from "./ViewAreas";
 
-/** The held-⌥ list of recent tabs or projects; the row at `index` is what release commits. */
+/**
+ * Recent Panels or Recent Projects while the chord's modifier is held: at
+ * most nine rows around the highlight, which is what release commits
+ * (docs/UI_BEHAVIOR.md, Recent navigation).
+ */
 export function CycleOverlay() {
   const cycle = useUiStore((s) => s.cycle);
+  const registry = useShellStore((s) => hostRegistry(s.rest?.ui_state, hostKind()).registry);
   if (!cycle) return null;
+  const { start, rows } = visibleWindow(cycle.items, cycle.index);
+  const title = cycle.kind === "panels" ? "Recent Panels" : "Recent Projects";
+  const chord = displayCommand(cycle.kind === "panels" ? "recent_panel" : "recent_project", hostKind(), registry);
   return (
     <div className="absolute inset-x-0 top-[var(--size-tab-strip)] z-30 flex justify-center" data-cycle={cycle.kind}>
-      <ul className="w-[var(--size-pr-popover)] rounded-md border border-border bg-popover py-xs text-body shadow-lg">
-        {cycle.items.map((item, index) => (
-          <li
-            key={item.id}
-            data-cycle-row={item.id}
-            aria-selected={index === cycle.index}
-            className={`flex items-baseline gap-sm px-md py-xxs ${index === cycle.index ? "bg-secondary text-foreground" : "text-subtle-foreground"}`}
-          >
-            <span className="min-w-0 flex-1 truncate">{item.label}</span>
-            <span className="truncate text-caption text-muted-foreground">{item.detail}</span>
-          </li>
-        ))}
-      </ul>
+      <div role="listbox" aria-label={title} className="w-[var(--size-pr-popover)] rounded-md border border-border bg-popover py-xs shadow-lg">
+        <div className="flex items-center justify-between px-md pb-xxs">
+          <span className="text-caption font-semibold uppercase text-muted-foreground">{title}</span>
+          {chord ? <Kbd>{chord}</Kbd> : null}
+        </div>
+        {rows.map((item, offset) => {
+          const selected = start + offset === cycle.index;
+          return (
+            <div
+              key={item.key}
+              role="option"
+              data-cycle-row={item.surface?.id ?? item.key}
+              data-cycle-kind={item.kind}
+              aria-selected={selected}
+              aria-label={[item.title, item.agent?.status_label, item.detail].filter(Boolean).join(", ")}
+              className={`flex items-center gap-sm px-md py-xxs ${selected ? "bg-secondary text-foreground" : "text-subtle-foreground"}`}
+            >
+              <span className="flex w-(--size-icon) shrink-0 justify-center">
+                <CycleMark item={item} />
+              </span>
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-body">{item.title}</span>
+                <span className="truncate text-caption text-muted-foreground">{item.detail}</span>
+              </span>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
+}
+
+/** A row's mark: the one agent's status mark, never its colour alone; else what kind of surface it is. */
+function CycleMark({ item }: { item: CycleItem }) {
+  if (item.agent) return <StatusMark symbol={item.agent.symbol} className={markTone(item.agent)} />;
+  if (item.kind === "project") return <FolderIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />;
+  if (item.kind === "herdr") return <TerminalIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />;
+  return displayMark({ kind: item.kind, label: item.title });
 }
 
 /** The Swift consequence sheet: Keep open, or stop the work and close. */

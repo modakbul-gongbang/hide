@@ -148,20 +148,23 @@ test("cycles: ⌃Tab and ⌥Tab commit once, on releasing the held modifier", as
     await page.keyboard.down("Control");
     await page.keyboard.press("Tab");
     await page.keyboard.press("Tab");
-    await expect(cycleRow("tabs")).toHaveAttribute("data-cycle-row", tabs[2]!);
+    await expect(cycleRow("panels")).toHaveAttribute("data-cycle-row", tabs[2]!);
     expect(sent.get("focus_tab") ?? 0).toBe(focused);
     await page.keyboard.up("Control");
     await expect(page.locator("[data-cycle]")).toHaveCount(0);
     await expect(canvas).toHaveAttribute("data-canvas", tabs[2]!);
     await exactlyOnce(sent, "focus_tab", focused + 1, page);
 
-    // ⌃⇧Tab walks backward: from third, one back past the end is second.
+    // ⌃⇧Tab walks back toward the start: from third, two forward then one
+    // back is first, the order Recent Panels holds across every checkout.
     focused = sent.get("focus_tab") ?? 0;
     await page.keyboard.down("Control");
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Tab");
     await page.keyboard.press("Shift+Tab");
-    await expect(cycleRow("tabs")).toHaveAttribute("data-cycle-row", tabs[1]!);
+    await expect(cycleRow("panels")).toHaveAttribute("data-cycle-row", tabs[0]!);
     await page.keyboard.up("Control");
-    await expect(canvas).toHaveAttribute("data-canvas", tabs[1]!);
+    await expect(canvas).toHaveAttribute("data-canvas", tabs[0]!);
     await exactlyOnce(sent, "focus_tab", focused + 1, page);
 
     // Recent Projects gamma, beta, fixture: fixture is current.
@@ -172,25 +175,26 @@ test("cycles: ⌃Tab and ⌥Tab commit once, on releasing the held modifier", as
       await expect(checkout(name)).toHaveAttribute("aria-current", "true");
     }
 
-    // ⌥Tab twice walks to gamma; releasing ⌥ commits one focus_checkout.
-    focused = sent.get("focus_checkout") ?? 0;
+    // ⌥Tab twice walks to gamma; releasing ⌥ commits one focus_tab, back on
+    // the tab gamma was last used on.
+    focused = sent.get("focus_tab") ?? 0;
     await page.keyboard.down("Alt");
     await page.keyboard.press("Tab");
     await page.keyboard.press("Tab");
     await expect(cycleRow("projects")).toBeVisible();
-    expect(sent.get("focus_checkout") ?? 0).toBe(focused);
+    expect(sent.get("focus_tab") ?? 0).toBe(focused);
     await page.keyboard.up("Alt");
     await expect(page.locator("[data-cycle]")).toHaveCount(0);
     await expect(checkout("gamma")).toHaveAttribute("aria-current", "true");
-    await exactlyOnce(sent, "focus_checkout", focused + 1, page);
+    await exactlyOnce(sent, "focus_tab", focused + 1, page);
 
     // ⌥⇧Tab walks backward: from gamma, one back past the end is beta.
-    focused = sent.get("focus_checkout") ?? 0;
+    focused = sent.get("focus_tab") ?? 0;
     await page.keyboard.down("Alt");
     await page.keyboard.press("Shift+Tab");
     await page.keyboard.up("Alt");
     await expect(checkout("beta")).toHaveAttribute("aria-current", "true");
-    await exactlyOnce(sent, "focus_checkout", focused + 1, page);
+    await exactlyOnce(sent, "focus_tab", focused + 1, page);
   } finally {
     for (const id of extraWorkspaces) herdr.run(["workspace", "close", id]);
     for (const id of tabs.slice(1)) herdr.run(["tab", "close", id]);

@@ -108,10 +108,10 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await expect(page.locator("[role=tab][aria-selected=true]")).toContainText(nextLabel);
     await expect.poll(() => sent.get("create_tab")).toBe(1);
 
-    // ⌥` cycles recent tabs: the previous tab (second) is the first candidate.
+    // ⌥` walks Recent Panels: the previous surface (the second tab) is the first candidate.
     await page.keyboard.down("Alt");
     await page.keyboard.press("Backquote");
-    await expect(page.locator("[data-cycle=tabs] [aria-selected=true]")).toHaveAttribute("data-cycle-row", tabs[1]);
+    await expect(page.locator("[data-cycle=panels] [aria-selected=true]")).toHaveAttribute("data-cycle-row", tabs[1]);
     await page.keyboard.up("Alt");
     await expect(page.locator("[data-cycle]")).toHaveCount(0);
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", tabs[1]);

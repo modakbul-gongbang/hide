@@ -12,43 +12,57 @@
 
 import type { Actions } from "./actions";
 import { hostBridge, hostKind } from "./host";
-import { recentCheckoutOrder, recentTabOrder } from "./recent";
-import { contextWorkspaces, remoteContext, remoteView } from "./remote";
+import { availableSurfaces, currentSurface, observeProject, observeSurfaces, panelItem, projectItem, reconcileCycle, recentProjectOrder, recentSurfaces, type CycleItem } from "./recent";
+import { contextWorkspaces, remoteContext } from "./remote";
 import { hostRegistry, matchHost, REGISTRY, storedBindings, type CommandId } from "./shortcuts";
-import { editorFor, focusedCheckout, type SnapshotRest } from "./snapshot";
+import { editorFor, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type Cycle } from "./ui";
 import { drawnViews, viewAreaInUse } from "./viewFocus";
 
-/** The checkout whose tabs ⌥` walks: this machine's focused one, or the selected device's visible one. */
-function cycleCheckout(rest: SnapshotRest | null) {
-  return remoteContext(rest) ? (remoteView(remoteContext(rest)?.session ?? null)?.checkout ?? null) : focusedCheckout(rest);
+/**
+ * Recent Panels: every surface this machine holds, most recent first, so
+ * index 0 is the one in use and one chord lands on the one before it.
+ */
+export function panelCycle(rest: SnapshotRest | null): Cycle | null {
+  const items = recentSurfaces()
+    .map((surface) => panelItem(rest, surface))
+    .filter((item): item is CycleItem => item !== null);
+  return items.length > 1 ? { kind: "panels", items, index: 0 } : null;
 }
 
-function tabCycle(rest: SnapshotRest | null): Cycle | null {
-  const checkout = cycleCheckout(rest);
-  if (!checkout) return null;
-  const tabs = checkout.tabs.filter((tab) => tab.id);
-  const order = recentTabOrder(checkout.id, tabs.map((tab) => tab.id as string));
-  const items = order.map((id) => {
-    const tab = tabs.find((row) => row.id === id);
-    return { id, label: tab?.label ?? id, detail: tab?.panes.length === 1 ? "1 pane" : `${tab?.panes.length ?? 0} panes`, workspaceId: checkout.workspace_id };
-  });
-  return items.length > 1 ? { kind: "tabs", items, index: 0 } : null;
-}
-
-function projectCycle(rest: SnapshotRest | null): Cycle | null {
-  const rows = contextWorkspaces(rest).flatMap((workspace) =>
-    workspace.checkouts.map((checkout) => ({
-      id: checkout.id,
-      label: checkout.label,
-      detail: workspace.label === checkout.label ? (checkout.branch ?? "") : `${workspace.label}${checkout.branch ? ` · ${checkout.branch}` : ""}`,
-      workspaceId: workspace.id,
-    })),
-  );
-  const order = recentCheckoutOrder(rows.map((row) => row.id));
-  const items = order.map((id) => rows.find((row) => row.id === id)!).filter(Boolean);
+/** Recent Projects on the device in front, each row naming the surface it restores. */
+export function projectCycle(rest: SnapshotRest | null): Cycle | null {
+  const workspaces = contextWorkspaces(rest);
+  const local = remoteContext(rest) === null;
+  const order = recentProjectOrder(workspaces.map((workspace) => workspace.id));
+  const items = order
+    .map((id) => workspaces.find((workspace) => workspace.id === id))
+    .map((workspace) => (workspace ? projectItem(workspace, rest, local) : null))
+    .filter((item): item is CycleItem => item !== null);
   return items.length > 1 ? { kind: "projects", items, index: 0 } : null;
+}
+
+/**
+ * Brings the recent order up to date with the session, and records what the
+ * operator is using now when `moved` says the surface in use may have
+ * changed. While another device is in front nothing of this machine's is in
+ * use, so the order only drops what is gone.
+ */
+export function observeRecent(rest: SnapshotRest | null, moved: boolean) {
+  const local = remoteContext(rest) === null;
+  observeSurfaces(rest, local && moved ? currentSurface(rest, viewAreaInUse(rest)) : null);
+  if (local && moved) observeProject(rest?.navigator?.focused_workspace_id);
+}
+
+/** The held cycle once the session changed under it: see `reconcileCycle`. */
+export function reconcileHeldCycle(cycle: Cycle, rest: SnapshotRest | null): Cycle | null {
+  const alive =
+    cycle.kind === "panels"
+      ? new Set(availableSurfaces(rest, recentSurfaces()).map((surface) => surface.key))
+      : new Set(contextWorkspaces(rest).map((workspace) => workspace.id));
+  const kept = reconcileCycle(cycle.items, cycle.index, (item) => alive.has(item.key));
+  return kept && kept.items.length > 1 ? { ...cycle, ...kept } : null;
 }
 
 function advance(cycle: Cycle, backward: boolean): Cycle {
@@ -73,16 +87,16 @@ export function installKeyboard(actions: Actions): () => void {
         return actions.reopenClosed();
       case "new_workspace":
         return actions.openNewWorkspace();
-      case "recent_tab":
-      case "previous_recent_tab":
+      case "recent_panel":
+      case "previous_recent_panel":
       case "recent_project":
       case "previous_recent_project": {
         if (!event) return;
         const backward = id.startsWith("previous");
         cycleRelease = event.ctrlKey ? "Control" : "Alt";
-        const kind = id.endsWith("tab") ? "tabs" : "projects";
+        const kind = id.endsWith("panel") ? "panels" : "projects";
         const current = ui().cycle;
-        const cycle = current?.kind === kind ? current : kind === "tabs" ? tabCycle(useShellStore.getState().rest) : projectCycle(useShellStore.getState().rest);
+        const cycle = current?.kind === kind ? current : kind === "panels" ? panelCycle(useShellStore.getState().rest) : projectCycle(useShellStore.getState().rest);
         if (!cycle) return;
         ui().setCycle(advance(cycle, backward));
         return;
@@ -198,6 +212,8 @@ export function installKeyboard(actions: Actions): () => void {
 
   // Releasing the held modifier commits the cycle: one focus event for the
   // row the operator stopped on, none when they stopped where they started.
+  // A project with no surface to restore comes forward as its checkout does
+  // from the sidebar, which is also how a device's project comes forward.
   const onKeyUp = (event: KeyboardEvent) => {
     if (event.key !== cycleRelease) return;
     const cycle = ui().cycle;
@@ -205,8 +221,8 @@ export function installKeyboard(actions: Actions): () => void {
     ui().setCycle(null);
     const chosen = cycle.items[cycle.index];
     if (!chosen || cycle.index === 0) return;
-    if (cycle.kind === "tabs") actions.focusTab(chosen.id);
-    else actions.focusCheckout(chosen.workspaceId, chosen.id);
+    if (chosen.surface) actions.openSurface(chosen.surface);
+    else actions.focusCheckout(chosen.workspaceId, chosen.checkoutId);
   };
 
   // Losing the window mid-cycle (⌥-Tab switching apps) cancels it; nothing

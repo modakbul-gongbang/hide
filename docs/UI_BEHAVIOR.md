@@ -403,11 +403,14 @@ An add that lands mid-removal cancels the removal and says so, rather than losin
 
 ## Recent navigation
 
-Native owner: `AgentMRU.swift`, `ShellModel.swift`, `ShellModelNavigation.swift`. Web owner: `web/src/recent.ts`.
+Native owner: `AgentMRU.swift`, `ShellModel.swift`, `ShellModelNavigation.swift`. Web owner: `web/src/recent.ts`, `web/src/keyboard.ts`, and `CycleOverlay` in `web/src/Overlays.tsx`.
 
-Cycling recent surfaces walks every unified surface in recent-use order, across every project, checkout, and device the session holds: terminal, file/editor, and diff tabs.
-The overlay ("Recent Panels") returns to the actually previous surface on a single chord, and repeated chords toggle between the last two surfaces; holding the modifier while repeating the chord walks older visits rather than tab-strip or agent-list order.
-A second cycle scopes to projects globally and restores each project's last used surface.
+Cycling recent surfaces walks every unified surface in recent-use order, across every project, checkout, and device the session holds: terminal, file/editor, and diff tabs, and on the web every View-area display (file, diff, and browser).
+The overlay ("Recent Panels", ⌃Tab / ⌃⇧Tab in the desktop app and the Swift app, ⌥` / ⌥⇧` in a browser, where Chrome keeps ⌃Tab) returns to the actually previous surface on a single chord, and repeated chords toggle between the last two surfaces; holding the modifier while repeating the chord walks older visits rather than tab-strip or agent-list order.
+A second cycle ("Recent Projects", ⌥Tab / ⌥⇧Tab) scopes to projects globally and restores each project's last used surface.
+Committing a row brings its surface forward in its own project and checkout, switching the Workspace when needed, as one event; a display's View area shows if only Agents showed, and the keyboard lands in it.
+On the web a surface is in use where the keyboard is: the focused checkout's active display while the keyboard is in its View area (or only Views show), else its visible Herdr tab; a commit's intermediate frames are not visits.
+The web shell's Recent Panels holds this machine's surfaces only: a device's tab or display cannot be brought forward from the web shell yet, so no row stands for one, and while a device is in front nothing of this machine's counts as in use.
 Holding the chord's modifier previews; releasing it commits; Escape keeps the original selection; a menu action commits immediately.
 Reopen Closed Tab is disabled when the session-local recent-close stack is empty or a restore is already running, and restoration works regardless of which surface currently owns focus.
 Restoration is one action with no confirmation: an in-flight pane shows inline progress, and a restore without a target pane shows a compact inline warning.

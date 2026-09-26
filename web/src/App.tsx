@@ -6,18 +6,18 @@ import { DraftRecoveryLine, refreshRecoveryDrafts } from "./DraftRecovery";
 import { pruneDrafts, settleDraft } from "./editor/draft";
 import { ConnectionBadge } from "./badge";
 import { configureFileBytes } from "./fileBytes";
-import { installKeyboard } from "./keyboard";
+import { installKeyboard, observeRecent, reconcileHeldCycle } from "./keyboard";
 import { MainScreen } from "./MainScreen";
 import { ConfirmClose, ConfirmTrash, CycleOverlay, NoticeBar } from "./Overlays";
 import { Palette } from "./Palette";
 import { ProjectOverview } from "./ProjectOverview";
 import { installProbe, probeEnabled } from "./probe";
-import { rememberCheckout, rememberTab } from "./recent";
+import { expectSurface, focusSignature } from "./recent";
 import { SettingsGate } from "./SettingsSheet";
 import { FONT_SIZE_BASE, usableAccent, usableFontSize } from "./settings";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./sidebar";
-import { focusedCheckout, focusedRemoteDevice, frontCheckout } from "./snapshot";
+import { focusedRemoteDevice, frontCheckout } from "./snapshot";
 import { OPEN_ANSWER_TIMEOUT_MS, openingProgress, startupScreen } from "./navigation";
 import { useShellStore } from "./store";
 import { WorkspaceDialogs, WorkspaceNotices } from "./WorkspaceDialogs";
@@ -59,8 +59,19 @@ export function App() {
         terminalSelectionText,
       );
     }
-    // The MRU behind ⌥`/⌥Tab and the project row follows what the core
-    // reports as focused, whichever side moved it.
+    // Recent Panels and Recent Projects follow what the operator uses: the
+    // core's focus, whichever side moved it, and where the keyboard is, since
+    // moving between a checkout's terminal and its View area changes no core
+    // state. The operator's next press or click ends a commit's wait.
+    // Focus that lands outside both areas (the sidebar, a palette) is not a
+    // move between surfaces.
+    const observeFocus = (event: FocusEvent) => {
+      if (event.target instanceof Element && event.target.closest("[data-agent-area], [data-view-area]")) observeRecent(useShellStore.getState().rest, true);
+    };
+    const endCommit = () => expectSurface(null);
+    window.addEventListener("focusin", observeFocus);
+    window.addEventListener("pointerdown", endCommit, true);
+    window.addEventListener("keydown", endCommit, true);
     const unsubscribe = useShellStore.subscribe((state, previous) => {
       if (state.rest === previous.rest) return;
       // A terminal lives as long as the core streams its pane; released or
@@ -87,15 +98,17 @@ export function App() {
         useUiStore.getState().setNotice({ text: refusal, refreshable: false });
         useUiStore.getState().setViewFocusRequest(null);
       }
-      const checkout = focusedCheckout(state.rest);
-      if (!checkout) return;
-      const before = focusedCheckout(previous.rest);
-      if (checkout.id !== before?.id) rememberCheckout(checkout.id);
-      if (checkout.active_tab_id && (checkout.id !== before?.id || checkout.active_tab_id !== before?.active_tab_id)) {
-        rememberTab(checkout.id, checkout.active_tab_id);
-      }
+      // A refused commit brings nothing forward, so the next surface in use is a visit again.
+      if (fresh) expectSurface(null);
+      if (state.rest?.navigator === previous.rest?.navigator && state.rest?.workspace_view === previous.rest?.workspace_view) return;
+      observeRecent(state.rest, focusSignature(state.rest) !== focusSignature(previous.rest));
+      const cycle = useUiStore.getState().cycle;
+      if (cycle) useUiStore.getState().setCycle(reconcileHeldCycle(cycle, state.rest));
     });
     return () => {
+      window.removeEventListener("focusin", observeFocus);
+      window.removeEventListener("pointerdown", endCommit, true);
+      window.removeEventListener("keydown", endCommit, true);
       unsubscribe();
       keyboard();
       session.close();
