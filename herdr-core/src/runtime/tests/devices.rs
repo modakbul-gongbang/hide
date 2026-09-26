@@ -135,6 +135,7 @@ fn runtime_with_home() -> Runtime {
         host_helper_dir: None,
         host_helper_root: None,
         workspace_views_path: None,
+        shortcut_import_path: None,
     };
     Runtime::new(
         options,

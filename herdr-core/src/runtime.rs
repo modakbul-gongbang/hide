@@ -1188,6 +1188,10 @@ impl Runtime {
         snapshot.status.environment = environment.statuses;
         let (ui_state, pane_terminal_sizes, disposition) = persistence::load(&state_path);
         snapshot.ui_state = ui_state;
+        let shortcuts_imported = options
+            .shortcut_import_path
+            .as_deref()
+            .is_some_and(|source| import_swift_shortcuts(&mut snapshot, Path::new(source)));
         snapshot.navigator.devices = workspace::devices(&snapshot.ui_state.device_registrations);
         // This machine's row names the root a device consent would name, so
         // the add form can show it before the first device exists.
@@ -1408,6 +1412,9 @@ impl Runtime {
         runtime.resync_navigator_focus();
         runtime.apply_persisted_pet_state();
         runtime.refresh_pet();
+        if shortcuts_imported {
+            runtime.persist_ui_state();
+        }
         runtime
     }
 
@@ -1806,6 +1813,47 @@ fn worktree_agent_line(
         uninstrumented_label: worst.map(|reason| reason.accessibility_label().to_owned()),
         uninstrumented_code: worst.map(|reason| reason.code().to_owned()),
     }
+}
+
+/// Brings the Swift app's pane chords across once: only while the core's own
+/// set is empty and no import ran before, so a set the operator edited here,
+/// or reset to defaults after the import, is never overwritten. Returns
+/// whether the UI state changed and needs saving. A file that is there but
+/// cannot be used is recorded and left for the next launch to try again.
+fn import_swift_shortcuts(snapshot: &mut Snapshot, source: &Path) -> bool {
+    let ui_state = &mut snapshot.ui_state;
+    if ui_state.shortcut_bindings_imported || !ui_state.shortcut_bindings.is_empty() {
+        return false;
+    }
+    let refused = match persistence::read_swift_shortcuts(source) {
+        persistence::SwiftShortcuts::Missing => return false,
+        persistence::SwiftShortcuts::Found(bindings) if events::bindings_fit(&bindings) => {
+            crate::diagnostic!(serde_json::json!({
+                "component": "ui_state",
+                "kind": "ui_state.shortcuts_imported",
+                "message": "Pane shortcuts were brought across from the macOS app",
+                "count": bindings.len(),
+            }));
+            ui_state.shortcut_bindings = bindings;
+            ui_state.shortcut_bindings_imported = true;
+            return true;
+        }
+        persistence::SwiftShortcuts::Found(_) => "too many or too long",
+        persistence::SwiftShortcuts::Unreadable => "unreadable",
+    };
+    let message = format!("The macOS app's pane shortcuts were not brought across: {refused}");
+    crate::diagnostic!(serde_json::json!({
+        "component": "ui_state",
+        "kind": "ui_state.shortcut_import_failed",
+        "message": message,
+        "fallback": "defaults"
+    }));
+    snapshot.status.diagnostics.push(DiagnosticSnapshot {
+        kind: "ui_state.shortcut_import_failed".to_owned(),
+        message,
+        occurred_at: unix_milliseconds(),
+    });
+    false
 }
 
 fn unix_milliseconds() -> u64 {

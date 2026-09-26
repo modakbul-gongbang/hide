@@ -28,6 +28,13 @@ pub struct CoreOptions {
     /// nothing and keeps a document in place of the terminal canvas.
     #[serde(default)]
     pub workspace_views_path: Option<String>,
+    /// The Swift app's persisted state, whose `shortcut_bindings` the core
+    /// adopts once while its own set is empty, so the desktop app starts with
+    /// the pane chords the operator chose there. Only hided passes it: the
+    /// Swift shell owns that file until S10 deletes it, and the core is the
+    /// owner that outlives it.
+    #[serde(default)]
+    pub shortcut_import_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -1775,6 +1782,11 @@ pub struct UiStateSnapshot {
     pub selected_path: Option<String>,
     pub selected_pane_id: Option<String>,
     pub shortcut_bindings: BTreeMap<String, String>,
+    /// Whether `shortcut_bindings` was already brought across from the Swift
+    /// app's state. Persisted, never on the wire: once the import ran, an
+    /// empty set is the operator's reset to defaults, not a set to import.
+    #[serde(skip)]
+    pub shortcut_bindings_imported: bool,
     /// The web shell's own pane chords, command id to chord. They live apart
     /// from `shortcut_bindings` because the two hosts reserve different keys
     /// (Chrome keeps ⌘W), so one host's rebind must never become the other's.
@@ -1910,6 +1922,7 @@ impl Default for UiStateSnapshot {
             selected_path: None,
             selected_pane_id: None,
             shortcut_bindings: BTreeMap::new(),
+            shortcut_bindings_imported: false,
             browser_shortcut_bindings: BTreeMap::new(),
             // The pet shows itself on a first run; hiding it is a choice the
             // user makes and the store then remembers (D-09).
