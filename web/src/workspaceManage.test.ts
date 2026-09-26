@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Checkout, TaskOperation, Workspace } from "./snapshot";
-import { branchProblem, checkoutMenu, normalizePurpose, projectMenu, purposeCountLabel, purposeIsLong, purposeScope, removalFor, scalarCount, taskFor } from "./workspaceManage";
+import { branchProblem, checkoutMenu, folderMenu, normalizePurpose, projectMenu, purposeCountLabel, purposeIsLong, purposeScope, removalFor, scalarCount, taskFor } from "./workspaceManage";
 
 const workspace = (patch: Partial<Workspace> = {}): Workspace => ({
   id: "w1",
@@ -107,6 +107,16 @@ describe("row menus", () => {
     if (blocked.worktree) blocked.worktree.deletion_gate.blocked_reason = "The main worktree cannot be deleted";
     expect(checkoutMenu(blocked)[1]?.unavailable).toBe("The main worktree cannot be deleted");
     expect(checkoutMenu(checkout({ worktree: null }))[1]?.unavailable).toMatch(/not been read/);
+  });
+
+  it("puts a folder's checkout items after its project items, past a separator", () => {
+    const menu = folderMenu(workspace({ is_git: false }), checkout({ is_worktree: false }));
+    expect(menu.map((item) => [item.id, item.separated ?? false])).toEqual([
+      ["pin", false],
+      ["new_worktree", false],
+      ["remove_project", false],
+      ["set_purpose", true],
+    ]);
   });
 });
 

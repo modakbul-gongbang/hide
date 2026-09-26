@@ -64,6 +64,14 @@ export function relativeActivity(unixMs: number | null | undefined, nowMs: numbe
   return `${Math.floor(hours / 24)}d`;
 }
 
+/**
+ * A plain folder's only checkout: a project that is not a Git repository and
+ * holds one checkout is drawn as that checkout, on one row.
+ */
+export function folderCheckout(workspace: Workspace): Checkout | null {
+  return !workspace.is_git && workspace.checkouts.length === 1 ? (workspace.checkouts[0] ?? null) : null;
+}
+
 /** The count first (it names the project's contents), then the recency the order was decided by. */
 export function activityLabel(workspace: Workspace, agents: AgentRow[], nowMs: number): string {
   const paneIds = new Set(workspace.checkouts.flatMap((c) => c.tabs).flatMap((t) => t.panes).map((p) => p.id));

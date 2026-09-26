@@ -221,6 +221,7 @@ A Workspace without nested agent rows shows no chevron and clicking its row open
 Select an agent to focus its pane; expanding or collapsing a populated Workspace only changes the tree.
 Collapsing does not change the selected pane, tab, agent read state, running processes, or aggregated status.
 `collapsed_checkout_ids` persists across launches.
+The web shell starts every checkout closed instead and keeps the ones the operator opened in `expanded_checkout_ids`; a `ui_state_update` without that set, as the Swift shell sends, leaves it unchanged, and each shell ignores the other's set.
 Raised Needs You and Done rows remain available, while number shortcuts skip hidden tree rows.
 
 ### Verification ownership

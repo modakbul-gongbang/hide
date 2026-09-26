@@ -60,6 +60,8 @@ export type MenuItem = {
   label: string;
   /** Why the action is not offered here; the item is drawn disabled with this as its hint. */
   unavailable: string | null;
+  /** Drawn after a separator: where a folder row's menu turns from the project to its checkout. */
+  separated?: boolean;
 };
 
 /** The device a receipt names; the daemon's own machine when it names none. */
@@ -97,6 +99,12 @@ export function projectRemovalConsequences(workspace: Workspace): string[] {
   }
   lines.push("Only the registration is removed: the folder, its repository and its worktrees stay on disk.");
   return lines;
+}
+
+/** A plain folder's one row (`folderCheckout`): the project's items, then its checkout's. */
+export function folderMenu(workspace: Workspace, checkout: Checkout, purposeProblem: string | null = null): MenuItem[] {
+  const [first, ...rest] = checkoutMenu(checkout, purposeProblem);
+  return first ? [...projectMenu(workspace), { ...first, separated: true }, ...rest] : projectMenu(workspace);
 }
 
 /**

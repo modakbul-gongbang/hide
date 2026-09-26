@@ -1,10 +1,10 @@
 // The sidebar's Projects tab on an isolated pinned Herdr and hided: a Git
 // project with an agent in its primary checkout and one in a worktree, and a
-// plain folder with only a shell. The rows name their kind and last-commit
-// age; an opened checkout lists its agents and a closed one names them on its
-// second line; a project folds its checkouts; both folds are the core's
-// ui state, so they survive a reload. Light and Dark captures land in
-// HIDE_E2E_SCREENSHOT_DIR.
+// plain folder with one agent. The rows name their kind and last-commit age;
+// a checkout's agent rows start closed, where its second line names them, and
+// open on its chevron; a plain folder is one row that opens its checkout; a
+// project folds its checkouts; both folds are the core's ui state, so they
+// survive a reload. Light and Dark captures land in HIDE_E2E_SCREENSHOT_DIR.
 
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -82,7 +82,7 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
 
     await workspaceAt(herdr, repo, "메인 체크아웃 정리");
     const rowsPane = await workspaceAt(herdr, worktree, "사이드바 행 구현");
-    await workspaceAt(herdr, notes, null);
+    const notesPane = await workspaceAt(herdr, notes, "회의록 요약 정리");
 
     daemon = await startHided(herdr, "projects-sidebar");
     await open(page, daemon);
@@ -97,29 +97,46 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     // The worktree's commit was just made: its age is the first minute.
     await expect(feature.locator("[data-checkout-age]")).toHaveText("now");
 
-    // A checkout's agent rows start open (the core's collapsed set is empty):
-    // its agent is listed under it and line two gives way to the rows.
+    // A checkout's agent rows start closed: line two names the one agent,
+    // then the checkout's purpose.
     const featureToggle = feature.locator("[data-checkout-toggle]");
+    await expect(featureToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(feature.locator("[data-checkout-agents-open]")).toHaveCount(0);
+    await expect(feature.locator('[data-checkout-agents="1"]')).toBeVisible();
+    await expect(feature.locator("[data-purpose]")).toHaveText("Projects 탭 행 다시 그리기");
+    await screenshot(page, "projects-sidebar-closed");
+
+    // The chevron opens the agent rows, which take line two's place.
+    await featureToggle.click();
     await expect(featureToggle).toHaveAttribute("aria-expanded", "true");
     await expect(feature.locator(`[data-checkout-agents-open] [data-pane="${rowsPane}"]`)).toBeVisible();
     await expect(feature.locator("[data-checkout-agents]")).toHaveCount(0);
     await screenshot(page, "projects-sidebar-open");
 
-    // Closed, line two names the one agent, then the checkout's purpose.
-    await featureToggle.click();
-    await expect(featureToggle).toHaveAttribute("aria-expanded", "false");
-    await expect(feature.locator("[data-checkout-agents-open]")).toHaveCount(0);
-    await expect(feature.locator('[data-checkout-agents="1"]')).toBeVisible();
-    await expect(feature.locator("[data-purpose]")).toHaveText("Projects 탭 행 다시 그리기");
-
-    // A plain folder with only a shell: a folder glyph, one line, nothing to open.
-    const folder = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]", { hasText: /^notes/ }) });
-    await expect(folder.locator("[data-checkout]")).toHaveAttribute("data-checkout-kind", "folder");
-    await expect(folder.locator("[data-checkout-toggle]")).toHaveCount(0);
-
     // The row itself still opens the checkout.
     await feature.locator("[data-checkout]").click();
     await expect(feature.locator("[data-checkout]")).toHaveAttribute("aria-current", "true");
+
+    // A plain folder is one row: no project row or fold of its own, a folder
+    // glyph, and its agent named on line two until its chevron opens the row.
+    const folder = page.locator("[data-project]", { hasText: /^notes/ });
+    await expect(folder.locator("[data-project-row]")).toHaveCount(0);
+    await expect(folder.locator("[data-project-toggle]")).toHaveCount(0);
+    const folderRow = folder.locator("[data-checkout]");
+    await expect(folderRow).toHaveCount(1);
+    await expect(folderRow).toHaveAttribute("data-checkout-kind", "folder");
+    await expect(folder.locator('[data-checkout-agents="1"]')).toBeVisible();
+    const folderToggle = folder.locator("[data-checkout-toggle]");
+    await expect(folderToggle).toHaveAttribute("aria-expanded", "false");
+    // The row opens the folder's checkout, not an Overview.
+    await folderRow.click();
+    await expect(folderRow).toHaveAttribute("aria-current", "true");
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
+    await expect(feature.locator("[data-checkout]")).not.toHaveAttribute("aria-current", "true");
+    await folderToggle.click();
+    await expect(folder.locator(`[data-checkout-agents-open] [data-pane="${notesPane}"]`)).toBeVisible();
+    await folderToggle.click();
+    await expect(folder.locator("[data-checkout-agents-open]")).toHaveCount(0);
 
     // Folding the project hides its checkouts; both folds survive a reload.
     await projectToggle.click();
@@ -129,10 +146,13 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     await expect(projectToggle).toHaveAttribute("aria-expanded", "false");
     await expect(project.locator("[data-checkout]")).toHaveCount(0);
     await projectToggle.click();
-    await expect(featureToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(featureToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(folderToggle).toHaveAttribute("aria-expanded", "false");
 
     for (const theme of ["light", "dark"] as const) {
       await chooseTheme(page, theme);
+      // The Settings shortcut leaves keyboard focus on the last clicked control; its ring is not part of the rows.
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
       await page.locator("[data-project-list]").hover({ position: { x: 1, y: 1 } });
       await screenshot(page, `projects-sidebar-${theme}`);
     }

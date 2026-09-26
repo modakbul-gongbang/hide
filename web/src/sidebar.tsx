@@ -28,11 +28,21 @@ import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { AgentRowItem } from "./components/agent-row";
 import { WeeklyUsage } from "./components/weekly-usage";
 import { agentSections, allAgents, liveDescendantCounts, type ListedAgent } from "./navigation";
-import { activeCheckouts, activityLabel, checkoutPresentation, inactiveCheckouts, projectRows, type CheckoutKind, type ProjectRow } from "./projects";
+import {
+  activeCheckouts,
+  activityLabel,
+  checkoutPresentation,
+  folderCheckout,
+  inactiveCheckouts,
+  projectRows,
+  type CheckoutKind,
+  type CheckoutPresentation,
+  type ProjectRow,
+} from "./projects";
 import { hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
 import { contextAgents, contextWorkspaces, deviceCatalogLine, remoteContext, remoteView } from "./remote";
-import { checkoutMenu, projectMenu, remotePurposeProblem, type MenuItem } from "./workspaceManage";
+import { checkoutMenu, folderMenu, projectMenu, remotePurposeProblem, type MenuItem } from "./workspaceManage";
 import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore } from "./ui";
@@ -200,7 +210,7 @@ function ProjectList({ actions }: { actions: Actions }) {
     remote ? (remoteView(remoteContext(s.rest)?.session ?? null)?.checkout.id ?? null) : (s.rest?.navigator?.focused_checkout_id ?? null),
   );
   const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
-  const collapsedCheckouts = useShellStore((s) => s.rest?.ui_state?.collapsed_checkout_ids ?? NO_IDS);
+  const openCheckouts = useShellStore((s) => s.rest?.ui_state?.expanded_checkout_ids ?? NO_IDS);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
   const catalogState = useShellStore((s) => catalogLineOf(s.rest)?.state ?? null);
   const catalogText = useShellStore((s) => catalogLineOf(s.rest)?.text ?? null);
@@ -208,7 +218,7 @@ function ProjectList({ actions }: { actions: Actions }) {
   const rows = projectRows(workspaces, groups);
   // The folds are this machine's choices, like the inactive groups, so a
   // selected SSH device's tree is drawn open with every checkout's line two.
-  const context: ListContext = { agents, focusedCheckoutId, focusedPaneId, collapsedCheckouts, disclosure: !remote, actions };
+  const context: ListContext = { agents, focusedCheckoutId, focusedPaneId, openCheckouts, disclosure: !remote, actions };
   return (
     <ul className="min-h-0 flex-1 overflow-auto" data-project-list="true">
       {catalogLine ? (
@@ -230,7 +240,8 @@ type ListContext = {
   agents: AgentRow[];
   focusedCheckoutId: string | null;
   focusedPaneId: string | null;
-  collapsedCheckouts: string[];
+  /** Checkouts whose agent rows the operator opened; every other checkout names its agents on line two. */
+  openCheckouts: string[];
   /** False over a selected SSH device, whose tree is drawn with nothing folded. */
   disclosure: boolean;
   actions: Actions;
@@ -325,6 +336,19 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
   const rowsByCheckout = useMemo(() => checkoutAgentRows(workspace, agents), [workspace, agents]);
   const expanded = !disclosure || workspace.expanded !== false;
   const inset = level === "child" ? "pl-[var(--size-lineage-indent)]" : "";
+  const folder = folderCheckout(workspace);
+  if (folder) {
+    return (
+      <FolderRowView
+        workspace={workspace}
+        checkout={folder}
+        agentRows={rowsByCheckout.get(folder.id) ?? NO_BOARD_ROWS}
+        focused={folder.id === context.focusedCheckoutId}
+        inset={inset}
+        context={context}
+      />
+    );
+  }
   const ProjectIcon = workspace.is_git ? FolderGit2Icon : FolderIcon;
   const Chevron = expanded ? ChevronDownIcon : ChevronRightIcon;
   const checkoutRow = (checkout: Checkout) => (
@@ -411,6 +435,19 @@ const KIND_ICON: Record<CheckoutKind, typeof GitBranchIcon> = {
 };
 
 /**
+ * What a checkout's row draws besides line one, shared by the checkout row and
+ * a folder's one row: its agent rows open only where agents run and the
+ * operator opened them, and line two stands in for them while they are closed.
+ */
+function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: CheckoutPresentation, context: ListContext) {
+  const foldable = context.disclosure && agentRows.length > 0;
+  const open = foldable && context.openCheckouts.includes(checkout.id);
+  const purpose = checkout.purpose?.text ?? null;
+  const secondLine = !open && view.secondLineReady && (view.agentCount > 0 || purpose !== null);
+  return { foldable, open, purpose, secondLine };
+}
+
+/**
  * A checkout: the row opens it; its trailing chevron, there only while
  * agents run in it, opens their rows in place of line two, which names them
  * (the representative's mark and provider, +N for the rest) and the purpose.
@@ -429,17 +466,12 @@ const CheckoutRowView = memo(function CheckoutRowView({
   focused: boolean;
   context: ListContext;
 }) {
-  const { agents, actions, disclosure } = context;
+  const { actions } = context;
   const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote));
   const view = checkoutPresentation(workspace, checkout, Date.now());
   const name = checkout.branch ?? checkout.label;
-  const foldable = disclosure && agentRows.length > 0;
-  const open = foldable && !context.collapsedCheckouts.includes(checkout.id);
-  const purpose = checkout.purpose?.text ?? null;
-  const secondLine = !open && view.secondLineReady && (view.agentCount > 0 || purpose !== null);
-  const representative = agents.find((agent) => agent.pane_id === checkout.agent_summary?.representative_pane_id) ?? null;
+  const { foldable, open, purpose, secondLine } = checkoutDisclosure(checkout, agentRows, view, context);
   const KindIcon = KIND_ICON[view.kind];
-  const Chevron = open ? ChevronDownIcon : ChevronRightIcon;
   return (
     <li data-checkout-row={checkout.id}>
       <RowMenu
@@ -457,17 +489,14 @@ const CheckoutRowView = memo(function CheckoutRowView({
               view.settled && "opacity-(--opacity-dimmed)",
             )}
           >
-            <Hint label={view.detail}>
-              <button
-                type="button"
-                data-checkout={checkout.id}
-                data-checkout-kind={view.kind}
-                aria-current={focused ? "true" : undefined}
-                aria-label={[name, view.age, purpose].filter(Boolean).join(", ")}
-                className="absolute inset-0 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-                onClick={() => actions.openWorkspace(workspace.device_id, checkout.workspace_id, checkout.id)}
-              />
-            </Hint>
+            <CheckoutOpenButton
+              workspace={workspace}
+              checkout={checkout}
+              view={view}
+              focused={focused}
+              label={[name, view.age, purpose].filter(Boolean).join(", ")}
+              actions={actions}
+            />
             {/* The row button covers the whole row; a control drawn over it is positioned, so it stacks above. */}
             <span className="pointer-events-none flex min-w-0 items-center gap-sm">
               <Lane width="chevron" />
@@ -475,15 +504,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
               <span aria-hidden="true" className={cn("min-w-0 truncate text-subhead text-foreground", focused ? "font-semibold" : "font-medium")}>
                 {name}
               </span>
-              {!checkout.exists ? (
-                <Badge variant="secondary" className="shrink-0 text-destructive" data-checkout-missing="true">
-                  missing
-                </Badge>
-              ) : checkout.temporary ? (
-                <Badge variant="secondary" className="shrink-0 text-warning">
-                  temporary
-                </Badge>
-              ) : null}
+              <CheckoutBadge checkout={checkout} />
               <span className="flex-1" />
               <span className="group/menu pointer-events-auto relative flex h-(--size-icon-button-toolbar) w-(--size-icon-button-toolbar) shrink-0 items-center justify-end">
                 {view.age ? (
@@ -497,61 +518,211 @@ const CheckoutRowView = memo(function CheckoutRowView({
                 ) : null}
                 {trigger}
               </span>
-              {foldable ? (
-                <button
-                  type="button"
-                  aria-expanded={open}
-                  aria-label={open ? `Hide the agents in ${name}` : `Show the agents in ${name}`}
-                  data-checkout-toggle={checkout.id}
-                  className="pointer-events-auto relative flex h-(--size-icon-button-toolbar) w-(--size-lineage-chevron) shrink-0 items-center justify-center rounded-xs text-subtle-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-                  onClick={() => actions.toggleCheckoutAgents(checkout.id)}
+              {foldable ? <AgentRowsToggle checkoutId={checkout.id} name={name} open={open} onToggle={() => actions.toggleCheckoutAgents(checkout.id)} /> : <Lane width="chevron" />}
+            </span>
+            {secondLine ? <CheckoutSummaryLine checkout={checkout} agentCount={view.agentCount} agents={context.agents} /> : null}
+          </div>
+        )}
+      </RowMenu>
+      {open ? <OpenAgentRows checkoutId={checkout.id} agentRows={agentRows} context={context} /> : null}
+    </li>
+  );
+});
+
+/**
+ * A plain folder (`folderCheckout`): the project and its only checkout are
+ * one row. Line one is the project's name and activity, line two the
+ * checkout's agents and purpose, in the checkout row's columns; the row opens
+ * the checkout and is marked when that checkout is focused, and its menu is
+ * the project's followed by the checkout's. With no fold of its own it keeps
+ * the fold's lane, and its Overview is reached from Main.
+ */
+const FolderRowView = memo(function FolderRowView({
+  workspace,
+  checkout,
+  agentRows,
+  focused,
+  inset,
+  context,
+}: {
+  workspace: Workspace;
+  checkout: Checkout;
+  agentRows: BoardRow[];
+  focused: boolean;
+  inset: string;
+  context: ListContext;
+}) {
+  const { actions } = context;
+  const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote));
+  const view = checkoutPresentation(workspace, checkout, Date.now());
+  const activity = activityLabel(workspace, context.agents, Date.now());
+  const { foldable, open, purpose, secondLine } = checkoutDisclosure(checkout, agentRows, view, context);
+  return (
+    <li data-project={workspace.id} className={inset}>
+      <RowMenu
+        label={`${workspace.label} actions`}
+        items={folderMenu(workspace, checkout, purposeProblem)}
+        onSelect={(item) => (item === "set_purpose" || item === "delete_worktree" ? runCheckoutItem(workspace, checkout, item) : runProjectItem(actions, workspace, item))}
+        data-project-menu={workspace.id}
+      >
+        {(trigger) => (
+          <div
+            className={cn(
+              "relative flex w-full flex-col justify-center gap-xxs pr-xs pl-md",
+              secondLine ? "h-(--size-checkout-row-detailed)" : "h-(--size-control-regular)",
+              focused ? "bg-secondary" : "hover:bg-accent",
+            )}
+          >
+            <CheckoutOpenButton
+              workspace={workspace}
+              checkout={checkout}
+              view={view}
+              focused={focused}
+              label={[workspace.label, activity, purpose].filter(Boolean).join(", ")}
+              actions={actions}
+            />
+            <span className="pointer-events-none flex min-w-0 items-center gap-sm">
+              <Lane width="chevron" />
+              <FolderIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />
+              <span aria-hidden="true" className="min-w-0 truncate text-title font-semibold text-foreground">
+                {workspace.label}
+              </span>
+              <CheckoutBadge checkout={checkout} />
+              <span className="flex-1" />
+              {/* The activity stands where a checkout's age does, and the `⋯` takes its place the same way. */}
+              <span className="group/menu relative flex h-(--size-icon-button-toolbar) min-w-(--size-icon-button-toolbar) shrink-0 items-center justify-end">
+                <span
+                  aria-hidden="true"
+                  className="text-body text-muted-foreground group-hover:opacity-0 group-has-[:focus-visible]/menu:opacity-0 group-has-[[data-state=open]]/menu:opacity-0"
                 >
-                  <Chevron aria-hidden="true" className="size-(--size-icon-sm)" />
-                </button>
+                  {activity}
+                </span>
+                <span className="pointer-events-auto absolute inset-y-0 right-0 w-(--size-icon-button-toolbar)">{trigger}</span>
+              </span>
+              {foldable ? (
+                <AgentRowsToggle checkoutId={checkout.id} name={workspace.label} open={open} onToggle={() => actions.toggleCheckoutAgents(checkout.id)} />
               ) : (
                 <Lane width="chevron" />
               )}
             </span>
-            {secondLine ? (
-              <span aria-hidden="true" className="pointer-events-none flex min-w-0 items-center gap-xs pl-(--size-checkout-metadata-inset) pr-md text-caption">
-                {view.agentCount > 0 ? (
-                  <span className="flex shrink-0 items-center gap-xs" data-checkout-agents={view.agentCount}>
-                    {representative ? <span className={cn("w-(--size-agent-mark) text-center font-mono", markTone(representative))}>{representative.symbol}</span> : null}
-                    <AgentMark kind={representative?.agent_kind} />
-                    {view.agentCount > 1 ? <span className="font-mono text-subtle-foreground">+{view.agentCount - 1}</span> : null}
-                  </span>
-                ) : null}
-                {purpose ? (
-                  <span className="min-w-0 truncate text-muted-foreground" data-purpose={checkout.purpose?.origin}>
-                    {purpose}
-                  </span>
-                ) : null}
-              </span>
-            ) : null}
+            {secondLine ? <CheckoutSummaryLine checkout={checkout} agentCount={view.agentCount} agents={context.agents} /> : null}
           </div>
         )}
       </RowMenu>
-      {open ? (
-        <ul data-checkout-agents-open={checkout.id}>
-          {agentRows.map((row) => (
-            <AgentRowItem
-              key={row.agent.pane_id}
-              agent={row.agent}
-              device={null}
-              depth={row.depth}
-              descendants={0}
-              childRows={NO_AGENT_ROWS}
-              selected={row.agent.pane_id === context.focusedPaneId}
-              onOpen={actions.openAgent}
-              onToggleTree={null}
-              inset={NAME_COLUMN}
-            />
-          ))}
-        </ul>
-      ) : null}
+      {open ? <OpenAgentRows checkoutId={checkout.id} agentRows={agentRows} context={context} /> : null}
     </li>
   );
 });
+
+/** The button under a checkout's whole row: it opens the checkout, and its tooltip carries the pull request, agents, branch and path. */
+function CheckoutOpenButton({
+  workspace,
+  checkout,
+  view,
+  focused,
+  label,
+  actions,
+}: {
+  workspace: Workspace;
+  checkout: Checkout;
+  view: CheckoutPresentation;
+  focused: boolean;
+  label: string;
+  actions: Actions;
+}) {
+  return (
+    <Hint label={view.detail}>
+      <button
+        type="button"
+        data-checkout={checkout.id}
+        data-checkout-kind={view.kind}
+        aria-current={focused ? "true" : undefined}
+        aria-label={label}
+        className="absolute inset-0 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+        onClick={() => actions.openWorkspace(workspace.device_id, checkout.workspace_id, checkout.id)}
+      />
+    </Hint>
+  );
+}
+
+function CheckoutBadge({ checkout }: { checkout: Checkout }) {
+  if (!checkout.exists) {
+    return (
+      <Badge variant="secondary" className="shrink-0 text-destructive" data-checkout-missing="true">
+        missing
+      </Badge>
+    );
+  }
+  if (checkout.temporary) {
+    return (
+      <Badge variant="secondary" className="shrink-0 text-warning">
+        temporary
+      </Badge>
+    );
+  }
+  return null;
+}
+
+/** The chevron at a checkout row's end that opens its agent rows in place of line two. */
+function AgentRowsToggle({ checkoutId, name, open, onToggle }: { checkoutId: string; name: string; open: boolean; onToggle: () => void }) {
+  const Chevron = open ? ChevronDownIcon : ChevronRightIcon;
+  return (
+    <button
+      type="button"
+      aria-expanded={open}
+      aria-label={open ? `Hide the agents in ${name}` : `Show the agents in ${name}`}
+      data-checkout-toggle={checkoutId}
+      className="pointer-events-auto relative flex h-(--size-icon-button-toolbar) w-(--size-lineage-chevron) shrink-0 items-center justify-center rounded-xs text-subtle-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+      onClick={onToggle}
+    >
+      <Chevron aria-hidden="true" className="size-(--size-icon-sm)" />
+    </button>
+  );
+}
+
+/** A closed checkout's line two: the representative agent's mark and provider, +N for the rest, and the purpose. */
+function CheckoutSummaryLine({ checkout, agentCount, agents }: { checkout: Checkout; agentCount: number; agents: AgentRow[] }) {
+  const representative = agents.find((agent) => agent.pane_id === checkout.agent_summary?.representative_pane_id) ?? null;
+  const purpose = checkout.purpose?.text ?? null;
+  return (
+    <span aria-hidden="true" className="pointer-events-none flex min-w-0 items-center gap-xs pl-(--size-checkout-metadata-inset) pr-md text-caption">
+      {agentCount > 0 ? (
+        <span className="flex shrink-0 items-center gap-xs" data-checkout-agents={agentCount}>
+          {representative ? <span className={cn("w-(--size-agent-mark) text-center font-mono", markTone(representative))}>{representative.symbol}</span> : null}
+          <AgentMark kind={representative?.agent_kind} />
+          {agentCount > 1 ? <span className="font-mono text-subtle-foreground">+{agentCount - 1}</span> : null}
+        </span>
+      ) : null}
+      {purpose ? (
+        <span className="min-w-0 truncate text-muted-foreground" data-purpose={checkout.purpose?.origin}>
+          {purpose}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/** An opened checkout's agent rows, their marks on the name column. */
+function OpenAgentRows({ checkoutId, agentRows, context }: { checkoutId: string; agentRows: BoardRow[]; context: ListContext }) {
+  return (
+    <ul data-checkout-agents-open={checkoutId}>
+      {agentRows.map((row) => (
+        <AgentRowItem
+          key={row.agent.pane_id}
+          agent={row.agent}
+          device={null}
+          depth={row.depth}
+          descendants={0}
+          childRows={NO_AGENT_ROWS}
+          selected={row.agent.pane_id === context.focusedPaneId}
+          onOpen={context.actions.openAgent}
+          onToggleTree={null}
+          inset={NAME_COLUMN}
+        />
+      ))}
+    </ul>
+  );
+}
 
 /** An opened checkout draws every descendant, so no row lists folded children. */
 const NO_AGENT_ROWS: AgentRow[] = [];
