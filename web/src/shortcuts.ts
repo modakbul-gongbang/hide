@@ -149,10 +149,14 @@ export function matchHost(event: KeyEventLike, registry: readonly Command[], hos
   );
 }
 
-// The pane commands an operator may rebind on the browser host (PRD S5 D-07):
-// the eight Swift pane commands less Toggle Conversation, which the web shell
-// has no surface for. Their overrides live in the core's
-// `ui_state.browser_shortcut_bindings`, apart from the Swift host's own map.
+// The pane commands an operator may rebind (PRD S5 D-07): the eight Swift
+// pane commands less Toggle Conversation, which the web shell has no surface
+// for. Each host keeps its own set in the core, because the hosts reserve
+// different keys (Chrome keeps ⌘W): the browser's in
+// `ui_state.browser_shortcut_bindings`, and the desktop app's in
+// `ui_state.shortcut_bindings`, the macOS set it shares with the Swift app
+// in the Swift app's own format and command names (user decision 2026-09-26:
+// the desktop app honours the operator's Swift shortcut settings).
 export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
   "split_right",
   "split_down",
@@ -163,11 +167,25 @@ export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
   "text_reset",
 ];
 
+/** The macOS set's name for each editable command (`PaneCommand` in the Swift app). */
+const MACOS_KEYS: Readonly<Partial<Record<CommandId, string>>> = {
+  split_right: "split_right",
+  split_down: "split_down",
+  toggle_zoom: "toggle_zoom",
+  close_pane: "close_pane",
+  text_larger: "increase_text_size",
+  text_smaller: "decrease_text_size",
+  text_reset: "reset_text_size",
+};
+
+/** Swift pane commands the web shell has no surface for: kept in the set, never run here. */
+const MACOS_ONLY_KEYS: readonly string[] = ["toggle_conversation"];
+
 // A physical key a chord may use. Anything else (a dead key, an IME process
 // key, a lone modifier) is not a chord this registry can match reliably.
 const BINDABLE_CODE = /^(Key[A-Z]|Digit[0-9]|Enter|Backquote|Minus|Equal|BracketLeft|BracketRight|Backslash|Semicolon|Quote|Comma|Period|Slash|Arrow(Up|Down|Left|Right))$/;
 
-/** One stored chord: its modifiers in a fixed order, then the physical key. */
+/** One stored browser chord: its modifiers in a fixed order, then the physical key. */
 export function serializeChord(chord: Chord): string {
   return [chord.ctrl && "ctrl", chord.alt && "alt", chord.shift && "shift", chord.meta && "meta", chord.code].filter(Boolean).join("+");
 }
@@ -186,16 +204,114 @@ export function parseChord(text: string): Chord | null {
   return chord;
 }
 
+// The macOS set's keys: one printable ASCII key, named by the character it
+// types unshifted, or Return (`PaneShortcut.parse` in the Swift app).
+const MACOS_KEY_CODES: Readonly<Record<string, string>> = {
+  return: "Enter",
+  "`": "Backquote",
+  "-": "Minus",
+  "=": "Equal",
+  "[": "BracketLeft",
+  "]": "BracketRight",
+  "\\": "Backslash",
+  ";": "Semicolon",
+  "'": "Quote",
+  ",": "Comma",
+  ".": "Period",
+  "/": "Slash",
+};
+
+function macosKeyCode(key: string): string | null {
+  if (/^[a-z]$/.test(key)) return `Key${key.toUpperCase()}`;
+  if (/^[0-9]$/.test(key)) return `Digit${key}`;
+  return MACOS_KEY_CODES[key] ?? null;
+}
+
+function macosKeyName(code: string): string | null {
+  if (/^Key[A-Z]$/.test(code)) return code.slice(3).toLowerCase();
+  if (/^Digit[0-9]$/.test(code)) return code.slice(5);
+  return Object.entries(MACOS_KEY_CODES).find(([, known]) => known === code)?.[0] ?? null;
+}
+
+/** A macOS set chord ("command+shift+return"), read as leniently as the Swift app reads it. */
+export function parseMacosChord(text: string): Chord | null {
+  const parts = text.toLowerCase().replace(/ /g, "").split("+");
+  const key = parts.pop() ?? "";
+  if (parts.length === 0) return null;
+  const code = macosKeyCode(key === "enter" ? "return" : key);
+  if (!code) return null;
+  const chord: Chord = { code };
+  for (const part of parts) {
+    const modifier =
+      part === "cmd" || part === "command" ? "meta" : part === "ctrl" || part === "control" ? "ctrl" : part === "opt" || part === "option" || part === "alt" ? "alt" : part === "shift" ? "shift" : null;
+    if (!modifier || chord[modifier]) return null;
+    chord[modifier] = true;
+  }
+  return chord;
+}
+
+/** A chord in the macOS set's canonical form (modifiers command, control, option, shift), or null when its key has no name there. */
+export function serializeMacosChord(chord: Chord): string | null {
+  const key = macosKeyName(chord.code);
+  if (!key) return null;
+  return [chord.meta && "command", chord.ctrl && "control", chord.alt && "option", chord.shift && "shift", key].filter(Boolean).join("+");
+}
+
+/** Chords macOS or the app keeps on the desktop host (`PaneShortcutPolicy.reserved` in the Swift app). */
+const MACOS_RESERVED: readonly Chord[] = [
+  ...["KeyQ", "KeyH", "KeyM", "KeyS", "KeyW", "Comma"].map((code) => ({ code, meta: true })),
+  ...Array.from({ length: 9 }, (_, index) => ({ code: `Digit${index + 1}`, meta: true })),
+];
+
+/** The key a command's chord is stored under in `host`'s set. */
+export function storedKey(id: CommandId, host: HostKind): string {
+  return host === "electron" ? (MACOS_KEYS[id] ?? id) : id;
+}
+
+export function parseStoredChord(text: string, host: HostKind): Chord | null {
+  return host === "electron" ? parseMacosChord(text) : parseChord(text);
+}
+
+export function serializeStoredChord(chord: Chord, host: HostKind): string | null {
+  return host === "electron" ? serializeMacosChord(chord) : serializeChord(chord);
+}
+
+/** The stored maps the snapshot's `ui_state` carries, one per host. */
+export type StoredShortcutSets = {
+  shortcut_bindings?: Record<string, string>;
+  browser_shortcut_bindings?: Record<string, string>;
+} | null | undefined;
+
+/** `host`'s own stored set. */
+export function storedBindings(uiState: StoredShortcutSets, host: HostKind): Record<string, string> | undefined {
+  return host === "electron" ? uiState?.shortcut_bindings : uiState?.browser_shortcut_bindings;
+}
+
+function withChord(command: Command, chord: Chord, host: HostKind): Command {
+  return host === "electron" ? { ...command, electron: chord } : { ...command, browser: chord, moved: false, movedFrom: undefined };
+}
+
 /**
- * Why `chord` cannot become `id`'s binding in `registry`, or null when it can.
- * The same rules decide a stored override on load, so a chord the editor
- * refuses can never become effective by being written to the core directly.
+ * Why `chord` cannot become `id`'s binding on `host` in `registry`, or null
+ * when it can. The same rules decide a stored set on load, so a chord the
+ * editor refuses can never become effective by being written to the core
+ * directly. The desktop host's rules are the Swift app's, because both run
+ * the one macOS set.
  */
-export function bindingProblem(id: CommandId, chord: Chord, registry: readonly Command[]): string | null {
-  if (!BINDABLE_CODE.test(chord.code)) return "Use a letter, a digit, Return, an arrow or a punctuation key.";
-  if (!chord.meta && !chord.ctrl && !chord.alt) return "Include ⌘, ⌥ or ⌃ so typing in a terminal stays typing.";
-  if (isChromeReserved(chord)) return `${displayChord(chord)} is kept by Chrome or macOS and never reaches the page.`;
-  const taken = registry.find((command) => command.id !== id && command.browser && chordEquals(command.browser, chord));
+export function bindingProblem(id: CommandId, chord: Chord, registry: readonly Command[], host: HostKind = "browser"): string | null {
+  if (host === "electron") {
+    if (!macosKeyName(chord.code)) return "Use one letter, digit or punctuation key, or Return.";
+    if (!chord.meta) return "Include ⌘ so typing in a terminal stays typing.";
+    if (MACOS_RESERVED.some((reserved) => chordEquals(reserved, chord))) return `${displayChord(chord)} is kept by macOS or the app menu.`;
+  } else {
+    if (!BINDABLE_CODE.test(chord.code)) return "Use a letter, a digit, Return, an arrow or a punctuation key.";
+    if (!chord.meta && !chord.ctrl && !chord.alt) return "Include ⌘, ⌥ or ⌃ so typing in a terminal stays typing.";
+    if (isChromeReserved(chord)) return `${displayChord(chord)} is kept by Chrome or macOS and never reaches the page.`;
+  }
+  const taken = registry.find((command) => {
+    const bound = command.id === id ? null : hostChord(command, host);
+    return bound && chordEquals(bound, chord);
+  });
   if (taken) return `${displayChord(chord)} is already ${taken.title}.`;
   return null;
 }
@@ -203,54 +319,58 @@ export function bindingProblem(id: CommandId, chord: Chord, registry: readonly C
 export type EffectiveRegistry = { registry: readonly Command[]; diagnostic: string | null };
 
 /**
- * The registry the browser host runs, with the operator's stored pane chords
- * applied. A stored map that names an unknown command, holds a chord this
- * host cannot use, or collides with another command is dropped as a whole and
- * the defaults run, the way the Swift host resolves its own map; the
- * diagnostic says why.
+ * The registry `host` runs, with the operator's stored pane chords applied.
+ * A stored set that names an unknown command, holds a chord this host cannot
+ * use, or collides with another command is dropped as a whole and the
+ * defaults run, the way the Swift app resolves its own set; the diagnostic
+ * says why. Collisions are judged on the whole set, so two commands that
+ * trade chords are one valid set.
  */
-export function effectiveRegistry(stored: Record<string, string> | null | undefined): EffectiveRegistry {
-  const entries = Object.entries(stored ?? {});
+export function effectiveRegistry(stored: Record<string, string> | null | undefined, host: HostKind = "browser"): EffectiveRegistry {
+  const which = host === "electron" ? "pane" : "browser";
+  const entries = Object.entries(stored ?? {}).filter(([key]) => !(host === "electron" && MACOS_ONLY_KEYS.includes(key)));
   if (entries.length === 0) return { registry: REGISTRY, diagnostic: null };
   let registry: Command[] = [...REGISTRY];
-  for (const [id, text] of entries) {
-    if (!EDITABLE_PANE_COMMANDS.includes(id as CommandId)) {
-      return { registry: REGISTRY, diagnostic: `Stored browser shortcuts name an unknown command (${id}); defaults are in use.` };
-    }
-    const chord = parseChord(text);
-    const problem = chord ? bindingProblem(id as CommandId, chord, registry) : "unreadable chord";
-    if (!chord || problem) {
-      return { registry: REGISTRY, diagnostic: `Stored browser shortcut for ${id} was not usable (${problem}); defaults are in use.` };
-    }
-    registry = registry.map((command) => (command.id === id ? { ...command, browser: chord, moved: false, movedFrom: undefined } : command));
+  const applied: [CommandId, Chord][] = [];
+  for (const [key, text] of entries) {
+    const id = EDITABLE_PANE_COMMANDS.find((command) => storedKey(command, host) === key);
+    if (!id) return { registry: REGISTRY, diagnostic: `Stored ${which} shortcuts name an unknown command (${key}); defaults are in use.` };
+    const chord = parseStoredChord(text, host);
+    if (!chord) return { registry: REGISTRY, diagnostic: `Stored ${which} shortcut for ${key} was not usable (unreadable chord); defaults are in use.` };
+    registry = registry.map((command) => (command.id === id ? withChord(command, chord, host) : command));
+    applied.push([id, chord]);
+  }
+  for (const [id, chord] of applied) {
+    const problem = bindingProblem(id, chord, registry, host);
+    if (problem) return { registry: REGISTRY, diagnostic: `Stored ${which} shortcut for ${storedKey(id, host)} was not usable (${problem}); defaults are in use.` };
   }
   return { registry, diagnostic: null };
 }
 
-let resolved: { stored: Record<string, string> | null | undefined; value: EffectiveRegistry } | null = null;
+const resolved = new Map<HostKind, { stored: Record<string, string> | null | undefined; value: EffectiveRegistry }>();
 
 /**
- * `effectiveRegistry` for the stored map the snapshot carries now, computed
- * once per map: the store shares an unchanged section by reference, so a
+ * `effectiveRegistry` for the stored set the snapshot carries now, computed
+ * once per set: the store shares an unchanged section by reference, so a
  * keystroke reuses the last resolution instead of re-validating every chord.
  */
-export function resolvedRegistry(stored: Record<string, string> | null | undefined): EffectiveRegistry {
-  if (!resolved || resolved.stored !== stored) resolved = { stored, value: effectiveRegistry(stored) };
-  return resolved.value;
+export function resolvedRegistry(stored: Record<string, string> | null | undefined, host: HostKind = "browser"): EffectiveRegistry {
+  const last = resolved.get(host);
+  if (last && last.stored === stored) return last.value;
+  const value = effectiveRegistry(stored, host);
+  resolved.set(host, { stored, value });
+  return value;
 }
 
-/**
- * The registry `host` runs. The stored overrides are the browser host's
- * (`browser_shortcut_bindings`, validated against Chrome's reserved keys);
- * the Electron host runs its own column as it stands.
- */
-export function hostRegistry(stored: Record<string, string> | null | undefined, host: HostKind): EffectiveRegistry {
-  return host === "electron" ? { registry: REGISTRY, diagnostic: null } : resolvedRegistry(stored);
+/** The registry `host` runs: its column with its own stored set applied. */
+export function hostRegistry(uiState: StoredShortcutSets, host: HostKind): EffectiveRegistry {
+  return resolvedRegistry(storedBindings(uiState, host), host);
 }
 
-/** The default browser chord for a command, before any override. */
-export function defaultBrowserChord(id: CommandId): Chord | null {
-  return REGISTRY.find((command) => command.id === id)?.browser ?? null;
+/** A command's default chord on `host`, before any stored set. */
+export function defaultChord(id: CommandId, host: HostKind): Chord | null {
+  const command = REGISTRY.find((row) => row.id === id);
+  return command ? hostChord(command, host) : null;
 }
 
 const CODE_GLYPHS: Record<string, string> = {

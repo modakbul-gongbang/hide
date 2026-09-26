@@ -375,6 +375,7 @@ mod tests {
             host_helper_dir: None,
             host_helper_root: None,
             workspace_views_path: None,
+            shortcut_import_path: None,
         })
         .navigator;
         navigator.workspaces = workspaces;
