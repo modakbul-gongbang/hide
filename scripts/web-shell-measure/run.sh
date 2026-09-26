@@ -35,7 +35,12 @@ cleanup() {
     rm -f "$HERDR_SOCKET_PATH" "${HERDR_SOCKET_PATH%.sock}-client.sock"
   fi
   for pid in "${pids[@]:-}"; do [[ -n "$pid" ]] && wait "$pid" 2>/dev/null; done
-  ps -axo pid,ppid,command > "$MEASURE_RUN_DIR/cleanup-processes.txt"
+  {
+    for pid in "${pids[@]:-}" "${server_pid:-}"; do
+      [[ -n "$pid" ]] || continue
+      ps -p "$pid" -o pid=,ppid=,comm= || printf '%s exited\n' "$pid"
+    done
+  } > "$MEASURE_RUN_DIR/cleanup-processes.txt"
   python3 "$measure_dir/operator-counts.py" "$HERDR_BIN_PATH" "$MEASURE_OPERATOR_SOCKET" "$MEASURE_RUN_DIR/operator-after.json"
 }
 trap cleanup EXIT
@@ -72,6 +77,7 @@ try {
     sidebarMode: document.querySelector('[data-sidebar]')?.getAttribute('data-sidebar'),
     sidebarProjects: document.querySelectorAll('[data-project-row]').length,
     sidebarCheckouts: document.querySelectorAll('[data-checkout]').length,
+    checkoutKinds: [...document.querySelectorAll('[data-checkout-kind]')].map((row) => row.getAttribute('data-checkout-kind')),
     workspaceVisible: Boolean(document.querySelector('[data-workspace-screen]'))
   })`)));
 } finally {
@@ -178,8 +184,8 @@ chrome_pid=$owned_pid
 wait_url "http://127.0.0.1:$MEASURE_CDP_PORT/json/list"
 # A first run opens on Main (PRD S6 D-11). Open the one fixture checkout
 # through the Projects sidebar, one click per poll until its Workspace shows.
-wait_js "(() => { if (document.querySelector('[data-workspace-screen]')) return true; const projects = document.querySelector('[data-sidebar-mode=\"projects\"]'); if (projects?.getAttribute('aria-pressed') !== 'true') { projects?.click(); return false; } const checkout = document.querySelector('[data-checkout]:not([disabled])'); if (checkout) { checkout.click(); return false; } document.querySelector('[data-project-toggle][aria-expanded=\"false\"]')?.click(); return false; })()"
-wait_js 'Boolean(window.__hideProbe && window.__hideProbe.paneId())'
+wait_js "(() => { if (document.querySelector('[data-workspace-screen]')) return true; const projects = document.querySelector('[data-sidebar-mode=\"projects\"]'); if (projects?.getAttribute('aria-pressed') !== 'true') { projects?.click(); return false; } const checkout = document.querySelector('[data-checkout-kind=\"branch\"]:not([disabled])'); if (checkout) { checkout.click(); return false; } document.querySelector('[data-project-toggle][aria-expanded=\"false\"]')?.click(); return false; })()"
+wait_js "window.__hideProbe?.paneId() === '$MEASURE_PANE_ID'"
 sleep 2
 if [[ "$scenario" == multi ]]; then
   # Show each extra tab once so the core attaches it, then return.
