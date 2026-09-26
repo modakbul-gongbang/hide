@@ -38,6 +38,7 @@ mod usage;
 mod view_layout;
 mod wire;
 pub mod workspace;
+pub mod workspace_control;
 pub mod workspace_views;
 mod worktrees;
 mod zoneinfo;

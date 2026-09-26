@@ -260,6 +260,12 @@ When the core cannot serve the cursor, because it dropped terminal chunks the cl
 A frame the daemon cannot produce at all (the core owner thread gone, an empty read, bytes that do not decode) ends that client's loop, which the browser sees as a bare close and answers by reconnecting; the daemon logs it as `ws.snapshot_failed` with the stage, the only trace of why.
 The web shell counts snapshots (`viewGeneration`) and re-requests its terminal view on each one, so a resync redraws the pane instead of trusting what it had drawn.
 The token comparison is constant in the token's length (`subtle`), so a refusal does not leak how much of the token a caller guessed.
+The Workspace CLI uses the same `/ws` for pane-scoped commands and results, without giving an agent the shell's unrestricted token or snapshot stream.
+Its local `pane-bootstrap.sock` only attests a kernel peer PID against Herdr's live pane shell and issues a protected file reference; the socket does not accept control commands.
+The scoped credential records the device, Workspace, checkout, pane terminal identity, and shell process birth, which are checked again for each command; closing or recreating a pane invalidates the credential.
+Direct CLI calls own one-shot credentials and release them after their request, while agent sessions may retain a reference until their pane ends or the eight-hour limit expires.
+The registry has a 64-reference cap, the bootstrap path has an eight-worker cap, and daemon shutdown revokes every reference.
+The shell handshake marks actual web and desktop renderer connections with `client_kind`; Workspace commands refuse when only the daemon or another CLI client is connected.
 Client frames are core events (`schema_version`, `kind`, `payload`).
 HTTP is static assets and `GET /health` (`pid`, `version`, `schema_version`, `clients`).
 No HTTP request dispatches a core event.

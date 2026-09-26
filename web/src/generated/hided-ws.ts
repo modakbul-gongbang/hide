@@ -8,6 +8,7 @@ export type HidedWebSocketContract = Handshake | ServerFrame | ClientEvent;
 export interface Handshake {
   token: string;
   schema_version: 2;
+  client_kind?: "web" | "desktop";
   have_revision?: number;
   have_terminal_sequence?: number;
 }

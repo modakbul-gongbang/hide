@@ -5,6 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use herdr_core::host_access::HostChannel;
+use herdr_core::workspace_control::{Query, QueryResult, Refusal};
 use herdr_core::{Core, CoreOptions};
 use tokio::sync::broadcast;
 
@@ -24,6 +25,12 @@ enum Command {
     DeviceChannel {
         device_id: String,
         reply: Sender<Result<Arc<dyn HostChannel>, String>>,
+    },
+    WorkspaceQuery {
+        device_id: String,
+        pane_id: String,
+        query: Query,
+        reply: Sender<Result<QueryResult, Refusal>>,
     },
     Snapshot {
         have_revision: u64,
@@ -93,6 +100,30 @@ impl CoreHandle {
             .map_err(|_| "core owner thread dropped device-channel reply".to_owned())?
     }
 
+    pub fn workspace_query(
+        &self,
+        device_id: &str,
+        pane_id: &str,
+        query: Query,
+    ) -> Result<QueryResult, Refusal> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::WorkspaceQuery {
+                device_id: device_id.to_owned(),
+                pane_id: pane_id.to_owned(),
+                query,
+                reply,
+            })
+            .map_err(|_| Refusal {
+                reason: "core_unavailable",
+                next_action: "Reconnect Hide and retry",
+            })?;
+        rx.recv().map_err(|_| Refusal {
+            reason: "core_unavailable",
+            next_action: "Reconnect Hide and retry",
+        })?
+    }
+
     pub fn snapshot(
         &self,
         have_revision: u64,
@@ -154,6 +185,14 @@ fn owner_loop(
             }
             Command::DeviceChannel { device_id, reply } => {
                 let _ = reply.send(core.device_channel(&device_id));
+            }
+            Command::WorkspaceQuery {
+                device_id,
+                pane_id,
+                query,
+                reply,
+            } => {
+                let _ = reply.send(core.workspace_control_query(&device_id, &pane_id, query));
             }
             Command::Snapshot {
                 have_revision,

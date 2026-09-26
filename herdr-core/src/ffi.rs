@@ -351,6 +351,24 @@ impl HerdrCore {
         result
     }
 
+    /// Daemon-only pane query. The daemon validates the process that asked;
+    /// the core then resolves current pane membership at the point of use.
+    /// Only owned result data leaves the runtime lock.
+    pub fn workspace_control_query(
+        &self,
+        device_id: &str,
+        pane_id: &str,
+        query: crate::workspace_control::Query,
+    ) -> Result<crate::workspace_control::QueryResult, crate::workspace_control::Refusal> {
+        if !check_owner_thread(self, "workspace_control_query") {
+            return Err(crate::workspace_control::Refusal {
+                reason: "core_unavailable",
+                next_action: "Reconnect Hide and retry",
+            });
+        }
+        lock_recover(&self.runtime).workspace_control_query(device_id, pane_id, query)
+    }
+
     pub fn snapshot_delta(&self, have_revision: u64, have_terminal_sequence: u64) -> Vec<u8> {
         if !check_owner_thread(self, "snapshot") {
             notify_change(self);

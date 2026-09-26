@@ -39,6 +39,8 @@ mod snapshot_delta;
 mod terminal;
 #[path = "tests/view_areas.rs"]
 mod view_areas;
+#[path = "tests/workspace_control.rs"]
+mod workspace_control;
 #[path = "tests/workspace_view.rs"]
 mod workspace_view;
 

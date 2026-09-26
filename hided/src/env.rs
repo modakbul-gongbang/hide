@@ -24,6 +24,7 @@ pub const HOME: &str = "HOME";
 pub const HIDE_OPEN_COMMAND: &str = "HIDE_OPEN_COMMAND";
 pub const HIDE_HOST_HELPER_ROOT: &str = "HIDE_HOST_HELPER_ROOT";
 pub const HERDR_PANE_ID: &str = "HERDR_PANE_ID";
+pub const HIDE_CAP_REF: &str = "HIDE_CAP_REF";
 
 pub const REGISTRY: &[EnvKey] = &[
     EnvKey {
@@ -97,6 +98,12 @@ pub const REGISTRY: &[EnvKey] = &[
         required: false,
         format: "the Herdr pane id; Herdr sets it in every pane it manages",
         absent_behavior: "`hide browser open` without `--pane` opens the page in the Workspace in front",
+    },
+    EnvKey {
+        key: HIDE_CAP_REF,
+        required: false,
+        format: "absolute path to a regular, owner-only pane credential reference",
+        absent_behavior: "Direct Herdr pane callers try kernel peer bootstrap; detached agent tools require a session-scoped reference",
     },
     EnvKey {
         key: HOME,

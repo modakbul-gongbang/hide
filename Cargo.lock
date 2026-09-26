@@ -1362,6 +1362,7 @@ dependencies = [
  "getrandom 0.2.16",
  "herdr-core",
  "hex",
+ "hide-herdr-client",
  "hide-host",
  "http-body-util",
  "hyper",

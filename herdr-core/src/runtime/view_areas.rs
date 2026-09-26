@@ -344,7 +344,7 @@ fn reconcile_layout<'t>(
 }
 
 impl Runtime {
-    fn view_layout_of(&self, key: &WorkspaceKey) -> Option<&Layout> {
+    pub(super) fn view_layout_of(&self, key: &WorkspaceKey) -> Option<&Layout> {
         self.workspace_views
             .as_ref()?
             .views
