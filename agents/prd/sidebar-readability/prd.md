@@ -21,7 +21,7 @@ updated_at: "2026-09-26"
 - Swift shell 개편, 상태 판정·읽음·소유권 프로토콜 변경, 새 에이전트 실행 API, 원격 제어 권한 확대.
 - SSH Projects의 새 접힘 저장 기능, 에이전트 생성 시 자동 펼침 정책, 새 pane 열기 대기·실패 UI.
 - 시안의 추가 branch/device 전용 줄 도입과 사이드바 밖 Overview의 밀도 재설계.
-- 이번 인계 단계의 제품 구현, PR 생성, 병합, 배포 또는 원격 작업자의 자동 시작.
+- PR 병합, 제품 배포 및 기존 운영 세션 변경.
 
 ## Decisions
 
@@ -37,7 +37,7 @@ updated_at: "2026-09-26"
 | D-8 | 로딩·빈 상태·실패·미확인·연결 끊김을 각 표면의 현 계약대로 표현한다. | 시안은 상태 커버리지 참고이며 존재하지 않는 데이터·숫자·오류 처리 기능의 추가 권한이 아니다. |
 | D-9 | 키보드, hover 없는 입력, 좁은 폭, 한글·영문 장문, Light/Dark를 같은 구성요소의 상태로 검증한다. | 숨긴 조작도 접근 가능해야 하고 마우스를 올려야만 핵심 상태를 읽을 수 있어서는 안 된다. |
 | D-10 | 기존 토큰·System 부품을 재사용하고 승인된 행과 상태를 Component 및 screen 시트와 코드에 함께 반영한다. | 디자인 workflow가 시각·수치·코드의 소유권을 나눈다. scratch는 커밋하지 않고 반복되는 상태는 master/ref로 표현한다. |
-| D-11 | 지금은 `feat/sidebar-readability` worktree의 PRD를 origin에 push하고 이슈와 비공개 디자인 자료로 원격 인계한다. | 사용자: “어 우선 좋다.. 이거 우선 worktree 파서 작업 진행해볼래? 근데 이거 우선 branch origin으로 푸시하고 issue 만드는것까지 해줄래? 왜냐면 mac mini쪽 remote쪽에 작업 위임하려고!” 후속 실행은 사용자 지정 작업자가 맡으며 PR/병합 권한은 별도다. |
+| D-11 | 이슈 #174와 `feat/sidebar-readability`를 Mac mini 전용 worktree에서 이어받아 구현·검증·리뷰·origin push·main 대상 PR 생성 및 CI 확인까지 진행한다. 기존 인계만 수행한다는 제한은 이 후속 지시로 종료하며 병합·배포는 제외한다. | 사용자 후속 지시: “mac mini에 herdr로 작업하게 해줄래? opus 5.5로 /goal 해서 이거 작업하라고 해서 PR까지 다 올리게~ 하면 좋을듯~?” 기존 디자인과 제품 범위는 유지한다. |
 | D-12 | engineering/design 원칙을 기존 구조 재사용, 실제 상태 표시, 좁은 오류 노출과 부수효과 없는 접힘으로 적용한다. | `oh-my-principle`의 `engineering/principles.md`, `design/principles.md`, source commit `654485f96b7764c759662d2c3e9e386ebc221cf6`을 읽었다. |
 
 ## Behaviors
