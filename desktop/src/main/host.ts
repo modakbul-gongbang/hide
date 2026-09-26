@@ -12,9 +12,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { app, BrowserWindow, screen, session, shell } from "electron";
+import { app, BrowserWindow, ipcMain, screen, session, shell, type IpcMainEvent } from "electron";
 import type { CommandId } from "../../../web/src/shortcuts";
-import { COMMAND_CHANNEL } from "../channel";
+import { BINDINGS_CHANNEL, COMMAND_CHANNEL } from "../channel";
 import {
   LOGIN_PATH_ARGS,
   parseConnect,
@@ -109,6 +109,22 @@ export class DesktopHost {
     this.stopWatch();
     this.runner.stop();
     this.log.event("host.quit", { state: this.state.kind });
+  }
+
+  /**
+   * The stored macOS pane chords the shell reports, for the menu. Only this
+   * window's page on the daemon origin is heard; anything else is logged and
+   * dropped.
+   */
+  listenBindings(apply: (reported: unknown) => void): void {
+    ipcMain.on(BINDINGS_CHANNEL, (event: IpcMainEvent, reported: unknown) => {
+      const frame = event.senderFrame;
+      if (!this.window || event.sender !== this.window.webContents || !frame || !this.isDaemonUrl(frame.url)) {
+        this.log.event("bindings.refused", { reason: "sender" });
+        return;
+      }
+      apply(reported);
+    });
   }
 
   /** An app-menu click, delivered to the shell only while it is loaded. */

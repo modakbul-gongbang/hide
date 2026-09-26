@@ -5,7 +5,8 @@ import { app, Menu } from "electron";
 import { loadEnv } from "./env";
 import { DesktopHost } from "./host";
 import { HostLog } from "./log";
-import { menuTemplate } from "./menu";
+import { REGISTRY, type Command } from "../../../web/src/shortcuts";
+import { menuBindings, menuTemplate } from "./menu";
 
 const env = loadEnv(process.env);
 // Pinned before anything reads it: the single-instance lock, web storage and
@@ -29,11 +30,29 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on("before-quit", () => host.quit());
 
+  // The menu is rebuilt only when the chords it shows change.
+  let shown: string | null = null;
+  const showMenu = (registry: readonly Command[]) => {
+    const chords = JSON.stringify(registry.map((command) => command.electron));
+    if (chords === shown) return;
+    shown = chords;
+    Menu.setApplicationMenu(
+      Menu.buildFromTemplate(menuTemplate({ appName: app.getName(), send: (id) => host.sendCommand(id), developer: !app.isPackaged, registry })),
+    );
+  };
+  host.listenBindings((reported) => {
+    const resolved = menuBindings(reported);
+    if ("refused" in resolved) {
+      log.event("bindings.refused", { reason: resolved.refused });
+      return;
+    }
+    if (resolved.diagnostic) log.event("bindings.defaults", { detail: resolved.diagnostic });
+    showMenu(resolved.registry);
+  });
+
   app.whenReady().then(
     () => {
-      Menu.setApplicationMenu(
-        Menu.buildFromTemplate(menuTemplate({ appName: app.getName(), send: (id) => host.sendCommand(id), developer: !app.isPackaged })),
-      );
+      showMenu(REGISTRY);
       host.start();
     },
     (error: unknown) => {

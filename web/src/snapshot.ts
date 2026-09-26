@@ -729,6 +729,8 @@ export type SnapshotRest = {
     /** `system`, `light` or `dark`; the page reads anything else as Dark. */
     theme?: string;
     font_size?: number;
+    /** The macOS pane chords the Swift app and the desktop app share, in the Swift app's format. */
+    shortcut_bindings?: Record<string, string>;
     browser_shortcut_bindings?: Record<string, string>;
     [key: string]: unknown;
   };

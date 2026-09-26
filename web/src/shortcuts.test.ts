@@ -11,7 +11,10 @@ import {
   isChromeReserved,
   matchHost,
   parseChord,
+  parseMacosChord,
   serializeChord,
+  serializeMacosChord,
+  storedKey,
 } from "./shortcuts";
 
 describe("shortcut registry", () => {
@@ -87,11 +90,16 @@ describe("shortcut registry", () => {
     expect(matchHost(press("KeyT", { alt: true }), REGISTRY, "browser")?.id).toBe("new_tab");
   });
 
-  it("runs the browser overrides on the browser host only", () => {
-    const stored = { split_right: "alt+KeyR" };
-    expect(matchHost({ code: "KeyR", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, hostRegistry(stored, "browser").registry, "browser")?.id).toBe("split_right");
-    expect(hostRegistry(stored, "electron").registry).toBe(REGISTRY);
-    expect(matchHost({ code: "KeyD", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false }, hostRegistry(stored, "electron").registry, "electron")?.id).toBe("split_right");
+  it("runs each host's own stored set and never the other's", () => {
+    const uiState = { browser_shortcut_bindings: { split_right: "alt+KeyR" }, shortcut_bindings: { toggle_zoom: "command+shift+return" } };
+    const browser = hostRegistry(uiState, "browser").registry;
+    const desktop = hostRegistry(uiState, "electron").registry;
+    expect(matchHost({ code: "KeyR", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, browser, "browser")?.id).toBe("split_right");
+    expect(matchHost({ code: "KeyR", metaKey: false, altKey: true, shiftKey: false, ctrlKey: false }, desktop, "electron")).toBeNull();
+    expect(matchHost({ code: "KeyD", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false }, desktop, "electron")?.id).toBe("split_right");
+    expect(matchHost({ code: "Enter", metaKey: true, altKey: false, shiftKey: true, ctrlKey: false }, desktop, "electron")?.id).toBe("toggle_zoom");
+    expect(matchHost({ code: "Enter", metaKey: true, altKey: false, shiftKey: true, ctrlKey: false }, browser, "browser")).toBeNull();
+    expect(hostRegistry({}, "electron").registry).toBe(REGISTRY);
   });
 
   it("binds every browser chord once", () => {
@@ -172,5 +180,68 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
       ["close_pane", "split_down", "split_right", "text_larger", "text_reset", "text_smaller", "toggle_zoom"].sort(),
     );
     for (const id of EDITABLE_PANE_COMMANDS) expect(REGISTRY.some((command) => command.id === id)).toBe(true);
+  });
+});
+
+describe("the desktop app's macOS pane chords (user decision 2026-09-26)", () => {
+  // The operator's Swift state.json on the day of the decision.
+  const operatorSet = {
+    close_pane: "command+shift+w",
+    split_down: "command+shift+d",
+    split_right: "command+d",
+    toggle_zoom: "command+shift+return",
+    increase_text_size: "command+=",
+    decrease_text_size: "command+-",
+    reset_text_size: "command+0",
+  };
+
+  it("reads the Swift app's chord text the way the Swift app does", () => {
+    expect(parseMacosChord("command+shift+return")).toEqual({ code: "Enter", meta: true, shift: true });
+    expect(parseMacosChord("Cmd + Opt + Enter")).toEqual({ code: "Enter", meta: true, alt: true });
+    expect(parseMacosChord("command+=")).toEqual({ code: "Equal", meta: true });
+    expect(parseMacosChord("command+command+d")).toBeNull();
+    expect(parseMacosChord("d")).toBeNull();
+    expect(parseMacosChord("command+tab")).toBeNull();
+    expect(serializeMacosChord({ code: "Enter", meta: true, shift: true, alt: true, ctrl: true })).toBe("command+control+option+shift+return");
+    expect(serializeMacosChord({ code: "ArrowUp", meta: true })).toBeNull();
+    expect(storedKey("text_larger", "electron")).toBe("increase_text_size");
+    expect(storedKey("text_larger", "browser")).toBe("text_larger");
+  });
+
+  it("runs the operator's set: ⇧⌘↩ zooms and ⌥⌘↩ no longer does", () => {
+    const { registry, diagnostic } = effectiveRegistry(operatorSet, "electron");
+    expect(diagnostic).toBeNull();
+    expect(displayCommand("toggle_zoom", "electron", registry)).toBe("⇧⌘↩");
+    expect(matchHost(press("Enter", { meta: true, shift: true }), registry, "electron")?.id).toBe("toggle_zoom");
+    expect(matchHost(press("Enter", { meta: true, alt: true }), registry, "electron")).toBeNull();
+    expect(displayCommand("text_larger", "electron", registry)).toBe("⌘=");
+    // The browser column is untouched by the macOS set.
+    expect(registry.find((command) => command.id === "toggle_zoom")?.browser).toEqual({ code: "Enter", meta: true, alt: true });
+  });
+
+  it("keeps the Swift-only Toggle Conversation in the set without running it", () => {
+    const { registry, diagnostic } = effectiveRegistry({ toggle_conversation: "command+option+c", split_right: "command+option+r" }, "electron");
+    expect(diagnostic).toBeNull();
+    expect(matchHost(press("KeyR", { meta: true, alt: true }), registry, "electron")?.id).toBe("split_right");
+  });
+
+  it("lets two commands trade chords in one set", () => {
+    const { diagnostic } = effectiveRegistry({ split_right: "command+shift+d", split_down: "command+d" }, "electron");
+    expect(diagnostic).toBeNull();
+  });
+
+  it("refuses what the Swift app refuses, and falls back to the defaults as a whole", () => {
+    expect(bindingProblem("split_right", { code: "KeyR", alt: true }, REGISTRY, "electron")).toMatch(/Include ⌘/);
+    expect(bindingProblem("split_right", { code: "KeyQ", meta: true }, REGISTRY, "electron")).toMatch(/kept by macOS/);
+    expect(bindingProblem("split_right", { code: "ArrowUp", meta: true }, REGISTRY, "electron")).toMatch(/Use one letter/);
+    expect(bindingProblem("split_right", { code: "KeyT", meta: true }, REGISTRY, "electron")).toMatch(/already New tab/);
+    // A chord Chrome keeps is the desktop app's to use.
+    expect(bindingProblem("close_pane", { code: "KeyW", meta: true, shift: true }, REGISTRY, "electron")).toBeNull();
+    const unusable: Record<string, string>[] = [{ split_right: "command+t" }, { split_right: "option+r" }, { zoom: "command+z" }, { split_right: "command+x", split_down: "command+x" }];
+    for (const stored of unusable) {
+      const resolved = effectiveRegistry(stored, "electron");
+      expect(resolved.registry, JSON.stringify(stored)).toBe(REGISTRY);
+      expect(resolved.diagnostic).toMatch(/defaults are in use/);
+    }
   });
 });

@@ -14,7 +14,7 @@ import type { Actions } from "./actions";
 import { hostBridge, hostKind } from "./host";
 import { recentCheckoutOrder, recentTabOrder } from "./recent";
 import { contextWorkspaces, remoteContext, remoteView } from "./remote";
-import { hostRegistry, matchHost, REGISTRY, type CommandId } from "./shortcuts";
+import { hostRegistry, matchHost, REGISTRY, storedBindings, type CommandId } from "./shortcuts";
 import { editorFor, focusedCheckout, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type Cycle } from "./ui";
@@ -185,7 +185,7 @@ export function installKeyboard(actions: Actions): () => void {
       }
       return;
     }
-    const { registry } = hostRegistry(useShellStore.getState().rest?.ui_state?.browser_shortcut_bindings, host);
+    const { registry } = hostRegistry(useShellStore.getState().rest?.ui_state, host);
     const command = matchHost(event, registry, host);
     if (!command) return;
     event.preventDefault();
@@ -214,17 +214,37 @@ export function installKeyboard(actions: Actions): () => void {
 
   // A menu item names a command id; one this registry does not know is a
   // host/shell version mismatch, recorded rather than guessed at.
-  const unsubscribeMenu = hostBridge()?.onCommand((id) => {
+  const bridge = hostBridge();
+  const unsubscribeMenu = bridge?.onCommand((id) => {
     const command = REGISTRY.find((row) => row.id === id);
     if (command) run(command.id, null);
     else useShellStore.getState().noteDiagnostic(`menu command the shell does not know: ${id}`);
   });
+  // The app menu's accelerators follow the stored macOS set: the host gets
+  // it once now and again whenever its contents change, and resolves it with
+  // the same rules this listener runs.
+  // The store notifies per snapshot; an unchanged set is the same object, so
+  // most notifications end at the reference check.
+  let seen: Record<string, string> | undefined | null = null;
+  let reported: string | null = null;
+  const report = () => {
+    const stored = storedBindings(useShellStore.getState().rest?.ui_state, "electron");
+    if (stored === seen) return;
+    seen = stored;
+    const text = JSON.stringify(stored ?? {});
+    if (text === reported) return;
+    reported = text;
+    bridge?.reportBindings(stored ?? {});
+  };
+  const unsubscribeBindings = bridge ? useShellStore.subscribe(report) : null;
+  if (bridge) report();
 
   window.addEventListener("keydown", onKeyDown, true);
   window.addEventListener("keyup", onKeyUp, true);
   window.addEventListener("blur", onBlur);
   return () => {
     unsubscribeMenu?.();
+    unsubscribeBindings?.();
     window.removeEventListener("keydown", onKeyDown, true);
     window.removeEventListener("keyup", onKeyUp, true);
     window.removeEventListener("blur", onBlur);

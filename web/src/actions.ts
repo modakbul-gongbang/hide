@@ -3,6 +3,7 @@
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
 import type { ThemeChoice } from "./theme";
+import type { HostKind } from "./host";
 import {
   closeWithSaveOutcome,
   deleteBuffer,
@@ -706,9 +707,9 @@ export function createActions(dispatch: DispatchFn) {
       updateUiState({ font_size: size });
     },
 
-    /** The browser host's pane chords, replaced as a whole; the Swift host's map is untouched. */
-    setBrowserShortcuts(bindings: Record<string, string>) {
-      updateUiState({ browser_shortcut_bindings: bindings });
+    /** `host`'s pane chords, replaced as a whole; the other host's set is untouched. */
+    setPaneShortcuts(host: HostKind, bindings: Record<string, string>) {
+      updateUiState(host === "electron" ? { shortcut_bindings: bindings } : { browser_shortcut_bindings: bindings });
     },
 
     /** Whether this page is looking at the Agents tab; the daemon owns the core's flag. */
