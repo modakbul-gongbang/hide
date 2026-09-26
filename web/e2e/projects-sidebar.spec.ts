@@ -318,10 +318,21 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     const largeAtRest = await rowGeometry(primaryRow, feature, primaryParts);
     await primaryRow.hover();
     expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(largeAtRest);
+    await rest(page);
+    await keyboardFocus(page, primary.locator("[data-checkout]"));
+    expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(largeAtRest);
+    await rest(page);
+    await screenshot(page, "projects-sidebar-large-font");
     await page.locator('[data-sidebar-mode="agents"]').click();
     await rest(page);
     expect(await sidebarRowsFit(page)).toEqual([]);
-    await screenshot(page, "projects-sidebar-large-font");
+    const largeAgentAtRest = await rowGeometry(agentRow, nextRow, agentParts);
+    await agentRow.hover();
+    expect(await rowGeometry(agentRow, nextRow, agentParts)).toEqual(largeAgentAtRest);
+    await keyboardFocus(page, agentRow.locator("[data-agent-open]"));
+    expect(await rowGeometry(agentRow, nextRow, agentParts)).toEqual(largeAgentAtRest);
+    await rest(page);
+    await screenshot(page, "agents-sidebar-large-font");
     await page.locator('[data-sidebar-mode="projects"]').click();
 
     // B3: on an input with no hover, the controls that wait for the pointer are always shown.

@@ -159,12 +159,14 @@ export async function sidebarRowsFit(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     const problems: string[] = [];
     // Every element in the lists that holds text itself (names, lines, places,
-    // times, chips) and every icon, so a line of marks alone is measured too.
+    // times, chips), every icon, and every status and provider mark, so a
+    // line drawn only in marks is measured too.
     const parts = [...document.querySelectorAll<HTMLElement>("nav[data-sidebar] :is([data-agent-list], [data-project-list]) *")].filter(
       (part) =>
         part.getClientRects().length > 0 &&
-        (part.tagName === "svg" || [...part.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())),
+        (part.matches("svg, [data-mark], [data-agent-mark]") || [...part.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())),
     );
+    const name = (part: Element) => part.textContent?.trim() || part.getAttribute("data-mark") || part.getAttribute("data-agent-mark") || part.getAttribute("class") || part.tagName;
     // What of a part can show: a box that clips its overflow (a badge, a
     // truncated label) is the visible edge of the text inside it.
     const shown = new Map<HTMLElement, DOMRect>();
@@ -173,7 +175,7 @@ export async function sidebarRowsFit(page: Page): Promise<string[]> {
       for (let box = part.parentElement; box && box.tagName !== "NAV"; box = box.parentElement) {
         const edge = box.getBoundingClientRect().bottom;
         if (rect.bottom > edge + 0.5) {
-          if (getComputedStyle(box).overflowY === "visible") problems.push(`${part.textContent} spills below its ${box.tagName.toLowerCase()}`);
+          if (getComputedStyle(box).overflowY === "visible") problems.push(`${name(part)} spills below its ${box.tagName.toLowerCase()}`);
           else rect.height = Math.max(0, edge - rect.top);
         }
         if (box.tagName === "LI") break;
@@ -186,7 +188,7 @@ export async function sidebarRowsFit(page: Page): Promise<string[]> {
         if (a.contains(b) || b.contains(a)) continue;
         const across = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
         const down = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
-        if (across > 1 && down > 1) problems.push(`${a.textContent} overlaps ${b.textContent}`);
+        if (across > 1 && down > 1) problems.push(`${name(a)} overlaps ${name(b)}`);
       }
     }
     return problems;
