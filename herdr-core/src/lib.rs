@@ -32,6 +32,7 @@ mod runtime;
 pub mod schema;
 mod session_sync;
 mod sidebar;
+pub mod tasks;
 mod terminal_attachments;
 mod terminal_recovery;
 mod usage;

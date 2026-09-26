@@ -697,6 +697,9 @@ pub struct SidebarAgentSnapshot {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WorkspaceSnapshot {
     pub home_issues: crate::issues::ProjectIssuesSnapshot,
+    /// The project's tasks in the source-neutral shape the web reads
+    /// (`tasks.rs`); `home_issues` stays as the Swift shell reads it.
+    pub tasks: crate::tasks::ProjectTasksSnapshot,
     pub id: String,
     pub label: String,
     pub path: String,
@@ -747,6 +750,30 @@ pub struct WorkspaceSnapshot {
     /// the registration-only removal.
     #[serde(default)]
     pub removal: WorkspaceRemovalGateSnapshot,
+    /// A local Git project's allocated disk, for the web Overview's facts
+    /// line. Absent from the wire until the project has a size, a reason it
+    /// has none, or a measurement in flight, so the Swift snapshot keeps its
+    /// keys.
+    #[serde(default, skip_serializing_if = "ProjectDiskSnapshot::is_empty")]
+    pub disk: ProjectDiskSnapshot,
+}
+
+/// A Git project's allocated disk: every worktree and the shared Git
+/// directory, counted once, as the catalog sums them (`disk_total_bytes`).
+/// `total_bytes` is known only once every part is measured; `measuring`
+/// says the project is the one named for measuring (`card_measure_disk`
+/// with its `workspace_id`) and its size has not come back yet.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ProjectDiskSnapshot {
+    pub total_bytes: Option<u64>,
+    pub unavailable_reason: Option<String>,
+    pub measuring: bool,
+}
+
+impl ProjectDiskSnapshot {
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
 }
 
 /// The counts the project removal confirmation reads (D-10).
@@ -799,6 +826,11 @@ pub struct CheckoutPurposeSnapshot {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct CheckoutSnapshot {
     pub issue: Option<crate::issues::IssueLinkSnapshot>,
+    /// The key of the task in its project's `tasks` this checkout works on.
+    pub task_key: Option<String>,
+    /// The other tasks of its project's `tasks` this checkout's pull request
+    /// closes, so each of them shows the same pull request (D-07).
+    pub closes_task_keys: Vec<String>,
     #[serde(skip_serializing)]
     pub branch_issue: Option<String>,
     pub github: GithubStatusSnapshot,

@@ -61,6 +61,7 @@ export async function enterWorkspace(page: Page, project?: string): Promise<void
   const workspace = page.locator("[data-workspace-screen]");
   await expect(main.or(workspace)).toBeVisible({ timeout: 20_000 });
   if ((await workspace.count()) > 0) return;
+  await main.locator('[data-main-tab="projects"]').click();
   await main.locator("[data-main-project]:not([disabled])", project ? { hasText: project } : {}).first().click();
   const overview = page.locator("[data-overview-screen]");
   const card = overview.locator("[data-overview-workspace]").first();

@@ -11,7 +11,7 @@ Where a rule is currently native-only, its Swift owner is named below; a web own
 The web shell's Workspace screen follows the approved S6 proposal, its View areas follow the approved boards of PRD S7 (`agents/prd/workspace-views-layout/prd.md`), and its side panel follows the operator's decisions on issue 170.
 Web owner: `web/src/WorkspaceScreen.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, `web/src/viewLayout.ts`, `web/src/viewDrag.ts`, `web/src/viewFocus.ts`.
 
-The toolbar reads left to right: the path back (`Main / Project / Workspace`, naming the device when it is not this Mac), the side panel toggle, then the two tool toggles.
+The toolbar reads left to right: the path back (`All projects / Project / Workspace`, naming the device when it is not this Mac), the side panel toggle, then the two tool toggles.
 The side panel toggle is drawn pressed while the panel shows, and ⌘⇧B does the same; while the panel is closed with views open, it carries a badge with their count, also said in its accessible name.
 Explorer and History are independent toggles that open and close on their own, drawn pressed while shown; with both shown they share the tool column, Explorer above History, each with its own close.
 Pressing a tool toggle while the panel is closed opens the panel with that tool.
@@ -111,8 +111,8 @@ A restored view whose device or root is not ready says what it waits for (such a
 A view whose file cannot be read shows why, with Close view and Retry, and its tab title reads as struck through; either action acts on that view alone and leaves the active area where it was.
 Each state belongs to its view alone, so one missing file never blanks another view or area.
 After a restart the app reopens the last Workspace as it was left: its areas and their sizes, each area's tabs in order with its preview, pinned views, and active view, the active area, the side panel's state, width and Pin, and the tools; unsaved text returns from the browser's drafts, and Herdr's current tabs and panes are used as they are.
-A first run, or a last Workspace that no longer exists, starts on Main.
-A layout file that cannot be read is kept aside and the app starts on Main, where the operator picks a Workspace and continues with a new layout.
+A first run, or a last Workspace that no longer exists, starts on All projects.
+A layout file that cannot be read is kept aside and the app starts on All projects, where the operator picks a Workspace and continues with a new layout.
 A Workspace stored before the side panel, with a layout instead of a panel state, restarts into the nearest panel state: Agents only as a closed panel (an open one when its View areas floated over the agents), Agents and Views as a pinned open panel as wide as its View region was, and Views only as an expanded panel.
 
 ### Browser displays
@@ -167,15 +167,15 @@ Web owner: `web/src/agentRow.ts` (rules, reusable by any list of agents), `web/s
 
 ## Web Project Sessions
 
-A Project's Sessions is a web screen of its own (PRD S8): the Overview's header offers `Sessions`, and the path back reads `Main / Project / Sessions`, naming the device the way Overview does.
-Web owner: `web/src/SessionsScreen.tsx`, `web/src/sessions.ts`.
+A Project's Sessions is the Project Overview's Sessions tab (PRD S8), under the Overview's own path back, title and facts line.
+Web owner: `web/src/ProjectSessions.tsx`, `web/src/sessions.ts`.
 
 It lists the history of every Workspace the Project has, works for a Project with no Workspace, and never runs an agent or sends a session to a Workspace.
 Above the list are the `All / Codex / Claude Code` choice, the search, and the count (`N sessions` or `N of M sessions` while a filter narrows it); a read in flight adds `Reading…` beside the count and keeps the rows.
 Each row shows the provider mark and name, the time, the first request or title in at most two lines with the full text in its tooltip, and the checkout it ran in.
 A session with neither request nor title reads `Untitled session`, muted, and a time it never carried is left out.
 A row's accessible name reads provider, first request, checkout, time, and availability, in that order.
-The open session's row is the list's one Tab stop; the arrows, Home, and End move between rows, ArrowDown from the search lands on that row, and Escape in the search clears it.
+The open session's row is the list's one Tab stop; the arrows, Home, and End move between rows, ArrowDown from the search lands on that row, and Escape in the search clears it, so only an Escape in an empty search leaves the Overview.
 The provider choice is one Tab stop whose arrows choose the neighbouring provider.
 An unreadable session dims only its own row, marks it unavailable, and keeps its reason, Retry, and Copy source location under it, copying the provider file's own path.
 A session whose file is no longer found after the history listed it stays listed the same way, with an explanation that it may have been moved or deleted, and its last location to copy.
@@ -211,28 +211,60 @@ Reintroducing a shared attachment shelf requires a supported provider contract f
 ## Project Home
 
 Native owner: `HideTheme.Home` and the SwiftUI Project Home views.
-Web owner: `web/src/ProjectOverview.tsx` (the Project Overview screen), `web/src/projectBoard.ts` (the board rules); a card's agent row is the Agents list's `web/src/components/agent-row.tsx`.
-Both shells place a checkout by the same rules; `web/src/projectBoard.test.ts` carries the Swift `ProjectHomeTests` cases.
+Web owner: `web/src/ProjectOverview.tsx` (the Project Overview screen), `web/src/MainScreen.tsx` (All projects), `web/src/TaskBoards.tsx` (the Tasks and Agents boards both scopes draw), `web/src/WaitingBand.tsx` (the waiting band), `web/src/projectBoard.ts` (the board rules); a card's agent row is the Agents list's `web/src/components/agent-row.tsx`.
+The web boards follow PRD task-agents-views (`agents/prd/task-agents-views/prd.md`); the frozen Swift Project Home keeps its four Git columns and no longer shares the web's rules.
 
 Project Home uses the shared tab choice, badges, agent identity marks, settings field, icon buttons, and command tooltip.
-Tasks is the session default, with ad hoc requests above four Git-derived columns; Agents reuses each card in three canonical lifecycle columns.
-A checkout's stage is merged when its worktree or its pull request is merged, review with an open pull request, working with changed files or commits ahead, and ready otherwise; agents and the issue's Project status never move it.
+On the web, Tasks is the session default: a board of tasks in five columns, `백로그 · 준비 · 진행 중 · 리뷰 · 완료`, each headed `name · count`, under an ad hoc strip.
+A task comes from the project's task source, GitHub issues today, read through the operator's own `gh`; the core hands the web a source-neutral task (kind, the id the source shows, URL, title, open or closed), so no view reads a GitHub shape.
+A checkout's stage is 완료 when its worktree or its pull request is merged, 리뷰 with an open pull request, 진행 중 with changed files or commits ahead, and 준비 otherwise; agents and the task's own state never move it.
 Merged is Git ancestry against the base the core resolves, so a branch with no commits of its own reads as merged once its base resolves.
-The ad hoc strip holds the checkouts that are not linked worktrees (the primary checkout, a folder) and only while an agent works in them; an open issue no checkout is linked to is a backlog card in ready.
-Needs You uses the warning halo and an error uses danger, and raises the card to the top of its own column without moving it out of its Git column.
-Only the current delivery fact and linked issue appear in the footer; an issue whose Project status names another stage carries a mismatch chip whose tooltip names both.
-GitHub's age appears only in the issue chip's tooltip, as the last successful read, never as a banner.
-Merged and Seen columns start collapsed and list only their names while folded.
-The board scrolls horizontally below its column minimum, and titles wrap to two lines; branch labels truncate at the tail with the full text in a shared tooltip and accessibility help.
+백로그 holds the open tasks no checkout works on; an untracked checkout (a linked worktree with no task) is titled by its branch, carries only its pull request, and says `태스크 없음` quietly.
+The ad hoc strip holds the checkouts that are not linked worktrees (the primary checkout, a folder) and only while an agent works in them.
+완료 starts folded to one line per card (`title >`), and its header's `>` unfolds it; the facts line's merged count opens it.
 
-On the web, the board is the Project Overview: the sidebar's project name (a plain folder's one row opens its checkout instead), Main's project row, the palette and the Workspace toolbar menu open it, and ⌘⇧H opens it for the checkout in front.
-Escape, once no dialog or menu is open, returns to the Workspace in front, or to Main when there is none; an agent row opens its pane and a card header opens its checkout.
-The header carries the path back, the Tasks/Agents choice, the worktree count, the open pull-request count once GitHub has answered, main's distance behind origin only above zero, Sessions, and New agent.
+A task card reads top to bottom: the source glyph and the id small and muted before the title (a title of several lines keeps the id on its first), then a lock and the ids of the open tasks it waits on in warning (a task of another repository by `owner/repo#N`, a task with no id by its title), then the delivery facts (`N files` in warning and `↑N` while in progress, the `PR #n` chip, `↓N behind` on any card), then at most two agents, the ones that need the operator first, and `+N` for the rest.
+An issue is the work and a pull request is the result: the bare `#N` before a title is always the issue and opens it, and its tooltip names the source and the branch; the `PR #n` chip carries the pull-request glyph in its lifecycle colour (open green, draft grey, merged purple, closed red) and the CI mark once read, and opens the pull request.
+A pull request that closes two issues shows the same chip on both cards.
+The title opens the task's checkout and an agent row opens its pane; the card has no link line.
+Start agent (Claude, Codex or a terminal alone) shows only on hover or focus of a 준비 card with no agent on this machine, and the header's one primary action is New agent.
+Needs You uses the warning halo and an error uses danger, and raises the card to the top of its own column without moving it out of its stage; a completed card is dimmed.
+When the source cannot be read the board keeps the last tasks it read and each task card carries a small warning mark whose tooltip says the read failed and how old the tasks are; there is no banner, and the reason is in the diagnostic log.
+A column past 40 cards shows the first 40 and `스크롤 · N개 더 보기`, and a tall column scrolls inside itself; the board scrolls horizontally below its column minimum, and titles wrap.
+With no task source and no agent, Tasks is one sentence and `GitHub 이슈 연결`, whose popover says, in `gh`'s own words, why no source is connected.
+
+While an agent of the scope waits on the operator, a band between the header's facts line and the tabs lists each one, and there is no band when none does.
+It lists the agents asking first (an error before a question or approval), then the finished ones not yet looked at, each in the core's order; a delegated agent is never one of them, since its parent is the one that waits.
+A row is the agent's mark, where it works in mono (`#id · branch`, with the project first on All projects), its request in one line, its age and `>`, and the whole row opens that agent's pane as one event; the answer is given in the pane, and the band has no label, hint or separate open button.
+
+`Board | Dependencies` on the right of the tab row is a mode of the Tasks view, not a tab; like the view it belongs to the page, so another scope keeps it.
+Dependencies draws the Board's task cards left to right with a quiet stage word at each card's top right: a task sits one column right of the longest chain of tasks it waits on, and an arrow runs from the blocker's right middle to the blocked card's left middle.
+Arrows carry no label; one legend line above the graph says the left task has to finish first.
+A blocked card is dimmed with its lock line, a done card is dimmed, and Needs You and error keep the Board's warning and danger borders.
+Tasks with no relation in scope gather below the graph under `관계 없는 태스크`, and untracked checkouts and the ad hoc strip stay on the Board.
+A blocker outside the scope, or one the source says is closed, is no arrow; an open one outside the scope is still named on the lock line.
+On All projects each card carries its project above its title and an arrow crosses projects, and a project with no source keeps its cell under the graph, saying `의존 관계를 그릴 태스크가 없음`.
+When the source answers the issues but not their dependencies, the last blockers read stay and the task cards carry the same warning mark as a failed read.
+
+The Agents view keeps its three columns, `진행 중 · 내 확인 대기 · 끝`, one card per agent: its status mark, provider, title and age; a request it is waiting on in the warning colour; the checkout it works in (on All projects, `project · branch`); its task chip (the issue's `#N`, a local task's title with a file glyph, or a quiet `태스크 없음`) and, for an agent on an SSH device, a device chip.
+A delegated agent sits right under its parent, one step in, in its parent's column.
+A pull request shows here only in the task chip's tooltip (title, branch, pull request); the card opens the pane and the chip opens the task.
+
+On the web, the sidebar picks the scope and the tabs under the title pick the view.
+All projects is every project on every device, a project is its Overview, and a checkout is its Workspace, which has no views of its own.
+The board is the Project Overview: the sidebar's project name (a plain folder's one row opens its checkout instead), All projects' project row, the palette and the Workspace toolbar menu open it, and ⌘⇧H opens it for the checkout in front.
+Escape, once no dialog or menu is open and no text field holds text, returns to the Workspace in front, or to All projects when there is none.
+The title row carries the path back (`All projects / Project`) and New agent; directly under it is one line of facts, then the `Tasks · Agents · Sessions` tabs, which show even while the project has no agent.
+The facts line holds only numbers the system has: the worktree count, the open pull-request count once GitHub has answered, the disk every worktree and the shared Git directory occupy, main's distance behind origin only above zero, and the merged worktrees only above zero.
+Opening a local Git project's Overview asks the core to measure its disk and to read its tasks; the size reads `… GB` while that runs and is left out, with the reason only in the diagnostic log, when a part cannot be read, and there is no refresh control.
+The view is the page's, so choosing another scope keeps Tasks, Agents or Sessions, and a scope without that view shows its first one.
+All projects has `Tasks · Agents · Projects`: the Tasks board mixes every project's tasks, and a project with agents and no task source is gathered under the board in one cell (`<project> · 태스크 출처 연결 안 됨`, its agent count, `GitHub 이슈 연결`) instead of spreading through the columns; the Agents board holds every agent; Projects is the list of every registered project by device.
+Its title row carries Add project, and its facts line the project count and, only when every project can give its part, the open pull-request and merged totals, which are plain facts there.
 New agent opens the New worktree dialog on a Git project and the folder's Workspace otherwise.
-A project with no agent at all shows only an empty state with New agent, a folder with agents only the ad hoc strip, and before the first snapshot the shell's own connecting state shows instead.
+Before the first snapshot the shell's own connecting state shows instead.
 While hided or a device is unreachable the board keeps the last snapshot and the existing connection or device line is the only signal.
 A card's agent row follows the Agents list's row rules above (`web/src/agentRow.ts`): the same first line, second line and branch chip, and the core's waiting-on-children ring.
-The whole lineage is drawn inside its card whatever the sidebar has folded, so a card row carries no chevron and no descendant badge.
+A card row carries no chevron and no descendant badge.
 
 ## Explorer file management
 
@@ -340,9 +372,11 @@ Workspaces with nested agent rows toggle disclosure across the whole row; worksp
 In the web shell a checkout row always opens its checkout: a trailing chevron, drawn only while agents run there, opens and closes their rows, and the row's `⋯` menu takes the last-commit age's place while the pointer is over the row.
 A web checkout's agent rows start closed, so its second line names them, and the checkouts the operator opens are kept in the core's ui state across launches; the Swift shell keeps its own disclosure until it is removed.
 A web project row folds its checkouts from its leading chevron, and the rest of the row opens the project's Overview; both folds are this machine's, so a selected SSH device's tree is drawn with nothing folded.
+The web Projects list is the scope picker: an All projects row heads it, with the layout-grid glyph and `N projects`, and opens All projects.
+One row carries the selected fill at a time, the row of the scope the center shows: All projects, a project row on its Overview, or the focused checkout and its open agent row only while a Workspace is in front.
 A plain folder, a project that is not a Git repository and holds one checkout, is one web row instead of a project row over an identical checkout row.
 Its first line is the project's folder glyph, name and activity, set in the checkout row's columns with the activity where the age stands; its second line and trailing chevron are the checkout's.
-It has no fold of its own and keeps the fold's lane; the row opens the checkout and is marked while that checkout is in front, its menu lists the project's items and then the checkout's, and its Overview is reached from Main, the palette or the Workspace toolbar.
+It has no fold of its own and keeps the fold's lane; the row opens the checkout and is marked while that checkout's Workspace or the project's Overview is in front, its menu lists the project's items and then the checkout's, and its Overview is reached from All projects, the palette or the Workspace toolbar.
 While a checkout's agent rows are closed, its second line names them, the representative agent's mark and provider and `+N` for the rest, before the purpose; a checkout with neither, or one whose Git facts have not been read yet, is one line.
 Workspace disclosure persists across launches and hides only the nested agent rows, preserving selection, running panes, and raised attention rows.
 An agent row's title is its identity label at both densities: the rolling task, or the workspace label when no task exists; a Herdr agent name remains a control identifier and never becomes display copy.
@@ -416,11 +450,14 @@ An add that lands mid-removal cancels the removal and says so, rather than losin
 
 ## Recent navigation
 
-Native owner: `AgentMRU.swift`, `ShellModel.swift`, `ShellModelNavigation.swift`. Web owner: `web/src/recent.ts`.
+Native owner: `AgentMRU.swift`, `ShellModel.swift`, `ShellModelNavigation.swift`. Web owner: `web/src/recent.ts`, `web/src/keyboard.ts`, and `CycleOverlay` in `web/src/Overlays.tsx`.
 
-Cycling recent surfaces walks every unified surface in recent-use order, across every project, checkout, and device the session holds: terminal, file/editor, and diff tabs.
-The overlay ("Recent Panels") returns to the actually previous surface on a single chord, and repeated chords toggle between the last two surfaces; holding the modifier while repeating the chord walks older visits rather than tab-strip or agent-list order.
-A second cycle scopes to projects globally and restores each project's last used surface.
+Cycling recent surfaces walks every unified surface in recent-use order, across every project, checkout, and device the session holds: terminal, file/editor, and diff tabs, and on the web every View-area display (file, diff, and browser).
+The overlay ("Recent Panels", ⌃Tab / ⌃⇧Tab in the desktop app and the Swift app, ⌥` / ⌥⇧` in a browser, where Chrome keeps ⌃Tab) returns to the actually previous surface on a single chord, and repeated chords toggle between the last two surfaces; holding the modifier while repeating the chord walks older visits rather than tab-strip or agent-list order.
+A second cycle ("Recent Projects", ⌥Tab / ⌥⇧Tab) scopes to projects globally and restores each project's last used surface.
+Committing a row brings its surface forward in its own project and checkout, switching the Workspace when needed, as one event; a display's View area shows if only Agents showed, and the keyboard lands in it.
+On the web a surface is in use where the keyboard is: the focused checkout's active display while the keyboard is in its View area (or only Views show), else its visible Herdr tab; a commit's intermediate frames are not visits.
+The web shell's Recent Panels order holds this machine's surfaces only: a device's tab or display cannot be brought forward from another context in the web shell yet, so no row stands for one; while a device is in front, nothing of this machine's counts as in use, and Recent Panels walks that device's visible checkout's Herdr tabs, the shown one first.
 Holding the chord's modifier previews; releasing it commits; Escape keeps the original selection; a menu action commits immediately.
 Reopen Closed Tab is disabled when the session-local recent-close stack is empty or a restore is already running, and restoration works regardless of which surface currently owns focus.
 Restoration is one action with no confirmation: an in-flight pane shows inline progress, and a restore without a target pane shows a compact inline warning.

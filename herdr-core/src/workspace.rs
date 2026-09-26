@@ -438,6 +438,7 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
                     .to_owned();
                 projects.push(WorkspaceSnapshot {
                     home_issues: Default::default(),
+                    tasks: Default::default(),
                     id: workspace_id.clone(),
                     label: name.clone(),
                     path: project_path.to_string_lossy().into_owned(),
@@ -456,6 +457,7 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
                     pinned: false,
                     inactive_checkouts: Default::default(),
                     removal: Default::default(),
+                    disk: Default::default(),
                 });
                 projects.len() - 1
             }
@@ -679,6 +681,7 @@ fn inspect(
 
     WorkspaceSnapshot {
         home_issues: Default::default(),
+        tasks: Default::default(),
         id: id.to_owned(),
         label: label.to_owned(),
         path: normalized.to_string_lossy().into_owned(),
@@ -702,6 +705,7 @@ fn inspect(
         checkouts,
         inactive_checkouts: Default::default(),
         removal: Default::default(),
+        disk: Default::default(),
     }
 }
 
@@ -1241,6 +1245,7 @@ mod tests {
         ];
         let project = WorkspaceSnapshot {
             home_issues: Default::default(),
+            tasks: Default::default(),
             id: "outer".to_owned(),
             label: "Outer".to_owned(),
             path: "/fixture/outer".to_owned(),
@@ -1259,6 +1264,7 @@ mod tests {
             pinned: false,
             inactive_checkouts: Default::default(),
             removal: Default::default(),
+            disk: Default::default(),
         };
 
         let authority = authoritative_session_space(&spaces, &project, "/fixture/outer/worktree")
@@ -1294,6 +1300,7 @@ mod tests {
         ];
         let project = WorkspaceSnapshot {
             home_issues: Default::default(),
+            tasks: Default::default(),
             id: "fixture".to_owned(),
             label: "Fixture".to_owned(),
             path: root.to_string_lossy().into_owned(),
@@ -1312,6 +1319,7 @@ mod tests {
             pinned: false,
             inactive_checkouts: Default::default(),
             removal: Default::default(),
+            disk: Default::default(),
         };
 
         let authority =

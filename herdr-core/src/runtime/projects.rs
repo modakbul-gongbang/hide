@@ -29,6 +29,23 @@ fn remote_purpose_unavailable_reason(version: Option<&str>) -> String {
     }
 }
 
+/// A project's size as its facts line reads it: the catalog's sum once every
+/// part is measured, the reason when a part could not be, and `measuring`
+/// while the project is the one named for measuring and neither has come
+/// back yet.
+fn project_disk(
+    project: Option<&crate::model::ProjectWorktreesSnapshot>,
+    named: bool,
+) -> crate::model::ProjectDiskSnapshot {
+    let total_bytes = project.and_then(|project| project.disk_total_bytes);
+    let unavailable_reason = project.and_then(|project| project.disk_unavailable_reason.clone());
+    crate::model::ProjectDiskSnapshot {
+        measuring: named && total_bytes.is_none() && unavailable_reason.is_none(),
+        total_bytes,
+        unavailable_reason,
+    }
+}
+
 impl Runtime {
     /// What the changes view needs read, or `None` while nothing on screen
     /// shows it. The checkout in front may be on this machine or on a device;
@@ -501,6 +518,8 @@ impl Runtime {
                 continue;
             }
             workspace::apply_worktrees(workspace, &self.worktree_catalog);
+            let named = self.disk_project.as_deref() == Some(workspace.path.as_str());
+            workspace.disk = project_disk(self.worktree_catalog.project(&workspace.path), named);
         }
         crate::project_context::sort_projects(
             &mut self.snapshot.navigator.workspaces,
@@ -619,6 +638,22 @@ impl Runtime {
                     project.status.stale = true;
                     project.status.last_success_at_unix_ms =
                         previous.status.last_success_at_unix_ms;
+                }
+            }
+            // Dependencies that could not be read this pass keep the ones
+            // read before, the same way a failed lookup keeps its answer.
+            if project.issues.dependencies_failure.is_some()
+                && let Some(previous) = self.github.project(&project.root_path)
+            {
+                for issue in &mut project.issues.issues {
+                    if let Some(known) = previous
+                        .issues
+                        .issues
+                        .iter()
+                        .find(|known| known.reference == issue.reference)
+                    {
+                        issue.blocked_by = known.blocked_by.clone();
+                    }
                 }
             }
         }
@@ -1453,7 +1488,7 @@ impl Runtime {
     }
 
     pub fn disk_request(&self) -> crate::disk::DiskRequest {
-        let paths = if self.snapshot.ui_state.right_panel_visible
+        let mut paths = if self.snapshot.ui_state.right_panel_visible
             && matches!(
                 self.snapshot.ui_state.right_panel_section,
                 RightPanelSection::Overview
@@ -1480,10 +1515,53 @@ impl Runtime {
         } else {
             Vec::new()
         };
+        // The project a web Overview named is measured beside the right
+        // panel's; the reader lets the deepest root own its subtree and
+        // counts each inode once, so a path both ask for is one measurement.
+        if let Some(project) = self
+            .disk_project
+            .as_deref()
+            .and_then(|path| self.worktree_catalog.project(path))
+        {
+            paths.extend(project.worktrees.iter().map(|w| PathBuf::from(&w.path)));
+            paths.extend(project.shared_git_path.as_ref().map(PathBuf::from));
+            paths.sort();
+            paths.dedup();
+        }
         crate::disk::DiskRequest {
             paths,
             generation: self.disk_generation,
         }
+    }
+
+    /// Names the local Git project a web Overview shows for measuring, for
+    /// every window of the daemon, and measures it again. A project that is
+    /// not a local Git project here has no size to measure; the refusal is a
+    /// diagnostic, and the Overview simply draws no size.
+    pub(super) fn measure_project_disk(&mut self, workspace_id: &str) -> bool {
+        let Some(path) = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| {
+                workspace.id == workspace_id
+                    && workspace.remote_target_id.is_none()
+                    && workspace.is_git
+            })
+            .map(|workspace| workspace.path.clone())
+        else {
+            crate::diagnostic!(serde_json::json!({
+                "component": "disk",
+                "kind": "project_measure.not_local_git",
+                "workspace_id": workspace_id,
+            }));
+            return false;
+        };
+        self.disk_project = Some(path);
+        self.disk_generation = self.disk_generation.wrapping_add(1);
+        self.refresh_worktree_projection();
+        true
     }
 
     pub fn ingest_disk_usage(&mut self, disk: Vec<crate::model::DiskUsageSnapshot>) -> bool {
@@ -1561,6 +1639,7 @@ impl Runtime {
             &self.snapshot.navigator.agents,
         );
         changed |= self.sync_issues();
+        changed |= self.sync_tasks();
         changed
     }
 

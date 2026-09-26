@@ -6,6 +6,7 @@ import { create } from "zustand";
 import type { Relation } from "./lineage";
 import type { Opening } from "./navigation";
 import type { SettingsTab } from "./settings";
+import type { CycleItem } from "./recent";
 import { placementForWidth, type ToolsPlacement, type ViewFocusRequest, type ViewWorkspace } from "./viewLayout";
 
 export type { ToolsPlacement, ViewFocusRequest } from "./viewLayout";
@@ -27,14 +28,35 @@ export type PendingClose = {
 };
 
 /**
- * Where the center stands (PRD S6 D-02): Main lists every Project, Overview
- * one Project's Workspaces and agents, Sessions that Project's session
- * history (PRD S8), Workspace the front checkout. It is this page's own
- * navigation, like the sidebar's mode: every value it shows is the core's,
- * and the Workspace it shows is the core's front checkout.
+ * The scope the center shows, picked in the sidebar (PRD S6 D-02): All
+ * projects (`main`) lists every Project, `overview` is one Project, and
+ * Workspace is the front checkout. It is this page's own navigation, like
+ * the sidebar's mode: every value it shows is the core's, and the Workspace
+ * it shows is the core's front checkout.
  * `null` until the first snapshot decides where the page starts (D-11).
  */
-export type Screen = { kind: "main" } | { kind: "overview"; projectId: string } | { kind: "sessions"; projectId: string } | { kind: "workspace" };
+export type Screen = { kind: "main" } | { kind: "overview"; projectId: string } | { kind: "workspace" };
+
+/**
+ * How a scope is looked at: its Tasks board, its Agents board, a Project's
+ * session history (PRD S8), or All projects' list of Projects. It belongs to
+ * the page, not to one scope, so choosing another Project keeps the view the
+ * operator was using, and a scope without it shows its first view (PRD
+ * task-agents-views D-01).
+ */
+export type ProjectView = "tasks" | "agents" | "sessions" | "projects";
+
+/**
+ * How the Tasks view draws its tasks: the stage columns, or the tasks that
+ * wait on one another laid out left to right (PRD task-agents-views D-02).
+ * Like the view it belongs to the page, so another scope keeps it (B9).
+ */
+export type TasksMode = "board" | "dependencies";
+
+/** The view a scope draws: the page's own when the scope has it, else the scope's first. */
+export function scopeView(view: ProjectView, views: readonly ProjectView[]): ProjectView {
+  return views.includes(view) ? view : (views[0] ?? view);
+}
 
 /** `file_palette_beside` is ⌘P's list for "Open file to the side" (S7 B4): its pick opens beside the active View area. */
 export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_palette" | "file_palette_beside" | "search" | "settings";
@@ -57,10 +79,10 @@ export type WorkspaceDialog =
   | { kind: "delete_worktree"; workspaceId: string; checkoutId: string }
   | { kind: "remove_project"; workspaceId: string };
 
-/** A held-modifier cycle over recent tabs or projects; committed when ⌥ is released. */
+/** A held-modifier cycle over Recent Panels or Recent Projects; committed when the modifier is released. */
 export type Cycle = {
-  kind: "tabs" | "projects";
-  items: { id: string; label: string; detail: string; workspaceId: string }[];
+  kind: "panels" | "projects";
+  items: CycleItem[];
   index: number;
 };
 
@@ -92,6 +114,8 @@ export type PendingTrash = {
 
 type UiStore = {
   screen: Screen | null;
+  projectView: ProjectView;
+  tasksMode: TasksMode;
   /** The focus asked for by a chip, a Return or a relationship Open, until another replaces it (S6 B15, B16). */
   relation: Relation | null;
   sidebarMode: SidebarMode;
@@ -131,7 +155,7 @@ type UiStore = {
   watchedTask: number | null;
   /** The pane a creation made, to be focused once the snapshot lists it (B13). */
   focusWhenListed: string | null;
-  /** A Workspace or agent asked for from Main, an Overview or the Agents list, until it is in front or refused (S6 B2, B21). */
+  /** A Workspace or agent asked for from All projects, an Overview or the Agents list, until it is in front or refused (S6 B2, B21). */
   opening: Opening | null;
   watchedRemoval: { deviceId: string; path: string; afterId: number } | null;
   /** True while a Shortcuts row is recording: the window listener then runs no command. */
@@ -143,6 +167,8 @@ type UiStore = {
    */
   escapeLayers: (() => void)[];
   setScreen: (screen: Screen) => void;
+  setProjectView: (view: ProjectView) => void;
+  setTasksMode: (mode: TasksMode) => void;
   setRelation: (relation: Relation | null) => void;
   setSidebarMode: (mode: SidebarMode) => void;
   toggleSidebarMode: () => void;
@@ -175,6 +201,8 @@ type UiStore = {
 
 export const useUiStore = create<UiStore>((set, get) => ({
   screen: null,
+  projectView: "tasks",
+  tasksMode: "board",
   relation: null,
   sidebarMode: "agents",
   explorerSelection: null,
@@ -199,6 +227,8 @@ export const useUiStore = create<UiStore>((set, get) => ({
   // Moving by hand drops an open still waiting for its Workspace, so a late
   // answer does not pull the screen away from where the operator went.
   setScreen: (screen) => set({ screen, opening: null }),
+  setProjectView: (projectView) => set({ projectView }),
+  setTasksMode: (tasksMode) => set({ tasksMode }),
   setRelation: (relation) => set({ relation }),
   setSidebarMode: (sidebarMode) => set({ sidebarMode }),
   toggleSidebarMode: () => {

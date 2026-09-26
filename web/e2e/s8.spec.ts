@@ -1,6 +1,6 @@
 // The S8 flow on an isolated pinned Herdr and hided, with Claude Code and
 // Codex session files written under the daemon's private HOME: a Project's
-// Sessions entered from its Overview, empty until an agent has run there and
+// Sessions, the Overview's Sessions tab, empty until an agent has run there and
 // then newest first with provider, request, checkout, time and availability
 // (B1, B2, B4); provider, search, no match and Clear filters (B4); a session
 // read beside the list (B3); an unreadable row and a session whose file went
@@ -92,13 +92,14 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     const sent = countSent(page, last);
     await open(page, daemon);
 
-    // The Overview offers the Project's Sessions (B1); before any agent has
-    // written a session here the list says so.
+    // The Overview's Sessions tab shows the Project's Sessions (B1); before
+    // any agent has written a session here the list says so.
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
+    await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: "fixture" }).click();
     await expect(page.locator("[data-overview-screen]")).toBeVisible();
     await expect(page.locator("[data-overview-screen]")).not.toContainText(/memory/i);
-    await page.locator("[data-overview-sessions]").click();
+    await page.locator('[data-overview-tab="sessions"]').click();
     const screen = page.locator("[data-sessions-screen]");
     await expect(screen).toBeVisible();
     await expect(page.locator("[data-sessions-state]")).toHaveAttribute("data-sessions-state", "empty", { timeout: 20_000 });
@@ -111,8 +112,8 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     // Arriving again reads the history afresh: newest first, the Project's own
     // sessions only, the unreadable one dated by its file (B1, B2).
     const files = writeSessions(daemon.home, root, alpha);
-    await page.locator("[data-go-overview]").click();
-    await page.locator("[data-overview-sessions]").click();
+    await page.locator('[data-overview-tab="tasks"]').click();
+    await page.locator('[data-overview-tab="sessions"]').click();
     const rows = page.locator("[data-session-row]");
     await expect(rows).toHaveCount(4, { timeout: 20_000 });
     expect(await rows.evaluateAll((items) => items.map((item) => item.getAttribute("data-session-row")))).toEqual([
@@ -255,6 +256,7 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await other.setViewportSize({ width: 1280, height: 800 });
     await open(other, daemon);
     await expect(other.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
+    await other.locator('[data-main-tab="projects"]').click();
     await other.locator("[data-main-project]", { hasText: "fixture" }).click();
     const [, second] = herdr.panes;
     await other.locator(`[data-overview-screen] [data-agent-open="${second}"]`).click();
@@ -273,12 +275,13 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await expect(input).toHaveValue(`${daemon.home}/`);
     await input.fill(alpha);
     await other.keyboard.press("Enter");
-    // This machine's sheet stays open for another path; the Project shows on Main.
+    // This machine's sheet stays open for another path; the Project shows on All projects.
     await other.getByLabel("Close new workspace").first().click();
     await other.locator("[data-go-main]").first().click();
+    await other.locator('[data-main-tab="projects"]').click();
     await expect(other.locator("[data-main-project]", { hasText: "alpha" })).toBeVisible({ timeout: 20_000 });
     await other.locator("[data-main-project]", { hasText: "alpha" }).click();
-    await other.locator("[data-overview-sessions]").click();
+    await other.locator('[data-overview-tab="sessions"]').click();
     await expect(other.locator("[data-session-row]")).toHaveCount(1, { timeout: 20_000 });
     await expect(other.locator('[data-session="claude-alpha"]')).toContainText("alpha only request");
     await screenshot(other, "s8-second-window");

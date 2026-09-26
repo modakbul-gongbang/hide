@@ -658,7 +658,7 @@ function DisplayTab({ display, selected, areaActive }: { display: ViewDisplaySna
 }
 
 /** A file's type mark or the diff's comparison mark; never colour alone (D-15). */
-function displayMark(display: ViewDisplaySnapshot) {
+export function displayMark(display: Pick<ViewDisplaySnapshot, "kind" | "label">) {
   if (display.kind === "browser") return <GlobeIcon aria-hidden="true" data-view-mark="browser" className="size-(--size-icon) shrink-0 text-muted-foreground" />;
   if (display.kind === "diff") {
     return (

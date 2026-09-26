@@ -158,7 +158,7 @@ function WorkspaceToolbar({ checkout, view, explorer, changes, actions }: { chec
       <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border bg-sidebar px-sm text-caption" data-workspace-toolbar="true">
         <nav aria-label="Location" className="flex min-w-0 flex-1 items-center gap-xs">
           <button type="button" className="shrink-0 rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setScreen({ kind: "main" })}>
-            Main
+            All projects
           </button>
           <span aria-hidden="true" className="text-muted-foreground">/</span>
           {project ? (

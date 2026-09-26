@@ -86,8 +86,9 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await expect.poll(() => sent.get("focus_checkout")).toBe(focusEvents + 1);
 
     // A plain folder's sidebar row opens its checkout, so its Overview is
-    // reached from Main (S6 B1), and its Workspace row enters the Workspace (B2).
+    // reached from All projects (S6 B1), and its Workspace row enters the Workspace (B2).
     await page.locator("[data-go-main]").click();
+    await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: /^fixture/ }).click();
     await expect(page.locator("[data-overview-screen]")).toBeVisible();
     await page.locator("[data-overview-workspace]").first().click();
@@ -108,10 +109,10 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await expect(page.locator("[role=tab][aria-selected=true]")).toContainText(nextLabel);
     await expect.poll(() => sent.get("create_tab")).toBe(1);
 
-    // ⌥` cycles recent tabs: the previous tab (second) is the first candidate.
+    // ⌥` walks Recent Panels: the previous surface (the second tab) is the first candidate.
     await page.keyboard.down("Alt");
     await page.keyboard.press("Backquote");
-    await expect(page.locator("[data-cycle=tabs] [aria-selected=true]")).toHaveAttribute("data-cycle-row", tabs[1]);
+    await expect(page.locator("[data-cycle=panels] [aria-selected=true]")).toHaveAttribute("data-cycle-row", tabs[1]);
     await page.keyboard.up("Alt");
     await expect(page.locator("[data-cycle]")).toHaveCount(0);
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", tabs[1]);

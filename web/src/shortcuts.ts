@@ -28,8 +28,8 @@ export type CommandId =
   | "close_tab"
   | "reopen_closed_tab"
   | "new_workspace"
-  | "recent_tab"
-  | "previous_recent_tab"
+  | "recent_panel"
+  | "previous_recent_panel"
   | "recent_project"
   | "previous_recent_project"
   | "search"
@@ -71,9 +71,9 @@ export const REGISTRY: readonly Command[] = [
   { id: "new_tab", title: "New tab", group: "Tabs", browser: { code: "KeyT", alt: true }, electron: { code: "KeyT", meta: true }, moved: true, movedFrom: "⌘T" },
   { id: "close_tab", title: "Close tab", group: "Tabs", browser: { code: "KeyW", alt: true }, electron: { code: "KeyW", meta: true }, moved: true, movedFrom: "⌘W" },
   { id: "reopen_closed_tab", title: "Reopen closed tab", group: "Tabs", browser: { code: "KeyT", alt: true, shift: true }, electron: { code: "KeyT", meta: true, shift: true }, moved: true, movedFrom: "⌘⇧T" },
-  { id: "recent_tab", title: "Next recent tab", group: "Tabs", browser: { code: "Backquote", alt: true }, electron: { code: "Tab", ctrl: true }, moved: true, movedFrom: "⌃Tab" },
-  { id: "previous_recent_tab", title: "Previous recent tab", group: "Tabs", browser: { code: "Backquote", alt: true, shift: true }, electron: { code: "Tab", ctrl: true, shift: true }, moved: true, movedFrom: "⌃⇧Tab" },
   { id: "new_workspace", title: "New workspace", group: "Navigate", browser: { code: "KeyN", alt: true, shift: true }, electron: { code: "KeyN", meta: true, shift: true }, moved: true, movedFrom: "⌘⇧N" },
+  { id: "recent_panel", title: "Next recent panel", group: "Navigate", browser: { code: "Backquote", alt: true }, electron: { code: "Tab", ctrl: true }, moved: true, movedFrom: "⌃Tab" },
+  { id: "previous_recent_panel", title: "Previous recent panel", group: "Navigate", browser: { code: "Backquote", alt: true, shift: true }, electron: { code: "Tab", ctrl: true, shift: true }, moved: true, movedFrom: "⌃⇧Tab" },
   { id: "recent_project", title: "Next recent project", group: "Navigate", browser: { code: "Tab", alt: true }, electron: { code: "Tab", alt: true }, moved: false },
   { id: "previous_recent_project", title: "Previous recent project", group: "Navigate", browser: { code: "Tab", alt: true, shift: true }, electron: { code: "Tab", alt: true, shift: true }, moved: false },
   { id: "search", title: "Search", group: "Navigate", browser: { code: "KeyK", meta: true }, electron: { code: "KeyK", meta: true }, moved: false },

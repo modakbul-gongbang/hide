@@ -385,113 +385,325 @@ function screenSidebar(tokens, id, suffix, agents) {
   ]);
 }
 
+// A scope's facts line (MainScreen.tsx FACTS_LINE): mono caption facts, each a
+// glyph and its number, drawn only when the system has the number.
+function factsLine(id, facts) {
+  return frame(id, 'Facts', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'center'}, facts.map((fact, index) =>
+    frame(`${id}-${index}`, fact.label, {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
+      icon(`${id}-${index}-g`, fact.glyph, {size: 12, fill: fact.fill ?? '$--subtle-foreground'}),
+      text(`${id}-${index}-t`, fact.label, {size: '$--text-caption', fill: fact.fill ?? '$--subtle-foreground', mono: true}),
+    ])));
+}
+
+// A project's Overview header (ProjectOverview.tsx): the path back and New
+// agent, the facts line, then the view tabs, the chosen one `view`.
+function overviewHeader(tokens, id, suffix, {project, facts, view, width, mode, waiting = []}) {
+  return frame(`${id}-${suffix}`, 'Header', {layout: 'vertical', gap: '$--spacing-sm', width}, [
+    frame(`${id}-title-${suffix}`, 'Title row', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'center', width}, [
+      frame(`${id}-crumb-${suffix}`, 'Path', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+        text(`${id}-crumb1-${suffix}`, 'All projects', {size: '$--text-caption', fill: '$--subtle-foreground'}),
+        text(`${id}-crumb2-${suffix}`, '/', {size: '$--text-caption', fill: '$--muted-foreground'}),
+        text(`${id}-crumb3-${suffix}`, project, {size: '$--text-headline', weight: '600'}),
+      ]),
+      frame(`${id}-gap-${suffix}`, 'Spacer', {width: 'fill_container', height: 1}, []),
+      screenButton(`${id}-new-${suffix}`, 'New agent', {height: num(tokens, '--size-control-sm'), icon: 'plus'}),
+    ]),
+    factsLine(`${id}-facts-${suffix}`, facts),
+    ...waitingBand(tokens, `${id}-band-${suffix}`, waiting, width),
+    frame(`${id}-rule-${suffix}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
+    viewRow(`${id}-row-${suffix}`, screenTabs(`${id}-tabs-${suffix}`, ['Tasks', 'Agents', 'Sessions'], ['tasks', 'agents', 'sessions'].indexOf(view)), view === 'tasks' ? mode ?? 'board' : null, width),
+  ]);
+}
+
+// The waiting band (WaitingBand.tsx, PRD task-agents-views D-11): one row per
+// agent waiting on the operator - its mark, where it works in mono, its
+// request, its age and a chevron - drawn only while one waits.
+function waitingBand(tokens, id, rows, width) {
+  if (rows.length === 0) return [];
+  return [frame(id, 'Waiting band', {layout: 'vertical', gap: '$--spacing-xxs', width}, rows.map((row, index) =>
+    frame(`${id}-${index}`, 'Waiting row', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: ['$--spacing-xs', '$--spacing-md'], width, fill: '$--card', cornerRadius: '$--radius-md'}, [
+      screenStatusMark(tokens, `${id}-${index}-mark`, row.mark, row.markFill),
+      text(`${id}-${index}-where`, row.where, {size: '$--text-caption', fill: '$--subtle-foreground', mono: true}),
+      text(`${id}-${index}-line`, row.line, {fill: '$--foreground'}),
+      frame(`${id}-${index}-gap`, 'Spacer', {width: 'fill_container', height: 1}, []),
+      text(`${id}-${index}-age`, row.age, {size: '$--text-micro', fill: '$--muted-foreground', mono: true}),
+      icon(`${id}-${index}-g`, 'chevron-right', {size: 12, fill: '$--muted-foreground'}),
+    ])))];
+}
+
+// The tab row: the view tabs, and on the Tasks view its Board | Dependencies
+// mode on the right (TaskBoards.tsx TasksModeToggle, PRD task-agents-views D-02).
+function viewRow(id, tabs, mode, width) {
+  return frame(id, 'View row', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', width}, [
+    tabs,
+    ...(mode ? [screenToggleGroup(`${id}-mode`, ['Board', 'Dependencies'], mode === 'board' ? 0 : 1)] : []),
+  ]);
+}
+
+const OV_WAITING = [
+  {mark: '?', markFill: '$--warning', where: '#170 · feat/waiting-band', line: 'WebContentsView 크기를 창 기준으로 할까요?', age: '20m'},
+];
+
+const HERDR_FACTS = [
+  {glyph: 'folder-git-2', label: '5 worktrees'},
+  {glyph: 'git-pull-request', label: '2 open PRs'},
+  {glyph: 'hard-drive', label: '4.1 GB'},
+  {glyph: 'arrow-down', label: 'main ↓3 behind origin', fill: '$--warning'},
+  {glyph: 'git-merge', label: '3 merged → 정리', fill: '$--pr-merged'},
+];
+
 // -- Screen / Main ------------------------------------------------------------
 
+// All projects (PRD task-agents-views D-10): the title with Add project, the
+// facts line, the Tasks · Agents · Projects tabs, every project's tasks on one
+// board, and a project with agents and no task source gathered below it.
 function buildMain(tokens) {
+  const {taskCard, stageColumn, doneColumn, arrow, legend, chain} = taskBoardParts(tokens);
   function build(suffix) {
     const sidebar = screenSidebar(tokens, 'main-sidebar', suffix, [
       {title: '두 번째 에이전트', status: 'Working'},
       {title: 'Agent one', status: 'Seen', symbol: '○', statusColor: '$--muted-foreground'},
     ]);
-    const list = frame(`main-list-${suffix}`, 'Projects', {width: 480, layout: 'vertical', gap: '$--spacing-md'}, [
-      frame(`main-listhdr-${suffix}`, 'Header', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center'}, [
-        text(`main-listtitle-${suffix}`, 'Projects', {size: '$--text-title', weight: '600'}),
-        screenButton(`main-addproj-${suffix}`, 'Add project', {variant: 'secondary', height: num(tokens, '--size-control-sm')}),
+    const width = 1500;
+    const board = frame(`main-list-${suffix}`, 'All projects', {width, layout: 'vertical', gap: '$--spacing-md'}, [
+      frame(`main-listhdr-${suffix}`, 'Header', {layout: 'vertical', gap: '$--spacing-sm', width}, [
+        frame(`main-listtitlerow-${suffix}`, 'Title row', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', width}, [
+          text(`main-listtitle-${suffix}`, 'All projects', {size: '$--text-headline', weight: '600'}),
+          screenButton(`main-addproj-${suffix}`, 'Add project', {variant: 'ghost', height: num(tokens, '--size-control-sm'), icon: 'plus'}),
+        ]),
+        factsLine(`main-facts-${suffix}`, [
+          {glyph: 'folder', label: '12 projects'},
+          {glyph: 'git-pull-request', label: '5 open PRs'},
+          {glyph: 'git-merge', label: '7 merged', fill: '$--pr-merged'},
+        ]),
+        ...waitingBand(tokens, `main-band-${suffix}`, [{mark: '?', markFill: '$--warning', where: 'herdr-ide · #170 · feat/waiting-band', line: 'WebContentsView 크기를 창 기준으로 할까요?', age: '20m'}], width),
+        frame(`main-rule-${suffix}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
+        viewRow(`main-row-${suffix}`, screenTabs(`main-tabs-${suffix}`, ['Tasks', 'Agents', 'Projects'], 0), 'board', width),
       ]),
-      screenSectionHeader(`main-sect-${suffix}`, {label: 'THIS MAC', count: '', detail: '', width: 480}),
-      screenProjectRow(`main-proj1-${suffix}`, {name: 'sasu-web-design-system-reset', agents: '3 agents', width: 480}),
-      screenProjectRow(`main-proj2-${suffix}`, {name: 'herdr-ide.worktrees/checkout-row-d', agents: 'No agents', width: 480}),
+      frame(`main-cols-${suffix}`, 'Columns', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
+        stageColumn(`main-backlog-${suffix}`, '백로그', '1', [taskCard(`main-b1-${suffix}`, {taskId: '#172', title: 'Graph 뷰', locked: '#171'})]),
+        stageColumn(`main-ready-${suffix}`, '준비', '1', [taskCard(`main-r1-${suffix}`, {taskId: '#171', title: '태스크 출처 어댑터', locked: '#170'})]),
+        stageColumn(`main-working-${suffix}`, '진행 중', '2', [
+          taskCard(`main-w1-${suffix}`, {taskId: '#170', title: '기다리는 것 띠', halo: true, facts: [{label: '4 files', fill: '$--warning', stroke: '$--warning'}], rows: [{...WAITING, title: 'Implementor'}]}),
+          taskCard(`main-w2-${suffix}`, {title: 'quick/155', rows: [{...WORKING, title: '브라우저 표시 확인'}], noTask: true}),
+        ]),
+        stageColumn(`main-review-${suffix}`, '리뷰', '1', [
+          taskCard(`main-v1-${suffix}`, {taskId: '#173', title: '카드 상태 시트', facts: [{label: 'PR #174', glyph: 'git-pull-request', fill: '$--pr-open'}, {label: 'CI', glyph: 'check', fill: '$--success'}]}),
+        ]),
+        doneColumn(`main-done-${suffix}`, ['웹 내비게이션']),
+      ]),
+      frame(`main-unconnected-${suffix}`, 'No task source', {layout: 'vertical', gap: '$--spacing-xs', padding: '$--spacing-sm', width, fill: '$--card', cornerRadius: '$--radius-md', stroke: '$--border', strokeWidth: '$--size-hairline'}, [
+        frame(`main-unconnected-h-${suffix}`, 'Title', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+          icon(`main-unconnected-g-${suffix}`, 'plug', {fill: '$--muted-foreground'}),
+          text(`main-unconnected-t-${suffix}`, 'modakbul · 태스크 출처 연결 안 됨', {weight: '600'}),
+        ]),
+        text(`main-unconnected-d-${suffix}`, '1개 에이전트가 작업 중이지만 이 프로젝트에는 태스크 출처가 없음', {size: '$--text-caption', fill: '$--muted-foreground'}),
+        screenButton(`main-unconnected-b-${suffix}`, 'GitHub 이슈 연결', {variant: 'secondary', height: num(tokens, '--size-control-sm'), icon: 'link-2'}),
+      ]),
     ]);
-    return [sidebar, list];
+    const dependencies = frame(`main-deps-${suffix}`, 'All projects · Dependencies', {width, layout: 'vertical', gap: '$--spacing-lg'}, [
+      frame(`main-dhdr-${suffix}`, 'Header', {layout: 'vertical', gap: '$--spacing-sm', width}, [
+        text(`main-dtitle-${suffix}`, 'All projects', {size: '$--text-headline', weight: '600'}),
+        frame(`main-drule-${suffix}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
+        viewRow(`main-drow-${suffix}`, screenTabs(`main-dtabs-${suffix}`, ['Tasks', 'Agents', 'Projects'], 0), 'dependencies', width),
+      ]),
+      legend(`main-dlegend-${suffix}`),
+      chain(`main-dchain1-${suffix}`, [
+        taskCard(`main-d1-${suffix}`, {project: 'herdr-ide', taskId: '#170', title: '기다리는 것 띠', word: '진행 중', halo: true, facts: [{label: '4 files', fill: '$--warning', stroke: '$--warning'}], rows: [{...WAITING, title: 'Implementor'}]}),
+        arrow(`main-da1-${suffix}`),
+        taskCard(`main-d2-${suffix}`, {project: 'sasu', title: 'judge 백엔드 전환', word: '백로그', locked: 'herdr-ide#170', dim: true}),
+      ]),
+      chain(`main-dchain2-${suffix}`, [
+        taskCard(`main-d3-${suffix}`, {project: 'herdr-ide', taskId: '#171', title: '태스크 출처 어댑터', word: '준비'}),
+        arrow(`main-da2-${suffix}`),
+        taskCard(`main-d4-${suffix}`, {project: 'herdr-ide', taskId: '#172', title: 'Graph 뷰', word: '백로그', locked: '#171', dim: true}),
+      ]),
+      frame(`main-dunconnected-${suffix}`, 'No task source', {layout: 'vertical', gap: '$--spacing-xs', padding: '$--spacing-sm', width, fill: '$--card', cornerRadius: '$--radius-md', stroke: '$--border', strokeWidth: '$--size-hairline'}, [
+        frame(`main-dunconnected-h-${suffix}`, 'Title', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+          icon(`main-dunconnected-g-${suffix}`, 'plug', {fill: '$--muted-foreground'}),
+          text(`main-dunconnected-t-${suffix}`, 'modakbul · 태스크 출처 연결 안 됨', {weight: '600'}),
+        ]),
+        text(`main-dunconnected-d-${suffix}`, '의존 관계를 그릴 태스크가 없음', {size: '$--text-caption', fill: '$--muted-foreground'}),
+      ]),
+    ]);
+    return [sidebar, frame(`main-views-${suffix}`, 'Views', {layout: 'vertical', gap: '$--spacing-xl'}, [board, dependencies])];
   }
-  return screenSheet('screen-main', 'Screen / Main', 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx: the agent/project sidebar beside the Projects list, grouped by device. Long checkout names truncate inside their row (B11).', s => build(s), s => build(s));
+  return screenSheet('screen-main', 'Screen / Main', 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx, TaskBoards.tsx, WaitingBand.tsx: All projects, the scope the sidebar’s top row opens - its title with Add project, the facts line (the project count, and the open-PR and merged totals only when every project can give its part), the waiting band while an agent waits, the Tasks · Agents · Projects tabs, every project’s tasks on one board, and a project with agents and no task source gathered under it; its Dependencies mode names each card’s project above its title and draws a blocker in another project as an arrow. The Projects view is the project list grouped by device.', s => build(s), s => build(s));
 }
 
 // -- Screen / Project Overview -------------------------------------------------
 
-// The Overview board (PRD web-project-overview): a header with the Tasks/Agents
-// tabs, the stat strip, Sessions and New agent; the ad hoc strip; the four Git
-// columns with 머지됨 folded. Cards and agent rows are authored here on local
-// tokens, since no library master draws them; the controls are library refs.
-function buildProjectOverview(tokens) {
+// The task and agent cards both boards draw (PRD task-agents-views D-04,
+// D-06, D-12), authored here on local tokens since no library master draws
+// them. A task card is the id and title, the delivery facts, and at most two
+// agents; an agent card is its identity, the checkout, and its task chip.
+function taskBoardParts(tokens) {
   const column = num(tokens, '--home-column-width');
-  const folded = num(tokens, '--home-collapsed-width');
-  function agentRow(id, {mark, markFill, title, time, detail, detailFill, width}) {
-    return frame(id, 'Agent row', {layout: 'vertical', gap: '$--spacing-xxs', width}, [
-      frame(`${id}-line`, 'Line', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width}, [
-        screenStatusMark(tokens, `${id}-mark`, mark, markFill),
-        frame(`${id}-kind`, 'Provider', {width: 16, height: 16, fill: '$--secondary', cornerRadius: '$--radius-xs'}, []),
-        text(`${id}-title`, title, {weight: '500'}),
-        frame(`${id}-gap`, 'Spacer', {width: 'fill_container', height: 1}, []),
-        text(`${id}-time`, time, {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
-      ]),
-      ...(detail ? [text(`${id}-detail`, detail, {size: '$--text-caption', fill: detailFill, width: width - 40})] : []),
+  const inner = column - 24;
+  function chip(id, label, {fill = '$--subtle-foreground', stroke = '$--border', glyph} = {}) {
+    return frame(id, label, {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', padding: ['$--spacing-xxs', '$--spacing-xs'], cornerRadius: '$--radius-xs', stroke, strokeWidth: '$--size-hairline'}, [
+      ...(glyph ? [icon(`${id}-g`, glyph, {size: 12, fill})] : []),
+      text(`${id}-t`, label, {size: '$--text-micro', fill, weight: '500'}),
     ]);
   }
-  function card(id, {branch, glyph = 'git-branch', purpose, issue, rows, footer, footerFill = '$--muted-foreground', halo = false}) {
-    const inner = column - 24;
-    return frame(id, 'Card', {layout: 'vertical', gap: '$--spacing-xs', padding: '$--spacing-sm', width: column, fill: '$--card', cornerRadius: '$--radius-md', stroke: halo ? '$--warning' : '$--border', strokeWidth: '$--size-hairline'}, [
-      frame(`${id}-head`, 'Header', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: inner}, [
-        icon(`${id}-glyph`, glyph, {fill: '$--muted-foreground'}),
-        text(`${id}-branch`, branch, {size: '$--text-title', weight: '600'}),
-        frame(`${id}-gap`, 'Spacer', {width: 'fill_container', height: 1}, []),
-        ...(issue ? [screenBadge(`${id}-issue`, issue)] : []),
+  function agentLine(id, {mark, markFill, title, width}) {
+    return frame(id, 'Agent row', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width}, [
+      screenStatusMark(tokens, `${id}-mark`, mark, markFill),
+      frame(`${id}-kind`, 'Provider', {width: 16, height: 16, fill: '$--secondary', cornerRadius: '$--radius-xs'}, []),
+      text(`${id}-title`, title, {size: '$--text-body', fill: '$--foreground'}),
+    ]);
+  }
+  function taskCard(id, {taskId, title, locked, facts = [], rows = [], more, noTask = false, halo = false, dim = false, word, project, start = false}) {
+    return frame(id, 'Task card', {layout: 'vertical', gap: '$--spacing-xs', padding: '$--spacing-sm', width: column, fill: '$--card', cornerRadius: '$--radius-md', stroke: halo ? '$--warning' : start ? '$--ring' : '$--border', strokeWidth: '$--size-hairline', ...(dim ? {opacity: 0.72} : {})}, [
+      ...(project ? [text(`${id}-proj`, project, {size: '$--text-caption', fill: '$--muted-foreground'})] : []),
+      frame(`${id}-head`, 'Head', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'start', width: inner}, [
+        ...(taskId ? [frame(`${id}-id`, 'Id', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
+          icon(`${id}-id-g`, 'circle-dot', {size: 12, fill: '$--muted-foreground'}),
+          text(`${id}-id-t`, taskId, {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
+        ])] : []),
+        text(`${id}-title`, title, {size: '$--text-title', weight: '600', width: taskId ? inner - 56 - (word ? 40 : 0) : inner - (word ? 40 : 0)}),
+        ...(word ? [text(`${id}-word`, word, {size: '$--text-caption', fill: '$--muted-foreground'})] : []),
       ]),
-      ...(purpose ? [text(`${id}-purpose`, purpose, {size: '$--text-caption', fill: '$--subtle-foreground', width: inner})] : []),
-      ...rows.map((row, index) => agentRow(`${id}-row${index}`, {...row, width: inner})),
-      ...(footer ? [text(`${id}-footer`, footer, {size: '$--text-caption', fill: footerFill, mono: true})] : []),
+      ...(locked ? [frame(`${id}-lock`, 'Blocked by', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
+        icon(`${id}-lock-g`, 'lock', {size: 12, fill: '$--warning'}),
+        text(`${id}-lock-t`, locked, {size: '$--text-caption', fill: '$--warning'}),
+      ])] : []),
+      ...(facts.length ? [frame(`${id}-facts`, 'Facts', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, facts.map((fact, index) => chip(`${id}-f${index}`, fact.label, fact)))] : []),
+      ...rows.map((row, index) => agentLine(`${id}-row${index}`, {...row, width: inner})),
+      ...(more ? [text(`${id}-more`, more, {size: '$--text-caption', fill: '$--muted-foreground'})] : []),
+      ...(noTask ? [frame(`${id}-none`, 'No task', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
+        icon(`${id}-none-g`, 'link', {size: 12, fill: '$--muted-foreground'}),
+        text(`${id}-none-t`, '태스크 없음', {size: '$--text-caption', fill: '$--muted-foreground'}),
+      ])] : []),
+      ...(start ? [screenButton(`${id}-start`, '에이전트 시작', {variant: 'secondary', height: num(tokens, '--size-control-sm'), icon: 'plus'})] : []),
     ]);
   }
   function stageColumn(id, label, count, cards) {
     return frame(id, label, {layout: 'vertical', gap: '$--spacing-sm', width: column}, [
-      text(`${id}-title`, `${label}  ${count}`, {size: '$--text-subhead', weight: '600'}),
+      text(`${id}-title`, `${label} · ${count}`, {size: '$--text-subhead', weight: '600'}),
       ...cards,
     ]);
   }
+  function doneColumn(id, names) {
+    return frame(id, '완료', {layout: 'vertical', gap: '$--spacing-sm', width: column}, [
+      text(`${id}-title`, `완료 · ${names.length}  ›`, {size: '$--text-subhead', weight: '600'}),
+      ...names.map((name, index) => frame(`${id}-n${index}`, name, {layout: 'horizontal', alignItems: 'center', justifyContent: 'space_between', padding: ['$--spacing-xxs', '$--spacing-sm'], width: column, fill: '$--card', cornerRadius: '$--radius-sm', stroke: '$--border', strokeWidth: '$--size-hairline'}, [
+        text(`${id}-n${index}-t`, name, {size: '$--text-caption', fill: '$--subtle-foreground'}),
+        icon(`${id}-n${index}-g`, 'chevron-right', {size: 12, fill: '$--muted-foreground'}),
+      ])),
+    ]);
+  }
+  function agentCard(id, {mark, markFill, title, time, where, task, device, halo = false}) {
+    const width = column - 40;
+    return frame(id, 'Agent card', {layout: 'vertical', gap: '$--spacing-xxs', padding: '$--spacing-sm', width, fill: '$--card', cornerRadius: '$--radius-md', stroke: halo ? '$--warning' : '$--border', strokeWidth: '$--size-hairline'}, [
+      frame(`${id}-line`, 'Identity', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: width - 24}, [
+        screenStatusMark(tokens, `${id}-mark`, mark, markFill),
+        frame(`${id}-kind`, 'Provider', {width: 16, height: 16, fill: '$--secondary', cornerRadius: '$--radius-xs'}, []),
+        text(`${id}-title`, title, {weight: '600'}),
+        frame(`${id}-gap`, 'Spacer', {width: 'fill_container', height: 1}, []),
+        text(`${id}-time`, time, {size: '$--text-micro', fill: '$--muted-foreground', mono: true}),
+      ]),
+      text(`${id}-where`, where, {size: '$--text-caption', fill: '$--muted-foreground'}),
+      frame(`${id}-chips`, 'Chips', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
+        task ? chip(`${id}-task`, task, {glyph: task.startsWith('#') ? 'circle-dot' : 'file-text'}) : text(`${id}-none`, '태스크 없음', {size: '$--text-caption', fill: '$--muted-foreground'}),
+        ...(device ? [chip(`${id}-dev`, device, {glyph: 'server'})] : []),
+      ]),
+    ]);
+  }
+  // One Dependencies arrow between two cards of a row: the blocker on the
+  // left, the task it blocks on the right (D-09).
+  function arrow(id) {
+    return frame(id, 'Blocks', {layout: 'horizontal', alignItems: 'center', width: num(tokens, '--home-dependency-gap')}, [
+      {type: 'line', id: `${id}-l`, name: 'Line', width: 'fill_container', height: 0, stroke: '$--warning', strokeWidth: '$--size-hairline', strokeAlignment: 'center'},
+      icon(`${id}-g`, 'chevron-right', {size: 12, fill: '$--warning'}),
+    ]);
+  }
+  function legend(id) {
+    return frame(id, 'Legend', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+      icon(`${id}-g`, 'arrow-right', {size: 12, fill: '$--warning'}),
+      text(`${id}-t`, '선행 · 왼쪽 태스크가 끝나야 화살표가 향하는 태스크를 시작할 수 있음', {size: '$--text-caption', fill: '$--muted-foreground'}),
+    ]);
+  }
+  function chain(id, parts) {
+    return frame(id, 'Chain', {layout: 'horizontal', alignItems: 'center'}, parts);
+  }
+  function indented(id, card) {
+    return frame(id, 'Delegated', {layout: 'horizontal', padding: [0, 0, 0, '$--size-lineage-indent']}, [card]);
+  }
+  return {column, chip, taskCard, stageColumn, doneColumn, agentCard, indented, arrow, legend, chain};
+}
+
+const WAITING = {mark: '?', markFill: '$--warning'};
+const WORKING = {mark: '●', markFill: '$--agent-working'};
+const SEEN = {mark: '○', markFill: '$--muted-foreground'};
+const DONE = {mark: '✓', markFill: '$--success'};
+
+// The Overview (PRD task-agents-views): the title row with the path back and
+// New agent, the facts line, the Tasks/Agents/Sessions tabs, then the Tasks
+// board in five columns - the backlog, a ready card offering Start agent on
+// hover, a needs-you card in the warning halo, an untracked checkout with no
+// task, the pull request as the result, Done folded - and the Agents board.
+function buildProjectOverview(tokens) {
+  const {taskCard, stageColumn, doneColumn, agentCard, indented, arrow, legend, chain} = taskBoardParts(tokens);
+  const facts = (files, ahead) => [...(files ? [{label: `${files} files`, fill: '$--warning', stroke: '$--warning'}] : []), ...(ahead ? [{label: `↑${ahead}`}] : [])];
+  const pr = (number, fill = '$--pr-open') => ({label: `PR #${number}`, glyph: 'git-pull-request', fill});
   function build(suffix) {
-    const idle = {mark: '○', markFill: '$--subtle-foreground'};
-    const header = frame(`ov-head-${suffix}`, 'Header', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'center', width: 1240}, [
-      frame(`ov-crumb-${suffix}`, 'Path', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-        text(`ov-crumb1-${suffix}`, 'Main', {size: '$--text-caption', fill: '$--subtle-foreground'}),
-        text(`ov-crumb2-${suffix}`, '/', {size: '$--text-caption', fill: '$--muted-foreground'}),
-        text(`ov-crumb3-${suffix}`, 'herdr-ide', {size: '$--text-headline', weight: '600'}),
+    const tasks = frame(`ov-tasks-${suffix}`, 'Tasks', {layout: 'vertical', gap: '$--spacing-lg', width: 1560}, [
+      overviewHeader(tokens, 'ov-head', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'tasks', width: 1560, waiting: OV_WAITING}),
+      frame(`ov-cols-${suffix}`, 'Columns', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
+        stageColumn(`ov-backlog-${suffix}`, '백로그', '2', [
+          taskCard(`ov-b1-${suffix}`, {taskId: '#172', title: 'Graph 뷰', locked: '#171'}),
+          taskCard(`ov-b2-${suffix}`, {taskId: '#191', title: '설정 화면에서 원격 기기 재연결 흐름을 다듬고 오류 메시지를 정리하는 작업'}),
+        ]),
+        stageColumn(`ov-ready-${suffix}`, '준비', '2', [
+          taskCard(`ov-r1-${suffix}`, {taskId: '#175', title: '모바일 레이아웃 검토', start: true}),
+          taskCard(`ov-r2-${suffix}`, {taskId: '#171', title: '태스크 출처 어댑터', locked: '#170'}),
+        ]),
+        stageColumn(`ov-working-${suffix}`, '진행 중', '2', [
+          taskCard(`ov-w1-${suffix}`, {taskId: '#170', title: '기다리는 것 띠', halo: true, facts: facts(4), rows: [{...WAITING, title: 'Implementor'}, {...SEEN, title: 'Observer'}], more: '+1'}),
+          taskCard(`ov-w2-${suffix}`, {title: 'quick/155', rows: [{...WORKING, title: '브라우저 표시 확인'}], noTask: true}),
+        ]),
+        stageColumn(`ov-review-${suffix}`, '리뷰', '1', [
+          taskCard(`ov-v1-${suffix}`, {taskId: '#173', title: '카드 상태 시트', facts: [pr(174), {label: 'CI', glyph: 'x', fill: '$--destructive'}], rows: [{...DONE, title: '리뷰 반영'}]}),
+        ]),
+        doneColumn(`ov-done-${suffix}`, ['웹 내비게이션']),
       ]),
-      screenTabs(`ov-tabs-${suffix}`, ['Tasks', 'Agents'], 0),
-      text(`ov-stats-${suffix}`, '5 worktrees   2 open PRs', {size: '$--text-caption', fill: '$--subtle-foreground', mono: true}),
-      text(`ov-behind-${suffix}`, 'main ↓3 behind origin', {size: '$--text-caption', fill: '$--warning', mono: true}),
-      frame(`ov-gap-${suffix}`, 'Spacer', {width: 'fill_container', height: 1}, []),
-      screenButton(`ov-sessions-${suffix}`, 'Sessions', {variant: 'ghost', height: num(tokens, '--size-control-sm')}),
-      screenButton(`ov-new-${suffix}`, 'New agent', {height: num(tokens, '--size-control-sm'), icon: 'plus'}),
     ]);
-    const adHoc = frame(`ov-adhoc-${suffix}`, '즉석', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'start'}, [
-      frame(`ov-adhoc-label-${suffix}`, 'Label', {layout: 'vertical', gap: '$--spacing-xxs', width: folded}, [
-        text(`ov-adhoc-t-${suffix}`, '즉석', {size: '$--text-subhead', weight: '600', fill: '$--subtle-foreground'}),
-        text(`ov-adhoc-d-${suffix}`, 'main · 폴더', {size: '$--text-caption', fill: '$--muted-foreground'}),
+    const dependencies = frame(`ov-deps-${suffix}`, 'Dependencies', {layout: 'vertical', gap: '$--spacing-lg', width: 1560}, [
+      overviewHeader(tokens, 'ov-dhead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'tasks', mode: 'dependencies', width: 1560, waiting: OV_WAITING}),
+      legend(`ov-dlegend-${suffix}`),
+      chain(`ov-dchain-${suffix}`, [
+        taskCard(`ov-d1-${suffix}`, {taskId: '#170', title: '기다리는 것 띠', word: '진행 중', halo: true, facts: facts(4), rows: [{...WAITING, title: 'Implementor'}, {...SEEN, title: 'Observer'}]}),
+        arrow(`ov-da1-${suffix}`),
+        taskCard(`ov-d2-${suffix}`, {taskId: '#171', title: '태스크 출처 어댑터', word: '준비', locked: '#170', dim: true}),
+        arrow(`ov-da2-${suffix}`),
+        taskCard(`ov-d3-${suffix}`, {taskId: '#172', title: 'Graph 뷰', word: '백로그', locked: '#171', dim: true}),
       ]),
-      card(`ov-main-${suffix}`, {branch: 'main', glyph: 'house', rows: [{mark: '●', markFill: '$--agent-working', title: '최신 hide 서버 웹 실행', time: '14m', detail: 'main 브랜치에 커밋하고 서버 시작', detailFill: '$--foreground'}]}),
+      text(`ov-dunrel-${suffix}`, '관계 없는 태스크', {size: '$--text-subhead', weight: '600', fill: '$--subtle-foreground'}),
+      frame(`ov-dunrelrow-${suffix}`, 'Unrelated', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
+        taskCard(`ov-d4-${suffix}`, {taskId: '#173', title: '카드 상태 시트', word: '리뷰', facts: [pr(174), {label: 'CI', glyph: 'x', fill: '$--destructive'}], rows: [{...DONE, title: '리뷰 반영'}]}),
+        taskCard(`ov-d5-${suffix}`, {taskId: '#169', title: '웹 내비게이션', word: '완료', facts: [pr(168, '$--pr-merged')], dim: true}),
+      ]),
     ]);
-    const columns = frame(`ov-cols-${suffix}`, 'Columns', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
-      stageColumn(`ov-ready-${suffix}`, '준비', '1', [
-        card(`ov-c1-${suffix}`, {branch: 'prd/right-panel-history', purpose: 'History 패널 기획 대기', issue: '#118', rows: [{...idle, title: 'History 탭 인터뷰', time: '5d'}], footer: '변경 없음'}),
-      ]),
-      stageColumn(`ov-working-${suffix}`, '작업 중', '2', [
-        card(`ov-c2-${suffix}`, {branch: 'prd/sidebar-child-status', purpose: '자식 대기 상태와 badge 팝오버', halo: true, rows: [{mark: '?', markFill: '$--warning', title: '사이드바 상태 규칙 구현', time: '12m', detail: 'Done 그룹 회색 링을 기존 표시로 바꿔도 될까요?', detailFill: '$--warning'}], footer: '↑1 커밋'}),
-        card(`ov-c3-${suffix}`, {branch: 'prd/web-design-system-reset', purpose: 'shadcn + Tailwind v4 + Pen 기반 재구성', rows: [{mark: '●', markFill: '$--agent-working', title: '웹 디자인 시스템 리셋 구현', time: '23m'}], footer: '변경 3 · ↑4 커밋'}),
-      ]),
-      stageColumn(`ov-review-${suffix}`, '리뷰', '1', [
-        card(`ov-c4-${suffix}`, {branch: 'prd/home-tasks-web', purpose: 'Project Home을 web shell로', rows: [{...idle, title: '리뷰 피드백 반영', time: '1h'}], footer: 'PR #151 · CI 통과', footerFill: '$--success'}),
-      ]),
-      frame(`ov-merged-${suffix}`, '머지됨', {layout: 'vertical', gap: '$--spacing-sm', width: folded}, [
-        text(`ov-merged-t-${suffix}`, '머지됨  3  ›', {size: '$--text-subhead', weight: '600'}),
-        frame(`ov-merged-names-${suffix}`, 'Names', {layout: 'vertical', gap: '$--spacing-xxs', padding: '$--spacing-sm', fill: '$--card', cornerRadius: '$--radius-md', width: folded}, [
-          text(`ov-merged-n1-${suffix}`, 'view-areas', {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
-          text(`ov-merged-n2-${suffix}`, 'sessions-screen', {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
+    const agents = frame(`ov-agents-${suffix}`, 'Agents', {layout: 'vertical', gap: '$--spacing-lg', width: 1000}, [
+      overviewHeader(tokens, 'ov-ahead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'agents', width: 1000, waiting: OV_WAITING}),
+      frame(`ov-acols-${suffix}`, 'Columns', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
+        stageColumn(`ov-active-${suffix}`, '진행 중', '3', [
+          agentCard(`ov-a1-${suffix}`, {...WAITING, title: 'Implementor', time: '3m', where: 'feat/waiting-band', task: '#170', halo: true}),
+          indented(`ov-a2i-${suffix}`, agentCard(`ov-a2-${suffix}`, {...WORKING, title: '리뷰어 A', time: '2m', where: 'feat/waiting-band', task: '#170'})),
+          agentCard(`ov-a3-${suffix}`, {...WORKING, title: '브라우저 표시 확인', time: '12m', where: 'quick/155'}),
+        ]),
+        stageColumn(`ov-mine-${suffix}`, '내 확인 대기', '1', [
+          agentCard(`ov-a4-${suffix}`, {...DONE, title: '리뷰 반영', time: '10m', where: 'quick/154', task: '#173'}),
+        ]),
+        stageColumn(`ov-end-${suffix}`, '끝', '1', [
+          agentCard(`ov-a5-${suffix}`, {...SEEN, title: '설정 화면 정리', time: '1h', where: 'fix/settings', task: '#183', device: 'mini'}),
         ]),
       ]),
     ]);
-    return [frame(`ovw-${suffix}`, 'Overview', {layout: 'vertical', gap: '$--spacing-lg', width: 1240}, [header, adHoc, columns])];
+    return [frame(`ovw-${suffix}`, 'Overview', {layout: 'vertical', gap: '$--spacing-xl'}, [tasks, dependencies, agents])];
   }
-  return screenSheet('screen-project-overview', 'Screen / Project Overview', 'web/src/ProjectOverview.tsx, projectBoard.ts: a project’s Tasks board - header facts, the ad hoc strip, Git columns with 머지됨 folded, a needs-you card in the warning halo - and the same cards on the Agents board.', s => build(s), s => build(s));
+  return screenSheet('screen-project-overview', 'Screen / Project Overview', 'web/src/ProjectOverview.tsx, TaskBoards.tsx, WaitingBand.tsx, projectBoard.ts: a project’s waiting band under its header while an agent waits, its Tasks board in five columns (백로그 · 준비 · 진행 중 · 리뷰 · 완료, Done folded) with task cards - the id before the title, the lock line naming what it waits on, the delivery facts, at most two agents and +N, Start agent on a ready card only on hover, an untracked checkout titled by its branch with 태스크 없음, the pull request as the result - its Dependencies mode (the same cards with a stage word, blockers left of what they block, a blocked or done card dimmed, unrelated tasks below), and the Agents board with each agent’s checkout, task chip and device.', s => build(s), s => build(s));
 }
 
 // -- Screen / Workspace ---------------------------------------------------------
@@ -614,13 +826,14 @@ function buildWorkspace(tokens) {
 
 // -- Screen / Project Sessions --------------------------------------------------
 
-function buildSessions() {
+// The Overview on its Sessions tab: the same header as the Tasks board, then
+// the Project's session list and the read-only detail beside it.
+function buildSessions(tokens) {
   function build(suffix) {
-    const crumb = frame(`ss-crumb-${suffix}`, 'Breadcrumb', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-      text(`ss-c1-${suffix}`, 'Main', {fill: '$--muted-foreground'}), text(`ss-c2-${suffix}`, '/', {fill: '$--muted-foreground'}),
-      text(`ss-c3-${suffix}`, 'fixture', {fill: '$--muted-foreground'}), text(`ss-c4-${suffix}`, '/', {fill: '$--muted-foreground'}),
-      text(`ss-c5-${suffix}`, 'Sessions', {weight: '600'}),
-    ]);
+    const header = overviewHeader(tokens, 'ss-head', suffix, {project: 'fixture', facts: [
+      {glyph: 'folder-git-2', label: '2 worktrees'},
+      {glyph: 'hard-drive', label: '812 MB'},
+    ], view: 'sessions', width: 820});
     const list = frame(`ss-list-${suffix}`, 'List', {width: 320, layout: 'vertical', gap: '$--spacing-sm'}, [
       screenTabs(`ss-tabs-${suffix}`, ['All', 'Codex', 'Claude Code'], 0),
       screenInput(`ss-search-${suffix}`, {placeholder: 'Search sessions', width: 300}),
@@ -630,9 +843,9 @@ function buildSessions() {
     const detail = frame(`ss-detail-${suffix}`, 'Detail', {width: 480, height: 320, alignItems: 'center', justifyContent: 'center', fill: '$--card', cornerRadius: '$--radius-md'}, [
       text(`ss-empty-${suffix}`, 'Choose a session to read it here.', {fill: '$--muted-foreground'}),
     ]);
-    return [frame(`ss-wrap-${suffix}`, 'Wrap', {layout: 'vertical', gap: '$--spacing-md'}, [crumb, frame(`ss-row-${suffix}`, 'Row', {layout: 'horizontal', gap: '$--spacing-lg'}, [list, detail])])];
+    return [frame(`ss-wrap-${suffix}`, 'Wrap', {layout: 'vertical', gap: '$--spacing-md'}, [header, frame(`ss-row-${suffix}`, 'Row', {layout: 'horizontal', gap: '$--spacing-lg'}, [list, detail])])];
   }
-  return screenSheet('screen-sessions', 'Screen / Project Sessions', 'web/src/SessionsScreen.tsx: the provider-filtered session list with search, and the read-only detail pane, using a real Korean session title.', build, build);
+  return screenSheet('screen-sessions', 'Screen / Project Sessions', 'web/src/ProjectOverview.tsx on its Sessions tab, ProjectSessions.tsx: the Overview’s header and tabs over the provider-filtered session list with search, and the read-only detail pane, using a real Korean session title.', build, build);
 }
 
 // -- Screen / Settings ----------------------------------------------------------
@@ -954,14 +1167,26 @@ function buildProjectsSidebar(tokens) {
     missing: {icon: 'git-branch', fill: '$--destructive'},
   };
 
-  function projectRow(id, {name, meta, expanded, hover = false}) {
-    return themedXref(id, 'qdhY0', name, {width, height: num(tokens, '--size-control-regular'), padding: [0, trailing, 0, '$--spacing-md'], ...(hover ? {fill: '$--accent'} : {})}, {
+  function projectRow(id, {name, meta, expanded, selected = false}) {
+    return themedXref(id, 'qdhY0', name, {width, height: num(tokens, '--size-control-regular'), padding: [0, trailing, 0, '$--spacing-md'], ...(selected ? {fill: '$--secondary'} : {})}, {
       iBYjj: {icon: expanded ? 'chevron-down' : 'chevron-right'},
       mIzlX: {icon: 'folder-git-2'},
       JkPyX: {content: name},
       nZkan: {content: meta},
       // The ⋯ keeps its column at rest and shows under the pointer.
-      hm1SG: {width: slot, height: slot, opacity: hover ? 1 : 0},
+      hm1SG: {width: slot, height: slot, opacity: 0},
+    });
+  }
+
+  // sidebar.tsx's AllProjectsRow: the project row's columns with the fold's lane
+  // empty, the layout-grid glyph, and the project count where the activity stands.
+  function allProjectsRow(id, {count}) {
+    return themedXref(id, 'qdhY0', 'All projects', {width, height: num(tokens, '--size-control-regular'), padding: [0, trailing, 0, '$--spacing-md']}, {
+      iBYjj: {opacity: 0},
+      mIzlX: {icon: 'layout-grid'},
+      JkPyX: {content: 'All projects'},
+      nZkan: {content: count},
+      hm1SG: {width: slot, height: slot, opacity: 0},
     });
   }
 
@@ -1046,11 +1271,12 @@ function buildProjectsSidebar(tokens) {
       screenIconButton(`psb-settings-${s}`, 'settings'),
     ]);
     const list = frame(`psb-list-${s}`, 'Projects list', {width, layout: 'vertical'}, [
+      allProjectsRow(`psb-all-${s}`, {count: '12 projects'}),
       section(`psb-sec-pin-${s}`, 'PINNED · 1'),
       folderRow(`psb-p-notes-${s}`, {name: 'team-notes', meta: '1 agent · 2h', agents: {status: 'seen'}, purpose: '회의록 요약 정리'}),
       section(`psb-sec-recent-${s}`, 'PROJECTS · RECENT ACTIVITY · 12'),
-      projectRow(`psb-p-herdr-${s}`, {name: 'herdr-ide', meta: '11 agents · now', expanded: true, hover: true}),
-      checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', agents: {status: 'working', more: 1, provider: 'codex'}, expanded: true, selected: true}),
+      projectRow(`psb-p-herdr-${s}`, {name: 'herdr-ide', meta: '11 agents · now', expanded: true, selected: true}),
+      checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', agents: {status: 'working', more: 1, provider: 'codex'}, expanded: true}),
       agentRow(`psb-a1-${s}`, {title: 'S5.5 PRD 초안 정리', status: 'working', provider: 'codex', age: '3m'}),
       agentRow(`psb-a2-${s}`, {title: '후속 UX 계획 인터뷰', status: 'seen', age: '1h'}),
       checkoutRow(`psb-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', agents: {status: 'asking'}, purpose: '#155 browser display (WebCon…'}),
@@ -1078,7 +1304,7 @@ function buildProjectsSidebar(tokens) {
     ]);
     return [frame(`psb-sidebar-${s}`, 'Sidebar', {width, layout: 'vertical', fill: '$--sidebar', clip: true}, [header, list, footer])];
   }
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, projects.ts: the Projects tab. A project’s primary checkout comes first, then the rest by activity. A project row folds its checkouts from its chevron and opens the Overview from the rest of the row; a checkout row opens the checkout, and its trailing chevron, shown only when agents run there, opens their rows in place of line two. Line two is the agents (the representative’s mark and provider, +N) and the purpose. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.', build, build);
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here herdr-ide on its Overview, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. A project row folds its checkouts from its chevron and opens the Overview from the rest of the row; a checkout row opens the checkout, and its trailing chevron, shown only when agents run there, opens their rows in place of line two. Line two is the agents (the representative’s mark and provider, +N) and the purpose. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.', build, build);
 }
 
 // -- assembly ---------------------------------------------------------------------
@@ -1100,7 +1326,7 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Main', build: () => buildMain(tokens)},
     {name: 'Screen / Project Overview', build: () => buildProjectOverview(tokens)},
     {name: 'Screen / Workspace', build: () => buildWorkspace(tokens)},
-    {name: 'Screen / Project Sessions', build: () => buildSessions()},
+    {name: 'Screen / Project Sessions', build: () => buildSessions(tokens)},
     {name: 'Screen / Settings', build: () => buildSettings(tokens)},
     {name: 'Screen / Palette', build: () => buildPalette(tokens)},
     {name: 'Screen / Dialogs and Sheets', build: () => buildDialogs(tokens)},

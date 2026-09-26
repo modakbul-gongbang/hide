@@ -1606,6 +1606,7 @@ mod tests {
         let (mut mirror, receiver) = PurposeMirror::recording();
         let mut project = WorkspaceSnapshot {
             home_issues: Default::default(),
+            tasks: Default::default(),
             id: "project".to_owned(),
             label: "Fixture".to_owned(),
             path: "/fixture/repo".to_owned(),
@@ -1633,6 +1634,7 @@ mod tests {
             }],
             inactive_checkouts: Default::default(),
             removal: Default::default(),
+            disk: Default::default(),
         };
         mirror.sync(&[], std::slice::from_ref(&project), &HashMap::new());
         project.checkouts[0].branch = Some("other".into());
@@ -1818,6 +1820,7 @@ mod tests {
         };
         let checkout = WorkspaceSnapshot {
             home_issues: Default::default(),
+            tasks: Default::default(),
             id: "project".to_owned(),
             label: "Fixture".to_owned(),
             path: "/fixture/repo".to_owned(),
@@ -1845,6 +1848,7 @@ mod tests {
             }],
             inactive_checkouts: Default::default(),
             removal: Default::default(),
+            disk: Default::default(),
         };
 
         let suppressed = HashMap::from([(
@@ -1933,6 +1937,7 @@ mod tests {
         ];
         let project = WorkspaceSnapshot {
             home_issues: Default::default(),
+            tasks: Default::default(),
             id: "outer".to_owned(),
             label: "Outer".to_owned(),
             path: "/fixture/repo".to_owned(),
@@ -1960,6 +1965,7 @@ mod tests {
             }],
             inactive_checkouts: Default::default(),
             removal: Default::default(),
+            disk: Default::default(),
         };
 
         mirror.sync(&spaces, std::slice::from_ref(&project), &HashMap::new());
@@ -1989,6 +1995,7 @@ mod tests {
         };
         let mut project = WorkspaceSnapshot {
             home_issues: Default::default(),
+            tasks: Default::default(),
             id: "project".to_owned(),
             label: "Fixture".to_owned(),
             path: "/fixture/repo".to_owned(),
@@ -2016,6 +2023,7 @@ mod tests {
             }],
             inactive_checkouts: Default::default(),
             removal: Default::default(),
+            disk: Default::default(),
         };
 
         mirror.sync(

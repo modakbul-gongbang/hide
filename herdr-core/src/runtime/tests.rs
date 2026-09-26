@@ -515,6 +515,7 @@ fn workspace(
 ) -> WorkspaceSnapshot {
     WorkspaceSnapshot {
         home_issues: Default::default(),
+        tasks: Default::default(),
         id: id.to_owned(),
         label: label.to_owned(),
         path: path.to_owned(),
@@ -533,6 +534,7 @@ fn workspace(
         pinned: false,
         inactive_checkouts: Default::default(),
         removal: Default::default(),
+        disk: Default::default(),
     }
 }
 

@@ -1,35 +1,105 @@
-import { useMemo } from "react";
+import { FolderIcon, GitMergeIcon, GitPullRequestIcon, PlusIcon } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
+import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Hint } from "./components/ui/tooltip";
-import { AGENT_GROUPS, mainSections, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
+import { cn } from "./lib/utils";
+import { AGENT_GROUPS, boardProjects, mainSections, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
+import { allProjectsStats, buildAgents, buildTasks, buildWaiting, type AllProjectsStats, type TaskCard } from "./projectBoard";
 import type { Device } from "./snapshot";
 import { useShellStore } from "./store";
-import { useUiStore } from "./ui";
+import { AgentsView, DependenciesView, TasksModeToggle, TasksView } from "./TaskBoards";
+import { WaitingBand } from "./WaitingBand";
+import { scopeView, useUiStore, type ProjectView } from "./ui";
 import { hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
 
-// Main (PRD S6 D-02, B1-B4, B21). Main lists every registered Project by
-// device; a Project opens its Overview (`ProjectOverview.tsx`), which also
-// uses the opening and device notices below.
+// All projects (PRD S6 D-02, B1-B4, B21; `screen.kind === "main"`), the scope
+// the sidebar's top row opens. Its facts line totals what every Project can
+// give, and the waiting band lists every agent that waits on the operator;
+// its views are every Project's tasks on one board, every agent, and
+// the registered Projects by device (PRD task-agents-views D-01, D-10); a
+// Project opens its Overview (`ProjectOverview.tsx`), which also uses the
+// facts line style and the opening and device notices below.
 // Everything drawn is a value the snapshot carries; a device that cannot
 // answer says why on its own section, with Retry where retrying can help.
+
+const VIEWS: readonly { view: ProjectView; label: string }[] = [
+  { view: "tasks", label: "Tasks" },
+  { view: "agents", label: "Agents" },
+  { view: "projects", label: "Projects" },
+];
+const VIEW_IDS = VIEWS.map((row) => row.view);
 
 export function MainScreen({ actions }: { actions: Actions }) {
   const rest = useShellStore((s) => s.rest);
   const agents = useShellStore((s) => s.agents);
+  const focusedPaneId = useShellStore((s) => s.focusedPaneId);
+  const view = scopeView(useUiStore((s) => s.projectView), VIEW_IDS);
+  const setView = useUiStore((s) => s.setProjectView);
+  const tasksMode = useUiStore((s) => s.tasksMode);
+  const [doneOpen, setDoneOpen] = useState(false);
   const sections = useMemo(() => mainSections(rest, agents), [rest, agents]);
-  const total = sections.reduce((sum, section) => sum + section.projects.length, 0);
+  const stats = useMemo(() => allProjectsStats(sections.flatMap((section) => section.projects.map((project) => project.workspace))), [sections]);
+  const projects = useMemo(() => boardProjects(rest, agents), [rest, agents]);
+  const tasks = useMemo(() => buildTasks(projects, "all", Date.now()), [projects]);
+  const agentBoard = useMemo(() => buildAgents(projects, "all"), [projects]);
+  const waiting = useMemo(() => buildWaiting(projects, "all"), [projects]);
+  // Every local Git project's tasks are read once the boards are on screen.
+  const localGit = useMemo(() => projects.filter(({ workspace }) => workspace.is_git && !workspace.remote_target_id).map(({ workspace }) => workspace.id).join("\n"), [projects]);
+  const boards = view !== "projects";
+  useEffect(() => {
+    if (!boards || !localGit) return;
+    for (const id of localGit.split("\n")) actions.readProjectTasks(id);
+  }, [actions, boards, localGit]);
+  const total = stats.projects;
+  const openCheckout = (card: TaskCard) => {
+    const project = projects.find(({ workspace }) => workspace.id === card.place.projectId);
+    if (project && card.checkout) actions.openWorkspace(project.workspace.device_id, card.checkout.workspace_id, card.checkout.id);
+  };
+  const unavailable = sections.filter((section) => section.availability.state !== "ready");
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto bg-background" aria-label="Main" data-main-screen="true">
-      <header className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border bg-sidebar px-md">
-        <h1 className="flex-1 text-subhead font-semibold text-foreground">Projects</h1>
-        <Button variant="ghost" onClick={() => actions.openNewWorkspace()} data-main-add-project="true">
-          Add project <span className="text-muted-foreground">{displayCommand("new_workspace", hostKind())}</span>
-        </Button>
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" aria-label="All projects" data-main-screen="true" data-main-view={view}>
+      <header className="flex shrink-0 flex-col gap-xs border-b border-border px-lg py-sm">
+        <div className="flex min-w-0 items-center gap-lg">
+          <h1 className="min-w-0 flex-1 truncate text-headline font-semibold text-foreground">All projects</h1>
+          <Button variant="ghost" onClick={() => actions.openNewWorkspace()} data-main-add-project="true">
+            <PlusIcon aria-hidden="true" />
+            Add project <span className="text-muted-foreground">{displayCommand("new_workspace", hostKind())}</span>
+          </Button>
+        </div>
+        <Facts stats={stats} />
+        <WaitingBand rows={waiting} onOpen={actions.openAgent} />
       </header>
       <OpeningStatus actions={actions} />
-      {total === 0 && sections.every((section) => section.availability.state === "ready") ? (
+      <div className="flex shrink-0 items-center justify-between gap-md px-lg py-sm">
+        <Tabs value={view} onValueChange={(value) => setView(value as ProjectView)}>
+          <TabsList aria-label="All projects view">
+            {VIEWS.map((choice) => (
+              <TabsTrigger key={choice.view} value={choice.view} data-main-tab={choice.view}>
+                {choice.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        {view === "tasks" ? <TasksModeToggle /> : null}
+      </div>
+      {boards ? (
+        // A device that cannot answer keeps its last rows off these boards and says why here.
+        unavailable.map((section) => (
+          <div key={section.device.id} className="shrink-0 px-lg">
+            <UnavailableNotice device={section.device} availability={section.availability} actions={actions} />
+          </div>
+        ))
+      ) : null}
+      {view === "tasks" && tasksMode === "dependencies" ? (
+        <DependenciesView board={tasks} scope="all" focusedPaneId={focusedPaneId} actions={actions} openCheckout={openCheckout} />
+      ) : view === "tasks" ? (
+        <TasksView board={tasks} focusedPaneId={focusedPaneId} actions={actions} openCheckout={openCheckout} doneOpen={doneOpen} onToggleDone={() => setDoneOpen((open) => !open)} />
+      ) : view === "agents" ? (
+        <AgentsView board={agentBoard} focusedPaneId={focusedPaneId} actions={actions} />
+      ) : total === 0 && sections.every((section) => section.availability.state === "ready") ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-main-empty="true">
           <p>No project is registered yet.</p>
           <Button variant="secondary" onClick={() => actions.openNewWorkspace()} data-main-empty-add="true">
@@ -37,13 +107,41 @@ export function MainScreen({ actions }: { actions: Actions }) {
           </Button>
         </div>
       ) : (
-        <div className="flex flex-col gap-lg p-md">
+        <div className="flex min-h-0 flex-1 flex-col gap-lg overflow-auto p-md" data-main-projects="true">
           {sections.map((section) => (
             <DeviceProjects key={section.device.id} section={section} actions={actions} />
           ))}
         </div>
       )}
     </section>
+  );
+}
+
+/** One fact of a scope's facts line, a glyph and its number. */
+export const FACT = "inline-flex items-center gap-xxs";
+export const FACTS_LINE = "flex flex-wrap items-center gap-md font-mono text-caption text-subtle-foreground";
+
+/** The Project count, and each total only once every Project gave its part (design #10). */
+function Facts({ stats }: { stats: AllProjectsStats }) {
+  return (
+    <div className={FACTS_LINE} data-main-stats="true">
+      <span className={FACT} data-stat="projects">
+        <FolderIcon aria-hidden="true" className="size-(--size-icon)" />
+        {stats.projects} {stats.projects === 1 ? "project" : "projects"}
+      </span>
+      {stats.openPullRequests === null ? null : (
+        <span className={FACT} data-stat="open-prs">
+          <GitPullRequestIcon aria-hidden="true" className="size-(--size-icon)" />
+          {stats.openPullRequests} open {stats.openPullRequests === 1 ? "PR" : "PRs"}
+        </span>
+      )}
+      {stats.merged ? (
+        <span className={cn(FACT, "text-pr-merged")} data-stat="merged">
+          <GitMergeIcon aria-hidden="true" className="size-(--size-icon)" />
+          {stats.merged} merged
+        </span>
+      ) : null}
+    </div>
   );
 }
 

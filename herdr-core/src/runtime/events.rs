@@ -135,6 +135,12 @@ pub(super) struct FocusCheckoutPayload {
     /// accepted, as `FocusPaneRequestPayload::focus_device` does.
     #[serde(default)]
     pub(super) focus_device: bool,
+    /// The checkout comes forward on this View display rather than on its
+    /// Agent tab: its Workspace's View area shows and the display takes it,
+    /// in the same event (Recent navigation). A display the Workspace no
+    /// longer holds refuses the whole event, so nothing moves.
+    #[serde(default)]
+    pub(super) display_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -143,10 +149,14 @@ pub(super) struct FocusTabPayload {
     pub(super) checkout_id: String,
     pub(super) tab_id: String,
     /// Chosen where it is drawn, in the Agent area on screen: the areas stay
-    /// as they are, so the View areas drawn over the agents stay up
-    /// (issue 170). A choice from the sidebar, a palette or a cycle is not.
+    /// as they are, so the side panel over the agents stays up (issue 170).
+    /// A choice from the sidebar, a palette or a cycle is not.
     #[serde(default)]
     pub(super) in_place: bool,
+    /// Also makes this machine the device in front when the tab is accepted,
+    /// as `FocusCheckoutPayload::focus_device` does.
+    #[serde(default)]
+    pub(super) focus_device: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -581,6 +591,15 @@ pub(super) struct SessionsRefreshPayload {
     pub(super) device_id: Option<String>,
 }
 
+/// Without a `workspace_id` the measurement is the Swift right panel's, the
+/// focused checkout's project. With one it names that local Git project for
+/// a web Overview's facts line, whatever is focused, and measures it again.
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct CardMeasureDiskPayload {
+    #[serde(default)]
+    pub(super) workspace_id: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct ArchiveOpenPayload {
     pub(super) kind: String,
@@ -944,7 +963,7 @@ pub(super) enum Event {
     CleanupConfirm(CleanupConfirmPayload),
     CleanupDismiss,
     CardRefresh,
-    CardMeasureDisk,
+    CardMeasureDisk(CardMeasureDiskPayload),
     ReconnectPane(FocusPanePayload),
     PetSetVisible(PetVisibilityPayload),
     PetToggleVisible,
@@ -1106,7 +1125,10 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "overview_open_section" => decode!(OverviewOpenSectionPayload, OverviewOpenSection),
         "agent_start_in_checkout" => decode!(AgentStartInCheckoutPayload, AgentStartInCheckout),
         "card_refresh" => Ok(Event::CardRefresh),
-        "card_measure_disk" => Ok(Event::CardMeasureDisk),
+        // The Swift shell sends `{}`; a payload that is absent reads the same.
+        "card_measure_disk" => serde_json::from_value::<Option<CardMeasureDiskPayload>>(payload)
+            .map(|payload| Event::CardMeasureDisk(payload.unwrap_or_default()))
+            .map_err(|_| invalid_payload(&kind)),
         "reconnect_pane" => decode!(FocusPanePayload, ReconnectPane),
         "pet_set_visible" => decode!(PetVisibilityPayload, PetSetVisible),
         "pet_toggle_visible" => Ok(Event::PetToggleVisible),
@@ -1451,7 +1473,30 @@ impl Runtime {
                 true
             }
             Event::FocusCheckout(payload) => {
-                let changed = self.focus_checkout(&payload.workspace_id, &payload.checkout_id);
+                if let Some(display_id) = payload.display_id.as_deref()
+                    && let Err(error) = self.view_display_known(
+                        &payload.workspace_id,
+                        &payload.checkout_id,
+                        display_id,
+                    )
+                {
+                    self.set_error(error.kind(), error.message(), false);
+                    return true;
+                }
+                let mut changed = self.focus_checkout(&payload.workspace_id, &payload.checkout_id);
+                // The display follows whenever the checkout came forward: a
+                // later failure inside the checkout focus (a pane projection
+                // worker) must not leave the checkout moved without it.
+                if let Some(display_id) = payload.display_id.as_deref()
+                    && self.snapshot.navigator.focused_checkout_id.as_deref()
+                        == Some(payload.checkout_id.as_str())
+                {
+                    changed |= self.focus_view_display_of(
+                        &payload.workspace_id,
+                        &payload.checkout_id,
+                        display_id,
+                    );
+                }
                 if payload.focus_device
                     && self.snapshot.status.last_error.is_none()
                     && !self.device_in_front(workspace::LOCAL_DEVICE_ID)
@@ -1537,6 +1582,9 @@ impl Runtime {
                 self.refresh_pane_read_state();
                 self.yield_surface_to_terminal();
                 self.persist_current_ui_state();
+                if payload.focus_device && !self.device_in_front(workspace::LOCAL_DEVICE_ID) {
+                    self.bring_device_forward(workspace::LOCAL_DEVICE_ID.to_owned());
+                }
                 // A first visit attaches the tab's panes now. Waiting for the
                 // next session update to do it left the canvas empty until
                 // Herdr happened to emit something, up to the catalog window.
@@ -2716,13 +2764,16 @@ impl Runtime {
                 self.remeasure_disk();
                 true
             }
-            Event::CardMeasureDisk => {
-                // The delete confirmation states the size it is about to
-                // delete, so it is measured when the dialog opens rather than
-                // shown from whenever the card last looked.
-                self.remeasure_disk();
-                true
-            }
+            Event::CardMeasureDisk(payload) => match payload.workspace_id {
+                Some(workspace_id) => self.measure_project_disk(&workspace_id),
+                None => {
+                    // The delete confirmation states the size it is about to
+                    // delete, so it is measured when the dialog opens rather
+                    // than shown from whenever the card last looked.
+                    self.remeasure_disk();
+                    true
+                }
+            },
             Event::GitWorktreeOpen(payload) => self.open_git_worktree(payload.checkout_path),
             Event::GitWorktreeSetBase(payload) => {
                 self.set_git_worktree_base(payload.repository_root, payload.branch)

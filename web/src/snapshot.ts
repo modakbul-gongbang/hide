@@ -115,6 +115,46 @@ export type IssueLink = { issue: Issue; source: string };
 /** A project's open issues, capped by the core (`ProjectIssuesSnapshot`). */
 export type ProjectIssues = { repository: string | null; issues: Issue[]; overflow: boolean };
 
+/**
+ * One task of a project's source, in the core's source-neutral shape
+ * (`TaskSnapshot`, PRD task-agents-views D-14). The web reads no source's own
+ * shape: `source` is `github` today, and a later source is drawn the same way.
+ */
+export type Task = {
+  key: string;
+  source: string;
+  /** The id the source shows (`#N`, `owner/repo#N` for another repository), or null when it has none. */
+  id: string | null;
+  url: string | null;
+  title: string;
+  open: boolean;
+  /** The open tasks this one waits on, possibly of another project (`TaskRefSnapshot`). */
+  blocked_by?: TaskRef[];
+};
+
+/** Another task, by its key and the id this task's source shows for it. */
+export type TaskRef = { key: string; id: string | null };
+
+/** Where a project's tasks come from and how the last read went (`TaskSourceSnapshot`). */
+export type TaskSource = {
+  kind: string;
+  label: string;
+  name: string | null;
+  /** No read has answered yet. */
+  reading: boolean;
+  /** The last read failed; the tasks are the answer before it. */
+  failure: string | null;
+  last_read_at_unix_ms: number | null;
+};
+
+/** A project's tasks (`ProjectTasksSnapshot`); `source` is null while none is connected. */
+export type ProjectTasks = {
+  source: TaskSource | null;
+  unconnected_reason: string | null;
+  tasks: Task[];
+  overflow: boolean;
+};
+
 export type Purpose = { text: string; origin: string };
 
 /** A checkout's agents by state; `unknown` is a subset of `seen`, not a fifth group. */
@@ -205,6 +245,10 @@ export type Checkout = {
   pull_request: PullRequest | null;
   /** The issue this checkout's work is linked to. */
   issue?: IssueLink | null;
+  /** The key of the task in its project's `tasks` this checkout works on. */
+  task_key?: string | null;
+  /** The other tasks this checkout's pull request closes; each shows the same pull request. */
+  closes_task_keys?: string[];
   github?: GithubStatus;
   changed_file_count?: number;
   /** Commits on this branch since its base. */
@@ -235,8 +279,24 @@ export type Workspace = {
   removal?: { pane_count: number; running_agent_count: number };
   checkouts: Checkout[];
   inactive_checkouts: { expanded: boolean; checkout_ids: string[] };
-  /** The repository's open issues, for the Overview's backlog cards. */
+  /** The repository's open issues, as the Swift shell reads them. */
   home_issues?: ProjectIssues;
+  /** The project's tasks, the Overview's Tasks and Agents views read these. */
+  tasks?: ProjectTasks;
+  /**
+   * A local Git project's allocated disk, every worktree and the shared Git
+   * directory counted once. Present once an Overview named the project for
+   * measuring (`card_measure_disk` with its `workspace_id`).
+   */
+  disk?: ProjectDisk;
+};
+
+export type ProjectDisk = {
+  /** Known only once every part is measured. */
+  total_bytes: number | null;
+  unavailable_reason: string | null;
+  /** The named measurement has not come back yet. */
+  measuring: boolean;
 };
 
 export type InactiveProjectGroup = { device_id: string; expanded: boolean; project_ids: string[] };

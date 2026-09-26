@@ -379,6 +379,7 @@ impl SessionReplica {
                     .filter(|active| tabs.iter().any(|tab| tab.id.as_ref() == Some(active)));
                 WorkspaceSnapshot {
                     home_issues: Default::default(),
+                    tasks: Default::default(),
                     id: workspace_id.clone(),
                     label: workspace.label.clone(),
                     path: path.clone(),
@@ -427,6 +428,7 @@ impl SessionReplica {
                     pinned: false,
                     inactive_checkouts: Default::default(),
                     removal: Default::default(),
+                    disk: Default::default(),
                 }
             })
             .collect::<Vec<_>>();

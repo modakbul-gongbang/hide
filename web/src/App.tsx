@@ -6,18 +6,18 @@ import { DraftRecoveryLine, refreshRecoveryDrafts } from "./DraftRecovery";
 import { pruneDrafts, settleDraft } from "./editor/draft";
 import { ConnectionBadge } from "./badge";
 import { configureFileBytes } from "./fileBytes";
-import { installKeyboard } from "./keyboard";
+import { installKeyboard, observeRecent, reconcileHeldCycle } from "./keyboard";
 import { MainScreen } from "./MainScreen";
 import { ConfirmClose, ConfirmTrash, CycleOverlay, NoticeBar } from "./Overlays";
 import { Palette } from "./Palette";
 import { ProjectOverview } from "./ProjectOverview";
 import { installProbe, probeEnabled } from "./probe";
-import { rememberCheckout, rememberTab } from "./recent";
+import { expectSurface, focusSignature } from "./recent";
 import { SettingsGate } from "./SettingsSheet";
 import { FONT_SIZE_BASE, usableAccent, usableFontSize } from "./settings";
 import { ShortcutSheet } from "./ShortcutSheet";
 import { Sidebar } from "./sidebar";
-import { focusedCheckout, focusedRemoteDevice, frontCheckout } from "./snapshot";
+import { focusedRemoteDevice, frontCheckout } from "./snapshot";
 import { OPEN_ANSWER_TIMEOUT_MS, openingProgress, startupScreen } from "./navigation";
 import { useShellStore } from "./store";
 import { WorkspaceDialogs, WorkspaceNotices } from "./WorkspaceDialogs";
@@ -28,7 +28,6 @@ import { TooltipProvider } from "./components/ui/tooltip";
 import { useUsageWindowHint } from "./components/weekly-usage";
 import { useUiStore } from "./ui";
 import { viewRefusal } from "./viewLayout";
-import { SessionsScreen } from "./SessionsScreen";
 import { WorkspaceScreen } from "./WorkspaceScreen";
 import { connectShell, type DispatchFn } from "./ws";
 
@@ -60,8 +59,25 @@ export function App() {
         terminalSelectionText,
       );
     }
-    // The MRU behind ⌥`/⌥Tab and the project row follows what the core
-    // reports as focused, whichever side moved it.
+    // Recent Panels and Recent Projects follow what the operator uses: the
+    // core's focus, whichever side moved it, and where the keyboard is, since
+    // moving between a checkout's terminal and its View area changes no core
+    // state. The operator's next press or click ends a commit's wait.
+    // Focus that lands outside both areas (the sidebar, a palette) is not a
+    // move between surfaces.
+    const observeFocus = (event: FocusEvent) => {
+      if (event.target instanceof Element && event.target.closest("[data-agent-area], [data-view-area]")) observeRecent(useShellStore.getState().rest, true);
+    };
+    // A chord the shell answered (the next cycle) and a bare modifier are
+    // not the operator acting on the surface a commit is bringing forward.
+    const endCommit = (event: Event) => {
+      if (event.defaultPrevented) return;
+      if (event instanceof KeyboardEvent && ["Control", "Alt", "Shift", "Meta"].includes(event.key)) return;
+      expectSurface(null);
+    };
+    window.addEventListener("focusin", observeFocus);
+    window.addEventListener("pointerdown", endCommit, true);
+    window.addEventListener("keydown", endCommit, true);
     const unsubscribe = useShellStore.subscribe((state, previous) => {
       if (state.rest === previous.rest) return;
       // A terminal lives as long as the core streams its pane; released or
@@ -88,15 +104,17 @@ export function App() {
         useUiStore.getState().setNotice({ text: refusal, refreshable: false });
         useUiStore.getState().setViewFocusRequest(null);
       }
-      const checkout = focusedCheckout(state.rest);
-      if (!checkout) return;
-      const before = focusedCheckout(previous.rest);
-      if (checkout.id !== before?.id) rememberCheckout(checkout.id);
-      if (checkout.active_tab_id && (checkout.id !== before?.id || checkout.active_tab_id !== before?.active_tab_id)) {
-        rememberTab(checkout.id, checkout.active_tab_id);
-      }
+      // A refused commit brings nothing forward, so the next surface in use is a visit again.
+      if (fresh) expectSurface(null);
+      if (state.rest?.navigator === previous.rest?.navigator && state.rest?.workspace_view === previous.rest?.workspace_view) return;
+      observeRecent(state.rest, focusSignature(state.rest) !== focusSignature(previous.rest));
+      const cycle = useUiStore.getState().cycle;
+      if (cycle) useUiStore.getState().setCycle(reconcileHeldCycle(cycle, state.rest));
     });
     return () => {
+      window.removeEventListener("focusin", observeFocus);
+      window.removeEventListener("pointerdown", endCommit, true);
+      window.removeEventListener("keydown", endCommit, true);
       unsubscribe();
       keyboard();
       session.close();
@@ -225,12 +243,12 @@ function ShortcutSheetGate({ actions }: { actions: Actions }) {
 }
 
 /**
- * Main, a Project's Overview, or the front Workspace (PRD S6 D-02, D-11). The
+ * All projects, a Project's Overview, or the front Workspace (PRD S6 D-02, D-11). The
  * page starts on the Workspace the core kept in front when it is the one used
- * last and still in the catalog, and on Main on a first run or when it is
+ * last and still in the catalog, and on All projects on a first run or when it is
  * gone; while the device in front is still being reached the choice waits,
- * so a Workspace that is about to appear does not first flash Main. A
- * Workspace that goes away while it is shown gives way to Main.
+ * so a Workspace that is about to appear does not first flash All projects. A
+ * Workspace that goes away while it is shown gives way to All projects.
  */
 function CenterScreen({ actions }: { actions: Actions }) {
   const screen = useUiStore((s) => s.screen);
@@ -241,9 +259,9 @@ function CenterScreen({ actions }: { actions: Actions }) {
   const remoteFront = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
   const opening = useUiStore((s) => s.opening);
   const progress = useShellStore((s) => (opening && !opening.failure ? openingProgress(s.rest, opening) : null));
-  // An open from Main, an Overview or the Agents list shows its Workspace
+  // An open from All projects, an Overview or the Agents list shows its Workspace
   // once the core has moved there; a refusal or no answer stays put and says
-  // why on Main or the Overview. On a Workspace the core's error notice
+  // why on All projects or the Overview. On a Workspace the core's error notice
   // already says it, so nothing is kept for later (B2, B21).
   useEffect(() => {
     if (!opening || opening.failure || progress === null) return;
@@ -288,7 +306,6 @@ function CenterScreen({ actions }: { actions: Actions }) {
     );
   }
   if (screen.kind === "overview") return <ProjectOverview projectId={screen.projectId} actions={actions} />;
-  if (screen.kind === "sessions") return <SessionsScreen projectId={screen.projectId} actions={actions} />;
   if (screen.kind === "workspace" && front && hasView) return <WorkspaceScreen actions={actions} />;
   return <MainScreen actions={actions} />;
 }
