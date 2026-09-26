@@ -23,6 +23,14 @@ test.skip(!process.env.HIDE_E2E_SSH_PORT, "an isolated SSH server is required");
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 
+async function canBindLoopback(port: number, host: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    const listener = net.createServer();
+    listener.once("error", () => resolve(false));
+    listener.listen(port, host, () => listener.close(() => resolve(true)));
+  });
+}
+
 function changedCheckout(herdr: HerdrFixture, filename: string): string {
   const checkout = path.join(herdr.root, "fixture");
   const file = path.join(checkout, filename);
@@ -315,6 +323,8 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
       return child ? (child as unknown as { webContents: Electron.WebContents }).webContents.executeJavaScript("document.body.textContent") as Promise<string> : null;
     }, tlsRoute.url), { timeout: 30_000 }).toContain("remote-secure");
     expect((await commandFromPane(remote, run, bridge, ["view", "close", tlsView.view_id], "remote-tls-close")).status).toBe(0);
+    await expect.poll(async () => Promise.all(["127.0.0.1", "::1"].map((host) =>
+      canBindLoopback(Number(new URL(tlsRoute.url).port), host))), { timeout: 10_000 }).toEqual([true, true]);
     expect((await commandFromPane(remote, run, bridge, ["view", "select", (openedDev.answer.result as { view_id: string }).view_id], "remote-dev-select")).status).toBe(0);
     const native = async () => app!.evaluate(async ({ BrowserWindow }, sourcePort) => {
       const child = BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>

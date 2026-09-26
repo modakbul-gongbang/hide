@@ -62,6 +62,8 @@ The remote source address remains in the Browser toolbar.
 Absolute loopback subrequests from a forwarded page use that View's forward when their scheme and source port match; other loopback requests are refused instead of reaching this Mac.
 If the SSH route fails, the page shows the failure; it never tries the same port on this Mac.
 Each native route is bounded, belongs to the desktop process that requested it, and closes when its View closes, its device disconnects, or that process exits.
+Closing a route cancels its pending SSH channel open and its active transfer tasks before releasing both local listeners.
+An individual SSH channel open has a 15-second limit, including the alternate localhost address attempt.
 
 A page the operator loaded can still follow its own links.
 A `file:` page that moves to a file outside the checkouts keeps showing it in its view, but its report is refused at the boundary, so the core keeps the last address it accepted and a relaunch opens that one.

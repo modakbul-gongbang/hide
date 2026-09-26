@@ -32,7 +32,7 @@ use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::{Builder, Runtime};
-use tokio::sync::{Semaphore, oneshot};
+use tokio::sync::Semaphore;
 
 use crate::domain::{
     DomainEvent, DomainProjection, DomainSnapshot, EnvironmentContract, HostScope,
@@ -2437,18 +2437,19 @@ impl RusshRemoteClient {
             )
         })?;
         let port = local_addr.port();
-        let session = self
-            .runtime
-            .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?;
-        let (stop, mut stopped) = oneshot::channel::<()>();
+        let session = Arc::new(
+            self.runtime
+                .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?,
+        );
+        let session_task = Arc::clone(&session);
         let failure = Arc::new(Mutex::new(None));
         let failure_task = Arc::clone(&failure);
         let task = self.runtime.spawn(async move {
             const MAX_CONNECTIONS: usize = 16;
             let permits = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+            let mut transfers = tokio::task::JoinSet::new();
             loop {
                 let accepted = tokio::select! {
-                    _ = &mut stopped => break,
                     accepted = listener.accept() => accepted,
                     accepted = async {
                         match &ipv6_listener {
@@ -2456,6 +2457,13 @@ impl RusshRemoteClient {
                             None => std::future::pending().await,
                         }
                     } => accepted,
+                    completed = transfers.join_next(), if !transfers.is_empty() => {
+                        if let Some(Err(error)) = completed
+                            && let Ok(mut slot) = failure_task.lock() {
+                                *slot = Some(error.to_string());
+                            }
+                        continue;
+                    },
                 };
                 let (mut local, _) = match accepted {
                     Ok(accepted) => accepted,
@@ -2470,30 +2478,35 @@ impl RusshRemoteClient {
                     let _ = local.shutdown().await;
                     continue;
                 };
-                let first = session
-                    .channel_open_direct_tcpip(
-                        remote.ip().to_string(),
-                        u32::from(remote.port()),
-                        local_ip.to_string(),
-                        u32::from(port),
-                    )
-                    .await;
-                let channel = match (first, alternate) {
-                    (Err(_), Some(alternate)) => {
-                        session
-                            .channel_open_direct_tcpip(
-                                alternate.ip().to_string(),
-                                u32::from(alternate.port()),
-                                local_ip.to_string(),
-                                u32::from(port),
-                            )
-                            .await
+                let channel = tokio::time::timeout(SSH_OPERATION_TIMEOUT, async {
+                    let first = session_task
+                        .channel_open_direct_tcpip(
+                            remote.ip().to_string(),
+                            u32::from(remote.port()),
+                            local_ip.to_string(),
+                            u32::from(port),
+                        )
+                        .await;
+                    match (first, alternate) {
+                        (Err(_), Some(alternate)) => {
+                            session_task
+                                .channel_open_direct_tcpip(
+                                    alternate.ip().to_string(),
+                                    u32::from(alternate.port()),
+                                    local_ip.to_string(),
+                                    u32::from(port),
+                                )
+                                .await
+                        }
+                        (answer, _) => answer,
                     }
-                    (answer, _) => answer,
-                };
+                })
+                .await
+                .map_err(|_| "SSH channel open timed out".to_owned())
+                .and_then(|answer| answer.map_err(|error| error.to_string()));
                 match channel {
                     Ok(channel) => {
-                        tokio::spawn(async move {
+                        transfers.spawn(async move {
                             let _permit = permit;
                             let mut stream = channel.into_stream();
                             let _ = tokio::io::copy_bidirectional(&mut local, &mut stream).await;
@@ -2507,14 +2520,15 @@ impl RusshRemoteClient {
                     }
                 }
             }
-            let _ = session
+            transfers.abort_all();
+            let _ = session_task
                 .disconnect(Disconnect::ByApplication, "browser forward closed", "en")
                 .await;
         });
         Ok(RemoteLocalForward {
             runtime: Arc::clone(&self.runtime),
             local_addr,
-            stop: Mutex::new(Some(stop)),
+            session,
             task: Mutex::new(Some(task)),
             failure,
         })
@@ -3615,7 +3629,7 @@ pub struct RemoteWorkspaceForward {
 pub struct RemoteLocalForward {
     runtime: Arc<Runtime>,
     local_addr: SocketAddr,
-    stop: Mutex<Option<oneshot::Sender<()>>>,
+    session: Arc<Handle<KnownHostHandler>>,
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
     failure: Arc<Mutex<Option<String>>>,
 }
@@ -3631,18 +3645,42 @@ impl RemoteLocalForward {
         self.failure.lock().ok().and_then(|slot| slot.clone())
     }
     pub fn close(&self) {
-        if let Ok(mut stop) = self.stop.lock()
-            && let Some(stop) = stop.take()
-        {
-            let _ = stop.send(());
-        }
-        if let Ok(mut task) = self.task.lock()
-            && let Some(task) = task.take()
-            && tokio::runtime::Handle::try_current().is_err()
-        {
-            let _ = self
-                .runtime
-                .block_on(async { tokio::time::timeout(Duration::from_secs(5), task).await });
+        let Some(task) = self.task.lock().ok().and_then(|mut task| task.take()) else {
+            return;
+        };
+        // The accept task can be awaiting SSH channel confirmation rather
+        // than the listener. Abort it and its owned transfer set immediately.
+        task.abort();
+        let session = Arc::clone(&self.session);
+        let local_addr = self.local_addr;
+        let cleanup = async move {
+            if tokio::time::timeout(Duration::from_secs(5), task)
+                .await
+                .is_err()
+            {
+                eprintln!(
+                    "{}",
+                    json!({"component":"remote","kind":"workspace_forward.task_close_timeout","local_addr":local_addr.to_string()})
+                );
+            }
+            if !matches!(
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    session.disconnect(Disconnect::ByApplication, "browser forward closed", "en")
+                )
+                .await,
+                Ok(Ok(()))
+            ) {
+                eprintln!(
+                    "{}",
+                    json!({"component":"remote","kind":"workspace_forward.session_close_failed","local_addr":local_addr.to_string()})
+                );
+            }
+        };
+        if tokio::runtime::Handle::try_current().is_ok() {
+            self.runtime.spawn(cleanup);
+        } else {
+            self.runtime.block_on(cleanup);
         }
     }
 }
