@@ -1660,22 +1660,74 @@
                   ]
                 },
                 {
-                  "id": "main-sidebar-device-l",
-                  "type": "ref",
-                  "ref": "hideui:sel-m",
-                  "name": "Select",
-                  "fill": "$--background",
-                  "stroke": "$--input",
-                  "width": 190,
-                  "descendants": {
-                    "hideui:sel-t": {
-                      "fill": "$--foreground",
-                      "content": "This Mac"
+                  "type": "frame",
+                  "id": "main-sidebar-footer-l",
+                  "name": "Footer",
+                  "children": [
+                    {
+                      "id": "main-sidebar-device-l",
+                      "type": "ref",
+                      "ref": "hideui:sel-m",
+                      "name": "Select",
+                      "fill": "$--background",
+                      "stroke": "$--input",
+                      "width": 84,
+                      "descendants": {
+                        "hideui:sel-t": {
+                          "fill": "$--foreground",
+                          "content": "This Mac"
+                        },
+                        "hideui:sel-i": {
+                          "fill": "$--muted-foreground"
+                        }
+                      }
                     },
-                    "hideui:sel-i": {
-                      "fill": "$--muted-foreground"
+                    {
+                      "type": "frame",
+                      "id": "main-sidebar-footergap-l",
+                      "name": "Gap",
+                      "children": [],
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "id": "main-sidebar-usage0-l",
+                      "type": "ref",
+                      "ref": "hideui:usage-chip",
+                      "name": "Usage claude",
+                      "fill": "$--secondary",
+                      "descendants": {
+                        "hideui:usage-chip-percent": {
+                          "fill": "$--success",
+                          "content": "62%"
+                        }
+                      }
+                    },
+                    {
+                      "id": "main-sidebar-usage1-l",
+                      "type": "ref",
+                      "ref": "hideui:usage-chip",
+                      "name": "Usage codex",
+                      "fill": "$--secondary",
+                      "descendants": {
+                        "hideui:usage-chip-percent": {
+                          "fill": "$--success",
+                          "content": "59%"
+                        },
+                        "hideui:usage-chip-mark": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                            "mode": "fit"
+                          }
+                        }
+                      }
                     }
-                  }
+                  ],
+                  "width": "fill_container",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "center"
                 }
               ],
               "width": 220,
@@ -1961,22 +2013,74 @@
                   ]
                 },
                 {
-                  "id": "main-sidebar-device-d",
-                  "type": "ref",
-                  "ref": "hideui:sel-m",
-                  "name": "Select",
-                  "fill": "$--background",
-                  "stroke": "$--input",
-                  "width": 190,
-                  "descendants": {
-                    "hideui:sel-t": {
-                      "fill": "$--foreground",
-                      "content": "This Mac"
+                  "type": "frame",
+                  "id": "main-sidebar-footer-d",
+                  "name": "Footer",
+                  "children": [
+                    {
+                      "id": "main-sidebar-device-d",
+                      "type": "ref",
+                      "ref": "hideui:sel-m",
+                      "name": "Select",
+                      "fill": "$--background",
+                      "stroke": "$--input",
+                      "width": 84,
+                      "descendants": {
+                        "hideui:sel-t": {
+                          "fill": "$--foreground",
+                          "content": "This Mac"
+                        },
+                        "hideui:sel-i": {
+                          "fill": "$--muted-foreground"
+                        }
+                      }
                     },
-                    "hideui:sel-i": {
-                      "fill": "$--muted-foreground"
+                    {
+                      "type": "frame",
+                      "id": "main-sidebar-footergap-d",
+                      "name": "Gap",
+                      "children": [],
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "id": "main-sidebar-usage0-d",
+                      "type": "ref",
+                      "ref": "hideui:usage-chip",
+                      "name": "Usage claude",
+                      "fill": "$--secondary",
+                      "descendants": {
+                        "hideui:usage-chip-percent": {
+                          "fill": "$--success",
+                          "content": "62%"
+                        }
+                      }
+                    },
+                    {
+                      "id": "main-sidebar-usage1-d",
+                      "type": "ref",
+                      "ref": "hideui:usage-chip",
+                      "name": "Usage codex",
+                      "fill": "$--secondary",
+                      "descendants": {
+                        "hideui:usage-chip-percent": {
+                          "fill": "$--success",
+                          "content": "59%"
+                        },
+                        "hideui:usage-chip-mark": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                            "mode": "fit"
+                          }
+                        }
+                      }
                     }
-                  }
+                  ],
+                  "width": "fill_container",
+                  "gap": "$--spacing-xs",
+                  "alignItems": "center"
                 }
               ],
               "width": 220,
@@ -4685,22 +4789,74 @@
                           ]
                         },
                         {
-                          "id": "ws-sidebar-device-l",
-                          "type": "ref",
-                          "ref": "hideui:sel-m",
-                          "name": "Select",
-                          "fill": "$--background",
-                          "stroke": "$--input",
-                          "width": 190,
-                          "descendants": {
-                            "hideui:sel-t": {
-                              "fill": "$--foreground",
-                              "content": "This Mac"
+                          "type": "frame",
+                          "id": "ws-sidebar-footer-l",
+                          "name": "Footer",
+                          "children": [
+                            {
+                              "id": "ws-sidebar-device-l",
+                              "type": "ref",
+                              "ref": "hideui:sel-m",
+                              "name": "Select",
+                              "fill": "$--background",
+                              "stroke": "$--input",
+                              "width": 84,
+                              "descendants": {
+                                "hideui:sel-t": {
+                                  "fill": "$--foreground",
+                                  "content": "This Mac"
+                                },
+                                "hideui:sel-i": {
+                                  "fill": "$--muted-foreground"
+                                }
+                              }
                             },
-                            "hideui:sel-i": {
-                              "fill": "$--muted-foreground"
+                            {
+                              "type": "frame",
+                              "id": "ws-sidebar-footergap-l",
+                              "name": "Gap",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "id": "ws-sidebar-usage0-l",
+                              "type": "ref",
+                              "ref": "hideui:usage-chip",
+                              "name": "Usage claude",
+                              "fill": "$--secondary",
+                              "descendants": {
+                                "hideui:usage-chip-percent": {
+                                  "fill": "$--success",
+                                  "content": "62%"
+                                }
+                              }
+                            },
+                            {
+                              "id": "ws-sidebar-usage1-l",
+                              "type": "ref",
+                              "ref": "hideui:usage-chip",
+                              "name": "Usage codex",
+                              "fill": "$--secondary",
+                              "descendants": {
+                                "hideui:usage-chip-percent": {
+                                  "fill": "$--success",
+                                  "content": "59%"
+                                },
+                                "hideui:usage-chip-mark": {
+                                  "fill": {
+                                    "type": "image",
+                                    "enabled": true,
+                                    "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                                    "mode": "fit"
+                                  }
+                                }
+                              }
                             }
-                          }
+                          ],
+                          "width": "fill_container",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center"
                         }
                       ],
                       "width": 220,
@@ -5559,22 +5715,74 @@
                           ]
                         },
                         {
-                          "id": "ws-sidebar-device-d",
-                          "type": "ref",
-                          "ref": "hideui:sel-m",
-                          "name": "Select",
-                          "fill": "$--background",
-                          "stroke": "$--input",
-                          "width": 190,
-                          "descendants": {
-                            "hideui:sel-t": {
-                              "fill": "$--foreground",
-                              "content": "This Mac"
+                          "type": "frame",
+                          "id": "ws-sidebar-footer-d",
+                          "name": "Footer",
+                          "children": [
+                            {
+                              "id": "ws-sidebar-device-d",
+                              "type": "ref",
+                              "ref": "hideui:sel-m",
+                              "name": "Select",
+                              "fill": "$--background",
+                              "stroke": "$--input",
+                              "width": 84,
+                              "descendants": {
+                                "hideui:sel-t": {
+                                  "fill": "$--foreground",
+                                  "content": "This Mac"
+                                },
+                                "hideui:sel-i": {
+                                  "fill": "$--muted-foreground"
+                                }
+                              }
                             },
-                            "hideui:sel-i": {
-                              "fill": "$--muted-foreground"
+                            {
+                              "type": "frame",
+                              "id": "ws-sidebar-footergap-d",
+                              "name": "Gap",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "id": "ws-sidebar-usage0-d",
+                              "type": "ref",
+                              "ref": "hideui:usage-chip",
+                              "name": "Usage claude",
+                              "fill": "$--secondary",
+                              "descendants": {
+                                "hideui:usage-chip-percent": {
+                                  "fill": "$--success",
+                                  "content": "62%"
+                                }
+                              }
+                            },
+                            {
+                              "id": "ws-sidebar-usage1-d",
+                              "type": "ref",
+                              "ref": "hideui:usage-chip",
+                              "name": "Usage codex",
+                              "fill": "$--secondary",
+                              "descendants": {
+                                "hideui:usage-chip-percent": {
+                                  "fill": "$--success",
+                                  "content": "59%"
+                                },
+                                "hideui:usage-chip-mark": {
+                                  "fill": {
+                                    "type": "image",
+                                    "enabled": true,
+                                    "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                                    "mode": "fit"
+                                  }
+                                }
+                              }
                             }
-                          }
+                          ],
+                          "width": "fill_container",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center"
                         }
                       ],
                       "width": 220,
@@ -7775,7 +7983,7 @@
           "type": "text",
           "id": "screen-palette-spec",
           "name": "web/src/Palette.tsx over Com",
-          "content": "web/src/Palette.tsx over Command/CommandDialog: the command palette and the file palette, same List Item row idiom as System / Command.",
+          "content": "web/src/Palette.tsx over Command/CommandDialog (issue #154): the sidebar Search field (⌘K), the query row with its Esc keycap, results grouped under <project> > AGENTS, WORKSPACE > COMMANDS, WORKSPACES > PROJECTS and WORKSPACES > CHECKOUTS in the order of each group’s best match, two-line rows with the agent’s own mark and its state sentence, ↵ on the selected row, the no-match and nothing-to-search states, and ⌘P on the same shell.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -7790,158 +7998,280 @@
           "children": [
             {
               "type": "frame",
-              "id": "pal-wrap-l",
-              "name": "Wrap",
+              "id": "pal-side-cell-l",
+              "name": "Sidebar · the Search field opens ⌘K",
               "children": [
                 {
-                  "type": "frame",
-                  "id": "pal-cmd-l",
-                  "name": "Surface",
-                  "children": [
-                    {
-                      "type": "frame",
-                      "id": "pal-cmd-l-in",
-                      "name": "Field",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "pal-cmd-l-ini",
-                          "name": "Glyph",
-                          "enabled": true,
-                          "width": 14,
-                          "height": 14,
-                          "icon": "search",
-                          "library": "lucide",
-                          "fill": "$--muted-foreground"
-                        },
-                        {
-                          "type": "text",
-                          "id": "pal-cmd-l-int",
-                          "name": "Search agents, workspaces an",
-                          "content": "Search agents, workspaces and commands",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
-                          "fontWeight": "400"
-                        }
-                      ],
-                      "height": 32,
-                      "layout": "horizontal",
-                      "alignItems": "center",
-                      "gap": "$--spacing-sm",
-                      "padding": [
-                        0,
-                        "$--spacing-md"
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "pal-cmd-l-list",
-                      "name": "List",
-                      "children": [
-                        {
-                          "id": "pal-c0-l",
-                          "type": "ref",
-                          "ref": "hideui:mnu-item-m",
-                          "name": "sasu-web-design-system-reset",
-                          "fill": "$--accent",
-                          "descendants": {
-                            "hideui:mnu-item-icon": {
-                              "fill": "$--accent-foreground",
-                              "icon": "folder-git-2",
-                              "enabled": true
-                            },
-                            "hideui:mnu-item-label": {
-                              "fill": "$--accent-foreground",
-                              "content": "sasu-web-design-system-reset"
-                            },
-                            "hideui:mnu-item-reason": {
-                              "fill": "$--muted-foreground",
-                              "enabled": false
-                            },
-                            "hideui:mnu-item-shortcut": {
-                              "fill": "$--muted-foreground",
-                              "enabled": false
-                            }
-                          }
-                        },
-                        {
-                          "id": "pal-c1-l",
-                          "type": "ref",
-                          "ref": "hideui:mnu-item-m",
-                          "name": "New Worktree",
-                          "descendants": {
-                            "hideui:mnu-item-icon": {
-                              "fill": "$--muted-foreground",
-                              "icon": "git-branch-plus",
-                              "enabled": true
-                            },
-                            "hideui:mnu-item-label": {
-                              "fill": "$--foreground",
-                              "content": "New Worktree"
-                            },
-                            "hideui:mnu-item-reason": {
-                              "fill": "$--muted-foreground",
-                              "enabled": false
-                            },
-                            "hideui:mnu-item-shortcut": {
-                              "fill": "$--muted-foreground",
-                              "enabled": false
-                            }
-                          }
-                        },
-                        {
-                          "id": "pal-c2-l",
-                          "type": "ref",
-                          "ref": "hideui:mnu-item-m",
-                          "name": "Open Settings",
-                          "descendants": {
-                            "hideui:mnu-item-icon": {
-                              "fill": "$--muted-foreground",
-                              "icon": "settings",
-                              "enabled": true
-                            },
-                            "hideui:mnu-item-label": {
-                              "fill": "$--foreground",
-                              "content": "Open Settings"
-                            },
-                            "hideui:mnu-item-reason": {
-                              "fill": "$--muted-foreground",
-                              "enabled": false
-                            },
-                            "hideui:mnu-item-shortcut": {
-                              "fill": "$--muted-foreground",
-                              "enabled": false
-                            }
-                          }
-                        }
-                      ],
-                      "layout": "vertical",
-                      "gap": 0,
-                      "padding": "$--spacing-xxs"
-                    }
-                  ],
-                  "width": 480,
-                  "cornerRadius": "$--radius-lg",
-                  "fill": "$--popover",
-                  "stroke": "$--border",
-                  "strokeWidth": "$--size-hairline",
-                  "strokeAlignment": "inner",
-                  "layout": "vertical"
+                  "type": "text",
+                  "id": "pal-side-cell-l-cap",
+                  "name": "Sidebar · the Search field o",
+                  "content": "Sidebar · the Search field opens ⌘K",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
                 },
                 {
                   "type": "frame",
-                  "id": "pal-file-l",
-                  "name": "Surface",
+                  "id": "pal-side-l",
+                  "name": "Sidebar",
                   "children": [
                     {
                       "type": "frame",
-                      "id": "pal-file-l-in",
-                      "name": "Field",
+                      "id": "pal-side-modes-l",
+                      "name": "Modes",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pal-side-agents-l",
+                          "name": "Agents",
+                          "content": "Agents",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "text",
+                          "id": "pal-side-projects-l",
+                          "name": "Projects",
+                          "content": "Projects",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-side-gap-l",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "text",
+                          "id": "pal-side-e-l",
+                          "name": "⌘E",
+                          "content": "⌘E",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "pal-side-settings-l",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 14,
+                          "height": 14,
+                          "icon": "settings",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center",
+                      "width": 292,
+                      "height": 32,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pal-side-searchwrap-l",
+                      "name": "Search",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pal-side-search-l",
+                          "name": "Search field",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "pal-side-searchi-l",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 14,
+                              "height": 14,
+                              "icon": "search",
+                              "library": "lucide",
+                              "fill": "$--muted-foreground"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-side-searcht-l",
+                              "name": "Label",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-side-searchl-l",
+                                  "name": "Search",
+                                  "content": "Search",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container"
+                            },
+                            {
+                              "id": "pal-side-searchk-l",
+                              "type": "ref",
+                              "ref": "hideui:kbd-m",
+                              "name": "⌘K",
+                              "fill": "$--secondary",
+                              "descendants": {
+                                "hideui:kbd-t": {
+                                  "fill": "$--subtle-foreground",
+                                  "content": "⌘K"
+                                }
+                              }
+                            }
+                          ],
+                          "width": "fill_container",
+                          "height": 28,
+                          "layout": "horizontal",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "padding": [
+                            0,
+                            "$--spacing-sm"
+                          ],
+                          "cornerRadius": "$--radius-sm",
+                          "fill": "$--background",
+                          "stroke": "$--input",
+                          "strokeWidth": "$--size-hairline",
+                          "strokeAlignment": "inner"
+                        }
+                      ],
+                      "width": 292,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pal-side-sectwrap-l",
+                      "name": "Section",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pal-side-sect-l",
+                          "name": "NEEDS YOU · 1",
+                          "content": "NEEDS YOU · 1",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "padding": [
+                        "$--spacing-sm",
+                        "$--spacing-md",
+                        0,
+                        "$--spacing-md"
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pal-side-a0-l",
+                      "name": "Agent row",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pal-side-a0s-l",
+                          "name": "?",
+                          "content": "?",
+                          "fill": "$--warning",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-side-a0m-l",
+                          "name": "Agent mark",
+                          "children": [],
+                          "width": 16,
+                          "height": 16,
+                          "cornerRadius": "$--radius-xs",
+                          "fill": {
+                            "type": "image",
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fill"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "pal-side-a0t-l",
+                          "name": "hcoord 원격 에이전트 구현",
+                          "content": "hcoord 원격 에이전트 구현",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "500"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-md"
+                      ]
+                    }
+                  ],
+                  "width": 292,
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "fill": "$--sidebar",
+                  "padding": [
+                    0,
+                    0,
+                    "$--spacing-md",
+                    0
+                  ],
+                  "cornerRadius": "$--radius-md"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs"
+            },
+            {
+              "type": "frame",
+              "id": "pal-default-cell-l",
+              "name": "⌘K · default",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "pal-default-cell-l-cap",
+                  "name": "⌘K · default",
+                  "content": "⌘K · default",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "pal-default-l",
+                  "name": "Palette",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "pal-default-l-in",
+                      "name": "Query",
                       "children": [
                         {
                           "type": "icon",
-                          "id": "pal-file-l-ini",
+                          "id": "pal-default-l-ini",
                           "name": "Glyph",
                           "enabled": true,
                           "width": 14,
@@ -7951,80 +8281,601 @@
                           "fill": "$--muted-foreground"
                         },
                         {
-                          "type": "text",
-                          "id": "pal-file-l-int",
-                          "name": "Open file",
-                          "content": "Open file",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
-                          "fontWeight": "400"
+                          "type": "frame",
+                          "id": "pal-default-l-inf",
+                          "name": "Field",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pal-default-l-inp",
+                              "name": "Search agents and workspaces",
+                              "content": "Search agents and workspaces",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "width": "fill_container"
+                        },
+                        {
+                          "id": "pal-default-esc-l",
+                          "type": "ref",
+                          "ref": "hideui:kbd-m",
+                          "name": "Esc",
+                          "fill": "$--secondary",
+                          "descendants": {
+                            "hideui:kbd-t": {
+                              "fill": "$--subtle-foreground",
+                              "content": "Esc"
+                            }
+                          }
                         }
                       ],
                       "height": 32,
+                      "width": 570,
                       "layout": "horizontal",
                       "alignItems": "center",
                       "gap": "$--spacing-sm",
                       "padding": [
                         0,
                         "$--spacing-md"
-                      ]
+                      ],
+                      "stroke": "$--border",
+                      "strokeWidth": {
+                        "bottom": 1
+                      }
                     },
                     {
                       "type": "frame",
-                      "id": "pal-file-l-list",
+                      "id": "pal-default-l-list",
                       "name": "List",
                       "children": [
                         {
-                          "id": "pal-f0-l",
-                          "type": "ref",
-                          "ref": "hideui:mnu-item-m",
-                          "name": "한글 노트.md",
-                          "fill": "$--accent",
-                          "descendants": {
-                            "hideui:mnu-item-icon": {
-                              "fill": "$--accent-foreground",
-                              "icon": "file-text",
-                              "enabled": true
-                            },
-                            "hideui:mnu-item-label": {
-                              "fill": "$--accent-foreground",
-                              "content": "한글 노트.md"
-                            },
-                            "hideui:mnu-item-reason": {
+                          "type": "frame",
+                          "id": "pal-g-herdr-l",
+                          "name": "Group heading",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pal-g-herdr-l-t",
+                              "name": "herdr-ide > AGENTS",
+                              "content": "herdr-ide > AGENTS",
                               "fill": "$--muted-foreground",
-                              "enabled": false
-                            },
-                            "hideui:mnu-item-shortcut": {
-                              "fill": "$--muted-foreground",
-                              "enabled": false
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "500"
                             }
-                          }
+                          ],
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "width": 566
                         },
                         {
-                          "id": "pal-f1-l",
-                          "type": "ref",
-                          "ref": "hideui:mnu-item-m",
-                          "name": "scripts/pen-screens.mjs",
-                          "descendants": {
-                            "hideui:mnu-item-icon": {
-                              "fill": "$--muted-foreground",
-                              "icon": "file-code",
-                              "enabled": true
+                          "type": "frame",
+                          "id": "pal-r0-l",
+                          "name": "Row · selected",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-r0m-l",
+                              "name": "Agent mark",
+                              "children": [],
+                              "width": 16,
+                              "height": 16,
+                              "cornerRadius": "$--radius-xs",
+                              "fill": {
+                                "type": "image",
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fill"
+                              }
                             },
-                            "hideui:mnu-item-label": {
-                              "fill": "$--foreground",
-                              "content": "scripts/pen-screens.mjs"
+                            {
+                              "type": "frame",
+                              "id": "pal-r0-l-body",
+                              "name": "Body",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-r0-l-title",
+                                  "name": "Electron포팅지침이행",
+                                  "content": "Electron포팅지침이행",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pal-r0-l-detail",
+                                  "name": "웹 E2E 테스트 60개 통과, verify 진행 ",
+                                  "content": "웹 E2E 테스트 60개 통과, verify 진행 중",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0,
+                              "width": "fill_container"
                             },
-                            "hideui:mnu-item-reason": {
+                            {
+                              "type": "text",
+                              "id": "pal-r0-l-enter",
+                              "name": "↵",
+                              "content": "↵",
                               "fill": "$--muted-foreground",
-                              "enabled": false
-                            },
-                            "hideui:mnu-item-shortcut": {
-                              "fill": "$--muted-foreground",
-                              "enabled": false
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
                             }
-                          }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "width": 566,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "cornerRadius": "$--radius-xs",
+                          "fill": "$--accent"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-r1-l",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-r1m-l",
+                              "name": "Agent mark",
+                              "children": [],
+                              "width": 16,
+                              "height": 16,
+                              "cornerRadius": "$--radius-xs",
+                              "fill": {
+                                "type": "image",
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fill"
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-r1-l-body",
+                              "name": "Body",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-r1-l-title",
+                                  "name": "Electron 기본 포팅 구현",
+                                  "content": "Electron 기본 포팅 구현",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pal-r1-l-detail",
+                                  "name": "PR #149 main 병합 진행: 단위테스트 통과",
+                                  "content": "PR #149 main 병합 진행: 단위테스트 통과, e2e 및 코드 리뷰 실행 중",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0,
+                              "width": "fill_container"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "width": 566,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "cornerRadius": "$--radius-xs"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-r2-l",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-r2m-l",
+                              "name": "Agent mark",
+                              "children": [],
+                              "width": 16,
+                              "height": 16,
+                              "cornerRadius": "$--radius-xs",
+                              "fill": {
+                                "type": "image",
+                                "url": "../web/src/assets/agent-codex.png",
+                                "mode": "fill"
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-r2-l-body",
+                              "name": "Body",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-r2-l-title",
+                                  "name": "Swift 단축키 Electron 포팅",
+                                  "content": "Swift 단축키 Electron 포팅",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pal-r2-l-detail",
+                                  "name": "Idle",
+                                  "content": "Idle",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0,
+                              "width": "fill_container"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "width": 566,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "cornerRadius": "$--radius-xs"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-g-sasu-l",
+                          "name": "Group heading",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pal-g-sasu-l-t",
+                              "name": "sasu > AGENTS",
+                              "content": "sasu > AGENTS",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "500"
+                            }
+                          ],
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "width": 566
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-r3-l",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-r3m-l",
+                              "name": "Agent mark",
+                              "children": [],
+                              "width": 16,
+                              "height": 16,
+                              "cornerRadius": "$--radius-xs",
+                              "fill": {
+                                "type": "image",
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fill"
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-r3-l-body",
+                              "name": "Body",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-r3-l-title",
+                                  "name": "hcoord 원격 에이전트 구현",
+                                  "content": "hcoord 원격 에이전트 구현",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pal-r3-l-detail",
+                                  "name": "방안 A와 데몬 재시작을 승인하세요",
+                                  "content": "방안 A와 데몬 재시작을 승인하세요",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0,
+                              "width": "fill_container"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "width": 566,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "cornerRadius": "$--radius-xs"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-g-projects-l",
+                          "name": "Group heading",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pal-g-projects-l-t",
+                              "name": "WORKSPACES > PROJECTS",
+                              "content": "WORKSPACES > PROJECTS",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "500"
+                            }
+                          ],
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "width": 566
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-r4-l",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-r4i-l",
+                              "name": "Icon",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "pal-r4i-l-i",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "folder",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                }
+                              ],
+                              "width": 16,
+                              "height": 16,
+                              "layout": "horizontal",
+                              "alignItems": "center",
+                              "justifyContent": "center"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-r4-l-body",
+                              "name": "Body",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-r4-l-title",
+                                  "name": "herdr-ide",
+                                  "content": "herdr-ide",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pal-r4-l-detail",
+                                  "name": "~/projects/herdr-ide",
+                                  "content": "~/projects/herdr-ide",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0,
+                              "width": "fill_container"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "width": 566,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "cornerRadius": "$--radius-xs"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-g-checkouts-l",
+                          "name": "Group heading",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pal-g-checkouts-l-t",
+                              "name": "WORKSPACES > CHECKOUTS",
+                              "content": "WORKSPACES > CHECKOUTS",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "500"
+                            }
+                          ],
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "width": 566
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-r5-l",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-r5i-l",
+                              "name": "Icon",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "pal-r5i-l-i",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "git-branch",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                }
+                              ],
+                              "width": 16,
+                              "height": 16,
+                              "layout": "horizontal",
+                              "alignItems": "center",
+                              "justifyContent": "center"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-r5-l-body",
+                              "name": "Body",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-r5-l-title",
+                                  "name": "herdr-ide / main",
+                                  "content": "herdr-ide / main",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pal-r5-l-detail",
+                                  "name": "~/projects/herdr-ide",
+                                  "content": "~/projects/herdr-ide",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0,
+                              "width": "fill_container"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "width": 566,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "cornerRadius": "$--radius-xs"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-r6-l",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-r6i-l",
+                              "name": "Icon",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "pal-r6i-l-i",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "git-branch",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                }
+                              ],
+                              "width": 16,
+                              "height": 16,
+                              "layout": "horizontal",
+                              "alignItems": "center",
+                              "justifyContent": "center"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-r6-l-body",
+                              "name": "Body",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-r6-l-title",
+                                  "name": "herdr-ide / quick/154-search",
+                                  "content": "herdr-ide / quick/154-search-palette",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pal-r6-l-detail",
+                                  "name": "~/projects/herdr-ide.worktre",
+                                  "content": "~/projects/herdr-ide.worktrees/web-search-palette",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0,
+                              "width": "fill_container"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "width": 566,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         }
                       ],
                       "layout": "vertical",
@@ -8032,16 +8883,783 @@
                       "padding": "$--spacing-xxs"
                     }
                   ],
-                  "width": 480,
+                  "width": 570,
                   "cornerRadius": "$--radius-lg",
                   "fill": "$--popover",
                   "stroke": "$--border",
                   "strokeWidth": "$--size-hairline",
                   "strokeAlignment": "inner",
-                  "layout": "vertical"
+                  "layout": "vertical",
+                  "clip": true
                 }
               ],
-              "layout": "horizontal",
+              "layout": "vertical",
+              "gap": "$--spacing-xs"
+            },
+            {
+              "type": "frame",
+              "id": "pal-states-l",
+              "name": "States",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "pal-commands-cell-l",
+                  "name": "⌘K · a Workspace on screen, typed",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "pal-commands-cell-l-cap",
+                      "name": "⌘K · a Workspace on screen, ",
+                      "content": "⌘K · a Workspace on screen, typed",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pal-commands-l",
+                      "name": "Palette",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pal-commands-l-in",
+                          "name": "Query",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "pal-commands-l-ini",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 14,
+                              "height": 14,
+                              "icon": "search",
+                              "library": "lucide",
+                              "fill": "$--muted-foreground"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-commands-l-inf",
+                              "name": "Field",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-commands-l-inq",
+                                  "name": "split",
+                                  "content": "split",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container"
+                            },
+                            {
+                              "id": "pal-commands-esc-l",
+                              "type": "ref",
+                              "ref": "hideui:kbd-m",
+                              "name": "Esc",
+                              "fill": "$--secondary",
+                              "descendants": {
+                                "hideui:kbd-t": {
+                                  "fill": "$--subtle-foreground",
+                                  "content": "Esc"
+                                }
+                              }
+                            }
+                          ],
+                          "height": 32,
+                          "width": 570,
+                          "layout": "horizontal",
+                          "alignItems": "center",
+                          "gap": "$--spacing-sm",
+                          "padding": [
+                            0,
+                            "$--spacing-md"
+                          ],
+                          "stroke": "$--border",
+                          "strokeWidth": {
+                            "bottom": 1
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-commands-l-list",
+                          "name": "List",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-g-commands-l",
+                              "name": "Group heading",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-g-commands-l-t",
+                                  "name": "WORKSPACE > COMMANDS",
+                                  "content": "WORKSPACE > COMMANDS",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "500"
+                                }
+                              ],
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-sm"
+                              ],
+                              "width": 566
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-c0-l",
+                              "name": "Row · selected",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "pal-c0i-l",
+                                  "name": "Icon",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "pal-c0i-l-i",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 14,
+                                      "height": 14,
+                                      "icon": "chevron-right",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    }
+                                  ],
+                                  "width": 16,
+                                  "height": 16,
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "pal-c0-l-body",
+                                  "name": "Body",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "pal-c0-l-title",
+                                      "name": "Split right",
+                                      "content": "Split right",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "500"
+                                    }
+                                  ],
+                                  "layout": "vertical",
+                                  "gap": 0,
+                                  "width": "fill_container"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pal-c0-l-enter",
+                                  "name": "↵",
+                                  "content": "↵",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "width": 566,
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-sm"
+                              ],
+                              "cornerRadius": "$--radius-xs",
+                              "fill": "$--accent"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-c1-l",
+                              "name": "Row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "pal-c1i-l",
+                                  "name": "Icon",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "pal-c1i-l-i",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 14,
+                                      "height": 14,
+                                      "icon": "chevron-right",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    }
+                                  ],
+                                  "width": 16,
+                                  "height": 16,
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "pal-c1-l-body",
+                                  "name": "Body",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "pal-c1-l-title",
+                                      "name": "Split down",
+                                      "content": "Split down",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "pal-c1-l-detail",
+                                      "name": "This Workspace already shows",
+                                      "content": "This Workspace already shows 6 view areas, the most it can.",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "layout": "vertical",
+                                  "gap": 0,
+                                  "width": "fill_container"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "width": 566,
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-sm"
+                              ],
+                              "cornerRadius": "$--radius-xs",
+                              "opacity": 0.45
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": 0,
+                          "padding": "$--spacing-xxs"
+                        }
+                      ],
+                      "width": 570,
+                      "cornerRadius": "$--radius-lg",
+                      "fill": "$--popover",
+                      "stroke": "$--border",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "clip": true
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs"
+                },
+                {
+                  "type": "frame",
+                  "id": "pal-nomatch-cell-l",
+                  "name": "⌘K · no match",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "pal-nomatch-cell-l-cap",
+                      "name": "⌘K · no match",
+                      "content": "⌘K · no match",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pal-nomatch-l",
+                      "name": "Palette",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pal-nomatch-l-in",
+                          "name": "Query",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "pal-nomatch-l-ini",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 14,
+                              "height": 14,
+                              "icon": "search",
+                              "library": "lucide",
+                              "fill": "$--muted-foreground"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-nomatch-l-inf",
+                              "name": "Field",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-nomatch-l-inq",
+                                  "name": "zzz",
+                                  "content": "zzz",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container"
+                            },
+                            {
+                              "id": "pal-nomatch-esc-l",
+                              "type": "ref",
+                              "ref": "hideui:kbd-m",
+                              "name": "Esc",
+                              "fill": "$--secondary",
+                              "descendants": {
+                                "hideui:kbd-t": {
+                                  "fill": "$--subtle-foreground",
+                                  "content": "Esc"
+                                }
+                              }
+                            }
+                          ],
+                          "height": 32,
+                          "width": 570,
+                          "layout": "horizontal",
+                          "alignItems": "center",
+                          "gap": "$--spacing-sm",
+                          "padding": [
+                            0,
+                            "$--spacing-md"
+                          ],
+                          "stroke": "$--border",
+                          "strokeWidth": {
+                            "bottom": 1
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-nomatch-l-list",
+                          "name": "List",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-nomatch-e-l",
+                              "name": "Empty",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-nomatch-e-l-t",
+                                  "name": "No matching agents or worksp",
+                                  "content": "No matching agents or workspaces",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "padding": [
+                                "$--spacing-sm",
+                                "$--spacing-md"
+                              ]
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": 0,
+                          "padding": "$--spacing-xxs"
+                        }
+                      ],
+                      "width": 570,
+                      "cornerRadius": "$--radius-lg",
+                      "fill": "$--popover",
+                      "stroke": "$--border",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "clip": true
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs"
+                },
+                {
+                  "type": "frame",
+                  "id": "pal-nothing-cell-l",
+                  "name": "⌘K · nothing to search",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "pal-nothing-cell-l-cap",
+                      "name": "⌘K · nothing to search",
+                      "content": "⌘K · nothing to search",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pal-nothing-l",
+                      "name": "Palette",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pal-nothing-l-in",
+                          "name": "Query",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "pal-nothing-l-ini",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 14,
+                              "height": 14,
+                              "icon": "search",
+                              "library": "lucide",
+                              "fill": "$--muted-foreground"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-nothing-l-inf",
+                              "name": "Field",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-nothing-l-inp",
+                                  "name": "Search agents and workspaces",
+                                  "content": "Search agents and workspaces",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container"
+                            },
+                            {
+                              "id": "pal-nothing-esc-l",
+                              "type": "ref",
+                              "ref": "hideui:kbd-m",
+                              "name": "Esc",
+                              "fill": "$--secondary",
+                              "descendants": {
+                                "hideui:kbd-t": {
+                                  "fill": "$--subtle-foreground",
+                                  "content": "Esc"
+                                }
+                              }
+                            }
+                          ],
+                          "height": 32,
+                          "width": 570,
+                          "layout": "horizontal",
+                          "alignItems": "center",
+                          "gap": "$--spacing-sm",
+                          "padding": [
+                            0,
+                            "$--spacing-md"
+                          ],
+                          "stroke": "$--border",
+                          "strokeWidth": {
+                            "bottom": 1
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-nothing-l-list",
+                          "name": "List",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-nothing-e-l",
+                              "name": "Empty",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-nothing-e-l-t",
+                                  "name": "No agents or workspaces yet",
+                                  "content": "No agents or workspaces yet",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "padding": [
+                                "$--spacing-sm",
+                                "$--spacing-md"
+                              ]
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": 0,
+                          "padding": "$--spacing-xxs"
+                        }
+                      ],
+                      "width": 570,
+                      "cornerRadius": "$--radius-lg",
+                      "fill": "$--popover",
+                      "stroke": "$--border",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "clip": true
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs"
+                },
+                {
+                  "type": "frame",
+                  "id": "pal-files-cell-l",
+                  "name": "⌘P · same shell",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "pal-files-cell-l-cap",
+                      "name": "⌘P · same shell",
+                      "content": "⌘P · same shell",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pal-files-l",
+                      "name": "Palette",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pal-files-l-in",
+                          "name": "Query",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "pal-files-l-ini",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 14,
+                              "height": 14,
+                              "icon": "search",
+                              "library": "lucide",
+                              "fill": "$--muted-foreground"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-files-l-inf",
+                              "name": "Field",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-files-l-inp",
+                                  "name": "Search files by name",
+                                  "content": "Search files by name",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container"
+                            },
+                            {
+                              "id": "pal-files-esc-l",
+                              "type": "ref",
+                              "ref": "hideui:kbd-m",
+                              "name": "Esc",
+                              "fill": "$--secondary",
+                              "descendants": {
+                                "hideui:kbd-t": {
+                                  "fill": "$--subtle-foreground",
+                                  "content": "Esc"
+                                }
+                              }
+                            }
+                          ],
+                          "height": 32,
+                          "width": 570,
+                          "layout": "horizontal",
+                          "alignItems": "center",
+                          "gap": "$--spacing-sm",
+                          "padding": [
+                            0,
+                            "$--spacing-md"
+                          ],
+                          "stroke": "$--border",
+                          "strokeWidth": {
+                            "bottom": 1
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-files-l-list",
+                          "name": "List",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-f0-l",
+                              "name": "Row · selected",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "pal-f0i-l",
+                                  "name": "Icon",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "pal-f0i-l-i",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 14,
+                                      "height": 14,
+                                      "icon": "file-text",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    }
+                                  ],
+                                  "width": 16,
+                                  "height": 16,
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "pal-f0-l-body",
+                                  "name": "Body",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "pal-f0-l-title",
+                                      "name": "docs/한글 노트.md",
+                                      "content": "docs/한글 노트.md",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "500"
+                                    }
+                                  ],
+                                  "layout": "vertical",
+                                  "gap": 0,
+                                  "width": "fill_container"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pal-f0-l-enter",
+                                  "name": "↵",
+                                  "content": "↵",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "width": 566,
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-sm"
+                              ],
+                              "cornerRadius": "$--radius-xs",
+                              "fill": "$--accent"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-f1-l",
+                              "name": "Row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "pal-f1i-l",
+                                  "name": "Icon",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "pal-f1i-l-i",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 14,
+                                      "height": 14,
+                                      "icon": "file-code",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    }
+                                  ],
+                                  "width": 16,
+                                  "height": 16,
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "pal-f1-l-body",
+                                  "name": "Body",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "pal-f1-l-title",
+                                      "name": "scripts/pen-screens.mjs",
+                                      "content": "scripts/pen-screens.mjs",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "500"
+                                    }
+                                  ],
+                                  "layout": "vertical",
+                                  "gap": 0,
+                                  "width": "fill_container"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "width": 566,
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-sm"
+                              ],
+                              "cornerRadius": "$--radius-xs"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": 0,
+                          "padding": "$--spacing-xxs"
+                        }
+                      ],
+                      "width": 570,
+                      "cornerRadius": "$--radius-lg",
+                      "fill": "$--popover",
+                      "stroke": "$--border",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "clip": true
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs"
+                }
+              ],
+              "layout": "vertical",
               "gap": "$--spacing-lg"
             }
           ],
@@ -8063,158 +9681,280 @@
           "children": [
             {
               "type": "frame",
-              "id": "pal-wrap-d",
-              "name": "Wrap",
+              "id": "pal-side-cell-d",
+              "name": "Sidebar · the Search field opens ⌘K",
               "children": [
                 {
-                  "type": "frame",
-                  "id": "pal-cmd-d",
-                  "name": "Surface",
-                  "children": [
-                    {
-                      "type": "frame",
-                      "id": "pal-cmd-d-in",
-                      "name": "Field",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "pal-cmd-d-ini",
-                          "name": "Glyph",
-                          "enabled": true,
-                          "width": 14,
-                          "height": 14,
-                          "icon": "search",
-                          "library": "lucide",
-                          "fill": "$--muted-foreground"
-                        },
-                        {
-                          "type": "text",
-                          "id": "pal-cmd-d-int",
-                          "name": "Search agents, workspaces an",
-                          "content": "Search agents, workspaces and commands",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
-                          "fontWeight": "400"
-                        }
-                      ],
-                      "height": 32,
-                      "layout": "horizontal",
-                      "alignItems": "center",
-                      "gap": "$--spacing-sm",
-                      "padding": [
-                        0,
-                        "$--spacing-md"
-                      ]
-                    },
-                    {
-                      "type": "frame",
-                      "id": "pal-cmd-d-list",
-                      "name": "List",
-                      "children": [
-                        {
-                          "id": "pal-c0-d",
-                          "type": "ref",
-                          "ref": "hideui:mnu-item-m",
-                          "name": "sasu-web-design-system-reset",
-                          "fill": "$--accent",
-                          "descendants": {
-                            "hideui:mnu-item-icon": {
-                              "fill": "$--accent-foreground",
-                              "icon": "folder-git-2",
-                              "enabled": true
-                            },
-                            "hideui:mnu-item-label": {
-                              "fill": "$--accent-foreground",
-                              "content": "sasu-web-design-system-reset"
-                            },
-                            "hideui:mnu-item-reason": {
-                              "fill": "$--muted-foreground",
-                              "enabled": false
-                            },
-                            "hideui:mnu-item-shortcut": {
-                              "fill": "$--muted-foreground",
-                              "enabled": false
-                            }
-                          }
-                        },
-                        {
-                          "id": "pal-c1-d",
-                          "type": "ref",
-                          "ref": "hideui:mnu-item-m",
-                          "name": "New Worktree",
-                          "descendants": {
-                            "hideui:mnu-item-icon": {
-                              "fill": "$--muted-foreground",
-                              "icon": "git-branch-plus",
-                              "enabled": true
-                            },
-                            "hideui:mnu-item-label": {
-                              "fill": "$--foreground",
-                              "content": "New Worktree"
-                            },
-                            "hideui:mnu-item-reason": {
-                              "fill": "$--muted-foreground",
-                              "enabled": false
-                            },
-                            "hideui:mnu-item-shortcut": {
-                              "fill": "$--muted-foreground",
-                              "enabled": false
-                            }
-                          }
-                        },
-                        {
-                          "id": "pal-c2-d",
-                          "type": "ref",
-                          "ref": "hideui:mnu-item-m",
-                          "name": "Open Settings",
-                          "descendants": {
-                            "hideui:mnu-item-icon": {
-                              "fill": "$--muted-foreground",
-                              "icon": "settings",
-                              "enabled": true
-                            },
-                            "hideui:mnu-item-label": {
-                              "fill": "$--foreground",
-                              "content": "Open Settings"
-                            },
-                            "hideui:mnu-item-reason": {
-                              "fill": "$--muted-foreground",
-                              "enabled": false
-                            },
-                            "hideui:mnu-item-shortcut": {
-                              "fill": "$--muted-foreground",
-                              "enabled": false
-                            }
-                          }
-                        }
-                      ],
-                      "layout": "vertical",
-                      "gap": 0,
-                      "padding": "$--spacing-xxs"
-                    }
-                  ],
-                  "width": 480,
-                  "cornerRadius": "$--radius-lg",
-                  "fill": "$--popover",
-                  "stroke": "$--border",
-                  "strokeWidth": "$--size-hairline",
-                  "strokeAlignment": "inner",
-                  "layout": "vertical"
+                  "type": "text",
+                  "id": "pal-side-cell-d-cap",
+                  "name": "Sidebar · the Search field o",
+                  "content": "Sidebar · the Search field opens ⌘K",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
                 },
                 {
                   "type": "frame",
-                  "id": "pal-file-d",
-                  "name": "Surface",
+                  "id": "pal-side-d",
+                  "name": "Sidebar",
                   "children": [
                     {
                       "type": "frame",
-                      "id": "pal-file-d-in",
-                      "name": "Field",
+                      "id": "pal-side-modes-d",
+                      "name": "Modes",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pal-side-agents-d",
+                          "name": "Agents",
+                          "content": "Agents",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "text",
+                          "id": "pal-side-projects-d",
+                          "name": "Projects",
+                          "content": "Projects",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-side-gap-d",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "text",
+                          "id": "pal-side-e-d",
+                          "name": "⌘E",
+                          "content": "⌘E",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "pal-side-settings-d",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 14,
+                          "height": 14,
+                          "icon": "settings",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center",
+                      "width": 292,
+                      "height": 32,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pal-side-searchwrap-d",
+                      "name": "Search",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pal-side-search-d",
+                          "name": "Search field",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "pal-side-searchi-d",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 14,
+                              "height": 14,
+                              "icon": "search",
+                              "library": "lucide",
+                              "fill": "$--muted-foreground"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-side-searcht-d",
+                              "name": "Label",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-side-searchl-d",
+                                  "name": "Search",
+                                  "content": "Search",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container"
+                            },
+                            {
+                              "id": "pal-side-searchk-d",
+                              "type": "ref",
+                              "ref": "hideui:kbd-m",
+                              "name": "⌘K",
+                              "fill": "$--secondary",
+                              "descendants": {
+                                "hideui:kbd-t": {
+                                  "fill": "$--subtle-foreground",
+                                  "content": "⌘K"
+                                }
+                              }
+                            }
+                          ],
+                          "width": "fill_container",
+                          "height": 28,
+                          "layout": "horizontal",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "padding": [
+                            0,
+                            "$--spacing-sm"
+                          ],
+                          "cornerRadius": "$--radius-sm",
+                          "fill": "$--background",
+                          "stroke": "$--input",
+                          "strokeWidth": "$--size-hairline",
+                          "strokeAlignment": "inner"
+                        }
+                      ],
+                      "width": 292,
+                      "padding": [
+                        0,
+                        "$--spacing-md"
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pal-side-sectwrap-d",
+                      "name": "Section",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pal-side-sect-d",
+                          "name": "NEEDS YOU · 1",
+                          "content": "NEEDS YOU · 1",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "padding": [
+                        "$--spacing-sm",
+                        "$--spacing-md",
+                        0,
+                        "$--spacing-md"
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pal-side-a0-d",
+                      "name": "Agent row",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pal-side-a0s-d",
+                          "name": "?",
+                          "content": "?",
+                          "fill": "$--warning",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-side-a0m-d",
+                          "name": "Agent mark",
+                          "children": [],
+                          "width": 16,
+                          "height": 16,
+                          "cornerRadius": "$--radius-xs",
+                          "fill": {
+                            "type": "image",
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fill"
+                          }
+                        },
+                        {
+                          "type": "text",
+                          "id": "pal-side-a0t-d",
+                          "name": "hcoord 원격 에이전트 구현",
+                          "content": "hcoord 원격 에이전트 구현",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "500"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-md"
+                      ]
+                    }
+                  ],
+                  "width": 292,
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "fill": "$--sidebar",
+                  "padding": [
+                    0,
+                    0,
+                    "$--spacing-md",
+                    0
+                  ],
+                  "cornerRadius": "$--radius-md"
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-xs"
+            },
+            {
+              "type": "frame",
+              "id": "pal-default-cell-d",
+              "name": "⌘K · default",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "pal-default-cell-d-cap",
+                  "name": "⌘K · default",
+                  "content": "⌘K · default",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                },
+                {
+                  "type": "frame",
+                  "id": "pal-default-d",
+                  "name": "Palette",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "pal-default-d-in",
+                      "name": "Query",
                       "children": [
                         {
                           "type": "icon",
-                          "id": "pal-file-d-ini",
+                          "id": "pal-default-d-ini",
                           "name": "Glyph",
                           "enabled": true,
                           "width": 14,
@@ -8224,80 +9964,601 @@
                           "fill": "$--muted-foreground"
                         },
                         {
-                          "type": "text",
-                          "id": "pal-file-d-int",
-                          "name": "Open file",
-                          "content": "Open file",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
-                          "fontWeight": "400"
+                          "type": "frame",
+                          "id": "pal-default-d-inf",
+                          "name": "Field",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pal-default-d-inp",
+                              "name": "Search agents and workspaces",
+                              "content": "Search agents and workspaces",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-body",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "width": "fill_container"
+                        },
+                        {
+                          "id": "pal-default-esc-d",
+                          "type": "ref",
+                          "ref": "hideui:kbd-m",
+                          "name": "Esc",
+                          "fill": "$--secondary",
+                          "descendants": {
+                            "hideui:kbd-t": {
+                              "fill": "$--subtle-foreground",
+                              "content": "Esc"
+                            }
+                          }
                         }
                       ],
                       "height": 32,
+                      "width": 570,
                       "layout": "horizontal",
                       "alignItems": "center",
                       "gap": "$--spacing-sm",
                       "padding": [
                         0,
                         "$--spacing-md"
-                      ]
+                      ],
+                      "stroke": "$--border",
+                      "strokeWidth": {
+                        "bottom": 1
+                      }
                     },
                     {
                       "type": "frame",
-                      "id": "pal-file-d-list",
+                      "id": "pal-default-d-list",
                       "name": "List",
                       "children": [
                         {
-                          "id": "pal-f0-d",
-                          "type": "ref",
-                          "ref": "hideui:mnu-item-m",
-                          "name": "한글 노트.md",
-                          "fill": "$--accent",
-                          "descendants": {
-                            "hideui:mnu-item-icon": {
-                              "fill": "$--accent-foreground",
-                              "icon": "file-text",
-                              "enabled": true
-                            },
-                            "hideui:mnu-item-label": {
-                              "fill": "$--accent-foreground",
-                              "content": "한글 노트.md"
-                            },
-                            "hideui:mnu-item-reason": {
+                          "type": "frame",
+                          "id": "pal-g-herdr-d",
+                          "name": "Group heading",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pal-g-herdr-d-t",
+                              "name": "herdr-ide > AGENTS",
+                              "content": "herdr-ide > AGENTS",
                               "fill": "$--muted-foreground",
-                              "enabled": false
-                            },
-                            "hideui:mnu-item-shortcut": {
-                              "fill": "$--muted-foreground",
-                              "enabled": false
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "500"
                             }
-                          }
+                          ],
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "width": 566
                         },
                         {
-                          "id": "pal-f1-d",
-                          "type": "ref",
-                          "ref": "hideui:mnu-item-m",
-                          "name": "scripts/pen-screens.mjs",
-                          "descendants": {
-                            "hideui:mnu-item-icon": {
-                              "fill": "$--muted-foreground",
-                              "icon": "file-code",
-                              "enabled": true
+                          "type": "frame",
+                          "id": "pal-r0-d",
+                          "name": "Row · selected",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-r0m-d",
+                              "name": "Agent mark",
+                              "children": [],
+                              "width": 16,
+                              "height": 16,
+                              "cornerRadius": "$--radius-xs",
+                              "fill": {
+                                "type": "image",
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fill"
+                              }
                             },
-                            "hideui:mnu-item-label": {
-                              "fill": "$--foreground",
-                              "content": "scripts/pen-screens.mjs"
+                            {
+                              "type": "frame",
+                              "id": "pal-r0-d-body",
+                              "name": "Body",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-r0-d-title",
+                                  "name": "Electron포팅지침이행",
+                                  "content": "Electron포팅지침이행",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pal-r0-d-detail",
+                                  "name": "웹 E2E 테스트 60개 통과, verify 진행 ",
+                                  "content": "웹 E2E 테스트 60개 통과, verify 진행 중",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0,
+                              "width": "fill_container"
                             },
-                            "hideui:mnu-item-reason": {
+                            {
+                              "type": "text",
+                              "id": "pal-r0-d-enter",
+                              "name": "↵",
+                              "content": "↵",
                               "fill": "$--muted-foreground",
-                              "enabled": false
-                            },
-                            "hideui:mnu-item-shortcut": {
-                              "fill": "$--muted-foreground",
-                              "enabled": false
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
                             }
-                          }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "width": 566,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "cornerRadius": "$--radius-xs",
+                          "fill": "$--accent"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-r1-d",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-r1m-d",
+                              "name": "Agent mark",
+                              "children": [],
+                              "width": 16,
+                              "height": 16,
+                              "cornerRadius": "$--radius-xs",
+                              "fill": {
+                                "type": "image",
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fill"
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-r1-d-body",
+                              "name": "Body",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-r1-d-title",
+                                  "name": "Electron 기본 포팅 구현",
+                                  "content": "Electron 기본 포팅 구현",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pal-r1-d-detail",
+                                  "name": "PR #149 main 병합 진행: 단위테스트 통과",
+                                  "content": "PR #149 main 병합 진행: 단위테스트 통과, e2e 및 코드 리뷰 실행 중",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0,
+                              "width": "fill_container"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "width": 566,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "cornerRadius": "$--radius-xs"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-r2-d",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-r2m-d",
+                              "name": "Agent mark",
+                              "children": [],
+                              "width": 16,
+                              "height": 16,
+                              "cornerRadius": "$--radius-xs",
+                              "fill": {
+                                "type": "image",
+                                "url": "../web/src/assets/agent-codex.png",
+                                "mode": "fill"
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-r2-d-body",
+                              "name": "Body",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-r2-d-title",
+                                  "name": "Swift 단축키 Electron 포팅",
+                                  "content": "Swift 단축키 Electron 포팅",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pal-r2-d-detail",
+                                  "name": "Idle",
+                                  "content": "Idle",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0,
+                              "width": "fill_container"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "width": 566,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "cornerRadius": "$--radius-xs"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-g-sasu-d",
+                          "name": "Group heading",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pal-g-sasu-d-t",
+                              "name": "sasu > AGENTS",
+                              "content": "sasu > AGENTS",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "500"
+                            }
+                          ],
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "width": 566
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-r3-d",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-r3m-d",
+                              "name": "Agent mark",
+                              "children": [],
+                              "width": 16,
+                              "height": 16,
+                              "cornerRadius": "$--radius-xs",
+                              "fill": {
+                                "type": "image",
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fill"
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-r3-d-body",
+                              "name": "Body",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-r3-d-title",
+                                  "name": "hcoord 원격 에이전트 구현",
+                                  "content": "hcoord 원격 에이전트 구현",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pal-r3-d-detail",
+                                  "name": "방안 A와 데몬 재시작을 승인하세요",
+                                  "content": "방안 A와 데몬 재시작을 승인하세요",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0,
+                              "width": "fill_container"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "width": 566,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "cornerRadius": "$--radius-xs"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-g-projects-d",
+                          "name": "Group heading",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pal-g-projects-d-t",
+                              "name": "WORKSPACES > PROJECTS",
+                              "content": "WORKSPACES > PROJECTS",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "500"
+                            }
+                          ],
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "width": 566
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-r4-d",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-r4i-d",
+                              "name": "Icon",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "pal-r4i-d-i",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "folder",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                }
+                              ],
+                              "width": 16,
+                              "height": 16,
+                              "layout": "horizontal",
+                              "alignItems": "center",
+                              "justifyContent": "center"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-r4-d-body",
+                              "name": "Body",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-r4-d-title",
+                                  "name": "herdr-ide",
+                                  "content": "herdr-ide",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pal-r4-d-detail",
+                                  "name": "~/projects/herdr-ide",
+                                  "content": "~/projects/herdr-ide",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0,
+                              "width": "fill_container"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "width": 566,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "cornerRadius": "$--radius-xs"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-g-checkouts-d",
+                          "name": "Group heading",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pal-g-checkouts-d-t",
+                              "name": "WORKSPACES > CHECKOUTS",
+                              "content": "WORKSPACES > CHECKOUTS",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "500"
+                            }
+                          ],
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "width": 566
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-r5-d",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-r5i-d",
+                              "name": "Icon",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "pal-r5i-d-i",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "git-branch",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                }
+                              ],
+                              "width": 16,
+                              "height": 16,
+                              "layout": "horizontal",
+                              "alignItems": "center",
+                              "justifyContent": "center"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-r5-d-body",
+                              "name": "Body",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-r5-d-title",
+                                  "name": "herdr-ide / main",
+                                  "content": "herdr-ide / main",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pal-r5-d-detail",
+                                  "name": "~/projects/herdr-ide",
+                                  "content": "~/projects/herdr-ide",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0,
+                              "width": "fill_container"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "width": 566,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "cornerRadius": "$--radius-xs"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-r6-d",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-r6i-d",
+                              "name": "Icon",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "pal-r6i-d-i",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "git-branch",
+                                  "library": "lucide",
+                                  "fill": "$--muted-foreground"
+                                }
+                              ],
+                              "width": 16,
+                              "height": 16,
+                              "layout": "horizontal",
+                              "alignItems": "center",
+                              "justifyContent": "center"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-r6-d-body",
+                              "name": "Body",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-r6-d-title",
+                                  "name": "herdr-ide / quick/154-search",
+                                  "content": "herdr-ide / quick/154-search-palette",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pal-r6-d-detail",
+                                  "name": "~/projects/herdr-ide.worktre",
+                                  "content": "~/projects/herdr-ide.worktrees/web-search-palette",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0,
+                              "width": "fill_container"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "width": 566,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "cornerRadius": "$--radius-xs"
                         }
                       ],
                       "layout": "vertical",
@@ -8305,16 +10566,783 @@
                       "padding": "$--spacing-xxs"
                     }
                   ],
-                  "width": 480,
+                  "width": 570,
                   "cornerRadius": "$--radius-lg",
                   "fill": "$--popover",
                   "stroke": "$--border",
                   "strokeWidth": "$--size-hairline",
                   "strokeAlignment": "inner",
-                  "layout": "vertical"
+                  "layout": "vertical",
+                  "clip": true
                 }
               ],
-              "layout": "horizontal",
+              "layout": "vertical",
+              "gap": "$--spacing-xs"
+            },
+            {
+              "type": "frame",
+              "id": "pal-states-d",
+              "name": "States",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "pal-commands-cell-d",
+                  "name": "⌘K · a Workspace on screen, typed",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "pal-commands-cell-d-cap",
+                      "name": "⌘K · a Workspace on screen, ",
+                      "content": "⌘K · a Workspace on screen, typed",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pal-commands-d",
+                      "name": "Palette",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pal-commands-d-in",
+                          "name": "Query",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "pal-commands-d-ini",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 14,
+                              "height": 14,
+                              "icon": "search",
+                              "library": "lucide",
+                              "fill": "$--muted-foreground"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-commands-d-inf",
+                              "name": "Field",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-commands-d-inq",
+                                  "name": "split",
+                                  "content": "split",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container"
+                            },
+                            {
+                              "id": "pal-commands-esc-d",
+                              "type": "ref",
+                              "ref": "hideui:kbd-m",
+                              "name": "Esc",
+                              "fill": "$--secondary",
+                              "descendants": {
+                                "hideui:kbd-t": {
+                                  "fill": "$--subtle-foreground",
+                                  "content": "Esc"
+                                }
+                              }
+                            }
+                          ],
+                          "height": 32,
+                          "width": 570,
+                          "layout": "horizontal",
+                          "alignItems": "center",
+                          "gap": "$--spacing-sm",
+                          "padding": [
+                            0,
+                            "$--spacing-md"
+                          ],
+                          "stroke": "$--border",
+                          "strokeWidth": {
+                            "bottom": 1
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-commands-d-list",
+                          "name": "List",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-g-commands-d",
+                              "name": "Group heading",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-g-commands-d-t",
+                                  "name": "WORKSPACE > COMMANDS",
+                                  "content": "WORKSPACE > COMMANDS",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "500"
+                                }
+                              ],
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-sm"
+                              ],
+                              "width": 566
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-c0-d",
+                              "name": "Row · selected",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "pal-c0i-d",
+                                  "name": "Icon",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "pal-c0i-d-i",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 14,
+                                      "height": 14,
+                                      "icon": "chevron-right",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    }
+                                  ],
+                                  "width": 16,
+                                  "height": 16,
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "pal-c0-d-body",
+                                  "name": "Body",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "pal-c0-d-title",
+                                      "name": "Split right",
+                                      "content": "Split right",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "500"
+                                    }
+                                  ],
+                                  "layout": "vertical",
+                                  "gap": 0,
+                                  "width": "fill_container"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pal-c0-d-enter",
+                                  "name": "↵",
+                                  "content": "↵",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "width": 566,
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-sm"
+                              ],
+                              "cornerRadius": "$--radius-xs",
+                              "fill": "$--accent"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-c1-d",
+                              "name": "Row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "pal-c1i-d",
+                                  "name": "Icon",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "pal-c1i-d-i",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 14,
+                                      "height": 14,
+                                      "icon": "chevron-right",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    }
+                                  ],
+                                  "width": 16,
+                                  "height": 16,
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "pal-c1-d-body",
+                                  "name": "Body",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "pal-c1-d-title",
+                                      "name": "Split down",
+                                      "content": "Split down",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "500"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "pal-c1-d-detail",
+                                      "name": "This Workspace already shows",
+                                      "content": "This Workspace already shows 6 view areas, the most it can.",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "layout": "vertical",
+                                  "gap": 0,
+                                  "width": "fill_container"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "width": 566,
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-sm"
+                              ],
+                              "cornerRadius": "$--radius-xs",
+                              "opacity": 0.45
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": 0,
+                          "padding": "$--spacing-xxs"
+                        }
+                      ],
+                      "width": 570,
+                      "cornerRadius": "$--radius-lg",
+                      "fill": "$--popover",
+                      "stroke": "$--border",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "clip": true
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs"
+                },
+                {
+                  "type": "frame",
+                  "id": "pal-nomatch-cell-d",
+                  "name": "⌘K · no match",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "pal-nomatch-cell-d-cap",
+                      "name": "⌘K · no match",
+                      "content": "⌘K · no match",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pal-nomatch-d",
+                      "name": "Palette",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pal-nomatch-d-in",
+                          "name": "Query",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "pal-nomatch-d-ini",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 14,
+                              "height": 14,
+                              "icon": "search",
+                              "library": "lucide",
+                              "fill": "$--muted-foreground"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-nomatch-d-inf",
+                              "name": "Field",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-nomatch-d-inq",
+                                  "name": "zzz",
+                                  "content": "zzz",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container"
+                            },
+                            {
+                              "id": "pal-nomatch-esc-d",
+                              "type": "ref",
+                              "ref": "hideui:kbd-m",
+                              "name": "Esc",
+                              "fill": "$--secondary",
+                              "descendants": {
+                                "hideui:kbd-t": {
+                                  "fill": "$--subtle-foreground",
+                                  "content": "Esc"
+                                }
+                              }
+                            }
+                          ],
+                          "height": 32,
+                          "width": 570,
+                          "layout": "horizontal",
+                          "alignItems": "center",
+                          "gap": "$--spacing-sm",
+                          "padding": [
+                            0,
+                            "$--spacing-md"
+                          ],
+                          "stroke": "$--border",
+                          "strokeWidth": {
+                            "bottom": 1
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-nomatch-d-list",
+                          "name": "List",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-nomatch-e-d",
+                              "name": "Empty",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-nomatch-e-d-t",
+                                  "name": "No matching agents or worksp",
+                                  "content": "No matching agents or workspaces",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "padding": [
+                                "$--spacing-sm",
+                                "$--spacing-md"
+                              ]
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": 0,
+                          "padding": "$--spacing-xxs"
+                        }
+                      ],
+                      "width": 570,
+                      "cornerRadius": "$--radius-lg",
+                      "fill": "$--popover",
+                      "stroke": "$--border",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "clip": true
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs"
+                },
+                {
+                  "type": "frame",
+                  "id": "pal-nothing-cell-d",
+                  "name": "⌘K · nothing to search",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "pal-nothing-cell-d-cap",
+                      "name": "⌘K · nothing to search",
+                      "content": "⌘K · nothing to search",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pal-nothing-d",
+                      "name": "Palette",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pal-nothing-d-in",
+                          "name": "Query",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "pal-nothing-d-ini",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 14,
+                              "height": 14,
+                              "icon": "search",
+                              "library": "lucide",
+                              "fill": "$--muted-foreground"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-nothing-d-inf",
+                              "name": "Field",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-nothing-d-inp",
+                                  "name": "Search agents and workspaces",
+                                  "content": "Search agents and workspaces",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container"
+                            },
+                            {
+                              "id": "pal-nothing-esc-d",
+                              "type": "ref",
+                              "ref": "hideui:kbd-m",
+                              "name": "Esc",
+                              "fill": "$--secondary",
+                              "descendants": {
+                                "hideui:kbd-t": {
+                                  "fill": "$--subtle-foreground",
+                                  "content": "Esc"
+                                }
+                              }
+                            }
+                          ],
+                          "height": 32,
+                          "width": 570,
+                          "layout": "horizontal",
+                          "alignItems": "center",
+                          "gap": "$--spacing-sm",
+                          "padding": [
+                            0,
+                            "$--spacing-md"
+                          ],
+                          "stroke": "$--border",
+                          "strokeWidth": {
+                            "bottom": 1
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-nothing-d-list",
+                          "name": "List",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-nothing-e-d",
+                              "name": "Empty",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-nothing-e-d-t",
+                                  "name": "No agents or workspaces yet",
+                                  "content": "No agents or workspaces yet",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "padding": [
+                                "$--spacing-sm",
+                                "$--spacing-md"
+                              ]
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": 0,
+                          "padding": "$--spacing-xxs"
+                        }
+                      ],
+                      "width": 570,
+                      "cornerRadius": "$--radius-lg",
+                      "fill": "$--popover",
+                      "stroke": "$--border",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "clip": true
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs"
+                },
+                {
+                  "type": "frame",
+                  "id": "pal-files-cell-d",
+                  "name": "⌘P · same shell",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "pal-files-cell-d-cap",
+                      "name": "⌘P · same shell",
+                      "content": "⌘P · same shell",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pal-files-d",
+                      "name": "Palette",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "pal-files-d-in",
+                          "name": "Query",
+                          "children": [
+                            {
+                              "type": "icon",
+                              "id": "pal-files-d-ini",
+                              "name": "Glyph",
+                              "enabled": true,
+                              "width": 14,
+                              "height": 14,
+                              "icon": "search",
+                              "library": "lucide",
+                              "fill": "$--muted-foreground"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-files-d-inf",
+                              "name": "Field",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pal-files-d-inp",
+                                  "name": "Search files by name",
+                                  "content": "Search files by name",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container"
+                            },
+                            {
+                              "id": "pal-files-esc-d",
+                              "type": "ref",
+                              "ref": "hideui:kbd-m",
+                              "name": "Esc",
+                              "fill": "$--secondary",
+                              "descendants": {
+                                "hideui:kbd-t": {
+                                  "fill": "$--subtle-foreground",
+                                  "content": "Esc"
+                                }
+                              }
+                            }
+                          ],
+                          "height": 32,
+                          "width": 570,
+                          "layout": "horizontal",
+                          "alignItems": "center",
+                          "gap": "$--spacing-sm",
+                          "padding": [
+                            0,
+                            "$--spacing-md"
+                          ],
+                          "stroke": "$--border",
+                          "strokeWidth": {
+                            "bottom": 1
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pal-files-d-list",
+                          "name": "List",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pal-f0-d",
+                              "name": "Row · selected",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "pal-f0i-d",
+                                  "name": "Icon",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "pal-f0i-d-i",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 14,
+                                      "height": 14,
+                                      "icon": "file-text",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    }
+                                  ],
+                                  "width": 16,
+                                  "height": 16,
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "pal-f0-d-body",
+                                  "name": "Body",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "pal-f0-d-title",
+                                      "name": "docs/한글 노트.md",
+                                      "content": "docs/한글 노트.md",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "500"
+                                    }
+                                  ],
+                                  "layout": "vertical",
+                                  "gap": 0,
+                                  "width": "fill_container"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pal-f0-d-enter",
+                                  "name": "↵",
+                                  "content": "↵",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "width": 566,
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-sm"
+                              ],
+                              "cornerRadius": "$--radius-xs",
+                              "fill": "$--accent"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pal-f1-d",
+                              "name": "Row",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "pal-f1i-d",
+                                  "name": "Icon",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "pal-f1i-d-i",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 14,
+                                      "height": 14,
+                                      "icon": "file-code",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    }
+                                  ],
+                                  "width": 16,
+                                  "height": 16,
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "pal-f1-d-body",
+                                  "name": "Body",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "pal-f1-d-title",
+                                      "name": "scripts/pen-screens.mjs",
+                                      "content": "scripts/pen-screens.mjs",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "500"
+                                    }
+                                  ],
+                                  "layout": "vertical",
+                                  "gap": 0,
+                                  "width": "fill_container"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "width": 566,
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-sm"
+                              ],
+                              "cornerRadius": "$--radius-xs"
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": 0,
+                          "padding": "$--spacing-xxs"
+                        }
+                      ],
+                      "width": 570,
+                      "cornerRadius": "$--radius-lg",
+                      "fill": "$--popover",
+                      "stroke": "$--border",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "layout": "vertical",
+                      "clip": true
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs"
+                }
+              ],
+              "layout": "vertical",
               "gap": "$--spacing-lg"
             }
           ],

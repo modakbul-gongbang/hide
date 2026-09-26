@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { filterEntries, fuzzyScore, searchEntries, type SearchEntry } from "./search";
+import { filterEntries, fuzzyScore, groupEntries, searchEntries, type SearchEntry } from "./search";
 import type { SnapshotRest, ViewNode } from "./snapshot";
 import { viewGeometry } from "./viewLayout";
 
@@ -19,6 +19,7 @@ const REST = {
   navigator: {
     agents: [
       { id: "a1", pane_id: "p1", identity_label: "Agent one", agent_kind: "claude", symbol: "●", group: "working", status_label: "Working", elapsed: "1m", emphasized: false, unread: false },
+      { id: "a2", pane_id: "p9", identity_label: "Agent elsewhere", agent_kind: "codex", symbol: "○", group: "seen", status_label: "Idle", detail: "Waiting for review", elapsed: "3m", emphasized: false, unread: false },
     ],
     workspaces: [
       {
@@ -29,7 +30,7 @@ const REST = {
         registered: true,
         temporary: false,
         pinned: false,
-        checkouts: [{ id: "c1", workspace_id: "w1", label: "main", path: "/tmp/fixture", branch: "main", purpose: null, is_worktree: false, exists: true, has_panes: true, pull_request: null, tabs: [], active_tab_id: null, strip: [], next_tab_label: "Tab 2" }],
+        checkouts: [{ id: "c1", workspace_id: "w1", label: "main", path: "/tmp/fixture", branch: "main", purpose: null, is_worktree: false, exists: true, has_panes: true, pull_request: null, tabs: [{ id: "t1", workspace_id: "w1", checkout_id: "c1", label: "Tab 1", empty: false, delegated: false, panes: [{ id: "p1" }] }], active_tab_id: null, strip: [], next_tab_label: "Tab 2" }],
         inactive_checkouts: { expanded: false, checkout_ids: [] },
       },
     ],
@@ -39,15 +40,32 @@ const REST = {
 describe("search entries", () => {
   it("lists agents, projects and checkouts with the ids that activate them", () => {
     const entries = searchEntries(REST);
-    expect(entries.map((entry) => entry.kind)).toEqual(["agent", "project", "checkout"]);
+    expect(entries.map((entry) => entry.kind)).toEqual(["agent", "agent", "project", "checkout"]);
     expect(entries[0]).toMatchObject({ kind: "agent", paneId: "p1" });
-    expect(entries[2]).toMatchObject({ kind: "checkout", workspaceId: "w1", checkoutId: "c1" });
+    expect(entries[3]).toMatchObject({ kind: "checkout", workspaceId: "w1", checkoutId: "c1" });
+  });
+
+  it("heads each entry in the Swift search view's form, an agent under the project holding its pane (issue 154)", () => {
+    const heads = Object.fromEntries(searchEntries(REST).map((entry) => [entry.id, entry.group.label]));
+    expect(heads).toEqual({
+      "agent:p1": "fixture > AGENTS",
+      "agent:p9": "AGENTS",
+      "project:w1": "WORKSPACES > PROJECTS",
+      "checkout:c1": "WORKSPACES > CHECKOUTS",
+    });
+  });
+
+  it("gives an agent row its mark's kind and its state sentence, else the status word", () => {
+    const [one, elsewhere] = searchEntries(REST);
+    expect(one).toMatchObject({ agentKind: "claude", subtitle: "Working" });
+    expect(elsewhere).toMatchObject({ agentKind: "codex", subtitle: "Waiting for review" });
   });
 
   it("filters by the fuzzy score and keeps the best first", () => {
+    const group = { id: "projects", label: "WORKSPACES > PROJECTS" };
     const entries: SearchEntry[] = [
-      { id: "1", title: "Alpha", subtitle: "/a", kind: "project" },
-      { id: "2", title: "Beta", subtitle: "/b", kind: "project" },
+      { id: "1", title: "Alpha", subtitle: "/a", kind: "project", group },
+      { id: "2", title: "Beta", subtitle: "/b", kind: "project", group },
     ];
     expect(filterEntries(entries, "beta").map((entry) => entry.id)).toEqual(["2"]);
     expect(filterEntries(entries, "").map((entry) => entry.id)).toEqual(["1", "2"]);
@@ -66,6 +84,10 @@ describe("workspace commands", () => {
     const explorer = (placement: "closed" | "open") => searchEntries(rest, { drawn: null, placement }).find((entry) => entry.id === "command:tool:explorer");
     expect(explorer("closed")).toMatchObject({ title: "Show Explorer", command: { tool: "explorer", visible: true } });
     expect(explorer("open")).toMatchObject({ title: "Hide Explorer", command: { tool: "explorer", visible: false } });
+  });
+
+  it("heads every Workspace command as one commands group", () => {
+    expect(new Set(searchEntries(rest, wide).map((entry) => entry.group.label))).toEqual(new Set(["WORKSPACE > COMMANDS"]));
   });
 
   it("offers no Workspace command when no Workspace is on screen", () => {
@@ -101,5 +123,28 @@ describe("workspace commands", () => {
     expect(commands.find((entry) => entry.title === "Split right")?.unavailable).toBe("This is the only view in its area.");
     expect(commands.find((entry) => entry.title === "Move up")?.unavailable).toBe("There is no view area above.");
     expect(commands.find((entry) => entry.title === "Keep open")?.unavailable).toBeNull();
+  });
+});
+
+describe("grouping (issue 154)", () => {
+  const agentsHere = { id: "agents:w1", label: "herdr-ide > AGENTS" };
+  const agentsThere = { id: "agents:w2", label: "sasu > AGENTS" };
+  const projects = { id: "projects", label: "WORKSPACES > PROJECTS" };
+  const entry = (id: string, group: SearchEntry["group"]): SearchEntry => ({ id, title: id, subtitle: "", kind: "agent", group });
+
+  it("stands each group where its best entry ranked and keeps the rank inside it", () => {
+    const ranked = [entry("a", agentsHere), entry("p", projects), entry("b", agentsThere), entry("c", agentsHere), entry("q", projects)];
+    const sections = groupEntries(ranked);
+    expect(sections.map((section) => section.group.label)).toEqual(["herdr-ide > AGENTS", "WORKSPACES > PROJECTS", "sasu > AGENTS"]);
+    expect(sections.map((section) => section.entries.map((row) => row.id))).toEqual([["a", "c"], ["p", "q"], ["b"]]);
+  });
+
+  it("draws no group for no entries", () => {
+    expect(groupEntries([])).toEqual([]);
+  });
+
+  it("keeps the best match first once grouped", () => {
+    const ranked = filterEntries(searchEntries(REST), "fixture");
+    expect(groupEntries(ranked)[0]?.entries[0]?.id).toBe(ranked[0]?.id);
   });
 });

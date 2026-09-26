@@ -3,7 +3,7 @@ import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "./
 import { Kbd } from "./components/ui/kbd";
 import { Hint } from "./components/ui/tooltip";
 import { hostKind } from "./host";
-import { displayChord, hostChord, hostRegistry, type Command } from "./shortcuts";
+import { displayChord, hostChord, resolvedRegistry, storedBindings, type Command } from "./shortcuts";
 import { useShellStore } from "./store";
 
 // The sheet is generated from the registry (PRD S2 B11): every mapping of the
@@ -16,9 +16,9 @@ const GROUPS: Command["group"][] = ["Tabs", "Navigate", "Panels", "Panes", "Help
 export function ShortcutSheet({ actions }: { actions: Actions }) {
   // The sheet reads the same effective registry the window listener runs, so
   // a rebound pane chord is what it lists (PRD S5 B9).
-  const stored = useShellStore((s) => s.rest?.ui_state?.browser_shortcut_bindings);
   const host = hostKind();
-  const { registry, diagnostic } = hostRegistry(stored, host);
+  const stored = useShellStore((s) => storedBindings(s.rest?.ui_state, host));
+  const { registry, diagnostic } = resolvedRegistry(stored, host);
   // The gate in App.tsx only mounts this component while the overlay is
   // "shortcuts", so the dialog is always open here; closing it (Escape, a
   // click outside, or the trigger elsewhere) toggles that overlay off.

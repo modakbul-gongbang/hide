@@ -1,6 +1,9 @@
 /** App-menu command ids, main -> renderer (B11). */
 export const COMMAND_CHANNEL = "hide:command";
 
+/** The stored macOS pane chords the menu is built from, renderer -> main. */
+export const BINDINGS_CHANNEL = "hide:bindings";
+
 /**
  * Browser displays (issue 155): the shell reports where each browser display
  * of the front Workspace sits (renderer -> main), asks for a still of one

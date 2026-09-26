@@ -322,6 +322,13 @@ function screenDevicePickerRow(id, {name, detail, selected}) {
   return screenMenuItem(id, name, {glyph: 'server', reason: detail, shortcut: selected ? '✓' : undefined});
 }
 
+// The weekly usage chip at the sidebar's foot (web/src/components/weekly-usage.tsx):
+// the master draws Claude Code's mark, so only another provider's mark is named.
+function screenUsageChip(id, {provider, value}) {
+  const mark = provider === 'claude' ? {} : {'usage-chip-mark': {fill: {type: 'image', enabled: true, url: `../macos/Sources/HerdrMacOS/Resources/agent-${provider}.png`, mode: 'fit'}}};
+  return themedXref(id, 'usage-chip', `Usage ${provider}`, {}, {...mark, 'usage-chip-percent': {content: value}});
+}
+
 // The Agents/Projects sidebar App.tsx/sidebar.tsx always shows beside a
 // screen's own content; every sheet that draws a whole screen (Main,
 // Workspace) includes it so a reader sees the whole thing, not just its
@@ -338,7 +345,12 @@ function screenSidebar(id, suffix, agents) {
       icon(`${id}-newwsi-${suffix}`, 'plus', {size: 12, fill: '$--muted-foreground'}),
       text(`${id}-newwst-${suffix}`, '새 워크스페이스 ⌥⇧N', {size: '$--text-caption', fill: '$--muted-foreground'}),
     ]),
-    screenSelect(`${id}-device-${suffix}`, {content: 'This Mac', width: 190}),
+    frame(`${id}-footer-${suffix}`, 'Footer', {width: 'fill_container', gap: '$--spacing-xs', alignItems: 'center'}, [
+      screenSelect(`${id}-device-${suffix}`, {content: 'This Mac', width: 84}),
+      frame(`${id}-footergap-${suffix}`, 'Gap', {width: 'fill_container', height: 1}, []),
+      screenUsageChip(`${id}-usage0-${suffix}`, {provider: 'claude', value: '62%'}),
+      screenUsageChip(`${id}-usage1-${suffix}`, {provider: 'codex', value: '59%'}),
+    ]),
   ]);
 }
 
@@ -665,28 +677,130 @@ function buildSettings(tokens) {
 
 // -- Screen / Palette ------------------------------------------------------------
 
-function buildPalette() {
+// The ⌘K palette in the Swift search view's form (issue #154): the sidebar's
+// Search field that opens it, the query row with its Esc keycap, results under
+// `<project> > AGENTS` / `WORKSPACE > COMMANDS` / `WORKSPACES > PROJECTS` /
+// `WORKSPACES > CHECKOUTS` headers, two-line rows with the agent's own mark,
+// and ↵ on the selected row. Rows are authored here on local tokens, as the
+// Overview board authors its agent rows, since no library master draws a
+// palette row; the keycaps are System / Kbd refs. The marks are the provider
+// artwork the web shell bundles (web/src/assets), not a stand-in.
+function buildPalette(tokens) {
+  const W = num(tokens, '--size-search-sheet-w');
+  const SIDEBAR = num(tokens, '--size-sidebar-ideal');
+  const MARK = num(tokens, '--size-agent-badge-compact');
+  const ROW = W - 2 * num(tokens, '--spacing-xxs');
+  const MARKS = {claude: '../web/src/assets/agent-claude.png', codex: '../web/src/assets/agent-codex.png'};
   function build(suffix) {
-    function surface(id, placeholder, rows) {
-      return frame(id, 'Surface', {width: 480, cornerRadius: '$--radius-lg', fill: '$--popover', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner', layout: 'vertical'}, [
-        frame(`${id}-in`, 'Field', {height: 32, layout: 'horizontal', alignItems: 'center', gap: '$--spacing-sm', padding: [0, '$--spacing-md']}, [
-          icon(`${id}-ini`, 'search', {size: 14, fill: '$--muted-foreground'}), text(`${id}-int`, placeholder, {fill: '$--muted-foreground'}),
+    const id = (name) => `pal-${name}-${suffix}`;
+    const kbd = (key, label) => themedXref(id(key), 'kbd-m', label, {}, {'kbd-t': {content: label}});
+    const mark = (key, kind) => frame(id(key), 'Agent mark', {width: MARK, height: MARK, cornerRadius: '$--radius-xs', fill: {type: 'image', url: MARKS[kind], mode: 'fill'}}, []);
+    const glyph = (key, name) => frame(id(key), 'Icon', {width: MARK, height: MARK, layout: 'horizontal', alignItems: 'center', justifyContent: 'center'}, [
+      icon(`${id(key)}-i`, name, {size: num(tokens, '--size-icon'), fill: '$--muted-foreground'}),
+    ]);
+    function row(key, {lead, title, detail, mono = false, selected = false, unavailable = false}) {
+      return frame(id(key), selected ? 'Row · selected' : 'Row', {
+        layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: ROW, padding: ['$--spacing-xs', '$--spacing-sm'],
+        cornerRadius: '$--radius-xs', ...(selected ? {fill: '$--accent'} : {}), ...(unavailable ? {opacity: disabledOpacity} : {}),
+      }, [
+        lead,
+        frame(`${id(key)}-body`, 'Body', {layout: 'vertical', gap: 0, width: 'fill_container'}, [
+          text(`${id(key)}-title`, title, {weight: '500', fill: unavailable ? '$--muted-foreground' : '$--foreground'}),
+          ...(detail ? [text(`${id(key)}-detail`, detail, {size: '$--text-caption', fill: '$--muted-foreground', mono})] : []),
         ]),
-        frame(`${id}-list`, 'List', {layout: 'vertical', gap: 0, padding: '$--spacing-xxs'}, rows),
+        ...(selected ? [text(`${id(key)}-enter`, '↵', {size: '$--text-caption', fill: '$--muted-foreground'})] : []),
       ]);
     }
-    const command = surface(`pal-cmd-${suffix}`, 'Search agents, workspaces and commands', [
-      screenMenuItem(`pal-c0-${suffix}`, 'sasu-web-design-system-reset', {state: 'highlighted', glyph: 'folder-git-2'}),
-      screenMenuItem(`pal-c1-${suffix}`, 'New Worktree', {glyph: 'git-branch-plus'}),
-      screenMenuItem(`pal-c2-${suffix}`, 'Open Settings', {glyph: 'settings'}),
+    const heading = (key, label) => frame(id(key), 'Group heading', {padding: ['$--spacing-xs', '$--spacing-sm'], width: ROW}, [
+      text(`${id(key)}-t`, label, {size: '$--text-caption', weight: '500', fill: '$--muted-foreground'}),
     ]);
-    const file = surface(`pal-file-${suffix}`, 'Open file', [
-      screenMenuItem(`pal-f0-${suffix}`, '한글 노트.md', {state: 'highlighted', glyph: 'file-text'}),
-      screenMenuItem(`pal-f1-${suffix}`, 'scripts/pen-screens.mjs', {glyph: 'file-code'}),
+    function surface(key, {query, placeholder, list}) {
+      return frame(id(key), 'Palette', {width: W, cornerRadius: '$--radius-lg', fill: '$--popover', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner', layout: 'vertical', clip: true}, [
+        frame(`${id(key)}-in`, 'Query', {height: num(tokens, '--size-control-lg'), width: W, layout: 'horizontal', alignItems: 'center', gap: '$--spacing-sm', padding: [0, '$--spacing-md'], stroke: '$--border', strokeWidth: {bottom: num(tokens, '--size-hairline')}}, [
+          icon(`${id(key)}-ini`, 'search', {size: num(tokens, '--size-icon'), fill: '$--muted-foreground'}),
+          frame(`${id(key)}-inf`, 'Field', {width: 'fill_container'}, [
+            query ? text(`${id(key)}-inq`, query) : text(`${id(key)}-inp`, placeholder, {fill: '$--muted-foreground'}),
+          ]),
+          kbd(`${key}-esc`, 'Esc'),
+        ]),
+        frame(`${id(key)}-list`, 'List', {layout: 'vertical', gap: 0, padding: '$--spacing-xxs'}, list),
+      ]);
+    }
+    const empty = (key, words) => frame(id(key), 'Empty', {padding: ['$--spacing-sm', '$--spacing-md']}, [
+      text(`${id(key)}-t`, words, {size: '$--text-caption', fill: '$--muted-foreground'}),
     ]);
-    return [frame(`pal-wrap-${suffix}`, 'Wrap', {layout: 'horizontal', gap: '$--spacing-lg'}, [command, file])];
+    const labelled = (key, label, node) => frame(id(key), label, {layout: 'vertical', gap: '$--spacing-xs'}, [
+      text(`${id(key)}-cap`, label, {size: '$--text-micro', weight: '600', fill: '$--muted-foreground'}),
+      node,
+    ]);
+
+    // The sidebar's top: the mode row, then the Search field that opens ⌘K.
+    const sidebar = frame(id('side'), 'Sidebar', {width: SIDEBAR, layout: 'vertical', gap: '$--spacing-xs', fill: '$--sidebar', padding: [0, 0, '$--spacing-md', 0], cornerRadius: '$--radius-md'}, [
+      frame(id('side-modes'), 'Modes', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: SIDEBAR, height: num(tokens, '--size-tab-strip'), padding: [0, '$--spacing-md']}, [
+        text(id('side-agents'), 'Agents', {size: '$--text-caption'}),
+        text(id('side-projects'), 'Projects', {size: '$--text-caption', fill: '$--muted-foreground'}),
+        frame(id('side-gap'), 'Spacer', {width: 'fill_container', height: 1}, []),
+        text(id('side-e'), '⌘E', {size: '$--text-caption', fill: '$--muted-foreground'}),
+        icon(id('side-settings'), 'settings', {size: num(tokens, '--size-icon'), fill: '$--muted-foreground'}),
+      ]),
+      frame(id('side-searchwrap'), 'Search', {width: SIDEBAR, padding: [0, '$--spacing-md']}, [
+        frame(id('side-search'), 'Search field', {
+          width: 'fill_container', height: num(tokens, '--size-control'), layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-sm'],
+          cornerRadius: '$--radius-sm', fill: '$--background', stroke: '$--input', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
+        }, [
+          icon(id('side-searchi'), 'search', {size: num(tokens, '--size-icon'), fill: '$--muted-foreground'}),
+          frame(id('side-searcht'), 'Label', {width: 'fill_container'}, [text(id('side-searchl'), 'Search', {fill: '$--muted-foreground'})]),
+          kbd('side-searchk', '⌘K'),
+        ]),
+      ]),
+      frame(id('side-sectwrap'), 'Section', {padding: ['$--spacing-sm', '$--spacing-md', 0, '$--spacing-md']}, [
+        text(id('side-sect'), 'NEEDS YOU · 1', {size: '$--text-micro', fill: '$--muted-foreground'}),
+      ]),
+      frame(id('side-a0'), 'Agent row', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: ['$--spacing-xs', '$--spacing-md']}, [
+        text(id('side-a0s'), '?', {size: '$--text-caption', fill: '$--warning', mono: true}),
+        mark('side-a0m', 'claude'),
+        text(id('side-a0t'), 'hcoord 원격 에이전트 구현', {weight: '500'}),
+      ]),
+    ]);
+
+    const results = surface('default', {placeholder: 'Search agents and workspaces', list: [
+      heading('g-herdr', 'herdr-ide > AGENTS'),
+      row('r0', {lead: mark('r0m', 'claude'), title: 'Electron포팅지침이행', detail: '웹 E2E 테스트 60개 통과, verify 진행 중', selected: true}),
+      row('r1', {lead: mark('r1m', 'claude'), title: 'Electron 기본 포팅 구현', detail: 'PR #149 main 병합 진행: 단위테스트 통과, e2e 및 코드 리뷰 실행 중'}),
+      row('r2', {lead: mark('r2m', 'codex'), title: 'Swift 단축키 Electron 포팅', detail: 'Idle'}),
+      heading('g-sasu', 'sasu > AGENTS'),
+      row('r3', {lead: mark('r3m', 'claude'), title: 'hcoord 원격 에이전트 구현', detail: '방안 A와 데몬 재시작을 승인하세요'}),
+      heading('g-projects', 'WORKSPACES > PROJECTS'),
+      row('r4', {lead: glyph('r4i', 'folder'), title: 'herdr-ide', detail: '~/projects/herdr-ide', mono: true}),
+      heading('g-checkouts', 'WORKSPACES > CHECKOUTS'),
+      row('r5', {lead: glyph('r5i', 'git-branch'), title: 'herdr-ide / main', detail: '~/projects/herdr-ide', mono: true}),
+      row('r6', {lead: glyph('r6i', 'git-branch'), title: 'herdr-ide / quick/154-search-palette', detail: '~/projects/herdr-ide.worktrees/web-search-palette', mono: true}),
+    ]});
+
+    const commands = surface('commands', {query: 'split', list: [
+      heading('g-commands', 'WORKSPACE > COMMANDS'),
+      row('c0', {lead: glyph('c0i', 'chevron-right'), title: 'Split right', selected: true}),
+      row('c1', {lead: glyph('c1i', 'chevron-right'), title: 'Split down', detail: 'This Workspace already shows 6 view areas, the most it can.', unavailable: true}),
+    ]});
+    const noMatch = surface('nomatch', {query: 'zzz', list: [empty('nomatch-e', 'No matching agents or workspaces')]});
+    const nothing = surface('nothing', {placeholder: 'Search agents and workspaces', list: [empty('nothing-e', 'No agents or workspaces yet')]});
+    const files = surface('files', {placeholder: 'Search files by name', list: [
+      row('f0', {lead: glyph('f0i', 'file-text'), title: 'docs/한글 노트.md', selected: true}),
+      row('f1', {lead: glyph('f1i', 'file-code'), title: 'scripts/pen-screens.mjs'}),
+    ]});
+
+    return [
+      labelled('side-cell', 'Sidebar · the Search field opens ⌘K', sidebar),
+      labelled('default-cell', '⌘K · default', results),
+      frame(id('states'), 'States', {layout: 'vertical', gap: '$--spacing-lg'}, [
+        labelled('commands-cell', '⌘K · a Workspace on screen, typed', commands),
+        labelled('nomatch-cell', '⌘K · no match', noMatch),
+        labelled('nothing-cell', '⌘K · nothing to search', nothing),
+        labelled('files-cell', '⌘P · same shell', files),
+      ]),
+    ];
   }
-  return screenSheet('screen-palette', 'Screen / Palette', 'web/src/Palette.tsx over Command/CommandDialog: the command palette and the file palette, same List Item row idiom as System / Command.', build, build);
+  return screenSheet('screen-palette', 'Screen / Palette', 'web/src/Palette.tsx over Command/CommandDialog (issue #154): the sidebar Search field (⌘K), the query row with its Esc keycap, results grouped under <project> > AGENTS, WORKSPACE > COMMANDS, WORKSPACES > PROJECTS and WORKSPACES > CHECKOUTS in the order of each group’s best match, two-line rows with the agent’s own mark and its state sentence, ↵ on the selected row, the no-match and nothing-to-search states, and ⌘P on the same shell.', build, build);
 }
 
 // -- Screen / Dialogs and Sheets -------------------------------------------------
@@ -800,7 +914,7 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Workspace', build: () => buildWorkspace()},
     {name: 'Screen / Project Sessions', build: () => buildSessions()},
     {name: 'Screen / Settings', build: () => buildSettings(tokens)},
-    {name: 'Screen / Palette', build: () => buildPalette()},
+    {name: 'Screen / Palette', build: () => buildPalette(tokens)},
     {name: 'Screen / Dialogs and Sheets', build: () => buildDialogs(tokens)},
     {name: 'Screen / Menus and Overlays', build: () => buildMenus()},
   ];

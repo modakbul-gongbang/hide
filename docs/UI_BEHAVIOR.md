@@ -419,12 +419,34 @@ Empty lists say `No devices available`, long names truncate in their title line,
 The list scrolls once its rows exceed the shared height cap.
 The web shell draws the same trigger and list at the bottom of its sidebar from the shared tokens, with line icons standing in for the native SF Symbols.
 
+## Weekly usage
+
+Web owner: `web/src/components/weekly-usage.tsx`, `web/src/usage.ts`. Native owner: the sidebar utility bar's usage button and `HideUsagePopover`.
+The core reads the numbers and names each row's state (`navigator.provider_usage`, [AI_PROVIDERS.md: weekly usage display](AI_PROVIDERS.md#weekly-usage-display)); the shells only draw them.
+
+The sidebar footer carries one chip per provider at its right, beside the device picker: the provider mark and the rounded percent of the seven-day window.
+A percent reads in the success color below 70, the warning color from 70 and the destructive color from 90.
+A provider that is loading or unavailable is a dimmed mark with no percent; a stale or fallback reading keeps its percent.
+The chips' accessible name lists every provider with its reading.
+Clicking the chips opens the Weekly Usage popover above them, titled `Weekly Usage` with `7 days`: one row per provider with its mark, name, the time left before the reset (`in 5d 4h`, `in 3h 12m`, `in 7m`), the percent and a bar, and each scoped bucket such as Fable indented under its provider with `└`.
+A loading row reads `…` and an unavailable row reads `Unavailable`, each with the core's message in place of the bar; a stale or fallback row keeps its bar and shows its message under it.
+No usage state becomes a banner, toast or alert (design principle 13).
+The countdown advances once a minute while the popover is open, and nothing ticks while it is closed.
+
+The web page tells the core when a read is worth making, through two hints on `ui_state_update`: `usage_window_visible` follows the page's visibility and is sent on every live connection and on each change, and `usage_popover_open` is sent when the popover opens and again when it closes or leaves the screen.
+The core keeps one value of each, so with several pages open the last page to report decides.
+
 ## Search keyboard navigation
 
-Native owner: Command+K (agent/workspace search) and Command+P (file search). Web owner: `web/src/search.ts`, `web/src/Palette.tsx`.
+Native owner: Command+K (agent/workspace search) and Command+P (file search). Web owner: `web/src/search.ts`, `web/src/Palette.tsx`, `web/src/components/search-field.tsx`.
 
 Agent/workspace search and file search share the same focused query field and first-result selection behavior.
 An agent result is titled by the identity every other surface uses and subtitled by the row's second line, falling back to the status word when the state chose no sentence; the pane id leaves the printed row but still matches the query and is read by accessibility, so a result can be found by title, sentence, or id.
+On the web, the sidebar's `Search` field with its `⌘K` keycap opens the same palette Command+K opens, and the query row carries an `Esc` keycap.
+Results sit under headers in the form `<project> > AGENTS` (an agent under the first project whose checkouts hold its pane, `AGENTS` when none does), `WORKSPACE > COMMANDS`, `WORKSPACES > PROJECTS`, and `WORKSPACES > CHECKOUTS`.
+A group stands where its best result ranked and keeps its results in rank order, so grouping never moves the best match off the first row.
+An agent row is the agent's own mark, its title, and the state line under it; a project or checkout row carries its path under the title; the selected row shows `↵`.
+With nothing to search the list says `No agents or workspaces yet`, and a query with no match says `No matching agents or workspaces`.
 Up and Down move the selection in display order, stopping at either end, while typing continues in the query field.
 Return executes the highlighted result through the existing agent, checkout, or file-opening action; Escape closes the sheet.
 The selected row scrolls into view.

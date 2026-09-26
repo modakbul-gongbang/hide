@@ -938,13 +938,17 @@ pub(super) enum Event {
 
 /// The web shell rebinds a handful of pane commands; the bound keeps a
 /// malformed client from growing the persisted state without limit.
-const BROWSER_BINDINGS_CAP: usize = 16;
-const BROWSER_BINDING_TEXT_CAP: usize = 64;
+// The desktop host checks a reported set against the same caps
+// (desktop/src/main/menu.ts); change them together.
+const BINDINGS_CAP: usize = 16;
+const BINDING_TEXT_CAP: usize = 64;
 
-fn browser_bindings_fit(bindings: &std::collections::BTreeMap<String, String>) -> bool {
-    bindings.len() <= BROWSER_BINDINGS_CAP
+/// Whether a stored shortcut map is within the caps a host's set may use;
+/// both maps hold a handful of pane commands, so anything larger is refused.
+pub(super) fn bindings_fit(bindings: &std::collections::BTreeMap<String, String>) -> bool {
+    bindings.len() <= BINDINGS_CAP
         && bindings.iter().all(|(command, chord)| {
-            command.len() <= BROWSER_BINDING_TEXT_CAP && chord.len() <= BROWSER_BINDING_TEXT_CAP
+            command.len() <= BINDING_TEXT_CAP && chord.len() <= BINDING_TEXT_CAP
         })
 }
 
@@ -2899,9 +2903,19 @@ impl Runtime {
                         .unwrap_or(current.expanded_agent_pane_ids),
                     selected_path: payload.selected_path,
                     selected_pane_id: payload.selected_pane_id,
-                    shortcut_bindings: payload.shortcut_bindings,
+                    shortcut_bindings: if bindings_fit(&payload.shortcut_bindings) {
+                        payload.shortcut_bindings
+                    } else {
+                        self.set_error(
+                            "ui_state.shortcuts_invalid",
+                            "Shortcuts were not saved: too many or too long",
+                            false,
+                        );
+                        current.shortcut_bindings.clone()
+                    },
+                    shortcut_bindings_imported: current.shortcut_bindings_imported,
                     browser_shortcut_bindings: match payload.browser_shortcut_bindings {
-                        Some(bindings) if browser_bindings_fit(&bindings) => bindings,
+                        Some(bindings) if bindings_fit(&bindings) => bindings,
                         Some(_) => {
                             self.set_error(
                                 "ui_state.browser_shortcuts_invalid",

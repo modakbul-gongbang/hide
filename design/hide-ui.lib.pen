@@ -28575,6 +28575,910 @@
       "width": "fit_content",
       "x": 1440,
       "y": 0
+    },
+    {
+      "type": "frame",
+      "id": "weekly-usage-sheet",
+      "x": 7120,
+      "y": 7264,
+      "name": "Component / Weekly usage",
+      "width": 400,
+      "fill": "$--card",
+      "cornerRadius": "$--radius-md",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-md",
+      "children": [
+        {
+          "type": "frame",
+          "id": "weekly-usage-sheet-title",
+          "name": "Title block",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "weekly-usage-sheet-title-name",
+              "name": "Weekly usage (web sidebar fo",
+              "content": "Weekly usage (web sidebar footer)",
+              "fill": "$--foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-title",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "weekly-usage-sheet-title-spec",
+              "name": "The weekly usage chips at th",
+              "content": "The weekly usage chips at the right of the sidebar footer, beside the device picker, and the Weekly Usage popover the chips open above them (web/src/components/weekly-usage.tsx). A chip is the provider mark and its rounded percent: --success below 70, --warning from 70, --destructive from 90. A provider still loading or unavailable is a dimmed mark with no percent, never a banner. The popover lists each provider with its reset countdown, percent and bar, and a scoped bucket such as Fable indented under it with └. Loading reads … and an unavailable row reads Unavailable, each with the core's message in place of the bar; a stale or fallback row keeps its bar and says how old it is.",
+              "fill": "$--subtle-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "400",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "weekly-usage-sheet-masters",
+          "name": "Master",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "weekly-usage-sheet-masters-name",
+              "name": "Masters: a chip and a provid",
+              "content": "Masters: a chip and a provider row; each state is a ref",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "usage-chip",
+              "name": "Component / Usage chip",
+              "reusable": true,
+              "height": 24,
+              "gap": "$--spacing-xxs",
+              "padding": [
+                0,
+                "$--spacing-xs"
+              ],
+              "alignItems": "center",
+              "fill": "$--secondary",
+              "cornerRadius": "$--radius-sm",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "usage-chip-mark",
+                  "name": "Provider mark",
+                  "width": 16,
+                  "height": 16,
+                  "cornerRadius": "$--radius-xs",
+                  "fill": {
+                    "type": "image",
+                    "enabled": true,
+                    "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                    "mode": "fit"
+                  }
+                },
+                {
+                  "type": "text",
+                  "id": "usage-chip-percent",
+                  "name": "62%",
+                  "content": "62%",
+                  "fill": "$--success",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-micro",
+                  "fontWeight": "600"
+                }
+              ]
+            },
+            {
+              "type": "frame",
+              "id": "usage-row",
+              "name": "Component / Usage row",
+              "reusable": true,
+              "width": 248,
+              "layout": "vertical",
+              "gap": "$--spacing-xs",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "usage-row-line",
+                  "name": "Mark, label, reset and percent",
+                  "width": "fill_container",
+                  "gap": "$--spacing-sm",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "usage-row-branch",
+                      "name": "└",
+                      "content": "└",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "400",
+                      "enabled": false
+                    },
+                    {
+                      "type": "frame",
+                      "id": "usage-row-mark",
+                      "name": "Provider mark",
+                      "width": 16,
+                      "height": 16,
+                      "cornerRadius": "$--radius-xs",
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    {
+                      "type": "text",
+                      "id": "usage-row-label",
+                      "name": "Claude Code",
+                      "content": "Claude Code",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "text",
+                      "id": "usage-row-reset",
+                      "name": "· in 5d 4h",
+                      "content": "· in 5d 4h",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "usage-row-gap",
+                      "name": "Gap",
+                      "width": "fill_container",
+                      "height": 1,
+                      "children": []
+                    },
+                    {
+                      "type": "text",
+                      "id": "usage-row-value",
+                      "name": "62%",
+                      "content": "62%",
+                      "fill": "$--success",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "usage-row-track",
+                  "name": "Bar",
+                  "width": "fill_container",
+                  "height": 4,
+                  "fill": "$--border",
+                  "cornerRadius": "$--radius-xs",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "usage-row-fill",
+                      "name": "Used share",
+                      "width": 154,
+                      "height": 4,
+                      "fill": "$--success",
+                      "cornerRadius": "$--radius-xs",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "usage-row-note",
+                  "name": "Last checked 7m ago · offlin",
+                  "content": "Last checked 7m ago · offline",
+                  "fill": "$--muted-foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "400",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container",
+                  "enabled": false
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "usage-state-chips",
+          "name": "State / Chips: under 70, from 70, from 90, loading or unavailable",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "usage-state-chips-name",
+              "name": "Chips: under 70, from 70, fr",
+              "content": "Chips: under 70, from 70, from 90, loading or unavailable",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "usage-state-chips-row",
+              "name": "Chips",
+              "gap": "$--spacing-xs",
+              "alignItems": "center",
+              "children": [
+                {
+                  "id": "usage-chip-available",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": "Available",
+                  "descendants": {
+                    "usage-chip-mark": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "usage-chip-percent": {
+                      "content": "62%",
+                      "fill": "$--success"
+                    }
+                  }
+                },
+                {
+                  "id": "usage-chip-warning",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": "From 70",
+                  "descendants": {
+                    "usage-chip-mark": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "usage-chip-percent": {
+                      "content": "78%",
+                      "fill": "$--warning"
+                    }
+                  }
+                },
+                {
+                  "id": "usage-chip-danger",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": "From 90",
+                  "descendants": {
+                    "usage-chip-mark": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "usage-chip-percent": {
+                      "content": "94%",
+                      "fill": "$--destructive"
+                    }
+                  }
+                },
+                {
+                  "id": "usage-chip-muted",
+                  "type": "ref",
+                  "ref": "usage-chip",
+                  "name": "Loading or unavailable",
+                  "descendants": {
+                    "usage-chip-mark": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                        "mode": "fit"
+                      },
+                      "opacity": 0.5
+                    },
+                    "usage-chip-percent": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "usage-state-popover",
+          "name": "State / Popover: Claude Code with its Fable bucket, Codex",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "usage-state-popover-name",
+              "name": "Popover: Claude Code with it",
+              "content": "Popover: Claude Code with its Fable bucket, Codex",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "usage-popover-available",
+              "name": "Popover",
+              "width": 280,
+              "layout": "vertical",
+              "gap": "$--spacing-md",
+              "padding": "$--spacing-lg",
+              "cornerRadius": "$--radius-md",
+              "fill": "$--popover",
+              "stroke": "$--border",
+              "strokeWidth": "$--size-hairline",
+              "strokeAlignment": "inner",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "usage-popover-available-header",
+                  "name": "Title",
+                  "width": "fill_container",
+                  "gap": "$--spacing-sm",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "usage-popover-available-title",
+                      "name": "Weekly Usage",
+                      "content": "Weekly Usage",
+                      "fill": "$--foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-subhead",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "usage-popover-available-gap",
+                      "name": "Gap",
+                      "width": "fill_container",
+                      "height": 1,
+                      "children": []
+                    },
+                    {
+                      "type": "text",
+                      "id": "usage-popover-available-window",
+                      "name": "7 days",
+                      "content": "7 days",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "usage-popover-available-provider0",
+                  "name": "Provider",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "children": [
+                    {
+                      "id": "usage-row-claude",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "Claude Code",
+                      "descendants": {
+                        "usage-row-branch": {
+                          "enabled": false
+                        },
+                        "usage-row-mark": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "usage-row-label": {
+                          "content": "Claude Code"
+                        },
+                        "usage-row-reset": {
+                          "content": "· in 5d 4h"
+                        },
+                        "usage-row-value": {
+                          "content": "62%",
+                          "fill": "$--success"
+                        },
+                        "usage-row-track": {
+                          "enabled": true
+                        },
+                        "usage-row-fill": {
+                          "width": 154,
+                          "fill": "$--success"
+                        },
+                        "usage-row-note": {
+                          "enabled": false
+                        }
+                      }
+                    },
+                    {
+                      "id": "usage-row-fable",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "Fable bucket",
+                      "descendants": {
+                        "usage-row-branch": {
+                          "enabled": true
+                        },
+                        "usage-row-mark": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "usage-row-label": {
+                          "content": "Fable",
+                          "fontSize": "$--text-caption"
+                        },
+                        "usage-row-reset": {
+                          "content": "· in 5d 4h"
+                        },
+                        "usage-row-value": {
+                          "content": "6%",
+                          "fill": "$--success"
+                        },
+                        "usage-row-track": {
+                          "enabled": true
+                        },
+                        "usage-row-fill": {
+                          "width": 15,
+                          "fill": "$--success"
+                        },
+                        "usage-row-note": {
+                          "enabled": false
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "usage-popover-available-provider1",
+                  "name": "Provider",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "children": [
+                    {
+                      "id": "usage-row-codex",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "Codex",
+                      "descendants": {
+                        "usage-row-branch": {
+                          "enabled": false
+                        },
+                        "usage-row-mark": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "usage-row-label": {
+                          "content": "Codex"
+                        },
+                        "usage-row-reset": {
+                          "content": "· in 4d 1h"
+                        },
+                        "usage-row-value": {
+                          "content": "59%",
+                          "fill": "$--success"
+                        },
+                        "usage-row-track": {
+                          "enabled": true
+                        },
+                        "usage-row-fill": {
+                          "width": 146,
+                          "fill": "$--success"
+                        },
+                        "usage-row-note": {
+                          "enabled": false
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "usage-state-first-read",
+          "name": "State / Popover: Claude Code loading, Codex not signed in",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "usage-state-first-read-name",
+              "name": "Popover: Claude Code loading",
+              "content": "Popover: Claude Code loading, Codex not signed in",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "usage-popover-first-read",
+              "name": "Popover",
+              "width": 280,
+              "layout": "vertical",
+              "gap": "$--spacing-md",
+              "padding": "$--spacing-lg",
+              "cornerRadius": "$--radius-md",
+              "fill": "$--popover",
+              "stroke": "$--border",
+              "strokeWidth": "$--size-hairline",
+              "strokeAlignment": "inner",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "usage-popover-first-read-header",
+                  "name": "Title",
+                  "width": "fill_container",
+                  "gap": "$--spacing-sm",
+                  "alignItems": "center",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "usage-popover-first-read-title",
+                      "name": "Weekly Usage",
+                      "content": "Weekly Usage",
+                      "fill": "$--foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-subhead",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "usage-popover-first-read-gap",
+                      "name": "Gap",
+                      "width": "fill_container",
+                      "height": 1,
+                      "children": []
+                    },
+                    {
+                      "type": "text",
+                      "id": "usage-popover-first-read-window",
+                      "name": "7 days",
+                      "content": "7 days",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "usage-popover-first-read-provider0",
+                  "name": "Provider",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "children": [
+                    {
+                      "id": "usage-row-loading",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "Loading",
+                      "descendants": {
+                        "usage-row-branch": {
+                          "enabled": false
+                        },
+                        "usage-row-mark": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                            "mode": "fit"
+                          },
+                          "opacity": 0.5
+                        },
+                        "usage-row-label": {
+                          "content": "Claude Code"
+                        },
+                        "usage-row-reset": {
+                          "enabled": false
+                        },
+                        "usage-row-value": {
+                          "content": "…",
+                          "fill": "$--muted-foreground"
+                        },
+                        "usage-row-track": {
+                          "enabled": false
+                        },
+                        "usage-row-fill": {},
+                        "usage-row-note": {
+                          "content": "Checking usage…",
+                          "enabled": true
+                        }
+                      }
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "usage-popover-first-read-provider1",
+                  "name": "Provider",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "children": [
+                    {
+                      "id": "usage-row-unavailable",
+                      "type": "ref",
+                      "ref": "usage-row",
+                      "name": "Unavailable",
+                      "descendants": {
+                        "usage-row-branch": {
+                          "enabled": false
+                        },
+                        "usage-row-mark": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                            "mode": "fit"
+                          },
+                          "opacity": 0.5
+                        },
+                        "usage-row-label": {
+                          "content": "Codex"
+                        },
+                        "usage-row-reset": {
+                          "enabled": false
+                        },
+                        "usage-row-value": {
+                          "content": "Unavailable",
+                          "fill": "$--muted-foreground"
+                        },
+                        "usage-row-track": {
+                          "enabled": false
+                        },
+                        "usage-row-fill": {},
+                        "usage-row-note": {
+                          "content": "Sign in with codex to see usage",
+                          "enabled": true
+                        }
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "usage-state-older",
+          "name": "State / Rows: offline with a kept reading, from 90, the last Codex session",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs",
+          "children": [
+            {
+              "type": "text",
+              "id": "usage-state-older-name",
+              "name": "Rows: offline with a kept re",
+              "content": "Rows: offline with a kept reading, from 90, the last Codex session",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "usage-state-older-rows",
+              "name": "Rows",
+              "layout": "vertical",
+              "gap": "$--spacing-md",
+              "children": [
+                {
+                  "id": "usage-row-stale",
+                  "type": "ref",
+                  "ref": "usage-row",
+                  "name": "Stale",
+                  "descendants": {
+                    "usage-row-branch": {
+                      "enabled": false
+                    },
+                    "usage-row-mark": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "usage-row-label": {
+                      "content": "Claude Code"
+                    },
+                    "usage-row-reset": {
+                      "content": "· in 2d 7h"
+                    },
+                    "usage-row-value": {
+                      "content": "81%",
+                      "fill": "$--warning"
+                    },
+                    "usage-row-track": {
+                      "enabled": true
+                    },
+                    "usage-row-fill": {
+                      "width": 201,
+                      "fill": "$--warning"
+                    },
+                    "usage-row-note": {
+                      "content": "Last checked 7m ago · offline",
+                      "enabled": true
+                    }
+                  }
+                },
+                {
+                  "id": "usage-row-danger",
+                  "type": "ref",
+                  "ref": "usage-row",
+                  "name": "From 90",
+                  "descendants": {
+                    "usage-row-branch": {
+                      "enabled": false
+                    },
+                    "usage-row-mark": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "usage-row-label": {
+                      "content": "Claude Code"
+                    },
+                    "usage-row-reset": {
+                      "content": "· in 9h 12m"
+                    },
+                    "usage-row-value": {
+                      "content": "94%",
+                      "fill": "$--destructive"
+                    },
+                    "usage-row-track": {
+                      "enabled": true
+                    },
+                    "usage-row-fill": {
+                      "width": 233,
+                      "fill": "$--destructive"
+                    },
+                    "usage-row-note": {
+                      "enabled": false
+                    }
+                  }
+                },
+                {
+                  "id": "usage-row-fallback",
+                  "type": "ref",
+                  "ref": "usage-row",
+                  "name": "Fallback",
+                  "descendants": {
+                    "usage-row-branch": {
+                      "enabled": false
+                    },
+                    "usage-row-mark": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                        "mode": "fit"
+                      }
+                    },
+                    "usage-row-label": {
+                      "content": "Codex"
+                    },
+                    "usage-row-reset": {
+                      "content": "· in 3d 2h"
+                    },
+                    "usage-row-value": {
+                      "content": "23%",
+                      "fill": "$--success"
+                    },
+                    "usage-row-track": {
+                      "enabled": true
+                    },
+                    "usage-row-fill": {
+                      "width": 57,
+                      "fill": "$--success"
+                    },
+                    "usage-row-note": {
+                      "content": "From last Codex session",
+                      "enabled": true
+                    }
+                  }
+                },
+                {
+                  "id": "usage-row-bucket-unavailable",
+                  "type": "ref",
+                  "ref": "usage-row",
+                  "name": "Bucket unavailable",
+                  "descendants": {
+                    "usage-row-branch": {
+                      "enabled": true
+                    },
+                    "usage-row-mark": {
+                      "fill": {
+                        "type": "image",
+                        "enabled": true,
+                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                        "mode": "fit"
+                      },
+                      "opacity": 0.5
+                    },
+                    "usage-row-label": {
+                      "content": "Fable",
+                      "fontSize": "$--text-caption"
+                    },
+                    "usage-row-reset": {
+                      "enabled": false
+                    },
+                    "usage-row-value": {
+                      "content": "Unavailable",
+                      "fill": "$--muted-foreground"
+                    },
+                    "usage-row-track": {
+                      "enabled": false
+                    },
+                    "usage-row-fill": {},
+                    "usage-row-note": {
+                      "content": "Fable weekly usage response is unavailable",
+                      "enabled": true
+                    }
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
     }
   ],
   "variables": {

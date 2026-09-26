@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { REGISTRY } from "../../../web/src/shortcuts";
-import { accelerator, KEYBOARD_ONLY, MENU_LAYOUT, menuTemplate } from "./menu";
+import { accelerator, KEYBOARD_ONLY, MENU_LAYOUT, menuBindings, menuTemplate } from "./menu";
 
 describe("the app menu (B9)", () => {
   it("writes registry chords as Electron accelerators", () => {
@@ -33,5 +33,24 @@ describe("the app menu (B9)", () => {
     const roles = items.filter((item) => item.role).map((item) => item.role);
     expect(roles).not.toContain("close");
     expect(roles).not.toContain("reload");
+  });
+
+  it("shows the operator's macOS pane chords once the shell reports them", () => {
+    const resolved = menuBindings({ toggle_zoom: "command+shift+return", toggle_conversation: "command+option+c" });
+    if ("refused" in resolved) throw new Error(resolved.refused);
+    expect(resolved.diagnostic).toBeNull();
+    const template = menuTemplate({ appName: "hide", send: () => undefined, developer: false, registry: resolved.registry });
+    const items = template.flatMap((menu) => (Array.isArray(menu.submenu) ? menu.submenu : []));
+    expect(items.find((item) => item.id === "toggle_zoom")?.accelerator).toBe("Shift+Command+Return");
+    expect(items.find((item) => item.id === "split_right")?.accelerator).toBe("Command+D");
+  });
+
+  it("refuses a report that is not a short string map, and runs the defaults for an unusable set", () => {
+    expect(menuBindings(null)).toEqual({ refused: "not a map" });
+    expect(menuBindings(["command+d"])).toEqual({ refused: "not a map" });
+    expect(menuBindings({ split_right: 4 })).toEqual({ refused: "not short strings" });
+    expect(menuBindings(Object.fromEntries(Array.from({ length: 17 }, (_, index) => [`k${index}`, "command+d"])))).toEqual({ refused: "too many entries" });
+    const unusable = menuBindings({ split_right: "command+t" });
+    expect("refused" in unusable ? null : unusable.registry).toBe(REGISTRY);
   });
 });

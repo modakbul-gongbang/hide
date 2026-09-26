@@ -52,6 +52,10 @@ struct StoredUiState {
     selected_pane_id: Option<String>,
     #[serde(default)]
     shortcut_bindings: BTreeMap<String, String>,
+    /// Absent in a store written before the Swift import existed, which loads
+    /// as not imported and so imports once.
+    #[serde(default)]
+    shortcut_bindings_imported: bool,
     #[serde(default)]
     browser_shortcut_bindings: BTreeMap<String, String>,
     #[serde(default = "default_pet_visible")]
@@ -112,6 +116,49 @@ pub enum LoadDisposition {
     UnknownTheme,
     Missing,
     Corrupt,
+}
+
+/// What the Swift app's state file holds for `shortcut_bindings`.
+#[derive(Debug, PartialEq)]
+pub enum SwiftShortcuts {
+    /// No file: the Swift app never saved state under this account.
+    Missing,
+    Found(BTreeMap<String, String>),
+    /// The file is there but its bindings could not be read.
+    Unreadable,
+}
+
+/// A Swift state file larger than this is not read: the import is one field
+/// of a file the Swift shell owns, never a reason to load an unbounded one.
+const SWIFT_STATE_READ_CAP: u64 = 8 * 1024 * 1024;
+
+#[derive(Deserialize)]
+struct SwiftShortcutFields {
+    #[serde(default)]
+    shortcut_bindings: BTreeMap<String, String>,
+}
+
+/// Reads only `shortcut_bindings` from the Swift app's state file; the rest of
+/// that file is the Swift shell's, and the core takes nothing else from it.
+pub fn read_swift_shortcuts(path: &Path) -> SwiftShortcuts {
+    let bytes = match fs::metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return SwiftShortcuts::Missing;
+        }
+        Err(_) => return SwiftShortcuts::Unreadable,
+        Ok(metadata) if metadata.len() > SWIFT_STATE_READ_CAP => return SwiftShortcuts::Unreadable,
+        Ok(_) => match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return SwiftShortcuts::Missing;
+            }
+            Err(_) => return SwiftShortcuts::Unreadable,
+        },
+    };
+    match serde_json::from_slice::<SwiftShortcutFields>(&bytes) {
+        Ok(fields) => SwiftShortcuts::Found(fields.shortcut_bindings),
+        Err(_) => SwiftShortcuts::Unreadable,
+    }
 }
 
 /// Terminal sizes are kept beside the UI state rather than inside it: they
@@ -175,6 +222,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             selected_path: stored.selected_path,
             selected_pane_id: stored.selected_pane_id,
             shortcut_bindings: stored.shortcut_bindings,
+            shortcut_bindings_imported: stored.shortcut_bindings_imported,
             browser_shortcut_bindings: stored.browser_shortcut_bindings,
             pet_visible: stored.pet_visible,
             pet_origin: stored.pet_origin,
@@ -226,6 +274,7 @@ pub fn save(
         selected_path: state.selected_path.clone(),
         selected_pane_id: state.selected_pane_id.clone(),
         shortcut_bindings: state.shortcut_bindings.clone(),
+        shortcut_bindings_imported: state.shortcut_bindings_imported,
         browser_shortcut_bindings: state.browser_shortcut_bindings.clone(),
         pet_visible: state.pet_visible,
         pet_origin: state.pet_origin,
@@ -483,6 +532,34 @@ mod tests {
     }
 
     #[test]
+    fn swift_shortcuts_read_only_the_bindings_field() {
+        let root =
+            std::env::temp_dir().join(format!("herdr-core-swift-shortcuts-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("state.json");
+        assert_eq!(read_swift_shortcuts(&path), SwiftShortcuts::Missing);
+
+        // A Swift store carries fields the core's own schema would refuse.
+        fs::write(
+            &path,
+            br#"{"schema_version":7,"pet_visible":"yes","shortcut_bindings":{"toggle_zoom":"command+shift+return"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            read_swift_shortcuts(&path),
+            SwiftShortcuts::Found(BTreeMap::from([(
+                "toggle_zoom".to_owned(),
+                "command+shift+return".to_owned()
+            )]))
+        );
+
+        fs::write(&path, br#"{"shortcut_bindings":["not","a","map"]}"#).unwrap();
+        assert_eq!(read_swift_shortcuts(&path), SwiftShortcuts::Unreadable);
+        let _ = fs::remove_file(path);
+        let _ = fs::remove_dir(root);
+    }
+
+    #[test]
     fn shortcut_bindings_survive_save_and_relaunch_load() {
         let root =
             std::env::temp_dir().join(format!("herdr-core-shortcuts-{}", std::process::id()));
@@ -494,11 +571,13 @@ mod tests {
         state
             .browser_shortcut_bindings
             .insert("split_right".to_owned(), "alt+KeyR".to_owned());
+        state.shortcut_bindings_imported = true;
 
         save(&path, &state, &PaneTerminalSizes::new()).expect("persist shortcut binding");
         let (restored, _sizes, disposition) = load(&path);
 
         assert_eq!(disposition, LoadDisposition::Loaded);
+        assert!(restored.shortcut_bindings_imported);
         assert_eq!(
             restored
                 .shortcut_bindings

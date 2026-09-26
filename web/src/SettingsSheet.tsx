@@ -63,10 +63,14 @@ import {
   bindingProblem,
   chordEquals,
   chordFromEvent,
-  defaultBrowserChord,
+  defaultChord,
   displayChord,
+  displayCommand,
+  hostChord,
   resolvedRegistry,
-  serializeChord,
+  serializeStoredChord,
+  storedBindings,
+  storedKey,
   type Chord,
   type CommandId,
 } from "./shortcuts";
@@ -74,7 +78,7 @@ import type { AgentHookRuntime, Device } from "./snapshot";
 import { latestDraft } from "./editor/draft";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
-import { hostKind } from "./host";
+import { hostKind, type HostKind } from "./host";
 
 /** The core's newest error, if it arrived after `since` and is one of `kinds`' prefixes. */
 function useErrorSince(since: number | null, prefixes: readonly string[]): string | null {
@@ -261,6 +265,8 @@ function AppearanceTab({ actions }: { actions: Actions }) {
   const accent = useShellStore((s) => usableAccent(s.rest?.ui_state?.accent_hex));
   const theme = useShellStore((s) => readTheme(s.rest?.ui_state?.theme).choice);
   const fontSize = useShellStore((s) => usableFontSize(s.rest?.ui_state?.font_size)) ?? FONT_SIZE_BASE;
+  const host = hostKind();
+  const chords = resolvedRegistry(useShellStore((s) => storedBindings(s.rest?.ui_state, host)), host).registry;
   const [changedAt, setChangedAt] = useState<number | null>(null);
   const error = useErrorSince(changedAt, ["ui_state."]);
   const [draftSize, setDraftSize] = useState(fontSize);
@@ -318,7 +324,10 @@ function AppearanceTab({ actions }: { actions: Actions }) {
           <Value>{accent ? accent.toUpperCase() : "default"}</Value>
         </Row>
       </Group>
-      <Group title="Density" note="Terminal and editor text keep their own size (⌘= and ⌘- in a pane or document).">
+      <Group
+        title="Density"
+        note={`Terminal and editor text keep their own size (${displayCommand("text_larger", host, chords)} and ${displayCommand("text_smaller", host, chords)} in a pane or document).`}
+      >
         <Row label="Interface font">
           <Slider
             min={FONT_SIZE_MIN}
@@ -901,8 +910,11 @@ function AddDevice({ actions, devices, helperRoot }: { actions: Actions; devices
 // --- Shortcuts -----------------------------------------------------------------
 
 function ShortcutsTab({ actions }: { actions: Actions }) {
-  const stored = useShellStore((s) => s.rest?.ui_state?.browser_shortcut_bindings);
-  const { registry, diagnostic } = resolvedRegistry(stored);
+  // Each host edits its own set: the desktop app the macOS set it shares with
+  // the Swift app, the browser its own (user decision 2026-09-26).
+  const host = hostKind();
+  const stored = useShellStore((s) => storedBindings(s.rest?.ui_state, host));
+  const { registry, diagnostic } = resolvedRegistry(stored, host);
   const [sentAt, setSentAt] = useState<number | null>(null);
   const [sent, setSent] = useState<Record<string, string> | null>(null);
   const saveError = useErrorSince(sentAt, ["ui_state."]);
@@ -910,7 +922,7 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
   const apply = (bindings: Record<string, string>) => {
     setSent(bindings);
     setSentAt(Date.now());
-    actions.setBrowserShortcuts(bindings);
+    actions.setPaneShortcuts(host, bindings);
   };
   const current = (): Record<string, string> => ({ ...(diagnostic ? {} : (stored ?? {})) });
   return (
@@ -918,27 +930,29 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
       <Group
         title="Pane chords"
         note={
-          hostKind() === "electron"
-            ? "These chords apply when hide runs in a browser; this desktop app uses the chords its menus show."
-            : "These chords are this browser host's own; the macOS app keeps its own set. A chord needs ⌘, ⌥ or ⌃, and one Chrome keeps is refused before it is saved."
+          host === "electron"
+            ? "The macOS app's pane chords: this desktop app and the macOS app share them. A chord needs ⌘, and one macOS or the app menu keeps is refused before it is saved."
+            : "These chords are this browser host's own; the macOS and desktop apps keep their own set. A chord needs ⌘, ⌥ or ⌃, and one Chrome keeps is refused before it is saved."
         }
       >
         {EDITABLE_PANE_COMMANDS.map((id) => (
           <ShortcutRow
             key={id}
             id={id}
+            host={host}
             registry={registry}
-            overridden={!diagnostic && stored?.[id] !== undefined}
+            overridden={!diagnostic && stored?.[storedKey(id, host)] !== undefined}
             onApply={(chord) => {
               const next = current();
-              const fallback = defaultBrowserChord(id);
-              if (fallback && chordEquals(fallback, chord)) delete next[id];
-              else next[id] = serializeChord(chord);
+              const fallback = defaultChord(id, host);
+              const text = serializeStoredChord(chord, host);
+              if ((fallback && chordEquals(fallback, chord)) || text === null) delete next[storedKey(id, host)];
+              else next[storedKey(id, host)] = text;
               apply(next);
             }}
             onReset={() => {
               const next = current();
-              delete next[id];
+              delete next[storedKey(id, host)];
               apply(next);
             }}
           />
@@ -961,12 +975,14 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
 
 function ShortcutRow({
   id,
+  host,
   registry,
   overridden,
   onApply,
   onReset,
 }: {
   id: CommandId;
+  host: HostKind;
   registry: ReturnType<typeof resolvedRegistry>["registry"];
   overridden: boolean;
   onApply: (chord: Chord) => void;
@@ -983,6 +999,7 @@ function ShortcutRow({
     return () => setRecordingFlag(false);
   }, [recording, setRecordingFlag]);
   if (!command) return null;
+  const effective = hostChord(command, host);
   const record = (event: KeyboardEvent<HTMLButtonElement>) => {
     // IME composition and lone modifiers are not chords; the recorder waits.
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -995,7 +1012,7 @@ function ShortcutRow({
       return;
     }
     const chord = chordFromEvent(event.nativeEvent);
-    const reason = bindingProblem(id, chord, registry);
+    const reason = bindingProblem(id, chord, registry, host);
     setRecording(false);
     setProblem(reason);
     setDraft(reason ? null : chord);
@@ -1006,12 +1023,12 @@ function ShortcutRow({
       detail={
         problem ? (
           <Note tone="error" data-shortcut-problem={id}>
-            {problem} {command.browser ? `${displayChord(command.browser)} stays.` : ""}
+            {problem} {effective ? `${displayChord(effective)} stays.` : ""}
           </Note>
         ) : null
       }
     >
-      <Kbd data-shortcut-effective={id}>{command.browser ? displayChord(command.browser) : "-"}</Kbd>
+      <Kbd data-shortcut-effective={id}>{effective ? displayChord(effective) : "-"}</Kbd>
       {draft ? (
         <>
           <span className="text-body text-subtle-foreground">→</span>

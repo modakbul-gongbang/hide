@@ -31,6 +31,8 @@ mod project_sessions;
 mod projects;
 #[path = "tests/session_navigation.rs"]
 mod session_navigation;
+#[path = "tests/shortcut_import.rs"]
+mod shortcut_import;
 #[path = "tests/snapshot_delta.rs"]
 mod snapshot_delta;
 #[path = "tests/terminal.rs"]
@@ -303,6 +305,7 @@ fn runtime() -> Runtime {
         host_helper_dir: None,
         host_helper_root: None,
         workspace_views_path: None,
+        shortcut_import_path: None,
     };
     Runtime::new(
         options,

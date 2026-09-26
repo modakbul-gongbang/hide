@@ -4,6 +4,8 @@
 // layout. Every selector is a lookup: the snapshot carries every tab's layout,
 // so a tab switch never draws a waiting state (PRD S2 B3).
 
+import type { ProviderUsage } from "./generated/hided-ws";
+
 export type AgentRow = {
   id: string;
   pane_id: string;
@@ -712,6 +714,8 @@ export type SnapshotRest = {
     agents?: AgentRow[];
     devices?: Device[];
     focused_device_id?: string | null;
+    /** Each provider's weekly window, typed by the contract (`providerUsage`). */
+    provider_usage?: ProviderUsage[];
   };
   connection?: { kind: string; state: string; target_id: string | null };
   task_operation?: TaskOperation | null;
@@ -737,6 +741,8 @@ export type SnapshotRest = {
     /** `system`, `light` or `dark`; the page reads anything else as Dark. */
     theme?: string;
     font_size?: number;
+    /** The macOS pane chords the Swift app and the desktop app share, in the Swift app's format. */
+    shortcut_bindings?: Record<string, string>;
     browser_shortcut_bindings?: Record<string, string>;
     [key: string]: unknown;
   };

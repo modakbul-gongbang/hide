@@ -104,8 +104,8 @@ It draws the five tabs (General, Appearance, Agents, Devices, Shortcuts) and the
 Its web files are `web/src/SettingsSheet.tsx` and `web/src/settings.ts`.
 
 Palette is `Screen / Palette`.
-It draws the command palette and the file palette.
-Its web file is `web/src/Palette.tsx`.
+It draws the sidebar Search field, the ⌘K palette with its grouped two-line results and its no-match and nothing-to-search states, and the ⌘P file palette on the same shell.
+Its web files are `web/src/Palette.tsx`, `web/src/search.ts`, and `web/src/components/search-field.tsx`.
 
 Dialogs and Sheets is `Screen / Dialogs and Sheets`.
 It draws every Dialog and AlertDialog surface the shell opens: New worktree, Delete worktree, Remove project, Purpose, Unsaved drafts, New workspace, and Keyboard shortcuts.

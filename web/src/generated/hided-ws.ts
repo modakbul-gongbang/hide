@@ -41,3 +41,37 @@ export interface ClientEvent {
   };
   [k: string]: unknown;
 }
+/**
+ * One row of a snapshot's `navigator.provider_usage`: a provider's seven-day account window as herdr-core/src/usage.rs reads it (docs/AI_PROVIDERS.md, Weekly usage display). state is `loading` until the first read answers, `available` for a current read, `stale` for a success kept while the provider is offline (message says how old), `fallback` for Codex's latest local session window, and `unavailable` with message saying why, a window whose reset has passed included. used_percent and resets_at_unix_seconds are null in `loading` and `unavailable`. buckets are scoped windows under the row, such as one model's own weekly limit.
+ */
+export interface ProviderUsage {
+  provider: string;
+  label: string;
+  window_minutes: number;
+  state: "loading" | "available" | "stale" | "fallback" | "unavailable";
+  used_percent: number | null;
+  resets_at_unix_seconds: number | null;
+  message: string | null;
+  last_checked_at_unix_ms: number | null;
+  last_success_at_unix_ms: number | null;
+  last_error_kind: string | null;
+  buckets: ProviderUsageBucket[];
+}
+/**
+ * A scoped window under a providerUsage row. state is the row's own `available` or `stale` while the bucket has a value, and `unavailable` with message when its line could not be read or its reset has passed.
+ */
+export interface ProviderUsageBucket {
+  label: string;
+  state: "available" | "stale" | "unavailable";
+  used_percent: number | null;
+  resets_at_unix_seconds: number | null;
+  message: string | null;
+}
+/**
+ * Two fields a `ui_state_update` payload may carry beside the UI state it replaces; the core never persists or echoes them, and an absent field keeps the core's value. usage_window_visible: a shell window is on screen, so the core reads each provider every five minutes. usage_popover_open: the Weekly Usage popover is open; its change from false to true reads again any provider last read more than a minute ago.
+ */
+export interface UiStateUsageHints {
+  usage_window_visible?: boolean;
+  usage_popover_open?: boolean;
+  [k: string]: unknown;
+}

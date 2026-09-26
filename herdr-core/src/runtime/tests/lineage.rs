@@ -161,6 +161,7 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
         host_helper_dir: None,
         host_helper_root: None,
         workspace_views_path: None,
+        shortcut_import_path: None,
     };
     let restarted = Runtime::new(
         options,
