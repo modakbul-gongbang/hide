@@ -35,7 +35,7 @@ describe("snapshot merge", () => {
 
   it("drops the front Workspace's view when a delta no longer carries one", () => {
     const store = useShellStore.getState();
-    const view = { device_id: "local", path: "/h/hide", mode: "together", explorer: true, changes: false, agent_share: 0.5 };
+    const view = { device_id: "local", path: "/h/hide", panel: "open", pinned: false, explorer: true, changes: false, views_over_share: 0.6 };
     store.applyFrame({ type: "snapshot", payload: { revision: 1, rest: { workspace_view: view } as never } });
     expect(useShellStore.getState().rest?.workspace_view?.path).toBe("/h/hide");
     store.applyFrame({ type: "delta", payload: { revision: 2, rest: { focused: { pane_id: "p2" } } } });

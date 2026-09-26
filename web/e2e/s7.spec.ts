@@ -6,8 +6,8 @@
 // splits, dividers, menus and the palette work from the keyboard (B9, B10,
 // B18, B20); the tab menu and the caps say what cannot be done (B11, B19); a
 // narrow window changes only what is drawn (B12, B13); a restart brings the
-// layout back and a broken or older file is handled (B14-B17); and S6's
-// layout switch and tools keep working beside several areas (B22).
+// layout back and a broken or older file is handled (B14-B17); and the side
+// panel's toggle and tools keep working beside several areas (B22, issue 170).
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
@@ -15,7 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, enterWorkspace, screenshot } from "./wire";
+import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
 // A click or a key that cannot happen fails the flow in seconds, not at the test's end.
@@ -72,7 +72,8 @@ async function open(page: Page, daemon: Daemon): Promise<void> {
 
 /**
  * The isolated stack with `files` written into the fixture checkout, and the
- * page on that Workspace (a first run goes through Main and the Overview).
+ * page on that Workspace (a first run goes through Main and the Overview)
+ * with the Explorer shown, which opens its side panel.
  */
 async function startStack(
   page: Page,
@@ -97,6 +98,7 @@ async function startStack(
     await options.beforeOpen?.();
     await open(page, daemon);
     await enterWorkspace(page, "fixture");
+    await showExplorer(page);
     return { herdr, daemon, root: path.join(fs.realpathSync(herdr.root), "fixture"), sent, last, events, diagnostics };
   } catch (error) {
     daemon?.stop();
@@ -175,8 +177,8 @@ test("a click previews in the last used area, a pin keeps a view, and a shown fi
     // A single click previews in the one area, italic, and the next single
     // click replaces that preview in place (B1).
     await row("a.txt").click();
-    await expect(workspace).toHaveAttribute("data-layout", "agents");
-    await expect(workspace).toHaveAttribute("data-views-over-agents", "true");
+    await expect(workspace).toHaveAttribute("data-panel", "open");
+    await expect(workspace).toHaveAttribute("data-panel-docked", "false");
     await expect.poll(() => shape(page)).toBe("@(>a.txt*)");
     await expect(tab(page, "a.txt").getByText("a.txt")).toHaveCSS("font-style", "italic");
     await expect(tab(page, "a.txt")).toHaveAttribute("aria-label", /· Preview$/);
@@ -373,7 +375,7 @@ test("Open to the side shows one document twice: edits and Korean input reach bo
     fs.chmodSync(shared, 0o644);
     await tab(page, "shared.txt").hover();
     await tab(page, "shared.txt").getByRole("button", { name: /Close view/ }).click();
-    // The last view gone, the View region leaves and the agents take its space.
+    // The last view gone, the View areas leave and the panel keeps the Explorer.
     await expect(page.locator("[data-view-area]")).toHaveCount(0, { timeout: 10_000 });
     await expect.poll(() => fs.readFileSync(shared, "utf8").split("\n")[0]).toBe("line 001-B 한글안녕-C-D");
 
@@ -418,8 +420,7 @@ test("Open to the side from the only area is refused with its reason until that 
   await page.setViewportSize({ width: 1280, height: 720 });
   const stack = await startStack(page, "s7-beside-room", { "a.txt": "a\n" }, { prepare: gitCheckout });
   try {
-    // Beside the agents, where the one area is too narrow to halve.
-    await page.locator('[data-layout-choice="together"]').click();
+    // In the open panel, where the one area is too narrow to halve.
     const row = explorerRow(page, stack, "a.txt");
     await row.click();
     await expect.poll(() => shape(page)).toBe("@(>a.txt*)");
@@ -467,8 +468,8 @@ test("Open to the side from the only area is refused with its reason until that 
     expect(stack.events.filter((event) => event.kind === "file_open" && event.payload.beside === true)).toHaveLength(0);
     expect(stack.events.filter((event) => event.kind === "changes_select" && event.payload.beside === true)).toHaveLength(0);
 
-    // With room (Views only), the same item opens the second view to the right.
-    await page.locator('[data-layout-choice="views"]').click();
+    // With room (the panel expanded), the same item opens the second view to the right.
+    await page.locator('[data-panel-expand="off"]').click();
     await expect.poll(async () => (await boxOf(area(page, 0))).width).toBeGreaterThan(450);
     await row.click({ button: "right" });
     await expect(item).toBeEnabled();
@@ -520,8 +521,7 @@ test("dragging a tab reorders, moves or splits once on a valid drop and leaves e
   await page.setViewportSize({ width: 1920, height: 1080 });
   const stack = await startStack(page, "s7-drag", { "a.txt": "a\n", "b.txt": "b\n", "c.txt": "c\n" });
   try {
-    // The drop points below are measured beside the agents.
-    await page.locator('[data-layout-choice="together"]').click();
+    // The drop points below are measured in the open panel.
     for (const name of ["a.txt", "b.txt", "c.txt"]) await explorerRow(page, stack, name).dblclick();
     await expect.poll(() => shape(page)).toBe("@(a.txt b.txt >c.txt)");
     const moves = () => stack.sent.get("view_layout.move") ?? 0;
@@ -645,6 +645,9 @@ test("a drag or a tab menu begun on one Workspace ends when another client moves
     for (const name of ["a.txt", "c.txt"]) await explorerRow(page, stack, name).dblclick();
     await expect.poll(() => shape(page)).toBe("@(a.txt >c.txt)");
     await choose(page, "beta");
+    // A Workspace chosen for the first time starts with its panel closed.
+    await expect(page.locator("[data-workspace-screen]")).toHaveAttribute("data-panel", "closed");
+    await showExplorer(page);
     for (const name of ["b1.txt", "b2.txt"]) await page.locator(`[data-explorer-row="${path.join(betaRoot, name)}"]`).dblclick();
     await expect.poll(() => shape(page)).toBe("@(b1.txt >b2.txt)");
     await choose(page, "fixture");
@@ -752,9 +755,9 @@ test("splits, moves, resizes, focus and closes run from the palette and menus by
   const stack = await startStack(page, "s7-keys", { "a.txt": "a\n", "b.txt": "b\n", "c.txt": "c\n", "d.txt": "d\n" }, { beforeOpen: duplicateFirstSplit });
   try {
     for (const name of ["a.txt", "b.txt", "c.txt", "d.txt"]) await explorerRow(page, stack, name).dblclick();
-    await page.locator('[data-layout-choice="views"]').click();
+    await page.locator('[data-panel-expand="off"]').click();
     const workspace = page.locator("[data-workspace-screen]");
-    await expect(workspace).toHaveAttribute("data-layout", "views");
+    await expect(workspace).toHaveAttribute("data-panel", "expanded");
     await expect.poll(() => shape(page)).toBe("@(a.txt b.txt c.txt >d.txt)");
     const count = (key: string) => stack.sent.get(key) ?? 0;
 
@@ -835,20 +838,21 @@ test("splits, moves, resizes, focus and closes run from the palette and menus by
     await expect(divider).toHaveCount(0);
     await expect.poll(async () => Math.round((await boxOf(area(page, 0))).width)).toBe(Math.round(views.width));
 
-    // Closing the last view leaves the agents in the View areas' place, and
-    // the layout stays what it was (web-pane-scroll-find-areas B10).
+    // Closing the last view with no tool shown leaves the panel saying
+    // nothing is open, and its state stays what it was (issue 170).
     await paletteCommand(page, "Hide Explorer", "command:tool:explorer");
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
-    const layoutsBefore = stack.events.filter((event) => event.kind === "workspace_view" && "mode" in event.payload).length;
+    const panelsBefore = stack.events.filter((event) => event.kind === "workspace_view" && "panel" in event.payload).length;
     await tabTo(page, tab(page, "c.txt"), "Shift+Tab");
     await menuByKeyboard(page, "close_view");
     await expect.poll(() => shape(page)).toBe("@(>a.txt)");
     await tabTo(page, tab(page, "a.txt"), "Shift+Tab");
     await menuByKeyboard(page, "close_view");
     await expect(page.locator("[data-view-area]")).toHaveCount(0);
-    await expect(page.locator("[data-agent-area]")).toBeVisible();
-    await expect(workspace).toHaveAttribute("data-layout", "views");
-    expect(stack.events.filter((event) => event.kind === "workspace_view" && "mode" in event.payload).length).toBe(layoutsBefore);
+    await expect(page.locator("[data-side-panel]")).toHaveAttribute("data-panel-content", "empty");
+    await expect(page.locator("[data-side-panel]")).toContainText("No file or diff is open in this Workspace.");
+    await expect(workspace).toHaveAttribute("data-panel", "expanded");
+    expect(stack.events.filter((event) => event.kind === "workspace_view" && "panel" in event.payload).length).toBe(panelsBefore);
     await screenshot(page, "s7-keys-empty");
     await paletteCommand(page, "Show Explorer", "command:tool:explorer");
     await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
@@ -893,9 +897,9 @@ test("the tab menu offers only what a view can do, and each cap refuses with its
   const files = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`f${String(index + 1).padStart(2, "0")}.txt`, `file ${index + 1}\n`]));
   const stack = await startStack(page, "s7-caps", files);
   try {
-    await page.locator('[data-layout-choice="views"]').click();
     await explorerRow(page, stack, "f01.txt").click();
     await expect.poll(() => shape(page)).toBe("@(>f01.txt*)");
+    await page.locator('[data-panel-expand="off"]').click();
     const layoutEvents = () => viewEvents(stack).length;
 
     // A preview alone in its area: Keep open, four splits that cannot land
@@ -990,10 +994,11 @@ test("the tab menu offers only what a view can do, and each cap refuses with its
         {
           device_id: "local",
           path: stack.root,
-          mode: "views",
+          panel: "expanded",
+          pinned: false,
           explorer: true,
           changes: false,
-          agent_share: 0.5,
+          views_over_share: 0.6,
           last_used_unix_ms: Date.now(),
           layout: {
             root: {
@@ -1036,7 +1041,7 @@ test("the tab menu offers only what a view can do, and each cap refuses with its
   }
 });
 
-type StoredWorkspace = { device_id: string; path: string; mode: string; explorer: boolean; changes: boolean; agent_share: number; layout: unknown };
+type StoredWorkspace = { device_id: string; path: string; panel: string; pinned: boolean; explorer: boolean; changes: boolean; views_over_share: number; layout: unknown };
 
 /** This Workspace's entry in `workspace-views.json`, without the clock stamps a focus writes. */
 function storedWorkspace(daemon: Daemon, root: string): StoredWorkspace | null {
@@ -1052,12 +1057,11 @@ function storedWorkspace(daemon: Daemon, root: string): StoredWorkspace | null {
   return stored.workspaces.find((entry) => entry.device_id === "local" && entry.path === root) ?? null;
 }
 
-test("a narrow window floats the tools, shows one region and one area with a way to the others, and stores none of it", async ({ page }) => {
+test("a narrow window gives the side panel the whole body, floats the tools, shows one area with a way to the others, and stores none of it", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const stack = await startStack(page, "s7-narrow", { "a.txt": "a\n", "b.txt": "b\n" });
   try {
-    // Agents and Views, the layout that has two regions to narrow.
-    await page.locator('[data-layout-choice="together"]').click();
+    // Two areas in a panel pinned beside the agents, the state with the most to narrow.
     await explorerRow(page, stack, "a.txt").dblclick();
     await explorerRow(page, stack, "b.txt").dblclick();
     await tabMenu(page, page, "b.txt", "split_right");
@@ -1066,8 +1070,11 @@ test("a narrow window floats the tools, shows one region and one area with a way
     await divider.focus();
     await page.keyboard.press("ArrowLeft");
     await expect(divider).toHaveAttribute("aria-valuenow", "45");
+    await page.locator('[data-panel-pin="off"]').click();
     const workspace = page.locator("[data-workspace-screen]");
-    await expect(workspace).toHaveAttribute("data-layout", "together");
+    await expect(workspace).toHaveAttribute("data-panel", "open");
+    await expect(workspace).toHaveAttribute("data-panel-docked", "true");
+    await expect.poll(() => storedWorkspace(stack.daemon, stack.root)?.pinned).toBe(true);
     await expect.poll(() => (storedWorkspace(stack.daemon, stack.root)?.layout as { root?: { split?: { ratio?: number } } } | undefined)?.root?.split?.ratio).toBeCloseTo(0.45);
     const stored = storedWorkspace(stack.daemon, stack.root);
     const sentBefore = stack.events.filter((event) => event.kind === "workspace_view").length;
@@ -1075,19 +1082,35 @@ test("a narrow window floats the tools, shows one region and one area with a way
     const sidebar = (await boxOf(body)).x;
     const toggle = page.locator('[data-tool-toggle="explorer"]');
 
-    // Too narrow for the tool column: the tools float, closed until asked for,
-    // and the View areas that cannot all fit show the active one with a
-    // switcher to the others (B12, B13).
+    // Too narrow for the agents beside the panel: the panel takes the whole
+    // body and the pinned one floats; the View areas that cannot all fit
+    // show the active one with a switcher to the others (B13, issue 170).
     await page.setViewportSize({ width: Math.round(sidebar + 700), height: 1080 });
     await expect(body).toHaveAttribute("data-workspace-body", "narrow");
-    await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
-    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await expect(workspace).toHaveAttribute("data-panel", "expanded");
+    await expect(workspace).toHaveAttribute("data-panel-docked", "false");
+    await expect(page.locator('[data-workspace-tools="explorer"]')).toBeVisible();
     await expect(page.locator('[data-view-areas="single"]')).toBeVisible();
     await expect(page.locator("[data-view-area-id]")).toHaveCount(1);
     await expect.poll(() => shape(page)).toBe("@(>b.txt)");
     const switcher = page.locator("[data-view-area-switch]");
     await expect(switcher).toHaveText("2/2");
     await screenshot(page, "s7-narrow-single-area");
+
+    // The switcher shows another area; choosing one is an ordinary focus (B13).
+    await switcher.click();
+    await page.locator('[role="menu"] [data-menu-item]').first().click();
+    await expect.poll(() => shape(page)).toBe("@(>a.txt)");
+    await expect(switcher).toHaveText("1/2");
+    await switcher.click();
+    await page.locator('[role="menu"] [data-menu-item]').nth(1).click();
+    await expect.poll(() => shape(page)).toBe("@(>b.txt)");
+
+    // Too narrow for a View area beside the tool column: the tools float
+    // inside the panel, closed until asked for (B12).
+    await page.setViewportSize({ width: Math.round(sidebar + 440), height: 1080 });
+    await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
 
     // The overlay opens on request, takes the keyboard, and Escape closes it
     // with the keyboard back on its toggle (B12).
@@ -1107,36 +1130,13 @@ test("a narrow window floats the tools, shows one region and one area with a way
     await page.locator("[data-workspace-toolbar]").click({ position: { x: 3, y: 3 } });
     await expect(overlay).toHaveCount(0);
 
-    // The switcher shows another area; choosing one is an ordinary focus (B13).
-    await switcher.click();
-    await page.locator('[role="menu"] [data-menu-item]').first().click();
-    await expect.poll(() => shape(page)).toBe("@(>a.txt)");
-    await expect(switcher).toHaveText("1/2");
-    await switcher.click();
-    await page.locator('[role="menu"] [data-menu-item]').nth(1).click();
-    await expect.poll(() => shape(page)).toBe("@(>b.txt)");
-
-    // Too narrow for Agents and Views side by side: the region worked in last
-    // fills the width, with an explicit switch to the other (B13).
-    await page.setViewportSize({ width: Math.round(sidebar + 420), height: 1080 });
-    const regions = page.locator("[data-region-switch]");
-    await expect(regions).toBeVisible();
-    await expect(regions).toHaveAttribute("data-region-switch", "views");
-    await expect(page.locator("[data-agent-area]")).toHaveCount(0);
-    await expect(page.locator("[data-view-area]")).toBeVisible();
-    await screenshot(page, "s7-narrow-one-region");
-    await page.locator('[data-region-choice="agents"]').click();
-    await expect(page.locator("[data-agent-area]")).toBeVisible();
-    await expect(page.locator("[data-view-area]")).toHaveCount(0);
-    await page.locator('[data-region-choice="views"]').click();
-    await expect(page.locator("[data-view-area]")).toBeVisible();
-
-    // Widening brings the stored layout back: both regions, both areas at
-    // their ratio and the tool column; nothing narrow was sent or stored (B13).
+    // Widening brings back what the core stores: the pinned panel beside the
+    // agents, both areas at their ratio and the tool column; nothing narrow
+    // was sent or stored (B13).
     await page.setViewportSize({ width: 1920, height: 1080 });
     await expect(body).toHaveAttribute("data-workspace-body", "wide");
-    await expect(page.locator("[data-region-switch]")).toHaveCount(0);
-    await expect(page.locator("[data-agent-area]")).toBeVisible();
+    await expect(workspace).toHaveAttribute("data-panel", "open");
+    await expect(workspace).toHaveAttribute("data-panel-docked", "true");
     await expect(page.locator('[data-view-areas="tree"]')).toBeVisible();
     await expect.poll(() => shape(page)).toBe("(>a.txt) | @(>b.txt)");
     await expect(divider).toHaveAttribute("aria-valuenow", "45");
@@ -1145,13 +1145,12 @@ test("a narrow window floats the tools, shows one region and one area with a way
     expect(stack.events.filter((event) => event.kind === "workspace_view").length).toBe(sentBefore);
     await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toEqual(stored);
 
-    // In one region that shows only Views, the close chord closes the active
-    // view wherever the keyboard is (here on the region switch it was just
-    // clicked with), never a tab of the Agent area that is not drawn (B13).
+    // While the narrow panel covers the agents, the close chord closes the
+    // active view wherever the keyboard is (here on the toolbar's panel
+    // toggle), never a tab of the Agent area under it (B13).
     await page.setViewportSize({ width: Math.round(sidebar + 420), height: 1080 });
-    await page.locator('[data-region-choice="views"]').click();
-    await expect(page.locator("[data-agent-area]")).toHaveCount(0);
-    await expect(page.locator('[data-region-choice="views"]')).toBeFocused();
+    await expect(workspace).toHaveAttribute("data-panel", "expanded");
+    await page.locator("[data-panel-toggle]").focus();
     const herdrBefore = herdrIds(stack.herdr);
     const closes = () => viewEvents(stack).filter((event) => event.payload.action === "close").length;
     const closesBefore = closes();
@@ -1173,6 +1172,9 @@ test("an outside click that closes the narrow tools overlay gives the keyboard b
   await page.setViewportSize({ width: 1920, height: 1080 });
   const stack = await startStack(page, "s7-overlay-focus", { "a.txt": "a\n" });
   try {
+    // The tools fold into an overlay only beside a View area.
+    await explorerRow(page, stack, "a.txt").dblclick();
+    await expect.poll(() => shape(page)).toBe("@(>a.txt)");
     const sidebar = (await boxOf(page.locator("[data-workspace-body]"))).x;
     await page.setViewportSize({ width: Math.round(sidebar + 440), height: 1080 });
     await expect(page.locator("[data-workspace-body]")).toHaveAttribute("data-workspace-body", "narrow");
@@ -1205,7 +1207,7 @@ test("a restart brings the View areas back as they were, and a file gone meanwhi
   const stack = await startStack(page, "s7-restore", { "a.txt": "a text\n", "b.txt": "b text\n", "c.txt": "c text\n", "d.txt": "d text\n", "e.txt": "e text\n" });
   try {
     const row = (name: string) => explorerRow(page, stack, name);
-    // Three areas, a preview, two ratios, Views only, History without the Explorer.
+    // Three areas, a preview, two ratios, the panel expanded, History without the Explorer.
     await row("a.txt").dblclick();
     await row("b.txt").dblclick();
     await row("c.txt").click();
@@ -1224,14 +1226,14 @@ test("a restart brings the View areas back as they were, and a file gone meanwhi
     await expect(dividers.nth(0)).toHaveAttribute("aria-valuenow", "45");
     await expect(dividers.nth(1)).toHaveAttribute("aria-valuenow", "55");
     await tab(area(page, 2), "e.txt").click();
-    await page.locator('[data-layout-choice="views"]').click();
+    await page.locator('[data-panel-expand="off"]').click();
     await page.locator('[data-tool-toggle="changes"]').click();
     await page.locator('[data-tool-close="explorer"]').click();
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     const before = await shape(page);
     expect(before).toBe("(a.txt >c.txt*) | (>b.txt) | @(d.txt >e.txt)");
-    await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toMatchObject({ mode: "views", explorer: false, changes: true });
+    await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toMatchObject({ panel: "expanded", pinned: false, explorer: false, changes: true });
     await expect
       .poll(() => JSON.stringify(storedWorkspace(stack.daemon, stack.root)?.layout))
       .toMatch(/"ratio":0\.45.*"ratio":0\.55/);
@@ -1243,9 +1245,9 @@ test("a restart brings the View areas back as they were, and a file gone meanwhi
     await reopen(page, stack.daemon);
 
     // The same Workspace, not Main: the tree, ratios, order, preview, each
-    // area's view, the area in use, the layout and the tools (B14).
+    // area's view, the area in use, the panel and the tools (B14).
     const workspace = page.locator("[data-workspace-screen]");
-    await expect(workspace).toHaveAttribute("data-layout", "views", { timeout: 20_000 });
+    await expect(workspace).toHaveAttribute("data-panel", "expanded", { timeout: 20_000 });
     await expect(page.locator("[data-main-screen]")).toHaveCount(0);
     await expect.poll(() => shape(page), { timeout: 15_000 }).toBe(before);
     await expect(dividers.nth(0)).toHaveAttribute("aria-valuenow", "45");
@@ -1307,15 +1309,17 @@ test("a broken or unknown Views file is kept aside for Main and a fresh layout, 
       await expect.poll(() => stack.diagnostics.has("workspace_views.unreadable")).toBe(true);
       if (index === 0) await screenshot(page, "s7-recover-main");
       await enterWorkspace(page, "fixture");
-      await expect(workspace).toHaveAttribute("data-layout", "agents");
+      await expect(workspace).toHaveAttribute("data-panel", "closed");
+      await showExplorer(page);
       await explorerRow(page, stack, "b.txt").click();
       await expect.poll(() => shape(page)).toBe("@(>b.txt*)");
       await expect.poll(() => JSON.parse(fs.readFileSync(viewsFile(stack.daemon), "utf8")).schema_version as number).toBe(2);
     }
 
     // An S6 (schema 1) file: its tabs become one area in their order, with
-    // its active tab, preview, layout and tools; the next save writes
-    // schema 2 (B17, contract 1).
+    // its active tab, preview and tools, and its Views only layout restarts
+    // as an expanded side panel; the next save writes schema 2 (B17,
+    // contract 1, issue 170).
     const v1 = {
       schema_version: 1,
       workspaces: [
@@ -1335,7 +1339,7 @@ test("a broken or unknown Views file is kept aside for Main and a fresh layout, 
     stack.diagnostics.clear();
     stack.daemon = await stack.daemon.restart((dir) => fs.writeFileSync(path.join(dir, "workspace-views.json"), JSON.stringify(v1)));
     await reopen(page, stack.daemon);
-    await expect(workspace).toHaveAttribute("data-layout", "views", { timeout: 20_000 });
+    await expect(workspace).toHaveAttribute("data-panel", "expanded", { timeout: 20_000 });
     await expect.poll(() => shape(page), { timeout: 15_000 }).toBe("@(a.txt >b.txt c.txt*)");
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
@@ -1363,33 +1367,30 @@ function gitCheckout(checkout: string): void {
   fs.appendFileSync(path.join(checkout, "a.txt"), "changed\n");
 }
 
-test("S6's layouts, tools, kind marks and the open from Agents only keep working beside several View areas", async ({ page }) => {
+test("the side panel's toggle, Expand, tools, kind marks and an open from a closed panel keep working beside several View areas", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const stack = await startStack(page, "s7-s6", { "a.txt": "a text\n", "b.txt": "b text\n", "c.txt": "c text\n" }, { prepare: gitCheckout });
   try {
     const workspace = page.locator("[data-workspace-screen]");
-    const layouts = () => stack.events.filter((event) => event.kind === "workspace_view" && "mode" in event.payload).length;
+    const panels = () => stack.events.filter((event) => event.kind === "workspace_view" && "panel" in event.payload).length;
     const tools = () => stack.events.filter((event) => event.kind === "workspace_view" && ("explorer" in event.payload || "changes" in event.payload)).length;
 
-    // Three layout icons, one chosen (B22, S6 D-03).
-    const choices = page.locator("[data-layout-choice]");
-    await expect(choices).toHaveCount(3);
-    expect(await choices.evaluateAll((buttons) => buttons.map((button) => button.getAttribute("aria-label")))).toEqual(["Agents only", "Agents and Views", "Views only"]);
-    await expect(page.locator('[data-layout-choice="agents"]')).toHaveAttribute("aria-checked", "true");
+    // One panel toggle in the toolbar, and no layout switch (issue 170).
+    await expect(page.locator("[data-workspace-toolbar] [data-panel-toggle]")).toHaveCount(1);
+    await expect(page.locator("[data-layout-choice]")).toHaveCount(0);
 
-    // Choosing Views only never splits. With nothing open the agents stay in
-    // its place, and the first file brings one View area (B22,
-    // web-pane-scroll-find-areas B10).
-    await page.locator('[data-layout-choice="views"]').click();
-    await expect(workspace).toHaveAttribute("data-layout", "views");
-    await expect(page.locator("[data-view-area]")).toHaveCount(0);
-    await expect(page.locator("[data-agent-area]")).toBeVisible();
+    // Expanding never splits. With nothing open the panel stays the tool
+    // column's width, and the first file brings one View area over the
+    // whole body (B22, issue 170).
+    await paletteCommand(page, "Expand side panel", "command:panel:expanded");
+    await expect(page.locator("[data-side-panel]")).toHaveAttribute("data-panel-content", "tools");
+    await expect(workspace).toHaveAttribute("data-panel", "open");
     await explorerRow(page, stack, "a.txt").dblclick();
     await expect(page.locator("[data-view-area]")).toBeVisible();
-    await expect(page.locator("[data-agent-area]")).toHaveCount(0);
+    await expect(workspace).toHaveAttribute("data-panel", "expanded");
     await expect(page.locator("[data-view-divider]")).toHaveCount(0);
-    await page.locator('[data-layout-choice="together"]').click();
-    await expect(workspace).toHaveAttribute("data-layout", "together");
+    await page.locator('[data-panel-expand="on"]').click();
+    await expect(workspace).toHaveAttribute("data-panel", "open");
     await expect.poll(() => shape(page)).toBe("@(>a.txt)");
     await expect(page.locator("[data-view-divider]")).toHaveCount(0);
     expect(viewEvents(stack)).toHaveLength(0);
@@ -1429,22 +1430,29 @@ test("S6's layouts, tools, kind marks and the open from Agents only keep working
     expect(viewEvents(stack).length).toBe(viewsBefore);
     await expect.poll(() => shape(page)).toBe("(a.txt >a.txt) | @(>b.txt)");
 
-    // A file opened from Agents only draws the Views over the agents, whole,
-    // and lands in the area used last, which is the one in use (issue 170,
-    // B22); the layout stays Agents only.
-    await page.locator('[data-layout-choice="agents"]').click();
-    await expect(workspace).toHaveAttribute("data-layout", "agents");
+    // A file opened while the panel is closed opens it over the agents, the
+    // areas whole, and lands in the area used last, which is the one in use;
+    // the open asks for no panel state of its own (issue 170, B22).
+    await page.locator('[data-panel-toggle="on"]').click();
+    await expect(workspace).toHaveAttribute("data-panel", "closed");
     await expect(page.locator("[data-view-area-id]")).toHaveCount(0);
-    const layoutsBefore = layouts();
-    await explorerRow(page, stack, "c.txt").click();
-    await expect(workspace).toHaveAttribute("data-layout", "agents");
-    await expect(workspace).toHaveAttribute("data-views-over-agents", "true");
+    await expect(page.locator('[data-panel-badge]')).toHaveText("3");
+    const panelsBefore = panels();
+    await page.keyboard.press("Meta+KeyP");
+    const input = page.locator('[data-palette="Open file"] [data-palette-input]');
+    await expect(input).toBeVisible();
+    await input.fill("c.txt");
+    const row = page.locator(`[data-palette-row="${path.join(stack.root, "c.txt")}"]`);
+    await expect(row).toBeVisible({ timeout: 20_000 });
+    await row.click();
+    await expect(workspace).toHaveAttribute("data-panel", "open");
+    await expect(workspace).toHaveAttribute("data-panel-docked", "false");
     await expect.poll(() => shape(page)).toBe("(a.txt >a.txt) | @(b.txt >c.txt*)");
     await expect(area(page, 1)).toHaveAttribute("data-active-area", "true");
-    expect(layouts()).toBe(layoutsBefore);
+    expect(panels()).toBe(panelsBefore);
     // The diff shown over the agents is read like any diff on screen.
-    await expect(page.locator("[data-views-over-agents] .cm-content", { hasText: "+changed" })).toBeVisible({ timeout: 10_000 });
-    await screenshot(page, "s7-s6-open-from-agents");
+    await expect(page.locator("[data-side-panel] .cm-content", { hasText: "+changed" })).toBeVisible({ timeout: 10_000 });
+    await screenshot(page, "s7-s6-open-from-closed");
     expectFrontWorkspaceOnEveryViewEvent(stack);
   } finally {
     stopStack(stack);

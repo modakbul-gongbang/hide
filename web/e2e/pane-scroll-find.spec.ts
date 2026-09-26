@@ -1,5 +1,6 @@
 // Agent pane scroll beside another client, Cmd+F in the focused pane, and
-// the View region leaving with its last view (PRD web-pane-scroll-find-areas),
+// the side panel narrowing to its Explorer when its last view closes (PRD
+// web-pane-scroll-find-areas, issue 170),
 // on an isolated pinned Herdr. The other client is a plain `herdr terminal
 // session control` started before hided, holding control the way the Swift
 // shell does on the operator's server; hided then falls back to observing.
@@ -10,7 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, enterWorkspace, screenshot } from "./wire";
+import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
 test.use({ actionTimeout: 15_000 });
@@ -71,9 +72,12 @@ test("an observed agent pane scrolls, Cmd+F finds in the focused pane, and an em
     await expect.poll(() => paneText(page, observed), { timeout: 10_000 }).toContain("row-160");
 
     // B4: with a document open beside the agents, Cmd+F in a focused pane
-    // opens that pane's find bar, not the document's. Beside them is a layout
-    // the operator chooses; from Agents only a file is drawn over them.
-    await page.locator('[data-layout-choice="together"]').click();
+    // opens that pane's find bar, not the document's. Beside them is a pinned
+    // side panel; an unpinned one is drawn over them (issue 170).
+    await showExplorer(page);
+    await page.locator('[data-panel-pin="off"]').click();
+    const workspace = page.locator("[data-workspace-screen]");
+    await expect(workspace).toHaveAttribute("data-panel-docked", "true");
     await page.locator(`[data-explorer-row$="/notes.txt"]`).dblclick();
     await expect(page.locator("[data-view-area]")).toBeVisible();
     // Both panes narrow and redraw at the new grid, the observed one by
@@ -117,16 +121,18 @@ test("an observed agent pane scrolls, Cmd+F finds in the focused pane, and an em
     await expect(bar).toHaveCount(0);
     await page.keyboard.press("Escape");
 
-    // B8: closing the last view takes the View region away; the stored
-    // layout stays, so the next file brings it back in the same layout (B9).
-    const workspace = page.locator("[data-workspace-screen]");
-    await expect(workspace).toHaveAttribute("data-layout", "together");
+    // B8: closing the last view takes the View areas away and the panel
+    // narrows to the Explorer column it still shows; it stays open and
+    // pinned, so the next file brings the View areas back beside it (B9).
+    await expect(workspace).toHaveAttribute("data-panel", "open");
     const viewTab = page.locator('[data-view-tab-bar] [role="tab"][data-display]').first();
     await viewTab.hover();
     await viewTab.getByRole("button", { name: /Close view/ }).click();
     await expect(page.locator("[data-view-area]")).toHaveCount(0);
+    await expect(page.locator("[data-side-panel]")).toHaveAttribute("data-panel-content", "tools");
     await expect(page.getByText("No file or diff is open in this Workspace.")).toHaveCount(0);
-    await expect(workspace).toHaveAttribute("data-layout", "together");
+    await expect(workspace).toHaveAttribute("data-panel", "open");
+    await expect(workspace).toHaveAttribute("data-panel-docked", "true");
     // Both panes widen into the space and redraw at the new grid, the
     // observed one by attaching again at it.
     for (const pane of herdr.panes) await expect.poll(() => paneText(page, pane), { timeout: 15_000 }).toMatch(DRAWN_AT_GRID);

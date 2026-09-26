@@ -39,9 +39,6 @@ export type Screen = { kind: "main" } | { kind: "overview"; projectId: string } 
 /** `file_palette_beside` is ⌘P's list for "Open file to the side" (S7 B4): its pick opens beside the active View area. */
 export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_palette" | "file_palette_beside" | "search" | "settings";
 
-/** The two working regions of a Workspace, for a Together window too narrow for both (S7 B13). */
-export type WorkingRegion = "agents" | "views";
-
 /**
  * A notice the operator can act on: `refreshable` offers `refresh_status`
  * (activity unknown), and `dontSave` offers closing a view whose document
@@ -107,16 +104,10 @@ type UiStore = {
   editorFindDisplay: string | null;
   viewFocusRequest: ViewFocusRequest | null;
   /**
-   * The working region the operator last worked in, and the one a Together
-   * window too narrow for both shows (S7 B13). This page's presentation
-   * only: it is never sent or stored, so widening shows both again.
-   */
-  workingRegion: WorkingRegion;
-  /**
-   * How the Workspace tools stand (S7 B12, D-08): the column while the window
-   * has room for it, else an overlay that stays closed until the operator
-   * asks for a tool. The Workspace screen keeps it in step with the window's
-   * width; the tools the core stores are never changed by it.
+   * How the Workspace tools stand (S7 B12, D-08): the column while the side
+   * panel has room for it, else an overlay that stays closed until the
+   * operator asks for a tool. The Workspace screen keeps it in step with the
+   * panel's width; the tools the core stores are never changed by it.
    */
   toolsPlacement: ToolsPlacement;
   /** The Explorer's inline name field, or null. */
@@ -158,7 +149,6 @@ type UiStore = {
   setExplorerSelection: (path: string | null) => void;
   requestEditorFind: (displayId: string | null) => void;
   setViewFocusRequest: (request: ViewFocusRequest | null) => void;
-  setWorkingRegion: (region: WorkingRegion) => void;
   /** Follows the window: `column` when wide, a closed overlay when it turns narrow. */
   setToolsNarrow: (narrow: boolean) => void;
   /** The operator asked for a tool: a narrow window's overlay opens. */
@@ -191,7 +181,6 @@ export const useUiStore = create<UiStore>((set, get) => ({
   editorFindRequest: 0,
   editorFindDisplay: null,
   viewFocusRequest: null,
-  workingRegion: "agents",
   toolsPlacement: "column",
   explorerDraft: null,
   pendingTrash: null,
@@ -219,9 +208,6 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setExplorerSelection: (explorerSelection) => set({ explorerSelection }),
   requestEditorFind: (displayId) => set({ editorFindRequest: get().editorFindRequest + 1, editorFindDisplay: displayId }),
   setViewFocusRequest: (viewFocusRequest) => set({ viewFocusRequest }),
-  setWorkingRegion: (workingRegion) => {
-    if (get().workingRegion !== workingRegion) set({ workingRegion });
-  },
   setToolsNarrow: (narrow) => {
     const current = get().toolsPlacement;
     const next = placementForWidth(current, narrow);

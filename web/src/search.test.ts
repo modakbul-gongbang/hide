@@ -73,20 +73,13 @@ describe("search entries", () => {
 });
 
 describe("workspace commands", () => {
-  const rest = { workspace_view: { device_id: "local", path: "/repo", mode: "together", explorer: true, changes: false, agent_share: 0.5 } } as unknown as SnapshotRest;
+  const rest = { workspace_view: { device_id: "local", path: "/repo", panel: "open", pinned: false, explorer: true, changes: false, views_over_share: 0.6 } } as unknown as SnapshotRest;
   const wide = { drawn: null, placement: "column" } as const;
 
-  it("offers the other layouts by the menu's names and each tool by what it would do", () => {
-    expect(searchEntries(rest, wide).map((entry) => entry.title)).toEqual(["Layout: Agents only", "Layout: Views only", "Hide Explorer", "Show History"]);
-  });
-
-  it("offers the View areas over the agents in Agents only with a view open, and Agents only again to take them down (issue 170)", () => {
-    const agentsOnly = (over: boolean, displays: number) =>
-      ({ workspace_view: { ...(rest.workspace_view as object), mode: "agents", views_over_agents: over, layout: { root: { area: { id: "a1", active: null, displays: [] } }, active_area: "a1", limits: { areas: 6, depth: 3, displays: 64 }, display_count: displays } } }) as unknown as SnapshotRest;
-    const layoutTitles = (snapshot: SnapshotRest) => searchEntries(snapshot, wide).filter((entry) => entry.subtitle === "Workspace layout").map((entry) => entry.title);
-    expect(layoutTitles(agentsOnly(false, 1))).toEqual(["Layout: Agents and Views", "Layout: Views only", "Show Views over agents"]);
-    expect(layoutTitles(agentsOnly(true, 1))).toEqual(["Layout: Agents only", "Layout: Agents and Views", "Layout: Views only", "Hide Views over agents"]);
-    expect(layoutTitles(agentsOnly(false, 0))).toEqual(["Layout: Agents and Views", "Layout: Views only"]);
+  it("offers the side panel's other states, its pin, and each tool by what it would do (issue 170)", () => {
+    expect(searchEntries(rest, wide).map((entry) => entry.title)).toEqual(["Close side panel", "Expand side panel", "Pin side panel", "Hide Explorer", "Show History"]);
+    const closed = { workspace_view: { ...(rest.workspace_view as object), panel: "closed", pinned: true } } as unknown as SnapshotRest;
+    expect(searchEntries(closed, wide).map((entry) => entry.title)).toEqual(["Open side panel", "Expand side panel", "Unpin side panel", "Show Explorer", "Show History"]);
   });
 
   it("offers a tool a narrow window's closed overlay keeps out of sight as one to show (S7 B12)", () => {

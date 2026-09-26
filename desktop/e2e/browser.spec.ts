@@ -187,7 +187,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
 
   // Two View areas side by side need the Workspace's width: the Views take
   // it all and the Explorer steps aside until it is used below.
-  await page.locator('[data-layout-choice="views"]').click();
+  await page.locator('[data-panel-expand="off"]').click();
   await page.locator('[data-tool-toggle="explorer"][aria-pressed="true"]').click();
   await expect(page.locator('[data-tool-toggle="explorer"]')).toHaveAttribute("aria-pressed", "false");
 

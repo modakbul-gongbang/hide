@@ -88,3 +88,13 @@ export async function screenshot(page: Page, name: string): Promise<unknown> {
   await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
   return page.screenshot({ path: path.join(dir, `${name}.png`) });
 }
+
+/**
+ * Shows the Explorer: a Workspace starts with its side panel closed, and the
+ * Explorer's toggle opens the panel with it (issue 170).
+ */
+export async function showExplorer(page: Page): Promise<void> {
+  const toggle = page.locator('[data-tool-toggle="explorer"]');
+  if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
+  await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
+}

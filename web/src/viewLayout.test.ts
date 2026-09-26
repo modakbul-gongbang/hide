@@ -7,7 +7,6 @@ import {
   displayMenu,
   dropTarget,
   focusRequestArrived,
-  narrowWorkspace,
   neighbourArea,
   placeKey,
   placementForWidth,
@@ -350,35 +349,19 @@ describe("palette commands", () => {
   });
 });
 
-describe("narrow windows", () => {
-  const narrow = (bodyWidth: number, mode: "agents" | "together" | "views") => narrowWorkspace({ bodyWidth, mode, areaMin: 224, panelMin: 260, divider: 2 });
-
-  it("turns the tools into an overlay when the work area cannot keep its minimum beside them", () => {
-    expect(narrow(710, "together").toolsOverlay).toBe(false);
-    expect(narrow(709, "together").toolsOverlay).toBe(true);
-    expect(narrow(484, "views").toolsOverlay).toBe(false);
-    expect(narrow(483, "views").toolsOverlay).toBe(true);
-  });
-
-  it("shows one working region when Together cannot fit both minimums", () => {
-    expect(narrow(450, "together").singleRegion).toBe(false);
-    expect(narrow(449, "together").singleRegion).toBe(true);
-    expect(narrow(300, "views").singleRegion).toBe(false);
-  });
-
-  it("decides nothing before the body is measured", () => {
-    expect(narrow(0, "together")).toEqual({ toolsOverlay: false, singleRegion: false });
-  });
-
+describe("narrow panels", () => {
   it("never floats the tools over the work by itself: a narrowing window closes them until asked for", () => {
     expect(placementForWidth("column", true)).toBe("closed");
     expect(placementForWidth("open", true)).toBe("open");
     expect(placementForWidth("closed", true)).toBe("closed");
     expect(placementForWidth("open", false)).toBe("column");
-    const stored = { explorer: true, changes: false };
-    expect(shownTools(stored, "column")).toEqual(stored);
-    expect(shownTools(stored, "open")).toEqual(stored);
+    const stored = { explorer: true, changes: false, panel: "open" };
+    const tools = { explorer: true, changes: false };
+    expect(shownTools(stored, "column")).toEqual(tools);
+    expect(shownTools(stored, "open")).toEqual(tools);
     expect(shownTools(stored, "closed")).toEqual({ explorer: false, changes: false });
+    // A closed side panel shows no tool, whatever the core stores.
+    expect(shownTools({ ...stored, panel: "closed" }, "column")).toEqual({ explorer: false, changes: false });
   });
 });
 
