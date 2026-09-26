@@ -1,5 +1,9 @@
 use super::*;
-use crate::workspace_control::Query;
+use crate::workspace_control::{Action, Edge, Query};
+
+fn action_id(suffix: &str) -> String {
+    format!("{}-{suffix}", unix_milliseconds())
+}
 
 fn caller_fixture() -> (Runtime, tempfile::TempDir) {
     let dir = tempfile::tempdir().expect("fixture directory");
@@ -188,5 +192,176 @@ fn attested_device_resolves_colliding_pane_ids_without_crossing_workspaces() {
             .context
             .workspace_id,
         "workspace-b"
+    );
+}
+
+#[test]
+fn background_view_commands_preserve_front_focus_and_retried_split_converges() {
+    let (mut runtime, _dir) = caller_fixture();
+    let expected = runtime
+        .workspace_control_query("local", "pane-b", Query::Info)
+        .unwrap()
+        .context;
+    let other = runtime
+        .workspace_control_query("local", "pane-a", Query::Info)
+        .unwrap()
+        .context;
+    let key = ("local", "/checkouts/b");
+    let layout = &mut runtime
+        .workspace_views
+        .as_mut()
+        .unwrap()
+        .views
+        .entry(key.0, key.1)
+        .layout;
+    for path in ["first.md", "second.md"] {
+        let display = layout.new_display(
+            &format!("/checkouts/b/{path}"),
+            crate::view_layout::DisplayKind::File,
+            None,
+            false,
+        );
+        layout.insert("a1", display, 1).unwrap();
+    }
+    let before = (
+        runtime.snapshot.navigator.focused_workspace_id.clone(),
+        runtime.snapshot.navigator.focused_checkout_id.clone(),
+        runtime.snapshot.ui_state.selected_pane_id.clone(),
+    );
+    let view_id = runtime
+        .view_layout_of(&(key.0.into(), key.1.into()))
+        .unwrap()
+        .areas()[0]
+        .displays[0]
+        .id
+        .clone();
+    let action = Action::Split {
+        view_id: view_id.clone(),
+        area_id: "a1".into(),
+        edge: Edge::Right,
+    };
+    let retry_id = action_id("retry-split");
+    let first = runtime
+        .workspace_control_action("local", "pane-b", &expected, &retry_id, action.clone())
+        .unwrap();
+    assert!(first.changed);
+    let retry = runtime
+        .workspace_control_action("local", "pane-b", &expected, &retry_id, action)
+        .unwrap();
+    assert_eq!(retry, first);
+    assert_eq!(
+        runtime
+            .view_layout_of(&(key.0.into(), key.1.into()))
+            .unwrap()
+            .area_count(),
+        2
+    );
+    assert_eq!(
+        runtime
+            .workspace_control_action(
+                "local",
+                "pane-b",
+                &expected,
+                &retry_id,
+                Action::Close {
+                    view_id: view_id.clone()
+                }
+            )
+            .unwrap_err()
+            .reason,
+        "request_id_reused"
+    );
+    assert_eq!(
+        runtime
+            .workspace_control_action(
+                "local",
+                "pane-a",
+                &other,
+                &action_id("wrong-workspace"),
+                Action::Select {
+                    view_id: view_id.clone()
+                }
+            )
+            .unwrap_err()
+            .reason,
+        "view_layout.unknown_display"
+    );
+    assert_eq!(
+        (
+            runtime.snapshot.navigator.focused_workspace_id.clone(),
+            runtime.snapshot.navigator.focused_checkout_id.clone(),
+            runtime.snapshot.ui_state.selected_pane_id.clone(),
+        ),
+        before
+    );
+
+    runtime.snapshot.navigator.workspaces[1].checkouts[0].tabs[0].panes[0].id =
+        "former-pane-b".to_owned();
+    runtime.snapshot.navigator.workspaces[0].checkouts[0].tabs[0].panes[0].id = "pane-b".to_owned();
+    assert_eq!(
+        runtime
+            .workspace_control_action(
+                "local",
+                "pane-b",
+                &expected,
+                &retry_id,
+                Action::Split {
+                    view_id,
+                    area_id: "a1".into(),
+                    edge: Edge::Right,
+                },
+            )
+            .unwrap_err()
+            .reason,
+        "pane_changed"
+    );
+}
+
+#[test]
+fn close_of_an_already_closed_view_returns_a_no_change_result() {
+    let (mut runtime, _dir) = caller_fixture();
+    let expected = runtime
+        .workspace_control_query("local", "pane-b", Query::Info)
+        .unwrap()
+        .context;
+    let key = ("local", "/checkouts/b");
+    let layout = &mut runtime
+        .workspace_views
+        .as_mut()
+        .unwrap()
+        .views
+        .entry(key.0, key.1)
+        .layout;
+    let display = layout.new_browser_display("https://example.org", 1);
+    let view_id = display.id.clone();
+    layout.insert("a1", display, 1).unwrap();
+    let action = Action::Close {
+        view_id: view_id.clone(),
+    };
+    assert!(
+        runtime
+            .workspace_control_action(
+                "local",
+                "pane-b",
+                &expected,
+                &action_id("close-1"),
+                action.clone()
+            )
+            .unwrap()
+            .changed
+    );
+    assert!(
+        !runtime
+            .workspace_control_action("local", "pane-b", &expected, &action_id("close-2"), action)
+            .unwrap()
+            .changed
+    );
+    assert!(
+        runtime
+            .view_layout_of(&(key.0.into(), key.1.into()))
+            .unwrap()
+            .displays()
+            .next()
+            .is_none()
     );
 }

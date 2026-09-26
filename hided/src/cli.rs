@@ -3,6 +3,8 @@ use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
+use herdr_core::workspace_control::{Action, Edge};
+
 use crate::coexist::{self, Decision};
 use crate::env::{self, Env};
 use crate::spawn::spawn_owned;
@@ -31,6 +33,10 @@ pub enum CommandKind {
     WorkspaceBootstrap,
     WorkspaceInfo,
     ViewList,
+    WorkspaceAction {
+        action: Action,
+        request_id: Option<String>,
+    },
 }
 
 const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--pane <pane-id>]";
@@ -56,12 +62,73 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
             (Some("info"), None) => Ok(CommandKind::WorkspaceInfo),
             _ => Err("usage: hide workspace info".to_owned()),
         },
-        Some("view") => match (iter.next().map(String::as_str), iter.next()) {
-            (Some("list"), None) => Ok(CommandKind::ViewList),
-            _ => Err("usage: hide view list".to_owned()),
-        },
+        Some("view") => parse_view(iter),
         Some(other) => Err(format!("unknown command: {other}")),
     }
+}
+
+fn parse_view<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandKind, String> {
+    let usage = "usage: hide view list | select|close <view-id> [--request-id <id>] | split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>] | move <view-id> --area <area-id> --index <n> [--request-id <id>]";
+    let verb = iter.next().map(String::as_str).ok_or(usage)?;
+    if verb == "list" {
+        return if iter.next().is_none() {
+            Ok(CommandKind::ViewList)
+        } else {
+            Err(usage.to_owned())
+        };
+    }
+    let view_id = iter
+        .next()
+        .filter(|id| !id.starts_with('-'))
+        .ok_or(usage)?
+        .clone();
+    let mut area_id = None;
+    let mut edge = None;
+    let mut index = None;
+    let mut request_id = None;
+    while let Some(option) = iter.next() {
+        let value = iter.next().ok_or(usage)?;
+        if value.is_empty() || value.starts_with('-') {
+            return Err(usage.to_owned());
+        }
+        match option.as_str() {
+            "--area" if area_id.is_none() => area_id = Some(value.clone()),
+            "--edge" if edge.is_none() => {
+                edge = Some(match value.as_str() {
+                    "left" => Edge::Left,
+                    "right" => Edge::Right,
+                    "up" => Edge::Up,
+                    "down" => Edge::Down,
+                    _ => return Err(usage.to_owned()),
+                })
+            }
+            "--index" if index.is_none() => {
+                index = Some(value.parse::<usize>().map_err(|_| usage)?)
+            }
+            "--request-id" if request_id.is_none() => request_id = Some(value.clone()),
+            _ => return Err(usage.to_owned()),
+        }
+    }
+    let action = match verb {
+        "select" if area_id.is_none() && edge.is_none() && index.is_none() => {
+            Action::Select { view_id }
+        }
+        "close" if area_id.is_none() && edge.is_none() && index.is_none() => {
+            Action::Close { view_id }
+        }
+        "split" if index.is_none() => Action::Split {
+            view_id,
+            area_id: area_id.ok_or(usage)?,
+            edge: edge.ok_or(usage)?,
+        },
+        "move" if edge.is_none() => Action::Move {
+            view_id,
+            area_id: area_id.ok_or(usage)?,
+            index: index.ok_or(usage)?,
+        },
+        _ => return Err(usage.to_owned()),
+    };
+    Ok(CommandKind::WorkspaceAction { action, request_id })
 }
 
 fn parse_browser<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandKind, String> {
@@ -107,21 +174,83 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         }
         CommandKind::WorkspaceInfo => workspace_query(&env, "info"),
         CommandKind::ViewList => workspace_query(&env, "view_list"),
+        CommandKind::WorkspaceAction { action, request_id } => {
+            workspace_action(&env, action, request_id.as_deref())
+        }
+    }
+}
+
+fn workspace_action(env: &Env, action: Action, request_id: Option<&str>) -> Result<(), String> {
+    let request_id = match request_id {
+        Some(id) if crate::workspace_cli::valid_request_id(id) => id.to_owned(),
+        Some(_) => {
+            return workspace_refusal(
+                "invalid_request_id",
+                "Use the request ID printed by an earlier hide command",
+            );
+        }
+        None => match crate::workspace_cli::fresh_request_id() {
+            Ok(id) => id,
+            Err(reason) => return workspace_refusal(&reason, "Check the local runtime and retry"),
+        },
+    };
+    let (reference, ephemeral) = match workspace_reference(env) {
+        Ok(reference) => reference,
+        Err(reason) => return workspace_action_refusal(&request_id, &reason),
+    };
+    let _reference_owner =
+        ephemeral.then(|| crate::workspace_cli::OneShotReference(reference.clone()));
+    let answer = match crate::workspace_cli::request_action(&reference, action, &request_id) {
+        Ok(answer) => answer,
+        Err(reason) => return workspace_action_refusal(&request_id, &reason),
+    };
+    println!("{answer}");
+    if answer["ok"] == true {
+        Ok(())
+    } else {
+        Err(answer["reason"]
+            .as_str()
+            .unwrap_or("workspace_action_failed")
+            .to_owned())
+    }
+}
+
+fn workspace_action_refusal(request_id: &str, reason: &str) -> Result<(), String> {
+    let applied = if matches!(
+        reason,
+        "request_timeout" | "hide_unavailable" | "invalid_response"
+    ) {
+        "unknown"
+    } else {
+        "not_applied"
+    };
+    println!(
+        "{}",
+        serde_json::json!({
+            "ok": false,
+            "request_id": request_id,
+            "reason": reason,
+            "applied": applied,
+            "next_action": format!("Run hide view list to inspect the current state, or retry the same command with --request-id {request_id}"),
+        })
+    );
+    Err(reason.to_owned())
+}
+
+fn workspace_reference(env: &Env) -> Result<(std::path::PathBuf, bool), String> {
+    match std::env::var(env::HIDE_CAP_REF) {
+        Ok(value) if !value.is_empty() => Ok((std::path::PathBuf::from(value), false)),
+        Ok(_) => Err("invalid_reference".to_owned()),
+        Err(_) => crate::workspace_cli::bootstrap(env, true).map(|path| (path, true)),
     }
 }
 
 fn workspace_query(env: &Env, query: &str) -> Result<(), String> {
-    let (reference, ephemeral) = match std::env::var(env::HIDE_CAP_REF) {
-        Ok(value) if !value.is_empty() => (std::path::PathBuf::from(value), false),
-        Ok(_) => {
-            return workspace_refusal("invalid_reference", "Set a valid HIDE_CAP_REF and retry");
+    let (reference, ephemeral) = match workspace_reference(env) {
+        Ok(reference) => reference,
+        Err(reason) => {
+            return workspace_refusal(&reason, "Run Hide, reconnect this pane, and retry");
         }
-        Err(_) => match crate::workspace_cli::bootstrap(env, true) {
-            Ok(path) => (path, true),
-            Err(reason) => {
-                return workspace_refusal(&reason, "Run Hide, reconnect this pane, and retry");
-            }
-        },
     };
     let _reference_owner =
         ephemeral.then(|| crate::workspace_cli::OneShotReference(reference.clone()));
@@ -529,6 +658,43 @@ mod tests {
         ] {
             assert_eq!(parse(bad), Err(BROWSER_USAGE.to_owned()), "{bad:?}");
         }
+    }
+
+    #[test]
+    fn view_commands_accept_one_view_and_no_workspace_override() {
+        let parse = |line: &[&str]| {
+            parse_args(&line.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>())
+        };
+        assert_eq!(
+            parse(&[
+                "hide",
+                "view",
+                "split",
+                "d2",
+                "--area",
+                "a1",
+                "--edge",
+                "right",
+                "--request-id",
+                "1234567890000-abc"
+            ]),
+            Ok(CommandKind::WorkspaceAction {
+                action: Action::Split {
+                    view_id: "d2".into(),
+                    area_id: "a1".into(),
+                    edge: Edge::Right
+                },
+                request_id: Some("1234567890000-abc".into()),
+            })
+        );
+        assert!(parse(&["hide", "view", "select", "d2", "--workspace", "other"]).is_err());
+        assert!(parse(&["hide", "view", "move", "d2", "--area", "a1"]).is_err());
+        assert!(
+            parse(&[
+                "hide", "view", "split", "d2", "--area", "a1", "--edge", "right", "--edge", "left"
+            ])
+            .is_err()
+        );
     }
 
     #[test]

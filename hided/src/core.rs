@@ -5,7 +5,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use herdr_core::host_access::HostChannel;
-use herdr_core::workspace_control::{Query, QueryResult, Refusal};
+use herdr_core::workspace_control::{Action, ActionResult, Context, Query, QueryResult, Refusal};
 use herdr_core::{Core, CoreOptions};
 use tokio::sync::broadcast;
 
@@ -31,6 +31,14 @@ enum Command {
         pane_id: String,
         query: Query,
         reply: Sender<Result<QueryResult, Refusal>>,
+    },
+    WorkspaceAction {
+        device_id: String,
+        pane_id: String,
+        expected: Context,
+        request_id: String,
+        action: Action,
+        reply: Sender<Result<ActionResult, Refusal>>,
     },
     Snapshot {
         have_revision: u64,
@@ -124,6 +132,34 @@ impl CoreHandle {
         })?
     }
 
+    pub fn workspace_action(
+        &self,
+        device_id: &str,
+        pane_id: &str,
+        expected: &Context,
+        request_id: &str,
+        action: Action,
+    ) -> Result<ActionResult, Refusal> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::WorkspaceAction {
+                device_id: device_id.to_owned(),
+                pane_id: pane_id.to_owned(),
+                expected: expected.clone(),
+                request_id: request_id.to_owned(),
+                action,
+                reply,
+            })
+            .map_err(|_| Refusal {
+                reason: "core_unavailable",
+                next_action: "Reconnect Hide and retry",
+            })?;
+        rx.recv().map_err(|_| Refusal {
+            reason: "core_unavailable",
+            next_action: "Reconnect Hide and retry",
+        })?
+    }
+
     pub fn snapshot(
         &self,
         have_revision: u64,
@@ -193,6 +229,22 @@ fn owner_loop(
                 reply,
             } => {
                 let _ = reply.send(core.workspace_control_query(&device_id, &pane_id, query));
+            }
+            Command::WorkspaceAction {
+                device_id,
+                pane_id,
+                expected,
+                request_id,
+                action,
+                reply,
+            } => {
+                let _ = reply.send(core.workspace_control_action(
+                    &device_id,
+                    &pane_id,
+                    &expected,
+                    &request_id,
+                    action,
+                ));
             }
             Command::Snapshot {
                 have_revision,

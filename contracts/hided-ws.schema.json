@@ -6,7 +6,10 @@
   "oneOf": [
     { "$ref": "#/$defs/handshake" },
     { "$ref": "#/$defs/serverFrame" },
-    { "$ref": "#/$defs/clientEvent" }
+    { "$ref": "#/$defs/clientEvent" },
+    { "$ref": "#/$defs/workspaceQuery" },
+    { "$ref": "#/$defs/workspaceAction" },
+    { "$ref": "#/$defs/workspaceResult" }
   ],
   "$defs": {
     "handshake": {
@@ -19,6 +22,55 @@
         "client_kind": { "type": "string", "enum": ["web", "desktop"] },
         "have_revision": { "type": "integer", "minimum": 0 },
         "have_terminal_sequence": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "workspaceQuery": {
+      "description": "A pane-scoped query on a capability-authenticated WebSocket. The daemon derives device, pane, and Workspace from the credential and current core projection.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "query"],
+      "properties": {
+        "type": { "const": "workspace_query" },
+        "request_id": { "$ref": "#/$defs/workspaceRequestId" },
+        "query": { "enum": ["info", "view_list"] }
+      }
+    },
+    "workspaceAction": {
+      "description": "One pane-scoped View transition. Repeating the same request ID and command returns its recorded result within the ten-minute retry window.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "command"],
+      "properties": {
+        "type": { "const": "workspace_action" },
+        "request_id": { "$ref": "#/$defs/workspaceRequestId" },
+        "command": { "$ref": "#/$defs/workspaceViewCommand" }
+      }
+    },
+    "workspaceRequestId": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 64,
+      "pattern": "^[0-9]+-[A-Za-z0-9_-]+$"
+    },
+    "workspaceViewCommand": {
+      "oneOf": [
+        { "type": "object", "additionalProperties": false, "required": ["action", "view_id"], "properties": { "action": { "const": "select" }, "view_id": { "type": "string" } } },
+        { "type": "object", "additionalProperties": false, "required": ["action", "view_id"], "properties": { "action": { "const": "close" }, "view_id": { "type": "string" } } },
+        { "type": "object", "additionalProperties": false, "required": ["action", "view_id", "area_id", "edge"], "properties": { "action": { "const": "split" }, "view_id": { "type": "string" }, "area_id": { "type": "string" }, "edge": { "enum": ["left", "right", "up", "down"] } } },
+        { "type": "object", "additionalProperties": false, "required": ["action", "view_id", "area_id", "index"], "properties": { "action": { "const": "move" }, "view_id": { "type": "string" }, "area_id": { "type": "string" }, "index": { "type": "integer", "minimum": 0 } } }
+      ]
+    },
+    "workspaceResult": {
+      "description": "A pane-scoped request outcome. A successful action result includes context, request_id, changed, view_id, and optionally area_id; a refusal names reason and next_action.",
+      "type": "object",
+      "required": ["type", "ok"],
+      "properties": {
+        "type": { "const": "workspace_result" },
+        "request_id": { "$ref": "#/$defs/workspaceRequestId" },
+        "ok": { "type": "boolean" },
+        "result": { "type": "object" },
+        "reason": { "type": "string" },
+        "next_action": { "type": "string" }
       }
     },
     "serverFrame": {

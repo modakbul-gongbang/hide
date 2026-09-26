@@ -1177,6 +1177,7 @@ pub struct Runtime {
     /// Each Workspace's presentation; present only in a shell that draws
     /// separate Agent and View areas (`CoreOptions::workspace_views_path`).
     workspace_views: Option<WorkspaceViewStore>,
+    workspace_actions: VecDeque<workspace_control::RecordedAction>,
 }
 
 #[derive(Clone)]
@@ -1414,6 +1415,7 @@ impl Runtime {
             next_explorer_operation_id: 0,
             delta: snapshot_delta::DeltaState::default(),
             workspace_views,
+            workspace_actions: VecDeque::new(),
         };
         runtime.resync_navigator_focus();
         runtime.apply_persisted_pet_state();

@@ -266,6 +266,10 @@ The scoped credential records the device, Workspace, checkout, pane terminal ide
 Direct CLI calls own one-shot credentials and release them after their request, while agent sessions may retain a reference until their pane ends or the eight-hour limit expires.
 The registry has a 64-reference cap, the bootstrap path has an eight-worker cap, and daemon shutdown revokes every reference.
 The shell handshake marks actual web and desktop renderer connections with `client_kind`; Workspace commands refuse when only the daemon or another CLI client is connected.
+Pane-scoped `hide view select`, `split`, `move`, and `close` resolve the live device and checkout in the core, then apply one existing View layout transition without using the front Workspace as an authorization shortcut.
+They leave keyboard pane focus alone; a last View holding an unsaved document refuses close, while a second View of the same document may close by itself.
+One request ID carries an action result for up to ten minutes, and the 128-result cap refuses new commands instead of evicting an answer that a retry may need; a second intent uses a new ID.
+The CLI returns the request ID on uncertain transport outcomes so the caller can retry that same action or inspect `hide view list`.
 Client frames are core events (`schema_version`, `kind`, `payload`).
 HTTP is static assets and `GET /health` (`pid`, `version`, `schema_version`, `clients`).
 No HTTP request dispatches a core event.

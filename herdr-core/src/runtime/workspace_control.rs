@@ -1,11 +1,227 @@
-//! Read-only pane-scoped queries. They inspect the live Herdr projection and
-//! the View tree for that checkout, including one not in front.
+//! Pane-scoped queries and actions against the live Herdr projection.
 
 use super::Runtime;
 use crate::view_layout::DisplayKind;
-use crate::workspace_control::{Context, Query, QueryResult, Refusal, View};
+use crate::workspace_control::{Action, ActionResult, Context, Query, QueryResult, Refusal, View};
+
+const ACTION_RESULTS_KEPT: usize = 128;
+const ACTION_RETRY_WINDOW_MS: u64 = 10 * 60 * 1000;
+
+pub(super) struct RecordedAction {
+    device_id: String,
+    pane_id: String,
+    context: Context,
+    request_id: String,
+    at: u64,
+    action: Action,
+    result: Result<ActionResult, Refusal>,
+}
 
 impl Runtime {
+    pub fn workspace_control_action(
+        &mut self,
+        device_id: &str,
+        pane_id: &str,
+        expected: &Context,
+        request_id: &str,
+        action: Action,
+    ) -> Result<ActionResult, Refusal> {
+        // Membership is checked on every call, including a retry. A cached
+        // answer must never keep a moved or closed pane authorized.
+        let context = self
+            .workspace_control_query(device_id, pane_id, Query::Info)?
+            .context;
+        if &context != expected {
+            return Err(Refusal {
+                reason: "pane_changed",
+                next_action: "Reconnect the pane and run hide workspace info again",
+            });
+        }
+        let now = super::unix_milliseconds();
+        let issued = request_id
+            .split_once('-')
+            .and_then(|(issued, suffix)| {
+                (!suffix.is_empty())
+                    .then(|| issued.parse::<u64>().ok())
+                    .flatten()
+            })
+            .ok_or(Refusal {
+                reason: "invalid_request_id",
+                next_action: "Run the hide command again with a new request ID",
+            })?;
+        if issued > now.saturating_add(60_000)
+            || now.saturating_sub(issued) > ACTION_RETRY_WINDOW_MS
+        {
+            return Err(Refusal {
+                reason: "request_expired",
+                next_action: "Run hide view list and start a new request with a fresh ID",
+            });
+        }
+        self.workspace_actions
+            .retain(|record| now.saturating_sub(record.at) <= ACTION_RETRY_WINDOW_MS);
+        if let Some(record) = self.workspace_actions.iter().find(|record| {
+            record.device_id == device_id
+                && record.pane_id == pane_id
+                && record.request_id == request_id
+        }) {
+            return if record.context != context {
+                Err(Refusal {
+                    reason: "pane_changed",
+                    next_action: "Reconnect the pane and run hide workspace info again",
+                })
+            } else if record.action == action {
+                record.result.clone()
+            } else {
+                Err(Refusal {
+                    reason: "request_id_reused",
+                    next_action: "Use a new request ID for a different action",
+                })
+            };
+        }
+        if self.workspace_actions.len() >= ACTION_RESULTS_KEPT {
+            return Err(Refusal {
+                reason: "request_capacity",
+                next_action: "Wait for earlier requests to expire, then retry",
+            });
+        }
+        let key = (context.device_id.clone(), context.checkout_path.clone());
+        self.reconcile_view_displays();
+        let result = self.apply_workspace_action(&key, &context, request_id, &action);
+        self.workspace_actions.push_back(RecordedAction {
+            device_id: device_id.to_owned(),
+            pane_id: pane_id.to_owned(),
+            context,
+            request_id: request_id.to_owned(),
+            at: now,
+            action,
+            result: result.clone(),
+        });
+        result
+    }
+
+    fn apply_workspace_action(
+        &mut self,
+        key: &(String, String),
+        context: &Context,
+        request_id: &str,
+        action: &Action,
+    ) -> Result<ActionResult, Refusal> {
+        let (view_id, changed, area_id) = match action {
+            Action::Select { view_id } => {
+                let changed = self
+                    .change_view_layout(key, |layout, stamp| {
+                        layout
+                            .focus(view_id, stamp)
+                            .map(|changed| (changed, changed))
+                    })
+                    .map_err(layout_refusal)?;
+                let area = self
+                    .view_layout_of(key)
+                    .and_then(|layout| layout.area_of(view_id))
+                    .map(|area| area.id.clone());
+                (view_id.clone(), changed, area)
+            }
+            Action::Split {
+                view_id,
+                area_id,
+                edge,
+            } => {
+                let area = self
+                    .change_view_layout(key, |layout, stamp| {
+                        layout
+                            .split(view_id, area_id, *edge, stamp)
+                            .map(|area| (area, true))
+                    })
+                    .map_err(layout_refusal)?;
+                (view_id.clone(), true, Some(area))
+            }
+            Action::Move {
+                view_id,
+                area_id,
+                index,
+            } => {
+                let changed = self
+                    .change_view_layout(key, |layout, stamp| {
+                        layout
+                            .move_display(view_id, area_id, *index, stamp)
+                            .map(|changed| (changed, changed))
+                    })
+                    .map_err(layout_refusal)?;
+                (view_id.clone(), changed, Some(area_id.clone()))
+            }
+            Action::Close { view_id } => {
+                let Some(display) = self
+                    .view_layout_of(key)
+                    .and_then(|layout| layout.display(view_id))
+                    .cloned()
+                else {
+                    return Ok(ActionResult {
+                        context: context.clone(),
+                        request_id: request_id.to_owned(),
+                        changed: false,
+                        view_id: view_id.clone(),
+                        area_id: None,
+                    });
+                };
+                let shared = self.view_layout_of(key).is_some_and(|layout| {
+                    layout.displays().any(|other| {
+                        other.id != *view_id
+                            && match &display.tab_id {
+                                Some(tab) => other.tab_id.as_ref() == Some(tab),
+                                None => other.shows(&display.path, display.kind, display.committed),
+                            }
+                    })
+                });
+                if !shared
+                    && display
+                        .tab_id
+                        .as_deref()
+                        .is_some_and(|tab| self.document_kept(tab))
+                {
+                    return Err(Refusal {
+                        reason: "unsaved_document",
+                        next_action: "Save or discard the draft in Hide before closing its last View",
+                    });
+                }
+                let area = self
+                    .view_layout_of(key)
+                    .and_then(|layout| layout.area_of(view_id))
+                    .map(|area| area.id.clone());
+                if !shared {
+                    if let Some(tab) = display.tab_id.as_deref() {
+                        self.close_file_tab_now(tab);
+                        self.reconcile_view_displays();
+                    } else {
+                        self.change_view_layout(key, |layout, _| {
+                            Ok(((), layout.remove(view_id).is_some()))
+                        })
+                        .map_err(layout_refusal)?;
+                        if display.kind == DisplayKind::File {
+                            self.cancel_document_read(
+                                &context.workspace_id,
+                                &context.checkout_id,
+                                &display.path,
+                            );
+                        }
+                    }
+                } else {
+                    self.change_view_layout(key, |layout, _| {
+                        Ok(((), layout.remove(view_id).is_some()))
+                    })
+                    .map_err(layout_refusal)?;
+                }
+                (view_id.clone(), true, area)
+            }
+        };
+        Ok(ActionResult {
+            context: context.clone(),
+            request_id: request_id.to_owned(),
+            changed,
+            view_id,
+            area_id,
+        })
+    }
+
     pub fn workspace_control_query(
         &self,
         device_id: &str,
@@ -85,8 +301,22 @@ impl Runtime {
         });
         Ok(QueryResult {
             context,
-            capabilities: vec!["workspace.info", "view.list"],
+            capabilities: vec![
+                "workspace.info",
+                "view.list",
+                "view.select",
+                "view.split",
+                "view.move",
+                "view.close",
+            ],
             views,
         })
+    }
+}
+
+fn layout_refusal(error: crate::view_layout::LayoutError) -> Refusal {
+    Refusal {
+        reason: error.kind(),
+        next_action: "Run hide view list, choose an available View or area, and retry",
     }
 }

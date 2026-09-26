@@ -398,7 +398,7 @@ impl Runtime {
 
     /// Applies one change to a Workspace's layout, created when the file has
     /// none for it, and saves it when it changed something.
-    fn change_view_layout<T>(
+    pub(super) fn change_view_layout<T>(
         &mut self,
         key: &WorkspaceKey,
         change: impl FnOnce(&mut Layout, u64) -> Result<(T, bool), LayoutError>,
@@ -925,7 +925,7 @@ impl Runtime {
 
     /// Whether a document holds work a preview would lose: a draft, a save
     /// running, or a save's outcome the operator has not seen settle.
-    fn document_kept(&self, tab_id: &str) -> bool {
+    pub(super) fn document_kept(&self, tab_id: &str) -> bool {
         self.snapshot
             .editor
             .tabs

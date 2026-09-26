@@ -25,6 +25,8 @@ A View tab carries the file-type mark, and a diff tab the comparison mark, so a 
 Its title is cut at the tail to fit, and its tooltip and accessible name carry the kind, the full path, and `Preview` or `Unavailable` while the view is one, so a long path stays readable.
 A dirty view shows a warning-colored mark after its title.
 Closing a view is always called Close view, distinct from moving a file to the Trash and from closing a pane or tab.
+When a connected pane selects, splits, moves, or closes a View through `hide view`, the same View layout rules apply to that pane's Workspace even while another Workspace is in front.
+These commands do not move the keyboard target; a close that would lose the last View of an unsaved document reports the refusal and keeps the draft.
 
 ### View areas
 

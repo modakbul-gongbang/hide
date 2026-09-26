@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
+use herdr_core::workspace_control::Action;
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
@@ -106,21 +107,65 @@ fn read_reference(path: &Path) -> Result<Reference, String> {
 
 pub fn request(path: &Path, query: &str) -> Result<Value, String> {
     let reference = read_reference(path)?;
+    let request_id = fresh_request_id()?;
+    run_exchange(
+        &reference,
+        json!({"type":"workspace_query","request_id":request_id,"query":query}),
+        &request_id,
+    )
+}
+
+pub fn request_action(path: &Path, action: Action, request_id: &str) -> Result<Value, String> {
+    let reference = read_reference(path)?;
+    if !valid_request_id(request_id) {
+        return Err("invalid_request_id".to_owned());
+    }
+    run_exchange(
+        &reference,
+        json!({"type":"workspace_action","request_id":request_id,"command":action}),
+        request_id,
+    )
+}
+
+pub fn valid_request_id(id: &str) -> bool {
+    let Some((timestamp, suffix)) = id.split_once('-') else {
+        return false;
+    };
+    id.len() <= 64
+        && !suffix.is_empty()
+        && timestamp.parse::<u64>().is_ok()
+        && suffix
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+}
+
+pub fn fresh_request_id() -> Result<String, String> {
     let mut id = [0u8; 16];
     getrandom::getrandom(&mut id).map_err(|_| "request_unavailable".to_owned())?;
-    let request_id = hex::encode(id);
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "request_unavailable".to_owned())?
+        .as_millis();
+    Ok(format!("{now}-{}", hex::encode(id)))
+}
+
+fn run_exchange(reference: &Reference, payload: Value, request_id: &str) -> Result<Value, String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|_| "request_unavailable".to_owned())?;
     runtime.block_on(async {
-        tokio::time::timeout(TIMEOUT, exchange(&reference, query, &request_id))
+        tokio::time::timeout(TIMEOUT, exchange(reference, payload, request_id))
             .await
             .map_err(|_| "request_timeout".to_owned())?
     })
 }
 
-async fn exchange(reference: &Reference, query: &str, request_id: &str) -> Result<Value, String> {
+async fn exchange(
+    reference: &Reference,
+    payload: Value,
+    request_id: &str,
+) -> Result<Value, String> {
     let mut request = format!("ws://127.0.0.1:{}/ws", reference.port)
         .into_client_request()
         .map_err(|_| "hide_unavailable".to_owned())?;
@@ -142,11 +187,7 @@ async fn exchange(reference: &Reference, query: &str, request_id: &str) -> Resul
         .await
         .map_err(|_| "hide_unavailable".to_owned())?;
     socket
-        .send(Message::Text(
-            json!({"type":"workspace_query","request_id":request_id,"query":query})
-                .to_string()
-                .into(),
-        ))
+        .send(Message::Text(payload.to_string().into()))
         .await
         .map_err(|_| "hide_unavailable".to_owned())?;
     match socket.next().await {

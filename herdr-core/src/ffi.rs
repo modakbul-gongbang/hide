@@ -369,6 +369,30 @@ impl HerdrCore {
         lock_recover(&self.runtime).workspace_control_query(device_id, pane_id, query)
     }
 
+    /// A pane-scoped View action runs as one core transition. The daemon
+    /// attests the caller, and the core rechecks current membership.
+    pub fn workspace_control_action(
+        &self,
+        device_id: &str,
+        pane_id: &str,
+        expected: &crate::workspace_control::Context,
+        request_id: &str,
+        action: crate::workspace_control::Action,
+    ) -> Result<crate::workspace_control::ActionResult, crate::workspace_control::Refusal> {
+        if !check_owner_thread(self, "workspace_control_action") {
+            return Err(crate::workspace_control::Refusal {
+                reason: "core_unavailable",
+                next_action: "Reconnect Hide and retry",
+            });
+        }
+        let result = lock_recover(&self.runtime)
+            .workspace_control_action(device_id, pane_id, expected, request_id, action);
+        if result.as_ref().is_ok_and(|result| result.changed) {
+            notify_change(self);
+        }
+        result
+    }
+
     pub fn snapshot_delta(&self, have_revision: u64, have_terminal_sequence: u64) -> Vec<u8> {
         if !check_owner_thread(self, "snapshot") {
             notify_change(self);

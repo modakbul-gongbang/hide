@@ -460,6 +460,10 @@ async fn scoped_client_loop(
     token: String,
     one_shot: bool,
 ) {
+    enum ScopedRequest {
+        Query(herdr_core::workspace_control::Query),
+        Action(herdr_core::workspace_control::Action),
+    }
     let previous = state.clients.fetch_add(1, Ordering::SeqCst);
     if previous >= MAX_CLIENTS {
         state.clients.fetch_sub(1, Ordering::SeqCst);
@@ -472,27 +476,44 @@ async fn scoped_client_loop(
             match serde_json::from_str::<Value>(&text) {
                 Ok(value) => {
                     let request_id = value["request_id"].as_str().unwrap_or("");
-                    if value["type"] != "workspace_query"
+                    let command = match value["type"].as_str() {
+                        Some("workspace_query") => match value["query"].as_str() {
+                            Some("info") => Some(ScopedRequest::Query(
+                                herdr_core::workspace_control::Query::Info,
+                            )),
+                            Some("view_list") => Some(ScopedRequest::Query(
+                                herdr_core::workspace_control::Query::ViewList,
+                            )),
+                            _ => None,
+                        },
+                        Some("workspace_action") => {
+                            serde_json::from_value::<herdr_core::workspace_control::Action>(
+                                value["command"].clone(),
+                            )
+                            .ok()
+                            .map(ScopedRequest::Action)
+                        }
+                        _ => None,
+                    };
+                    if command.is_none()
                         || request_id.is_empty()
                         || request_id.len() > 64
                         || !request_id
                             .bytes()
                             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
-                        || !matches!(value["query"].as_str(), Some("info" | "view_list"))
                     {
-                        json!({"type":"workspace_result","ok":false,"reason":"invalid_request","next_action":"Run hide workspace info or hide view list with valid arguments"})
+                        json!({"type":"workspace_result","ok":false,"reason":"invalid_request","next_action":"Check hide command arguments and retry"})
                     } else {
                         let request_id = request_id.to_owned();
-                        let query = if value["query"] == "info" {
-                            herdr_core::workspace_control::Query::Info
-                        } else {
-                            herdr_core::workspace_control::Query::ViewList
+                        let Some(command) = command else {
+                            unreachable!("validated above")
                         };
                         let core = Arc::clone(&state.core);
                         let registry = Arc::clone(&state.pane_capabilities);
                         let renderers = Arc::clone(&state.renderers);
                         let herdr_socket = state.herdr_socket.clone();
                         let query_token = token.clone();
+                        let command_request_id = request_id.clone();
                         let outcome = tokio::task::spawn_blocking(move || {
                             let socket = herdr_socket
                                 .as_deref()
@@ -506,18 +527,46 @@ async fn scoped_client_loop(
                                     "Open Hide's web or desktop shell and retry",
                                 ));
                             }
-                            let result = core
-                                .workspace_query(&cap.context.device_id, &cap.pane_id, query)
-                                .map_err(|refusal| (refusal.reason, refusal.next_action))?;
-                            if result.context != cap.context {
-                                return Err(("pane_changed", "Reconnect the pane and retry"));
-                            }
-                            if renderers.load(Ordering::SeqCst) == 0 {
-                                return Err((
-                                    "renderer_unavailable",
-                                    "Open Hide's web or desktop shell and retry",
-                                ));
-                            }
+                            let result = match command {
+                                ScopedRequest::Query(query) => {
+                                    let result = core
+                                        .workspace_query(
+                                            &cap.context.device_id,
+                                            &cap.pane_id,
+                                            query,
+                                        )
+                                        .map_err(|refusal| (refusal.reason, refusal.next_action))?;
+                                    if result.context != cap.context {
+                                        return Err((
+                                            "pane_changed",
+                                            "Reconnect the pane and retry",
+                                        ));
+                                    }
+                                    serde_json::to_value(result).map_err(|_| {
+                                        ("result_encoding_failed", "Reconnect Hide and retry")
+                                    })?
+                                }
+                                ScopedRequest::Action(action) => {
+                                    let result = core
+                                        .workspace_action(
+                                            &cap.context.device_id,
+                                            &cap.pane_id,
+                                            &cap.context,
+                                            &command_request_id,
+                                            action,
+                                        )
+                                        .map_err(|refusal| (refusal.reason, refusal.next_action))?;
+                                    if result.context != cap.context {
+                                        return Err((
+                                            "pane_changed",
+                                            "Reconnect the pane and retry",
+                                        ));
+                                    }
+                                    serde_json::to_value(result).map_err(|_| {
+                                        ("result_encoding_failed", "Reconnect Hide and retry")
+                                    })?
+                                }
+                            };
                             Ok::<_, (&str, &str)>(result)
                         })
                         .await;
