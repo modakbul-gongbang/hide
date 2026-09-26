@@ -72,11 +72,6 @@ export function Sidebar({ actions }: { actions: Actions }) {
         ))}
         <span className="flex-1" />
         <span className="text-muted-foreground">⌘E</span>
-        <Hint label={`Settings (${displayCommand("settings", hostKind())})`}>
-          <Button variant="ghost" size="icon-sm" data-open-settings="true" onClick={() => actions.openSettings()}>
-            <SettingsIcon />
-          </Button>
-        </Hint>
       </div>
       <SearchField onOpen={() => actions.openSearch()} />
       {status ? (
@@ -96,6 +91,11 @@ export function Sidebar({ actions }: { actions: Actions }) {
         <DevicePicker actions={actions} />
         <span className="flex-1" />
         <WeeklyUsage actions={actions} />
+        <Hint label={`Settings (${displayCommand("settings", hostKind())})`}>
+          <Button variant="ghost" size="icon-sm" data-open-settings="true" onClick={() => actions.openSettings()}>
+            <SettingsIcon />
+          </Button>
+        </Hint>
       </div>
     </nav>
   );

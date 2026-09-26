@@ -1408,6 +1408,10 @@
       "type": "number",
       "value": 280
     },
+    "--size-usage-popover": {
+      "type": "number",
+      "value": 250
+    },
     "--size-pr-popover": {
       "type": "number",
       "value": 360
@@ -1723,6 +1727,20 @@
                           }
                         }
                       }
+                    },
+                    {
+                      "id": "main-sidebar-settings-l",
+                      "type": "ref",
+                      "ref": "hideui:Nyvom",
+                      "name": "Icon",
+                      "width": 20,
+                      "height": 20,
+                      "descendants": {
+                        "hideui:ZIZFR": {
+                          "fill": "$--muted-foreground",
+                          "icon": "settings"
+                        }
+                      }
                     }
                   ],
                   "width": "fill_container",
@@ -1730,7 +1748,7 @@
                   "alignItems": "center"
                 }
               ],
-              "width": 220,
+              "width": 292,
               "layout": "vertical",
               "gap": "$--spacing-md",
               "fill": "$--sidebar",
@@ -2076,6 +2094,20 @@
                           }
                         }
                       }
+                    },
+                    {
+                      "id": "main-sidebar-settings-d",
+                      "type": "ref",
+                      "ref": "hideui:Nyvom",
+                      "name": "Icon",
+                      "width": 20,
+                      "height": 20,
+                      "descendants": {
+                        "hideui:ZIZFR": {
+                          "fill": "$--muted-foreground",
+                          "icon": "settings"
+                        }
+                      }
                     }
                   ],
                   "width": "fill_container",
@@ -2083,7 +2115,7 @@
                   "alignItems": "center"
                 }
               ],
-              "width": 220,
+              "width": 292,
               "layout": "vertical",
               "gap": "$--spacing-md",
               "fill": "$--sidebar",
@@ -4644,7 +4676,7 @@
                   "layout": "horizontal",
                   "justifyContent": "space_between",
                   "alignItems": "center",
-                  "width": 1176
+                  "width": 1248
                 },
                 {
                   "type": "frame",
@@ -4852,6 +4884,20 @@
                                   }
                                 }
                               }
+                            },
+                            {
+                              "id": "ws-sidebar-settings-l",
+                              "type": "ref",
+                              "ref": "hideui:Nyvom",
+                              "name": "Icon",
+                              "width": 20,
+                              "height": 20,
+                              "descendants": {
+                                "hideui:ZIZFR": {
+                                  "fill": "$--muted-foreground",
+                                  "icon": "settings"
+                                }
+                              }
                             }
                           ],
                           "width": "fill_container",
@@ -4859,7 +4905,7 @@
                           "alignItems": "center"
                         }
                       ],
-                      "width": 220,
+                      "width": 292,
                       "layout": "vertical",
                       "gap": "$--spacing-md",
                       "fill": "$--sidebar",
@@ -5395,7 +5441,7 @@
               ],
               "layout": "vertical",
               "gap": "$--spacing-md",
-              "width": 1176
+              "width": 1248
             }
           ],
           "theme": {
@@ -5570,7 +5616,7 @@
                   "layout": "horizontal",
                   "justifyContent": "space_between",
                   "alignItems": "center",
-                  "width": 1176
+                  "width": 1248
                 },
                 {
                   "type": "frame",
@@ -5778,6 +5824,20 @@
                                   }
                                 }
                               }
+                            },
+                            {
+                              "id": "ws-sidebar-settings-d",
+                              "type": "ref",
+                              "ref": "hideui:Nyvom",
+                              "name": "Icon",
+                              "width": 20,
+                              "height": 20,
+                              "descendants": {
+                                "hideui:ZIZFR": {
+                                  "fill": "$--muted-foreground",
+                                  "icon": "settings"
+                                }
+                              }
                             }
                           ],
                           "width": "fill_container",
@@ -5785,7 +5845,7 @@
                           "alignItems": "center"
                         }
                       ],
-                      "width": 220,
+                      "width": 292,
                       "layout": "vertical",
                       "gap": "$--spacing-md",
                       "fill": "$--sidebar",
@@ -6321,7 +6381,7 @@
               ],
               "layout": "vertical",
               "gap": "$--spacing-md",
-              "width": 1176
+              "width": 1248
             }
           ],
           "theme": {
@@ -8058,17 +8118,6 @@
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-caption",
                           "fontWeight": "400"
-                        },
-                        {
-                          "type": "icon",
-                          "id": "pal-side-settings-l",
-                          "name": "Glyph",
-                          "enabled": true,
-                          "width": 14,
-                          "height": 14,
-                          "icon": "settings",
-                          "library": "lucide",
-                          "fill": "$--muted-foreground"
                         }
                       ],
                       "layout": "horizontal",
@@ -9741,17 +9790,6 @@
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-caption",
                           "fontWeight": "400"
-                        },
-                        {
-                          "type": "icon",
-                          "id": "pal-side-settings-d",
-                          "name": "Glyph",
-                          "enabled": true,
-                          "width": 14,
-                          "height": 14,
-                          "icon": "settings",
-                          "library": "lucide",
-                          "fill": "$--muted-foreground"
                         }
                       ],
                       "layout": "horizontal",
