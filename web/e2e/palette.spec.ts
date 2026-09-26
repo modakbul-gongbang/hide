@@ -113,6 +113,11 @@ test("⌘K groups agents, projects and checkouts, and the sidebar field opens th
     await expect(input).toBeFocused();
     await expect(headings(page)).toHaveText(["WORKSPACE > COMMANDS", "fixture > AGENTS", "WORKSPACES > PROJECTS", "WORKSPACES > CHECKOUTS"]);
     await screenshot(page, "palette-light-default");
+    // A query the agents match best brings their group above the commands'.
+    await page.keyboard.type("Agent");
+    await expect(headings(page).first()).toHaveText("fixture > AGENTS");
+    await expect(page.locator('[data-palette="Search"] [data-palette-row]').first()).toHaveAttribute("aria-selected", "true");
+    await screenshot(page, "palette-light-query");
     await page.keyboard.press("Escape");
   } finally {
     daemon?.stop();
