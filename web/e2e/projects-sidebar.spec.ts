@@ -32,7 +32,7 @@ async function prompt(herdr: HerdrFixture, pane: string): Promise<void> {
 }
 
 /** A Herdr workspace at `cwd`, with a fake `claude` agent titled `task` unless it is null. */
-async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string | null): Promise<string> {
+async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string | null, elapsed?: string): Promise<string> {
   const created = herdr.run(["workspace", "create", "--cwd", cwd, "--label", path.basename(cwd), "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]) as {
     result: { root_pane: { pane_id: string } };
   };
@@ -40,7 +40,8 @@ async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string | null
   await prompt(herdr, pane);
   if (task) {
     herdr.run(["agent", "start", `agent-${path.basename(cwd)}`, "--kind", "claude", "--pane", pane]);
-    execFileSync(herdr.bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `task=${task}`], { env: herdr.env, timeout: 30_000 });
+    const tokens = ["--token", `task=${task}`, ...(elapsed ? ["--token", `elapsed=${elapsed}`] : [])];
+    execFileSync(herdr.bin, ["pane", "report-metadata", pane, "--source", "e2e", ...tokens], { env: herdr.env, timeout: 30_000 });
   }
   return pane;
 }
@@ -81,8 +82,8 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     const notes = path.join(herdr.root, "notes");
     fs.mkdirSync(notes);
 
-    const mainPane = await workspaceAt(herdr, repo, "메인 체크아웃 정리");
-    const rowsPane = await workspaceAt(herdr, worktree, "사이드바 행 구현");
+    const mainPane = await workspaceAt(herdr, repo, "메인 체크아웃 정리", "12m");
+    const rowsPane = await workspaceAt(herdr, worktree, "사이드바 행 구현", "4m");
     const notesPane = await workspaceAt(herdr, notes, "회의록 요약 정리");
 
     daemon = await startHided(herdr, "projects-sidebar");
@@ -178,6 +179,9 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     await expect(feature.locator("[data-checkout]")).not.toHaveAttribute("aria-current", "true");
     await folderToggle.click();
     await expect(folder.locator(`[data-checkout-agents-open] [data-pane="${notesPane}"]`)).toBeVisible();
+    // B7: an agent that reported no elapsed time draws none rather than a made-up 0s.
+    await expect(folder.locator(`[data-pane="${notesPane}"] [data-agent-elapsed]`)).toHaveCount(0);
+    await expect(feature.locator(`[data-pane="${rowsPane}"] [data-agent-elapsed]`)).toHaveText("4m");
     await folderToggle.click();
     await expect(folder.locator("[data-checkout-agents-open]")).toHaveCount(0);
 
@@ -246,7 +250,7 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     // B4 in Agents: a quiet row and the row after it stay put through hover,
     // keyboard focus and selection.
     await page.locator('[data-sidebar-mode="agents"]').click();
-    const quietRows = page.locator("[data-agent-list] li[data-pane]:not(:has([data-agent-line]))");
+    const quietRows = page.locator("[data-agent-list] li[data-pane]:not(:has([data-agent-line])):has([data-agent-elapsed])");
     const [agentRow, nextRow] = [quietRows.nth(0), quietRows.nth(1)];
     const agentParts = [agentRow.locator("[data-agent-title]"), agentRow.locator("[data-agent-elapsed]")];
     await rest(page);

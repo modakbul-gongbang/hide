@@ -379,12 +379,12 @@ const CHECKOUT_NAME_COLUMN = "calc(var(--spacing-sm) + var(--size-lineage-indent
 
 /**
  * A row control that waits for the pointer, inside a row `RowMenu` wraps: its
- * slot is always kept, and it shows under the pointer, with keyboard focus in
+ * slot is always kept, and it shows under the pointer, with focus inside
  * the row, while the row's menu is open, and always on an input with no hover
  * (PRD sidebar-readability D-3, B2, B3).
  */
 const ROW_REVEALED =
-  "opacity-0 group-hover:opacity-100 group-has-[:focus-visible]:opacity-100 group-has-[[data-state=open]]:opacity-100 group-data-[state=open]:opacity-100 focus-visible:opacity-100 hoverless:opacity-100";
+  "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-has-[[data-state=open]]:opacity-100 group-data-[state=open]:opacity-100 focus-visible:opacity-100 hoverless:opacity-100";
 
 /** One disclosure for both inactive folds, the project level's and the checkout level's; its chevron stands in the fold slot. */
 function FoldRow({

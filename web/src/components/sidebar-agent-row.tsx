@@ -12,7 +12,7 @@ import { Hint } from "./ui/tooltip";
 /**
  * A control on the right of a sidebar row that waits for the pointer: its
  * slot is always there, so the title and the time never move, and it shows
- * under the pointer, while anything in the row has keyboard focus, while the
+ * under the pointer, while focus is anywhere inside the row, while the
  * row's menu is open, and always on an input with no hover (PRD
  * sidebar-readability D-3, B2, B3).
  */
@@ -107,12 +107,12 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
             {agent.identity_label}
           </span>
           {branch ? (
-            <Badge aria-hidden="true" variant="secondary" className="pointer-events-none min-w-0 max-w-fit shrink font-mono" data-branch-chip={branch}>
+            <Badge aria-hidden="true" variant="secondary" className="pointer-events-none min-w-0 max-w-2/5 shrink font-mono" data-branch-chip={branch}>
               <span className="truncate">{branch}</span>
             </Badge>
           ) : null}
           {device ? (
-            <Badge aria-hidden="true" variant="outline" className="pointer-events-none min-w-0 max-w-fit shrink" data-device-chip={device}>
+            <Badge aria-hidden="true" variant="outline" className="pointer-events-none min-w-0 max-w-2/5 shrink" data-device-chip={device}>
               <span className="truncate">{device}</span>
             </Badge>
           ) : null}
@@ -126,9 +126,12 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
               returnFocus={() => main.current?.focus()}
             />
           ) : null}
-          <span aria-hidden="true" className="pointer-events-none shrink-0 font-mono text-micro text-muted-foreground" data-agent-elapsed="true">
-            {agent.elapsed}
-          </span>
+          {/* An empty elapsed is a time nobody measured, and nothing stands in for it. */}
+          {agent.elapsed ? (
+            <span aria-hidden="true" className="pointer-events-none shrink-0 font-mono text-micro text-muted-foreground" data-agent-elapsed="true">
+              {agent.elapsed}
+            </span>
+          ) : null}
           {foldable ? (
             <button
               type="button"

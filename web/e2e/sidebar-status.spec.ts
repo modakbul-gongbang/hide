@@ -46,8 +46,8 @@ test("a root waiting on its child, the badge's child list, and the progress line
     await expect(page.locator('[data-sidebar="agents"]')).toBeVisible({ timeout: 20_000 });
 
     // B1: the parent finished its own turn and its child is working.
-    report(herdr, parent, { status_done: "✓", progress: "하위 작업 위임 후 대기" });
-    report(herdr, child, { status_working: "●", progress: "계보 투영 구현 중" });
+    report(herdr, parent, { status_done: "✓", progress: "하위 작업 위임 후 대기", elapsed: "12m" });
+    report(herdr, child, { status_working: "●", progress: "계보 투영 구현 중", elapsed: "3m" });
     declareChild(herdr, child, parent);
     const parentRow = page.locator(`[data-agent-list] [data-pane="${parent}"]`);
     await expect(parentRow).toHaveAttribute("data-waiting", "true", { timeout: 20_000 });

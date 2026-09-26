@@ -149,8 +149,8 @@ export function EntryPointMenu<Id extends string>({
 /**
  * The `⋯` menu on a sidebar row, also opened by a right-click on the row, the
  * way the native project and checkout menus open (WorktreeMenuPolicy). The
- * trigger shows while the row is under the pointer, while anything in it has
- * keyboard focus, while either menu is open, and always on an input with no
+ * trigger shows while the row is under the pointer, while focus is anywhere
+ * inside it, while either menu is open, and always on an input with no
  * hover; the row places it in a positioned slot of its own, kept at rest so
  * nothing beside it moves when it shows.
  */
@@ -176,7 +176,7 @@ export function RowMenu<Id extends string>({
             "absolute inset-0 flex items-center justify-center text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground",
             open
               ? "text-foreground"
-              : "opacity-0 group-hover:opacity-100 group-has-[:focus-visible]:opacity-100 group-data-[state=open]:opacity-100 focus-visible:opacity-100 hoverless:opacity-100",
+              : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-data-[state=open]:opacity-100 focus-visible:opacity-100 hoverless:opacity-100",
           )}
           {...data}
         >

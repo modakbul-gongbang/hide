@@ -1184,9 +1184,11 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
     let task = token_text(&agent.tokens, "task", MAX_TOKEN_TEXT_CHARS);
     let progress = token_text(&agent.tokens, "progress", MAX_TOKEN_TEXT_CHARS);
     let expected_reply = token_text(&agent.tokens, "expected_reply", MAX_EXPECTED_REPLY_CHARS);
+    // The label plugin's elapsed time, or empty when it reported none: a time
+    // nobody measured is not drawn as `0s` (PRD sidebar-readability B7).
     let elapsed = token_string(&agent.tokens, "elapsed")
         .filter(|value| valid_elapsed(value))
-        .unwrap_or_else(|| "0s".to_owned());
+        .unwrap_or_default();
 
     let identity_label = task.unwrap_or_else(|| workspace_label.clone());
     let projected = SidebarAgentSnapshot {
@@ -1593,6 +1595,25 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn an_agent_without_a_reported_elapsed_time_carries_none() {
+        let agents = project_agents(payload(json!([
+            {"pane_id": "measured", "workspace_label": "W", "agent": "codex", "agent_status": "running", "state_change_seq": 1, "tokens": {"elapsed": "3m"}},
+            {"pane_id": "unmeasured", "workspace_label": "W", "agent": "codex", "agent_status": "running", "state_change_seq": 1, "tokens": {}},
+            {"pane_id": "garbled", "workspace_label": "W", "agent": "codex", "agent_status": "running", "state_change_seq": 1, "tokens": {"elapsed": "soon"}}
+        ])))
+        .agents;
+        let elapsed = |pane: &str| {
+            agents
+                .iter()
+                .find(|agent| agent.pane_id == pane)
+                .map(|agent| agent.elapsed.as_str())
+        };
+        assert_eq!(elapsed("measured"), Some("3m"));
+        assert_eq!(elapsed("unmeasured"), Some(""));
+        assert_eq!(elapsed("garbled"), Some(""));
+    }
 
     #[test]
     fn checkout_purpose_uses_agent_then_pull_request_after_persistent_sources() {
