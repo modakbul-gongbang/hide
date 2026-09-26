@@ -308,7 +308,6 @@ fn runtime() -> Runtime {
         options,
         environment::EnvironmentReport {
             statuses: Vec::new(),
-            chromux_enabled: false,
             herdr_socket_path_override: None,
             home_path: None,
             codex_home: None,
@@ -450,7 +449,6 @@ fn working_payload() -> SessionSnapshotPayload {
 fn pane(id: &str, cwd: &str) -> PaneSnapshot {
     PaneSnapshot {
         id: id.to_owned(),
-        content: crate::pane_content::PaneContent::Terminal,
         herdr_label: None,
         terminal_title: None,
         workspace_label: None,

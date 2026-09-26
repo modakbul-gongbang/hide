@@ -1,7 +1,6 @@
 pub mod agent_hooks;
 mod ai;
 mod changes;
-pub mod chromux;
 mod device_catalog;
 pub mod diagnostics;
 mod disk;
@@ -22,7 +21,6 @@ pub mod host_access;
 pub mod issues;
 pub mod live;
 mod model;
-pub mod pane_content;
 mod persistence;
 pub mod pet;
 mod ports;

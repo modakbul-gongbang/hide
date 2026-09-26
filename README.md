@@ -29,7 +29,7 @@ It brings local and remote workspaces, checkouts, terminal panes, files, and cod
 - **Agents start in the right checkout.** Launch Claude Code or Codex from the selected workspace without rebuilding its context by hand.
 - **Local and remote stay distinct.** Work on this Mac or an SSH-connected Mac while keeping remote file writes inside the attached terminal.
 - **Files remain understandable.** Browse and edit existing local files in the Explorer, with remote trees exposed as read-only context.
-- **Browser QA stays beside the agent.** Open a Chromium pane from an existing chromux profile, then control the same target through CDP.
+- **A browser shows beside the work.** `hide browser open <url>` opens a browser as a View area display in the desktop app.
 - **Attention is visible.** Agent state, blocked work, failures, and the optional desktop pet make the next action easy to spot.
 
 ## How it works

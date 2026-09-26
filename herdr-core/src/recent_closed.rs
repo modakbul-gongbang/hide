@@ -40,7 +40,6 @@ pub struct ClosedPane {
     pub label: Option<String>,
     pub cwd: String,
     pub agent: Option<ClosedAgent>,
-    pub browser: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -113,7 +112,6 @@ pub enum ClosedItem {
         context: ClosedContext,
         layout: ClosedLayout,
         panes: Vec<ClosedPane>,
-        browser_count: usize,
     },
     File {
         key: String,
@@ -171,22 +169,16 @@ impl ClosedLayoutNode {
         }
     }
 
-    pub fn terminal_pane_ids(
-        &self,
-        panes: &BTreeMap<String, ClosedPane>,
-        output: &mut Vec<String>,
-    ) {
+    pub fn known_pane_ids(&self, panes: &BTreeMap<String, ClosedPane>, output: &mut Vec<String>) {
         match self {
             Self::Pane {
                 pane_id: Some(pane_id),
                 ..
-            } if panes.get(pane_id).is_some_and(|pane| !pane.browser) => {
-                output.push(pane_id.clone())
-            }
+            } if panes.contains_key(pane_id) => output.push(pane_id.clone()),
             Self::Pane { .. } => {}
             Self::Split { first, second, .. } => {
-                first.terminal_pane_ids(panes, output);
-                second.terminal_pane_ids(panes, output);
+                first.known_pane_ids(panes, output);
+                second.known_pane_ids(panes, output);
             }
         }
     }
@@ -255,7 +247,7 @@ impl ClosedLayoutNode {
         }
     }
 
-    pub fn prune_browser_panes(
+    pub fn resolve_panes(
         &self,
         panes: &BTreeMap<String, ClosedPane>,
         checkout_root: &str,
@@ -270,9 +262,6 @@ impl ClosedLayoutNode {
                 env,
             } => {
                 let pane = pane_id.as_ref().and_then(|id| panes.get(id))?;
-                if pane.browser {
-                    return None;
-                }
                 let restored_cwd = if std::path::Path::new(&pane.cwd).is_dir() {
                     pane.cwd.clone()
                 } else {
@@ -296,8 +285,8 @@ impl ClosedLayoutNode {
                 first,
                 second,
             } => match (
-                first.prune_browser_panes(panes, checkout_root, notices),
-                second.prune_browser_panes(panes, checkout_root, notices),
+                first.resolve_panes(panes, checkout_root, notices),
+                second.resolve_panes(panes, checkout_root, notices),
             ) {
                 (Some(first), Some(second)) => Some(Self::Split {
                     direction: *direction,
@@ -419,38 +408,29 @@ mod tests {
     }
 
     #[test]
-    fn browser_leaves_are_pruned_without_redrawing_the_remaining_topology() {
-        let layout = ClosedLayoutNode::Split {
-            direction: ClosedSplitDirection::Right,
-            ratio: 0.5,
-            first: Box::new(pane("terminal")),
-            second: Box::new(pane("browser")),
-        };
-        let panes = BTreeMap::from([
-            (
-                "terminal".into(),
-                ClosedPane {
-                    pane_id: "terminal".into(),
-                    label: None,
-                    cwd: "/tmp".into(),
-                    agent: None,
-                    browser: false,
-                },
-            ),
-            (
-                "browser".into(),
-                ClosedPane {
-                    pane_id: "browser".into(),
-                    label: None,
-                    cwd: "/tmp".into(),
-                    agent: None,
-                    browser: true,
-                },
-            ),
-        ]);
+    fn resolved_panes_restore_the_recorded_label_and_cwd() {
+        let layout = pane("terminal");
+        let panes = BTreeMap::from([(
+            "terminal".into(),
+            ClosedPane {
+                pane_id: "terminal".into(),
+                label: None,
+                cwd: "/tmp".into(),
+                agent: None,
+            },
+        )]);
         assert!(matches!(
-            layout.prune_browser_panes(&panes, "/tmp", &mut Vec::new()),
+            layout.resolve_panes(&panes, "/tmp", &mut Vec::new()),
             Some(ClosedLayoutNode::Pane { pane_id: None, .. })
         ));
+    }
+
+    #[test]
+    fn an_unknown_pane_id_resolves_to_nothing() {
+        let layout = pane("missing");
+        assert_eq!(
+            layout.resolve_panes(&BTreeMap::new(), "/tmp", &mut Vec::new()),
+            None
+        );
     }
 }

@@ -96,21 +96,6 @@ pub(super) struct FocusPaneRequestPayload {
 }
 
 #[derive(Debug, Deserialize)]
-pub(super) struct OpenBrowserPayload {
-    pub(super) profile: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub(super) struct BrowserStatusPayload {
-    pub(super) state: String,
-    pub(super) profile: String,
-    pub(super) current_url: Option<String>,
-    pub(super) current_title: Option<String>,
-    pub(super) message: Option<String>,
-    pub(super) last_checked_at_unix_ms: u64,
-}
-
-#[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct GithubRequestPayload {
     pub(super) workspace_id: String,
@@ -857,8 +842,6 @@ pub(super) enum Event {
     RefreshStatus,
     Click(ClickPayload),
     FocusPane(FocusPaneRequestPayload),
-    OpenBrowser(OpenBrowserPayload),
-    BrowserStatus(BrowserStatusPayload),
     CreateWorkspace(CreateWorkspacePayload),
     CreateTab(CreateTabPayload),
     FocusCheckout(FocusCheckoutPayload),
@@ -1013,8 +996,6 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "refresh_status" => Ok(Event::RefreshStatus),
         "click" => decode!(ClickPayload, Click),
         "focus_pane" => decode!(FocusPaneRequestPayload, FocusPane),
-        "open_browser" => decode!(OpenBrowserPayload, OpenBrowser),
-        "browser_status" => decode!(BrowserStatusPayload, BrowserStatus),
         "create_workspace" => decode!(CreateWorkspacePayload, CreateWorkspace),
         "create_tab" => decode!(CreateTabPayload, CreateTab),
         "focus_checkout" => decode!(FocusCheckoutPayload, FocusCheckout),
@@ -1282,26 +1263,6 @@ impl Runtime {
                     format!("Reconnect requested for pane {pane_id}"),
                 );
                 self.request_terminal_control(&pane_id);
-                true
-            }
-            Event::OpenBrowser(payload) => {
-                self.snapshot.status.chromux.profile = payload.profile;
-                let action = chromux::plan_open(&self.snapshot.status.chromux.profile, None, None);
-                self.snapshot.status.chromux.state = "parked".to_owned();
-                self.snapshot.status.chromux.message = Some(match action {
-                    chromux::BrowserAction::Parked(message) => message,
-                    _ => "Runtime execution is parked for this approved batch".to_owned(),
-                });
-                true
-            }
-            Event::BrowserStatus(payload) => {
-                self.snapshot.status.chromux.state = payload.state;
-                self.snapshot.status.chromux.profile = payload.profile;
-                self.snapshot.status.chromux.current_url = payload.current_url;
-                self.snapshot.status.chromux.current_title = payload.current_title;
-                self.snapshot.status.chromux.message = payload.message;
-                self.snapshot.status.chromux.last_checked_at_unix_ms =
-                    Some(payload.last_checked_at_unix_ms);
                 true
             }
             Event::InstallAgentHooks(payload) => {

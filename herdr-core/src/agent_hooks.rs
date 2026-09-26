@@ -2,9 +2,8 @@
 //!
 //! The hook helper reports through `pane.report_metadata`, so its
 //! values arrive as ordinary pane tokens on the session snapshot the core
-//! already pulls. This module is the only place that reads them, the way
-//! [`crate::pane_content`] is the only place that reads the browser pane's
-//! tokens (PRD D-08, D-33).
+//! already pulls. This module is the only place that reads them (PRD D-08,
+//! D-33).
 //!
 //! Every value is optional and an unreadable one is dropped rather than
 //! defaulted. A count Hide cannot read is unknown, and unknown is drawn as

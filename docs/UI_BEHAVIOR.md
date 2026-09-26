@@ -203,15 +203,11 @@ The whole lineage is drawn inside its card whatever the sidebar has folded, so a
 
 Web owner: `web/src/ExplorerTree.tsx`, `web/src/explorer.ts`. Native owner: `WorkspaceOutlineView.swift`, `WorkspaceOutlinePresentation.swift`, `changes.rs`.
 
-The tree's context menu follows VS Code's order: New File, New Folder, a separator, then on a file row Open with Default App, Open in Browser Pane and a separator, then Reveal in Finder, Copy Path, Copy Relative Path, a separator, Rename, a separator, Delete.
+The tree's context menu follows VS Code's order: New File, New Folder, a separator, then on a file row Open with Default App and a separator, then Reveal in Finder, Copy Path, Copy Relative Path, a separator, Rename, a separator, Delete.
 A folder row has no open items, because its open is Reveal in Finder; the empty area below the rows stands for the root and offers only the two creations; a remote tree is read-only and offers only the two copies.
 The item set the menu offers is a presentation decision a test can check directly, not something the platform decides implicitly.
 
 Open with Default App hands the file to the OS through the existing external opener, and a refusal is reported with the path and the reason.
-Open in Browser Pane stays in the menu whether or not it can act; when it cannot, the item is disabled with its one reason in the order the operator can act on it: remote files open on their device, opening in progress, Node.js is not on PATH, not connected to Herdr, no focused pane to open beside.
-The menu does not auto-enable; the disabled state is the presentation's decision.
-The outcome of an open is a notice: the host's own sentence when it refused, a message that no chromux profile is running with the launch command to fix it, or a timeout message after thirty seconds.
-`docs/BROWSER_PANES.md` owns how the pane is opened and which profile is chosen.
 
 Delete has two entry points, the menu item and a delete shortcut while the tree holds the keyboard, and both end in the same confirmation: an alert asking to move the item to Trash, telling the operator everything in a folder goes too, and that the item can be restored from Finder, with Cancel as the default action and Move to Trash as the destructive one.
 Nothing reaches the core without that alert; Cancel and Escape send nothing.

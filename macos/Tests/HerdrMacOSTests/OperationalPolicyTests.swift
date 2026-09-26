@@ -655,31 +655,6 @@ import Testing
     #expect(notice.consequence.contains("disk"))
 }
 
-@Test func cdpTabTitleDecodesCharacterReferencesAfterStructuredJSONParsing() throws {
-    let payload = Data(
-        #"[{"url":"chrome://profile-picker/","title":"Who&#39;s using Chrome?","type":"page"}]"#.utf8
-    )
-
-    let tabs = try ChromuxTabDecoder.decode(payload)
-
-    #expect(tabs.count == 1)
-    #expect(tabs[0].url == "chrome://profile-picker/")
-    #expect(tabs[0].title == "Who's using Chrome?")
-    #expect(tabs[0].type == "page")
-}
-
-@Test func chromuxPathAbsenceStopsBeforeAnyProcessLaunch() async {
-    let receipt = await ChromuxExecutor.inspectAndOpen(
-        profile: "default",
-        shouldOpen: true,
-        pathState: "absent"
-    )
-
-    #expect(receipt.phase == .unavailable)
-    #expect(receipt.action == "unavailable")
-    #expect(receipt.message.contains("PATH"))
-}
-
 /// The app runs only the Herdr it ships, verified against the pinned digest.
 /// A bundle whose binary is absent or altered yields no runtime rather than
 /// a runtime that happens to be on the machine.
@@ -756,18 +731,18 @@ private extension Process {
     }
 }
 
-@Test func consequencePromptListsWorkingPanesButNotTheBrowserSentence() {
-    let browser = DestructiveTarget(
-        id: "w1:p1", label: "Browser", statusLabel: "Idle",
-        requiresCloseConfirmation: true, summary: "Closing closes the tab.", contentConsequence: "Closing closes the tab."
+@Test func consequencePromptListsWorkingPanesButNotTheContentConsequenceSentence() {
+    let hosted = DestructiveTarget(
+        id: "w1:p1", label: "Viewer", statusLabel: "Idle",
+        requiresCloseConfirmation: true, summary: "Closing stops its host.", contentConsequence: "Closing stops its host."
     )
     let working = DestructiveTarget(
         id: "w1:p2", label: "claude", statusLabel: "Working",
         requiresCloseConfirmation: true, summary: "Editing files", contentConsequence: nil
     )
-    let pane = ConsequencePolicy.notice(kind: .pane, targets: [browser])
-    #expect(pane.message == "Closing closes the tab.")
-    let tab = ConsequencePolicy.notice(kind: .tab, targets: [browser, working])
+    let pane = ConsequencePolicy.notice(kind: .pane, targets: [hosted])
+    #expect(pane.message == "Closing stops its host.")
+    let tab = ConsequencePolicy.notice(kind: .tab, targets: [hosted, working])
     #expect(tab.message.hasSuffix("\nclaude - Working"))
-    #expect(!tab.message.contains("Browser - Idle"))
+    #expect(!tab.message.contains("Viewer - Idle"))
 }

@@ -852,10 +852,6 @@ impl Runtime {
                         .or_else(|| pane.terminal_title.clone()),
                     cwd: pane.cwd.clone(),
                     agent,
-                    browser: matches!(
-                        pane.content,
-                        crate::pane_content::PaneContent::Browser { .. }
-                    ),
                 }
             })
             .collect()

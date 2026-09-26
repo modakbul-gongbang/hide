@@ -15,7 +15,6 @@ fn runtime_at(path: &std::path::Path) -> Runtime {
         },
         environment::EnvironmentReport {
             statuses: Vec::new(),
-            chromux_enabled: false,
             herdr_socket_path_override: None,
             home_path: None,
             codex_home: None,

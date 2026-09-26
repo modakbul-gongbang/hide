@@ -1041,7 +1041,6 @@ pub struct TabSnapshot {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct PaneSnapshot {
     pub id: String,
-    pub content: crate::pane_content::PaneContent,
     /// The three names a pane can be shown by, in the order the header prefers
     /// them. The core ships the ingredients rather than a chosen title so the
     /// local and remote projections cannot disagree about the ladder, and so
@@ -2526,7 +2525,6 @@ pub struct TextRangeSnapshot {
 pub struct StatusSnapshot {
     pub herdr: ProviderStatusSnapshot,
     pub remote: Vec<RemoteStatusSnapshot>,
-    pub chromux: ChromuxStatusSnapshot,
     pub environment: Vec<EnvironmentStatusSnapshot>,
     pub agent_hooks: AgentHooksSnapshot,
     pub background_ai: BackgroundAiSnapshot,
@@ -2798,16 +2796,6 @@ pub struct RemotePaneLayoutFrame {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct ChromuxStatusSnapshot {
-    pub state: String,
-    pub profile: String,
-    pub current_url: Option<String>,
-    pub current_title: Option<String>,
-    pub message: Option<String>,
-    pub last_checked_at_unix_ms: Option<u64>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct LastErrorSnapshot {
     pub kind: String,
     pub message: String,
@@ -2913,14 +2901,6 @@ impl Snapshot {
                     received_version: None,
                 },
                 remote: Vec::new(),
-                chromux: ChromuxStatusSnapshot {
-                    state: "not_checked".to_owned(),
-                    profile: "default".to_owned(),
-                    current_url: None,
-                    current_title: None,
-                    message: Some("Browser availability has not been checked".to_owned()),
-                    last_checked_at_unix_ms: None,
-                },
                 environment: Vec::new(),
                 agent_hooks: AgentHooksSnapshot::default(),
                 background_ai: BackgroundAiSnapshot::unread(),

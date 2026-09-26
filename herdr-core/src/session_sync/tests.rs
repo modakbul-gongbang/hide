@@ -185,7 +185,6 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),
             home_path: None,
-            chromux_enabled: false,
             herdr_socket_path_override: None,
             codex_home: None,
         },
@@ -262,56 +261,6 @@ fn split_is_published_only_after_the_authoritative_layout_arrives() {
     assert!(updated.publish);
     assert_eq!(replica.project().panes.len(), 2);
     assert_eq!(replica.project().layouts[0].panes.len(), 2);
-}
-
-#[test]
-fn browser_host_identity_follows_pane_updates_and_rejects_remote_attachment() {
-    let value = snapshot();
-    let mut replica = SessionReplica::from_snapshot(&value).expect("snapshot");
-    let mut pane = value["panes"][0].clone();
-    pane["tokens"] = json!({
-        "hide_content": "browser-v1",
-        "hide_browser_binding": "login-qa",
-        "hide_browser_profile": "team",
-        "hide_browser_target": "A12B",
-        "hide_browser_session": "hide-login-qa",
-        "hide_browser_cdp_port": "9300",
-        "hide_browser_owns_target": "false"
-    });
-    replica
-        .apply(
-            event(
-                "pane_updated",
-                json!({"type": "pane_updated", "pane": pane}),
-            ),
-            ApplyMode::Strict,
-        )
-        .expect("host report");
-    let projected = replica.project();
-    let content = crate::pane_content::PaneContent::from_tokens(&projected.panes[0].tokens, false);
-    assert!(matches!(content,
-            crate::pane_content::PaneContent::Browser { target_id, .. } if target_id == "A12B"));
-    let (remote, _) = replica.project_remote("mini").expect("remote projection");
-    assert!(matches!(
-        remote.workspaces[0].checkouts[0].tabs[0].panes[0].content,
-        crate::pane_content::PaneContent::Unavailable { .. }
-    ));
-    // A host release must remove its content identity without leaving a
-    // stale browser over a shell that now occupies the same layout leaf.
-    pane["tokens"] = json!({});
-    replica
-        .apply(
-            event(
-                "pane_updated",
-                json!({"type": "pane_updated", "pane": pane}),
-            ),
-            ApplyMode::Strict,
-        )
-        .expect("host release");
-    assert!(
-        crate::pane_content::PaneContent::from_tokens(&replica.project().panes[0].tokens, false)
-            .is_terminal()
-    );
 }
 
 #[test]
@@ -577,7 +526,6 @@ fn official_remote_session_coordinator_probe() {
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),
             home_path: Some(PathBuf::from(home)),
-            chromux_enabled: false,
             herdr_socket_path_override: None,
             codex_home: None,
         },

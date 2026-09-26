@@ -189,7 +189,7 @@ This boundary has no provider-specific draft, composer or attachment shelf.
 ### Reopening locally closed work
 
 The core owns one session-local, twenty-item LIFO stack for file tabs and local Herdr pane or tab closes initiated through Hide.
-Browser-only panes, remote closes, and topology changes reported by another Herdr client never enter it.
+Remote closes and topology changes reported by another Herdr client never enter it.
 Every item names its device: a file tab closed on a device is that device's, a pane or tab close is this machine's.
 Reopen restores the newest item of the device in front and `recent_closed` counts only that device's items, so a reopen on one device never restores work on another and never takes another device's newer close off the stack; a device's file reopens through that device's host.
 A device's Herdr pane and tab closes are not recorded, so a device has nothing of that kind to reopen (PRD S5.5 D-21 exception).
@@ -205,7 +205,7 @@ Unknown agent activity is a separate close guard: the core refuses local and rem
 Recreation also runs outside `Mutex<Runtime>`.
 Pane restore uses the captured parent path, direct neighbor, split direction, original first-child ratio, and cwd, falling back to the tab's current pane and then the checkout root when the original facts no longer exist.
 A direct pane sibling uses `pane.split`; a sibling subtree is wrapped at its captured nested parent with `layout.apply`, preserving the surrounding tree and every existing ratio.
-Tab restore prunes Browser leaves, applies the remaining exported layout, restores its workspace position, and starts each captured agent in the new pane with the captured session id when the agent kind supports resume.
+Tab restore resolves each captured pane's cwd and label, applies the remaining exported layout, restores its workspace position, and starts each captured agent in the new pane with the captured session id when the agent kind supports resume.
 The create, split, and applied-layout requests stamp their panes with a reserved `HIDE_REOPEN_INTENT` environment value containing the closed-item key and mutation stage.
 On a retry, the worker adopts only a pane or layout carrying that exact marker; a new id, matching cwd, or matching workspace or tab label is never ownership evidence, so an unrelated agent cannot be interrupted as part of restore.
 Both a recovered layout and the first `layout.apply` result must contain the exact expected terminal-pane count before any agent starts.

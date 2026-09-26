@@ -4,7 +4,7 @@ This file routes and keeps the rules that hold everywhere; the reasons and the p
 Read [docs/README.md](docs/README.md) before choosing supporting documents: it says which are current contracts, who owns them in code and tests, and which are historical.
 Do not apply superseded architecture decisions, old milestone reports, or old PRD implementation paths to current code.
 Update the owning guide and its active references in the same change as the behavior; keep run evidence outside `docs/`.
-Before opening a browser inside Hide, read `docs/BROWSER_PANES.md` for the host entrypoint, installation ownership, and native display verification.
+Before changing browser displays, read `docs/BROWSER_PANES.md` for the host entrypoint, installation ownership, and native display verification.
 
 ## Repository Layout
 
@@ -16,7 +16,7 @@ Before opening a browser inside Hide, read `docs/BROWSER_PANES.md` for the host 
 - `hide-agent-hooks/` - the only code that writes a configuration file the operator owns (each agent runtime's hook file). A separate crate because a `settings.json` write must never sit behind the render lock; see `docs/agent-hooks.md`.
 - `hide-ai/` - the provider boundary for background AI features, backed by the user's own logged-in CLIs; see `docs/AI_PROVIDERS.md`.
 - `hide-session/` - shared local Claude and Codex session location, incremental reading, and conversation parsing used by the plugin and core usage fallback.
-- `plugins/` - Herdr plugins shipped from this repository, each installable on its own with `herdr plugin install <owner>/<repo>/plugins/<name>`: `browser/` and `agent-context-labels/`.
+- `plugins/` - Herdr plugins shipped from this repository, each installable on its own with `herdr plugin install <owner>/<repo>/plugins/<name>`: `agent-context-labels/`.
 - `spikes/swift-shell-pivot/` - the Stage 0 spike and its `VERDICTS.md`, a frozen record; do not edit it to reflect later changes.
 
 ## Before Opening A Pull Request
@@ -95,7 +95,6 @@ It owns the reproduction procedure, the isolation checklist, the measurement bou
   No per-tick or per-tab git forks: the catalog reads repository facts from the repository's own files (`git_dir.rs`), never from a `git` process.
 - Report idle and driven measurements separately, with the load and workload recorded for each.
 - Native verification targets one precisely identified candidate PID/window and an isolated Herdr server; the operator app may remain running. Never quit, restart, focus, or manipulate the operator's app, panes, or server for QA without explicit coordination. Prefer background exact-window capture; see `docs/PERFORMANCE_TESTING.md` for isolation and foreground-interaction boundaries.
-- A Browser plugin pane is only for QA of the browser-pane product surface, never a verification surface for the native shell, editor, Git diff, sidebar, build, or installed app.
 
 <!-- harness:agents-namespace:start -->
 ## Harness Namespace (`agents/`)
