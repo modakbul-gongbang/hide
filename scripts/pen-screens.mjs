@@ -385,6 +385,43 @@ function screenSidebar(tokens, id, suffix, agents) {
   ]);
 }
 
+// A scope's facts line (MainScreen.tsx FACTS_LINE): mono caption facts, each a
+// glyph and its number, drawn only when the system has the number.
+function factsLine(id, facts) {
+  return frame(id, 'Facts', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'center'}, facts.map((fact, index) =>
+    frame(`${id}-${index}`, fact.label, {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
+      icon(`${id}-${index}-g`, fact.glyph, {size: 12, fill: fact.fill ?? '$--subtle-foreground'}),
+      text(`${id}-${index}-t`, fact.label, {size: '$--text-caption', fill: fact.fill ?? '$--subtle-foreground', mono: true}),
+    ])));
+}
+
+// A project's Overview header (ProjectOverview.tsx): the path back and New
+// agent, the facts line, then the view tabs, the chosen one `view`.
+function overviewHeader(tokens, id, suffix, {project, facts, view, width}) {
+  return frame(`${id}-${suffix}`, 'Header', {layout: 'vertical', gap: '$--spacing-sm', width}, [
+    frame(`${id}-title-${suffix}`, 'Title row', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'center', width}, [
+      frame(`${id}-crumb-${suffix}`, 'Path', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+        text(`${id}-crumb1-${suffix}`, 'All projects', {size: '$--text-caption', fill: '$--subtle-foreground'}),
+        text(`${id}-crumb2-${suffix}`, '/', {size: '$--text-caption', fill: '$--muted-foreground'}),
+        text(`${id}-crumb3-${suffix}`, project, {size: '$--text-headline', weight: '600'}),
+      ]),
+      frame(`${id}-gap-${suffix}`, 'Spacer', {width: 'fill_container', height: 1}, []),
+      screenButton(`${id}-new-${suffix}`, 'New agent', {height: num(tokens, '--size-control-sm'), icon: 'plus'}),
+    ]),
+    factsLine(`${id}-facts-${suffix}`, facts),
+    frame(`${id}-rule-${suffix}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
+    screenTabs(`${id}-tabs-${suffix}`, ['Tasks', 'Agents', 'Sessions'], ['tasks', 'agents', 'sessions'].indexOf(view)),
+  ]);
+}
+
+const HERDR_FACTS = [
+  {glyph: 'folder-git-2', label: '5 worktrees'},
+  {glyph: 'git-pull-request', label: '2 open PRs'},
+  {glyph: 'hard-drive', label: '4.1 GB'},
+  {glyph: 'arrow-down', label: 'main ↓3 behind origin', fill: '$--warning'},
+  {glyph: 'git-merge', label: '3 merged → 정리', fill: '$--pr-merged'},
+];
+
 // -- Screen / Main ------------------------------------------------------------
 
 function buildMain(tokens) {
@@ -393,10 +430,18 @@ function buildMain(tokens) {
       {title: '두 번째 에이전트', status: 'Working'},
       {title: 'Agent one', status: 'Seen', symbol: '○', statusColor: '$--muted-foreground'},
     ]);
-    const list = frame(`main-list-${suffix}`, 'Projects', {width: 480, layout: 'vertical', gap: '$--spacing-md'}, [
-      frame(`main-listhdr-${suffix}`, 'Header', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center'}, [
-        text(`main-listtitle-${suffix}`, 'Projects', {size: '$--text-title', weight: '600'}),
-        screenButton(`main-addproj-${suffix}`, 'Add project', {variant: 'secondary', height: num(tokens, '--size-control-sm')}),
+    const list = frame(`main-list-${suffix}`, 'All projects', {width: 480, layout: 'vertical', gap: '$--spacing-md'}, [
+      frame(`main-listhdr-${suffix}`, 'Header', {layout: 'vertical', gap: '$--spacing-sm', width: 480}, [
+        frame(`main-listtitlerow-${suffix}`, 'Title row', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', width: 480}, [
+          text(`main-listtitle-${suffix}`, 'All projects', {size: '$--text-headline', weight: '600'}),
+          screenButton(`main-addproj-${suffix}`, 'Add project', {variant: 'ghost', height: num(tokens, '--size-control-sm'), icon: 'plus'}),
+        ]),
+        factsLine(`main-facts-${suffix}`, [
+          {glyph: 'folder', label: '12 projects'},
+          {glyph: 'git-pull-request', label: '5 open PRs'},
+          {glyph: 'git-merge', label: '7 merged', fill: '$--pr-merged'},
+        ]),
+        frame(`main-rule-${suffix}`, 'Rule', {width: 480, height: 1, fill: '$--border'}, []),
       ]),
       screenSectionHeader(`main-sect-${suffix}`, {label: 'THIS MAC', count: '', detail: '', width: 480}),
       screenProjectRow(`main-proj1-${suffix}`, {name: 'sasu-web-design-system-reset', agents: '3 agents', width: 480}),
@@ -404,14 +449,14 @@ function buildMain(tokens) {
     ]);
     return [sidebar, list];
   }
-  return screenSheet('screen-main', 'Screen / Main', 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx: the agent/project sidebar beside the Projects list, grouped by device. Long checkout names truncate inside their row (B11).', s => build(s), s => build(s));
+  return screenSheet('screen-main', 'Screen / Main', 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx: All projects, the scope the sidebar’s top row opens - its title with Add project, the facts line (the project count, and the open-PR and merged totals only when every project can give its part), and the project list grouped by device. It has one view, so it draws no tabs. Long checkout names truncate inside their row (B11).', s => build(s), s => build(s));
 }
 
 // -- Screen / Project Overview -------------------------------------------------
 
-// The Overview board (PRD web-project-overview): a header with the Tasks/Agents
-// tabs, the stat strip, Sessions and New agent; the ad hoc strip; the four Git
-// columns with 머지됨 folded. Cards and agent rows are authored here on local
+// The Overview board (PRD web-project-overview): the title row with the path
+// back and New agent, the facts line, the Tasks/Agents/Sessions tabs; the ad hoc
+// strip; the four Git columns with 머지됨 folded. Cards and agent rows are authored here on local
 // tokens, since no library master draws them; the controls are library refs.
 function buildProjectOverview(tokens) {
   const column = num(tokens, '--home-column-width');
@@ -450,19 +495,7 @@ function buildProjectOverview(tokens) {
   }
   function build(suffix) {
     const idle = {mark: '○', markFill: '$--subtle-foreground'};
-    const header = frame(`ov-head-${suffix}`, 'Header', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'center', width: 1240}, [
-      frame(`ov-crumb-${suffix}`, 'Path', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-        text(`ov-crumb1-${suffix}`, 'Main', {size: '$--text-caption', fill: '$--subtle-foreground'}),
-        text(`ov-crumb2-${suffix}`, '/', {size: '$--text-caption', fill: '$--muted-foreground'}),
-        text(`ov-crumb3-${suffix}`, 'herdr-ide', {size: '$--text-headline', weight: '600'}),
-      ]),
-      screenTabs(`ov-tabs-${suffix}`, ['Tasks', 'Agents'], 0),
-      text(`ov-stats-${suffix}`, '5 worktrees   2 open PRs', {size: '$--text-caption', fill: '$--subtle-foreground', mono: true}),
-      text(`ov-behind-${suffix}`, 'main ↓3 behind origin', {size: '$--text-caption', fill: '$--warning', mono: true}),
-      frame(`ov-gap-${suffix}`, 'Spacer', {width: 'fill_container', height: 1}, []),
-      screenButton(`ov-sessions-${suffix}`, 'Sessions', {variant: 'ghost', height: num(tokens, '--size-control-sm')}),
-      screenButton(`ov-new-${suffix}`, 'New agent', {height: num(tokens, '--size-control-sm'), icon: 'plus'}),
-    ]);
+    const header = overviewHeader(tokens, 'ov-head', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'tasks', width: 1240});
     const adHoc = frame(`ov-adhoc-${suffix}`, '즉석', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'start'}, [
       frame(`ov-adhoc-label-${suffix}`, 'Label', {layout: 'vertical', gap: '$--spacing-xxs', width: folded}, [
         text(`ov-adhoc-t-${suffix}`, '즉석', {size: '$--text-subhead', weight: '600', fill: '$--subtle-foreground'}),
@@ -491,7 +524,7 @@ function buildProjectOverview(tokens) {
     ]);
     return [frame(`ovw-${suffix}`, 'Overview', {layout: 'vertical', gap: '$--spacing-lg', width: 1240}, [header, adHoc, columns])];
   }
-  return screenSheet('screen-project-overview', 'Screen / Project Overview', 'web/src/ProjectOverview.tsx, projectBoard.ts: a project’s Tasks board - header facts, the ad hoc strip, Git columns with 머지됨 folded, a needs-you card in the warning halo - and the same cards on the Agents board.', s => build(s), s => build(s));
+  return screenSheet('screen-project-overview', 'Screen / Project Overview', 'web/src/ProjectOverview.tsx, projectBoard.ts: a project’s Tasks board - the facts line under the title (worktrees, open PRs, disk, behind, and merged, which opens 머지됨), the Tasks/Agents/Sessions tabs, the ad hoc strip, Git columns with 머지됨 folded, a needs-you card in the warning halo - and the same cards on the Agents board.', s => build(s), s => build(s));
 }
 
 // -- Screen / Workspace ---------------------------------------------------------
@@ -614,13 +647,14 @@ function buildWorkspace(tokens) {
 
 // -- Screen / Project Sessions --------------------------------------------------
 
-function buildSessions() {
+// The Overview on its Sessions tab: the same header as the Tasks board, then
+// the Project's session list and the read-only detail beside it.
+function buildSessions(tokens) {
   function build(suffix) {
-    const crumb = frame(`ss-crumb-${suffix}`, 'Breadcrumb', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-      text(`ss-c1-${suffix}`, 'Main', {fill: '$--muted-foreground'}), text(`ss-c2-${suffix}`, '/', {fill: '$--muted-foreground'}),
-      text(`ss-c3-${suffix}`, 'fixture', {fill: '$--muted-foreground'}), text(`ss-c4-${suffix}`, '/', {fill: '$--muted-foreground'}),
-      text(`ss-c5-${suffix}`, 'Sessions', {weight: '600'}),
-    ]);
+    const header = overviewHeader(tokens, 'ss-head', suffix, {project: 'fixture', facts: [
+      {glyph: 'folder-git-2', label: '2 worktrees'},
+      {glyph: 'hard-drive', label: '812 MB'},
+    ], view: 'sessions', width: 820});
     const list = frame(`ss-list-${suffix}`, 'List', {width: 320, layout: 'vertical', gap: '$--spacing-sm'}, [
       screenTabs(`ss-tabs-${suffix}`, ['All', 'Codex', 'Claude Code'], 0),
       screenInput(`ss-search-${suffix}`, {placeholder: 'Search sessions', width: 300}),
@@ -630,9 +664,9 @@ function buildSessions() {
     const detail = frame(`ss-detail-${suffix}`, 'Detail', {width: 480, height: 320, alignItems: 'center', justifyContent: 'center', fill: '$--card', cornerRadius: '$--radius-md'}, [
       text(`ss-empty-${suffix}`, 'Choose a session to read it here.', {fill: '$--muted-foreground'}),
     ]);
-    return [frame(`ss-wrap-${suffix}`, 'Wrap', {layout: 'vertical', gap: '$--spacing-md'}, [crumb, frame(`ss-row-${suffix}`, 'Row', {layout: 'horizontal', gap: '$--spacing-lg'}, [list, detail])])];
+    return [frame(`ss-wrap-${suffix}`, 'Wrap', {layout: 'vertical', gap: '$--spacing-md'}, [header, frame(`ss-row-${suffix}`, 'Row', {layout: 'horizontal', gap: '$--spacing-lg'}, [list, detail])])];
   }
-  return screenSheet('screen-sessions', 'Screen / Project Sessions', 'web/src/SessionsScreen.tsx: the provider-filtered session list with search, and the read-only detail pane, using a real Korean session title.', build, build);
+  return screenSheet('screen-sessions', 'Screen / Project Sessions', 'web/src/ProjectOverview.tsx on its Sessions tab, ProjectSessions.tsx: the Overview’s header and tabs over the provider-filtered session list with search, and the read-only detail pane, using a real Korean session title.', build, build);
 }
 
 // -- Screen / Settings ----------------------------------------------------------
@@ -954,14 +988,26 @@ function buildProjectsSidebar(tokens) {
     missing: {icon: 'git-branch', fill: '$--destructive'},
   };
 
-  function projectRow(id, {name, meta, expanded, hover = false}) {
-    return themedXref(id, 'qdhY0', name, {width, height: num(tokens, '--size-control-regular'), padding: [0, trailing, 0, '$--spacing-md'], ...(hover ? {fill: '$--accent'} : {})}, {
+  function projectRow(id, {name, meta, expanded, selected = false}) {
+    return themedXref(id, 'qdhY0', name, {width, height: num(tokens, '--size-control-regular'), padding: [0, trailing, 0, '$--spacing-md'], ...(selected ? {fill: '$--secondary'} : {})}, {
       iBYjj: {icon: expanded ? 'chevron-down' : 'chevron-right'},
       mIzlX: {icon: 'folder-git-2'},
       JkPyX: {content: name},
       nZkan: {content: meta},
       // The ⋯ keeps its column at rest and shows under the pointer.
-      hm1SG: {width: slot, height: slot, opacity: hover ? 1 : 0},
+      hm1SG: {width: slot, height: slot, opacity: 0},
+    });
+  }
+
+  // sidebar.tsx's AllProjectsRow: the project row's columns with the fold's lane
+  // empty, the layout-grid glyph, and the project count where the activity stands.
+  function allProjectsRow(id, {count}) {
+    return themedXref(id, 'qdhY0', 'All projects', {width, height: num(tokens, '--size-control-regular'), padding: [0, trailing, 0, '$--spacing-md']}, {
+      iBYjj: {opacity: 0},
+      mIzlX: {icon: 'layout-grid'},
+      JkPyX: {content: 'All projects'},
+      nZkan: {content: count},
+      hm1SG: {width: slot, height: slot, opacity: 0},
     });
   }
 
@@ -1046,11 +1092,12 @@ function buildProjectsSidebar(tokens) {
       screenIconButton(`psb-settings-${s}`, 'settings'),
     ]);
     const list = frame(`psb-list-${s}`, 'Projects list', {width, layout: 'vertical'}, [
+      allProjectsRow(`psb-all-${s}`, {count: '12 projects'}),
       section(`psb-sec-pin-${s}`, 'PINNED · 1'),
       folderRow(`psb-p-notes-${s}`, {name: 'team-notes', meta: '1 agent · 2h', agents: {status: 'seen'}, purpose: '회의록 요약 정리'}),
       section(`psb-sec-recent-${s}`, 'PROJECTS · RECENT ACTIVITY · 12'),
-      projectRow(`psb-p-herdr-${s}`, {name: 'herdr-ide', meta: '11 agents · now', expanded: true, hover: true}),
-      checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', agents: {status: 'working', more: 1, provider: 'codex'}, expanded: true, selected: true}),
+      projectRow(`psb-p-herdr-${s}`, {name: 'herdr-ide', meta: '11 agents · now', expanded: true, selected: true}),
+      checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', agents: {status: 'working', more: 1, provider: 'codex'}, expanded: true}),
       agentRow(`psb-a1-${s}`, {title: 'S5.5 PRD 초안 정리', status: 'working', provider: 'codex', age: '3m'}),
       agentRow(`psb-a2-${s}`, {title: '후속 UX 계획 인터뷰', status: 'seen', age: '1h'}),
       checkoutRow(`psb-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', agents: {status: 'asking'}, purpose: '#155 browser display (WebCon…'}),
@@ -1078,7 +1125,7 @@ function buildProjectsSidebar(tokens) {
     ]);
     return [frame(`psb-sidebar-${s}`, 'Sidebar', {width, layout: 'vertical', fill: '$--sidebar', clip: true}, [header, list, footer])];
   }
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, projects.ts: the Projects tab. A project’s primary checkout comes first, then the rest by activity. A project row folds its checkouts from its chevron and opens the Overview from the rest of the row; a checkout row opens the checkout, and its trailing chevron, shown only when agents run there, opens their rows in place of line two. Line two is the agents (the representative’s mark and provider, +N) and the purpose. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.', build, build);
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here herdr-ide on its Overview, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. A project row folds its checkouts from its chevron and opens the Overview from the rest of the row; a checkout row opens the checkout, and its trailing chevron, shown only when agents run there, opens their rows in place of line two. Line two is the agents (the representative’s mark and provider, +N) and the purpose. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.', build, build);
 }
 
 // -- assembly ---------------------------------------------------------------------
@@ -1100,7 +1147,7 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Main', build: () => buildMain(tokens)},
     {name: 'Screen / Project Overview', build: () => buildProjectOverview(tokens)},
     {name: 'Screen / Workspace', build: () => buildWorkspace(tokens)},
-    {name: 'Screen / Project Sessions', build: () => buildSessions()},
+    {name: 'Screen / Project Sessions', build: () => buildSessions(tokens)},
     {name: 'Screen / Settings', build: () => buildSettings(tokens)},
     {name: 'Screen / Palette', build: () => buildPalette(tokens)},
     {name: 'Screen / Dialogs and Sheets', build: () => buildDialogs(tokens)},

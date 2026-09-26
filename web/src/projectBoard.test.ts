@@ -2,7 +2,7 @@
 // board, so both shells put the same checkout in the same column (D-03).
 
 import { describe, expect, it } from "vitest";
-import { agentColumnCards, buildBoard, stageCards, stageMatches, stageOf } from "./projectBoard";
+import { agentColumnCards, allProjectsStats, buildBoard, formatBytes, stageCards, stageMatches, stageOf } from "./projectBoard";
 import type { AgentRow, Checkout, Issue, PullRequest, Workspace } from "./snapshot";
 
 const NOW = 1_800_000_000_000;
@@ -180,14 +180,36 @@ describe("what the Overview draws", () => {
     expect(buildBoard(workspace([checkout("a", { panes: ["x"] })]), [agent("x")], NOW).state).toBe("board");
   });
 
-  it("counts worktrees, open pull requests once GitHub answered, and main behind origin only above zero", () => {
+  it("counts worktrees, open pull requests once GitHub answered, main behind origin only above zero, and merged worktrees", () => {
     const main = { ...checkout("main", { worktree: false }), worktree: { is_main: true, behind_upstream: 3 } as Checkout["worktree"] };
     const answered = { failure_category: null, available: true, loading: false, stale: false, last_success_at_unix_ms: NOW, unavailable_reason: null };
     const checkouts = [main, checkout("a", { pr: pr("open") }), checkout("b", { pr: pr("merged") }), checkout("c", { pr: pr("review") })];
-    expect(buildBoard(workspace(checkouts), [], NOW).stats).toEqual({ worktrees: 3, openPullRequests: null, behind: { branch: "main", count: 3 } });
+    expect(buildBoard(workspace(checkouts), [], NOW).stats).toEqual({ worktrees: 3, openPullRequests: null, behind: { branch: "main", count: 3 }, merged: 1, disk: null });
     const read = checkouts.map((row) => ({ ...row, github: answered }));
     expect(buildBoard(workspace(read), [], NOW).stats.openPullRequests).toBe(2);
     const even = { ...main, worktree: { is_main: true, behind_upstream: 0 } as Checkout["worktree"] };
     expect(buildBoard(workspace([even]), [], NOW).stats.behind).toBeNull();
+  });
+
+  it("totals every Project's open pull requests and merged worktrees only when every Project can give its part", () => {
+    const answered = { failure_category: null, available: true, loading: false, stale: false, last_success_at_unix_ms: NOW, unavailable_reason: null };
+    const noRemote = { ...answered, available: false, last_success_at_unix_ms: null, failure_category: "no GitHub remote" };
+    const read = workspace([checkout("a", { pr: pr("open") }), checkout("b", { pr: pr("merged") })].map((row) => ({ ...row, github: answered })));
+    const local = workspace([{ ...checkout("c"), github: noRemote }]);
+    const folder = workspace([checkout("f", { worktree: false })], false);
+    expect(allProjectsStats([read, local, folder])).toEqual({ projects: 3, openPullRequests: 1, merged: 1 });
+    const unanswered = workspace([checkout("d", { pr: pr("merged") })]);
+    expect(allProjectsStats([read, unanswered])).toEqual({ projects: 2, openPullRequests: null, merged: 2 });
+    expect(allProjectsStats([read, null])).toEqual({ projects: 2, openPullRequests: null, merged: null });
+  });
+
+  it("states the disk as a size once measured, pending while measuring, and nothing when a part could not be read", () => {
+    const sized = (disk: Workspace["disk"]) => buildBoard({ ...workspace([]), disk }, [], NOW).stats.disk;
+    expect(sized({ total_bytes: null, unavailable_reason: null, measuring: true })).toBe("measuring");
+    expect(sized({ total_bytes: 1_503_238_553, unavailable_reason: null, measuring: false })).toBe(1_503_238_553);
+    expect(sized({ total_bytes: null, unavailable_reason: "Permission denied", measuring: false })).toBeNull();
+    expect(formatBytes(512)).toBe("512 B");
+    expect(formatBytes(812 * 1024 * 1024)).toBe("812 MB");
+    expect(formatBytes(1_503_238_553)).toBe("1.4 GB");
   });
 });

@@ -799,7 +799,7 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     /**
-     * A Workspace chosen on Main or an Overview, on any device (S6 B2, B21).
+     * A Workspace chosen on All projects or an Overview, on any device (S6 B2, B21).
      * A Workspace on another device than the one in front is one event that
      * also brings its device forward, so a refusal moves neither. The screen
      * follows once the core has moved there (`opening`).
@@ -849,6 +849,14 @@ export function createActions(dispatch: DispatchFn) {
      */
     refreshProjectSessions(workspaceId: string, deviceId: string) {
       dispatch({ schema_version: 2, kind: "sessions_refresh", payload: { workspace_id: workspaceId, ...deviceField(deviceId) } });
+    },
+
+    /**
+     * Names a local Git Project an Overview shows for measuring its disk, and
+     * measures it again; the core refuses anything else to the log.
+     */
+    measureProjectDisk(workspaceId: string) {
+      dispatch({ schema_version: 2, kind: "card_measure_disk", payload: { workspace_id: workspaceId } });
     },
 
     /** Opens one session read-only beside the named Project's history; never in a Workspace (B3). */
@@ -1187,7 +1195,7 @@ export function createActions(dispatch: DispatchFn) {
       ui().setScreen({ kind: "overview", projectId: project.id });
     },
 
-    /** Back from an Overview to the pane grid in front, or to Main when no Workspace is in front (B1). */
+    /** Back from an Overview to the pane grid in front, or to All projects when no Workspace is in front (B1). */
     leaveProjectOverview() {
       ui().setScreen(frontCheckout(rest()) && rest()?.workspace_view ? { kind: "workspace" } : { kind: "main" });
     },

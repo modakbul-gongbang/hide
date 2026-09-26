@@ -533,6 +533,7 @@ fn workspace(
         pinned: false,
         inactive_checkouts: Default::default(),
         removal: Default::default(),
+        disk: Default::default(),
     }
 }
 

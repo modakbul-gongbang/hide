@@ -1,4 +1,4 @@
-// Main and Project Overview (PRD S6 D-02, B1-B3, B21): every registered
+// All projects and Project Overview (PRD S6 D-02, B1-B3, B21): every registered
 // Project on every device, and one Project's Workspaces and agents, read from
 // the snapshot the core already publishes - the navigator for this machine,
 // each device's projected Herdr session, the registrations for a device that
@@ -201,7 +201,7 @@ function byPinThenLabel(left: ProjectEntry, right: ProjectEntry): number {
 }
 
 /**
- * Main: one section per device, this machine first. A device with a session
+ * All projects: one section per device, this machine first. A device with a session
  * lists its projected Projects; one without lists its registrations with no
  * counts, marked loading or unavailable, so nothing is guessed (B3, B21).
  */
@@ -226,6 +226,23 @@ export function mainSections(rest: SnapshotRest | null, localAgents: AgentRow[])
     sections.push({ device, local: false, availability, projects: [...projects].sort(byPinThenLabel) });
   }
   return sections;
+}
+
+/**
+ * How many Projects All projects lists, counted the way `mainSections` lists
+ * them: this machine's catalog, and each device's session or, before it
+ * answers, its registrations. A number, so the sidebar's All projects row
+ * reads it without building the sections.
+ */
+export function allProjectsCount(rest: SnapshotRest | null): number {
+  const devices = rest?.navigator?.devices ?? [];
+  const registrations = rest?.ui_state?.workspace_registrations ?? [];
+  let count = devices.some((device) => device.kind !== "remote") ? (rest?.navigator?.workspaces ?? []).length : 0;
+  for (const device of devices.filter((row) => row.kind === "remote")) {
+    const session = rest?.status?.remote?.find((row) => row.target_id === device.id)?.session ?? null;
+    count += session ? session.workspaces.length : registrations.filter((row) => row.device_id === device.id).length;
+  }
+  return count;
 }
 
 export type OverviewProject = {
@@ -279,7 +296,7 @@ const SETTLED_HERDR = new Set(["connected", "unconfigured", "socket_missing", "u
 /**
  * The first screen (S6 B19, D-11): the Workspace in front when the core
  * marks it as the one the operator last chose, now or before a restart,
- * Main when it is not (a first run, or a last Workspace that is gone) or when the device in front
+ * All projects when it is not (a first run, or a last Workspace that is gone) or when the device in front
  * has settled without one, and null while that device is still being
  * reached. The device in front decides: a device Workspace is known only
  * once that device's session arrives, and this machine's Herdr settling
@@ -299,7 +316,7 @@ export function startupScreen(rest: SnapshotRest | null, hasFront: boolean): "wo
   return "main";
 }
 
-/** What Main, an Overview or the Agents list asked to bring forward (B2, B12, B21). */
+/** What All projects, an Overview or the Agents list asked to bring forward (B2, B12, B21). */
 export type OpenTarget = { checkoutId: string; deviceId: string; path: string | null } | { paneId: string };
 
 /**

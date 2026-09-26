@@ -1642,6 +1642,7 @@ mod tests {
             pinned: false,
             inactive_checkouts: Default::default(),
             removal: Default::default(),
+            disk: Default::default(),
         };
         let agent = project_agents(payload(json!([{
             "pane_id": "pane",
@@ -1750,6 +1751,7 @@ mod tests {
             pinned: false,
             inactive_checkouts: Default::default(),
             removal: Default::default(),
+            disk: Default::default(),
         }];
         let mut agents = project_agents(payload(json!([
             {"pane_id":"error", "state_change_seq":1, "agent_status":"idle", "tokens":{"status_error":"×"}},

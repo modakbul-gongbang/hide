@@ -1,5 +1,5 @@
-import { ArrowDownIcon, ChevronDownIcon, ChevronRightIcon, FolderGit2Icon, FolderIcon, GitBranchIcon, GitCommitHorizontalIcon, GitMergeIcon, GitPullRequestIcon, HouseIcon, PlusIcon } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
+import { ArrowDownIcon, ChevronDownIcon, ChevronRightIcon, FolderGit2Icon, FolderIcon, GitBranchIcon, GitCommitHorizontalIcon, GitMergeIcon, GitPullRequestIcon, HardDriveIcon, HouseIcon, PlusIcon } from "lucide-react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { AgentRowItem } from "./components/agent-row";
 import { Badge } from "./components/ui/badge";
@@ -7,78 +7,91 @@ import { Button } from "./components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Hint } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
-import { OpeningStatus, UnavailableNotice } from "./MainScreen";
+import { FACT, FACTS_LINE, OpeningStatus, UnavailableNotice } from "./MainScreen";
 import { overviewProject } from "./navigation";
-import { AGENT_COLUMNS, STAGES, agentColumnCards, buildBoard, stageCards, type Board, type BoardCard, type Stage } from "./projectBoard";
+import { AGENT_COLUMNS, STAGES, agentColumnCards, buildBoard, formatBytes, stageCards, type Board, type BoardCard, type Stage } from "./projectBoard";
 import type { AgentRow, Checkout, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
-import { useUiStore } from "./ui";
+import { ProjectSessions } from "./ProjectSessions";
+import { useUiStore, type ProjectView } from "./ui";
 
-// A Project's Overview (PRD web-project-overview): the Tasks board of its
-// checkouts in Git columns under an ad hoc strip, or the Agents board of its
-// lineage roots, with the header facts and New agent. Built from
-// `buildBoard`; this file only draws it and routes the clicks.
+// A Project's Overview (PRD web-project-overview): the Project scope the
+// sidebar's project row opens. Under its title sits one line of facts, then
+// the view: the Tasks board of its checkouts in Git columns under an ad hoc
+// strip, the Agents board of its lineage roots, or its Sessions. The view is
+// the page's (`projectView`), so another Project opens on the same one.
+// Built from `buildBoard`; this file only draws it and routes the clicks.
 
-type BoardView = "tasks" | "agents";
+const VIEWS: readonly { view: ProjectView; label: string }[] = [
+  { view: "tasks", label: "Tasks" },
+  { view: "agents", label: "Agents" },
+  { view: "sessions", label: "Sessions" },
+];
 
 export function ProjectOverview({ projectId, actions }: { projectId: string; actions: Actions }) {
   const rest = useShellStore((s) => s.rest);
   const agents = useShellStore((s) => s.agents);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
   const setScreen = useUiStore((s) => s.setScreen);
-  const [view, setView] = useState<BoardView>("tasks");
+  const view = useUiStore((s) => s.projectView);
+  const setView = useUiStore((s) => s.setProjectView);
+  // The Project whose Merged column is open; the facts line's merged count opens it.
+  const [mergedOpenFor, setMergedOpenFor] = useState<string | null>(null);
   const found = useMemo(() => overviewProject(rest, agents, projectId), [rest, agents, projectId]);
   const workspace = found?.workspace ?? null;
   const deviceAgents = found?.deviceAgents ?? null;
   const board = useMemo(() => (workspace && deviceAgents ? buildBoard(workspace, deviceAgents, Date.now()) : null), [workspace, deviceAgents]);
+  // A local Git project's size is measured each time its Overview opens; a
+  // remote project has none this machine can walk.
+  const measurable = workspace !== null && workspace.is_git === true && !workspace.remote_target_id;
+  const measuredId = measurable ? workspace.id : null;
+  useEffect(() => {
+    if (measuredId) actions.measureProjectDisk(measuredId);
+  }, [actions, measuredId]);
   if (!found || !board) {
     return (
       <section className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-caption text-muted-foreground" data-overview-missing={projectId}>
         <p>This project is no longer in the catalog.</p>
-        <Button variant="secondary" onClick={() => setScreen({ kind: "main" })}>Back to Main</Button>
+        <Button variant="secondary" onClick={() => setScreen({ kind: "main" })}>Back to All projects</Button>
       </section>
     );
   }
   const { device, availability } = found;
   const project = found.workspace;
+  const mergedOpen = mergedOpenFor === project.id;
   const newAgent = () => {
     if (project.is_git) return useUiStore.getState().setWorkspaceDialog({ kind: "new_worktree", workspaceId: project.id });
     const folder = project.checkouts[0];
     if (folder) actions.openWorkspace(project.device_id, project.id, folder.id);
   };
   const openCheckout = (checkout: Checkout) => actions.openWorkspace(project.device_id, checkout.workspace_id, checkout.id);
+  const showMerged = () => {
+    setView("tasks");
+    setMergedOpenFor(project.id);
+  };
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" aria-label={`Project ${project.label}`} data-overview-screen={project.id} data-overview-state={board.state} data-overview-view={view}>
-      <header className="flex shrink-0 flex-wrap items-center gap-x-lg gap-y-xs border-b border-border px-lg py-sm">
-        <nav aria-label="Location" className="flex min-w-0 items-center gap-xs">
-          <button type="button" className="shrink-0 rounded-xs px-xs text-caption text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setScreen({ kind: "main" })}>
-            Main
-          </button>
-          <span aria-hidden="true" className="text-caption text-muted-foreground">/</span>
-          <Hint label={project.path} reveals>
-            <h1 className="min-w-0 truncate text-headline font-semibold text-foreground" aria-current="page">
-              {project.label}
-            </h1>
-          </Hint>
-          {device && device.kind === "remote" ? <Badge variant="secondary">{device.label}</Badge> : null}
-        </nav>
-        {board.state === "empty" ? null : (
-          <Tabs value={view} onValueChange={(value) => setView(value as BoardView)}>
-            <TabsList aria-label="Overview view">
-              <TabsTrigger value="tasks" data-overview-tab="tasks">Tasks</TabsTrigger>
-              <TabsTrigger value="agents" data-overview-tab="agents">Agents</TabsTrigger>
-            </TabsList>
-          </Tabs>
-        )}
-        <Stats workspace={project} board={board} />
-        <span className="flex-1" />
-        <Button variant="ghost" onClick={() => setScreen({ kind: "sessions", projectId: project.id })} data-overview-sessions="true">
-          Sessions
-        </Button>
-        <Button onClick={newAgent} disabled={!project.is_git && project.checkouts.length === 0} data-overview-new-agent="true">
-          <PlusIcon aria-hidden="true" />
-          New agent
-        </Button>
+      <header className="flex shrink-0 flex-col gap-xs border-b border-border px-lg py-sm">
+        <div className="flex min-w-0 items-center gap-lg">
+          <nav aria-label="Location" className="flex min-w-0 items-center gap-xs">
+            <button type="button" className="shrink-0 rounded-xs px-xs text-caption text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setScreen({ kind: "main" })}>
+              All projects
+            </button>
+            <span aria-hidden="true" className="text-caption text-muted-foreground">/</span>
+            <Hint label={project.path} reveals>
+              <h1 className="min-w-0 truncate text-headline font-semibold text-foreground" aria-current="page">
+                {project.label}
+              </h1>
+            </Hint>
+            {device && device.kind === "remote" ? <Badge variant="secondary">{device.label}</Badge> : null}
+          </nav>
+          <span className="flex-1" />
+          <Button onClick={newAgent} disabled={!project.is_git && project.checkouts.length === 0} data-overview-new-agent="true">
+            <PlusIcon aria-hidden="true" />
+            New agent
+          </Button>
+        </div>
+        <Stats workspace={project} board={board} onMerged={showMerged} />
       </header>
       <OpeningStatus actions={actions} />
       {device ? <UnavailableNotice device={device} availability={availability} actions={actions} /> : null}
@@ -87,7 +100,23 @@ export function ProjectOverview({ projectId, actions }: { projectId: string; act
           {availability.text}
         </p>
       ) : null}
-      {board.state === "empty" ? (
+      <div className="flex shrink-0 px-lg py-sm">
+        <Tabs value={view} onValueChange={(value) => setView(value as ProjectView)}>
+          <TabsList aria-label="Project view">
+            {VIEWS.map((choice) => (
+              <TabsTrigger key={choice.view} value={choice.view} data-overview-tab={choice.view}>
+                {choice.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      </div>
+      {view === "sessions" ? (
+        <div className="flex min-h-0 flex-1 border-t border-border">
+          {/* Keyed by the Project, so another Project starts with its own filters and asks for itself. */}
+          <ProjectSessions key={`${project.device_id}:${project.id}`} workspace={project} actions={actions} />
+        </div>
+      ) : board.state === "empty" ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-overview-empty="true">
           <p>No agent is working in this project yet.</p>
           <Button variant="secondary" onClick={newAgent} disabled={!project.is_git && project.checkouts.length === 0} data-overview-empty-new-agent="true">
@@ -97,9 +126,16 @@ export function ProjectOverview({ projectId, actions }: { projectId: string; act
         </div>
       ) : (
         <div className="min-h-0 flex-1 overflow-auto" data-overview-board="true">
-          <div className="flex w-max min-w-full flex-col gap-lg p-lg">
+          <div className="flex w-max min-w-full flex-col gap-lg px-lg pb-lg">
             {view === "tasks" ? (
-              <TasksBoard board={board} focusedPaneId={focusedPaneId} actions={actions} openCheckout={openCheckout} />
+              <TasksBoard
+                board={board}
+                focusedPaneId={focusedPaneId}
+                actions={actions}
+                openCheckout={openCheckout}
+                mergedOpen={mergedOpen}
+                onToggleMerged={() => setMergedOpenFor(mergedOpen ? null : project.id)}
+              />
             ) : (
               <AgentsBoard board={board} focusedPaneId={focusedPaneId} actions={actions} />
             )}
@@ -110,34 +146,75 @@ export function ProjectOverview({ projectId, actions }: { projectId: string; act
   );
 }
 
-/** Worktrees, open pull requests once GitHub answered, and main behind origin only when it is (B2). */
-function Stats({ workspace, board }: { workspace: Workspace; board: Board }) {
+/**
+ * The facts line under a Git project's title (B2): its worktrees, open pull
+ * requests once GitHub answered, its size on disk once measured (pending while
+ * the walk runs, absent when a part could not be read), main behind origin
+ * only when it is, and the merged worktrees only while there are any, which
+ * opens the Merged column where each one is removed. A plain folder has no line.
+ */
+function Stats({ workspace, board, onMerged }: { workspace: Workspace; board: Board; onMerged: () => void }) {
   const { stats } = board;
   if (!workspace.is_git) return null;
   return (
-    <div className="flex flex-wrap items-center gap-md font-mono text-caption text-subtle-foreground" data-overview-stats="true">
-      <span className="inline-flex items-center gap-xxs" data-stat="worktrees">
+    <div className={FACTS_LINE} data-overview-stats="true">
+      <span className={FACT} data-stat="worktrees">
         <FolderGit2Icon aria-hidden="true" className="size-(--size-icon)" />
         {stats.worktrees} {stats.worktrees === 1 ? "worktree" : "worktrees"}
       </span>
       {stats.openPullRequests === null ? null : (
-        <span className="inline-flex items-center gap-xxs" data-stat="open-prs">
+        <span className={FACT} data-stat="open-prs">
           <GitPullRequestIcon aria-hidden="true" className="size-(--size-icon)" />
           {stats.openPullRequests} open {stats.openPullRequests === 1 ? "PR" : "PRs"}
         </span>
       )}
+      {stats.disk === "measuring" ? (
+        <Hint label="Measuring allocated disk…">
+          <span className={cn(FACT, "text-muted-foreground")} data-stat="disk" data-disk-measuring="true">
+            <HardDriveIcon aria-hidden="true" className="size-(--size-icon)" />… GB
+          </span>
+        </Hint>
+      ) : stats.disk === null ? null : (
+        <Hint label="Allocated on disk, shared Git data counted once">
+          <span className={FACT} data-stat="disk">
+            <HardDriveIcon aria-hidden="true" className="size-(--size-icon)" />
+            {formatBytes(stats.disk)}
+          </span>
+        </Hint>
+      )}
       {stats.behind ? (
-        <span className="inline-flex items-center gap-xxs text-warning" data-stat="behind">
+        <span className={cn(FACT, "text-warning")} data-stat="behind">
           <ArrowDownIcon aria-hidden="true" className="size-(--size-icon)" />
           {stats.behind.branch} ↓{stats.behind.count} behind origin
         </span>
+      ) : null}
+      {stats.merged > 0 ? (
+        <Hint label="Show the merged worktrees">
+          <button type="button" className={cn(FACT, "rounded-xs text-pr-merged outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring")} data-stat="merged" onClick={onMerged}>
+            <GitMergeIcon aria-hidden="true" className="size-(--size-icon)" />
+            {stats.merged} merged → 정리
+          </button>
+        </Hint>
       ) : null}
     </div>
   );
 }
 
-function TasksBoard({ board, focusedPaneId, actions, openCheckout }: { board: Board; focusedPaneId: string | null; actions: Actions; openCheckout: (checkout: Checkout) => void }) {
-  const [mergedOpen, setMergedOpen] = useState(false);
+function TasksBoard({
+  board,
+  focusedPaneId,
+  actions,
+  openCheckout,
+  mergedOpen,
+  onToggleMerged,
+}: {
+  board: Board;
+  focusedPaneId: string | null;
+  actions: Actions;
+  openCheckout: (checkout: Checkout) => void;
+  mergedOpen: boolean;
+  onToggleMerged: () => void;
+}) {
   return (
     <>
       {board.adHoc.length > 0 ? (
@@ -167,7 +244,7 @@ function TasksBoard({ board, focusedPaneId, actions, openCheckout }: { board: Bo
                   label={label}
                   count={`${cards.length}${stage === "ready" && board.overflow ? "+" : ""}`}
                   collapsed={collapsible && !mergedOpen}
-                  onToggle={collapsible ? () => setMergedOpen((open) => !open) : null}
+                  onToggle={collapsible ? onToggleMerged : null}
                   names={cards.map((value) => value.checkout?.branch ?? value.checkout?.label ?? value.title ?? "")}
                   mono
                 >

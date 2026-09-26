@@ -6,7 +6,6 @@ import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
 import { Hint } from "./components/ui/tooltip";
-import { overviewProject } from "./navigation";
 import {
   PROVIDER_FILTERS,
   conversationTurns,
@@ -23,47 +22,21 @@ import {
 } from "./sessions";
 import type { ArchiveEvent, ProjectSessionDetail, SessionRow, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
-import { useUiStore } from "./ui";
 
-// A Project's Sessions (PRD S8 B1-B9, D-08): the session history of every
-// Workspace the Project has, newest first, narrowed by provider and search,
-// with one session read beside it. It is entered from the Project's Overview
-// and stays on that Project whatever the operator focuses elsewhere; nothing
-// here runs an agent or sends a session to a Workspace.
+// A Project's Sessions tab (PRD S8 B1-B9, D-08): the session history of
+// every Workspace the Project has, newest first, narrowed by provider and
+// search, with one session read beside it. It is the Project Overview's third
+// view and stays on that Project whatever the operator focuses elsewhere;
+// nothing here runs an agent or sends a session to a Workspace. The Overview
+// keys it by the Project, so another Project starts with its own filters and
+// asks for itself.
 
-export function SessionsScreen({ projectId, actions }: { projectId: string; actions: Actions }) {
-  const rest = useShellStore((s) => s.rest);
-  const agents = useShellStore((s) => s.agents);
-  const setScreen = useUiStore((s) => s.setScreen);
-  const found = useMemo(() => overviewProject(rest, agents, projectId), [rest, agents, projectId]);
-  if (!found) {
-    return (
-      <section className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-caption text-muted-foreground" data-sessions-missing={projectId}>
-        <p>This project is no longer in the catalog.</p>
-        <Button variant="secondary" onClick={() => setScreen({ kind: "main" })}>
-          Back to Main
-        </Button>
-      </section>
-    );
-  }
-  // Keyed by the Project, so another Project starts with its own filters and asks for itself.
-  return (
-    <ProjectSessions
-      key={`${found.workspace.device_id}:${found.workspace.id}`}
-      workspace={found.workspace}
-      deviceLabel={found.device?.label ?? null}
-      actions={actions}
-    />
-  );
-}
-
-function ProjectSessions({ workspace, deviceLabel, actions }: { workspace: Workspace; deviceLabel: string | null; actions: Actions }) {
-  const setScreen = useUiStore((s) => s.setScreen);
+export function ProjectSessions({ workspace, actions }: { workspace: Workspace; actions: Actions }) {
   const sessions = useShellStore((s) => s.projectSessions);
   const live = useShellStore((s) => s.connection === "live");
   const [provider, setProvider] = useState<ProviderFilter>("all");
   const [query, setQuery] = useState("");
-  // Whether this screen has seen its own Project named since it asked (A7).
+  // Whether this tab has seen its own Project named since it asked (A7).
   const [acknowledged, setAcknowledged] = useState(false);
   const project = useMemo(() => ({ id: workspace.id, deviceId: workspace.device_id }), [workspace.id, workspace.device_id]);
   const named = naming(sessions, project, acknowledged);
@@ -90,61 +63,38 @@ function ProjectSessions({ workspace, deviceLabel, actions }: { workspace: Works
   const total = named === "ours" ? (sessions?.rows.length ?? 0) : 0;
 
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" aria-label={`Sessions of ${workspace.label}`} data-sessions-screen={workspace.id}>
-      <header className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-xs border-b border-border bg-sidebar px-sm text-caption">
-        <button type="button" className="rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setScreen({ kind: "main" })}>
-          Main
-        </button>
-        <span aria-hidden="true" className="text-muted-foreground">/</span>
-        <Hint label={workspace.path}>
-        <button
-          type="button"
-          className="min-w-0 truncate rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
-          data-go-overview={workspace.id}
-          onClick={() => setScreen({ kind: "overview", projectId: workspace.id })}
-        >
-          {workspace.label}
-        </button>
-        </Hint>
-        <span aria-hidden="true" className="text-muted-foreground">/</span>
-        <h1 className="shrink-0 text-subhead font-semibold text-foreground" aria-current="page">
-          Sessions
-        </h1>
-        {deviceLabel ? <span className="shrink-0 rounded-xs bg-secondary px-xs text-micro text-subtle-foreground">{deviceLabel}</span> : null}
-      </header>
-      <div className="flex min-h-0 flex-1">
-        <section
-          aria-label="Session history"
-          className="flex min-h-0 min-w-[var(--size-panel-min)] shrink basis-[var(--size-panel-ideal)] flex-col border-r border-border bg-sidebar"
-          data-sessions-list={list.kind}
-        >
-          <HistoryControls
-            provider={provider}
-            query={query}
-            total={total}
-            shown={list.kind === "rows" ? list.rows.length : 0}
-            filtering={provider !== "all" || query.trim() !== ""}
-            reading={named === "ours" && sessions?.loading === true && total > 0}
-            onProvider={setProvider}
-            onQuery={setQuery}
-          />
-          <HistoryList
-            state={list}
-            workspace={workspace}
-            selected={detail.kind === "none" ? null : detail.detail.session_id}
-            onOpen={(row) => actions.openProjectSession(project.id, row.id)}
-            onRetry={retry}
-            onClearFilters={() => {
-              setProvider("all");
-              setQuery("");
-            }}
-            onShowHere={retry}
-          />
-        </section>
-        <section aria-label="Session" className="flex min-h-0 min-w-[var(--size-workspace-area-min)] flex-1 flex-col" data-session-detail={detail.kind}>
-          <SessionDetail state={detail} rows={named === "ours" ? (sessions?.rows ?? []) : []} choosable={list.kind === "rows"} workspace={workspace} onRetry={retry} />
-        </section>
-      </div>
+    <section className="flex min-h-0 flex-1" aria-label={`Sessions of ${workspace.label}`} data-sessions-screen={workspace.id}>
+      <section
+        aria-label="Session history"
+        className="flex min-h-0 min-w-[var(--size-panel-min)] shrink basis-[var(--size-panel-ideal)] flex-col border-r border-border bg-sidebar"
+        data-sessions-list={list.kind}
+      >
+        <HistoryControls
+          provider={provider}
+          query={query}
+          total={total}
+          shown={list.kind === "rows" ? list.rows.length : 0}
+          filtering={provider !== "all" || query.trim() !== ""}
+          reading={named === "ours" && sessions?.loading === true && total > 0}
+          onProvider={setProvider}
+          onQuery={setQuery}
+        />
+        <HistoryList
+          state={list}
+          workspace={workspace}
+          selected={detail.kind === "none" ? null : detail.detail.session_id}
+          onOpen={(row) => actions.openProjectSession(project.id, row.id)}
+          onRetry={retry}
+          onClearFilters={() => {
+            setProvider("all");
+            setQuery("");
+          }}
+          onShowHere={retry}
+        />
+      </section>
+      <section aria-label="Session" className="flex min-h-0 min-w-[var(--size-workspace-area-min)] flex-1 flex-col" data-session-detail={detail.kind}>
+        <SessionDetail state={detail} rows={named === "ours" ? (sessions?.rows ?? []) : []} choosable={list.kind === "rows"} workspace={workspace} onRetry={retry} />
+      </section>
     </section>
   );
 }

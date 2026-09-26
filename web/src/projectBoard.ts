@@ -83,6 +83,13 @@ export type BoardStats = {
   openPullRequests: number | null;
   /** The primary checkout's branch and how far origin is ahead of it, only when it is. */
   behind: { branch: string; count: number } | null;
+  /** Linked worktrees whose work is merged, the ones the Merged column lists for removal. */
+  merged: number;
+  /**
+   * Allocated disk in bytes, `measuring` while the core walks it, or null when
+   * there is no number: never asked, or a part could not be read.
+   */
+  disk: number | "measuring" | null;
 };
 
 /**
@@ -175,7 +182,8 @@ function prioritized(cards: BoardCard[]): BoardCard[] {
     .map(({ value }) => value);
 }
 
-function stats(workspace: Workspace): BoardStats {
+/** A Git project's facts line (B2); the All projects scope sums them across projects. */
+export function projectStats(workspace: Workspace): BoardStats {
   const answered = workspace.checkouts.some((checkout) => checkout.github?.last_success_at_unix_ms != null);
   const primary = workspace.checkouts.find((checkout) => checkout.worktree?.is_main) ?? workspace.checkouts.find((checkout) => !checkout.is_worktree) ?? null;
   const behind = primary?.worktree?.behind_upstream ?? 0;
@@ -183,7 +191,50 @@ function stats(workspace: Workspace): BoardStats {
     worktrees: workspace.checkouts.filter((checkout) => checkout.is_worktree).length,
     openPullRequests: answered ? workspace.checkouts.filter((checkout) => checkout.pull_request?.badge === "open" || checkout.pull_request?.badge === "review").length : null,
     behind: primary && behind > 0 ? { branch: primary.branch ?? primary.label, count: behind } : null,
+    merged: workspace.checkouts.filter((checkout) => checkout.is_worktree && stageOf(checkout) === "merged").length,
+    disk: workspace.disk?.total_bytes ?? (workspace.disk?.measuring ? "measuring" : null),
   };
+}
+
+export type AllProjectsStats = {
+  projects: number;
+  /** Open pull requests across every Project, or null while any Git project has no answer from GitHub. */
+  openPullRequests: number | null;
+  /** Merged worktrees across every Project, or null while any Project's catalog row is missing. */
+  merged: number | null;
+};
+
+/**
+ * The All projects facts line: the Project count, and a total only when every
+ * Project can give its part. A device that has not answered leaves a Project
+ * without its row, and a Git project GitHub has not answered for has no PR
+ * count; a repository with no GitHub remote has none to count.
+ */
+export function allProjectsStats(workspaces: readonly (Workspace | null)[]): AllProjectsStats {
+  const known = workspaces.every((workspace) => workspace !== null);
+  let openPullRequests: number | null = 0;
+  let merged = 0;
+  for (const workspace of workspaces) {
+    if (!workspace) continue;
+    const stats = projectStats(workspace);
+    merged += stats.merged;
+    if (!workspace.is_git || workspace.checkouts.some((checkout) => checkout.github?.failure_category === "no GitHub remote")) continue;
+    openPullRequests = openPullRequests === null || stats.openPullRequests === null ? null : openPullRequests + stats.openPullRequests;
+  }
+  return { projects: workspaces.length, openPullRequests: known ? openPullRequests : null, merged: known ? merged : null };
+}
+
+/** A size the way the Swift Overview writes it: `812 MB`, `1.4 GB`, binary units. */
+export function formatBytes(bytes: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit += 1;
+  }
+  if (unit === 0) return `${Math.trunc(value)} B`;
+  return `${value < 10 ? value.toFixed(1) : value.toFixed(0)} ${units[unit]}`;
 }
 
 /**
@@ -279,7 +330,7 @@ export function buildBoard(workspace: Workspace, agents: AgentRow[], now: number
     adHoc: prioritized(adHoc),
     agents: prioritized(agentCards),
     overflow: issues?.overflow ?? false,
-    stats: stats(workspace),
+    stats: projectStats(workspace),
   };
 }
 

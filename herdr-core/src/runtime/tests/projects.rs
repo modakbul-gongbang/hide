@@ -528,6 +528,103 @@ fn worktree_rows_sort_main_then_open_then_commit_time() {
     );
 }
 
+/// A web Overview names its project for measuring: every checkout of it and
+/// the shared Git directory join the disk request, the project reads as
+/// measuring until the reader answers, then carries the total. A project that
+/// is not a local Git project is refused, and the Swift shell's empty payload
+/// still means "measure the right panel's checkout again".
+#[test]
+fn a_named_project_overview_measures_its_whole_disk() {
+    use crate::model::{
+        DiskUsageSnapshot, ProjectWorktreesSnapshot, WorktreeCatalogSnapshot, WorktreeSnapshot,
+    };
+
+    let mut runtime = runtime();
+    let mut project = workspace(
+        "workspace-1",
+        "hide",
+        "/repo",
+        vec![checkout("workspace-1", "main", "/repo", None)],
+    );
+    project.is_git = true;
+    let mut remote = workspace("workspace-2", "far", "/far", Vec::new());
+    remote.is_git = true;
+    remote.remote_target_id = Some("mini".to_owned());
+    runtime.snapshot.navigator.workspaces = vec![project, remote];
+    let row = |path: &str, is_main: bool| WorktreeSnapshot {
+        path: path.to_owned(),
+        is_main,
+        ..WorktreeSnapshot::default()
+    };
+    runtime.ingest_worktrees(WorktreeCatalogSnapshot {
+        projects: vec![ProjectWorktreesSnapshot {
+            root_path: "/repo".to_owned(),
+            shared_git_path: Some("/repo/.git".to_owned()),
+            worktrees: vec![row("/repo", true), row("/repo.worktrees/feature", false)],
+            ..ProjectWorktreesSnapshot::default()
+        }],
+    });
+    let measure = |payload: serde_json::Value| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": "card_measure_disk", "payload": payload
+        }))
+        .unwrap()
+    };
+    let disk_of = |runtime: &Runtime, id: &str| {
+        runtime
+            .snapshot()
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == id)
+            .unwrap()
+            .disk
+            .clone()
+    };
+    assert!(runtime.disk_request().paths.is_empty(), "nothing asked yet");
+
+    assert!(runtime.dispatch_json(&measure(serde_json::json!({"workspace_id": "workspace-1"}))));
+    let request = runtime.disk_request();
+    assert_eq!(
+        request.paths,
+        [
+            PathBuf::from("/repo"),
+            PathBuf::from("/repo/.git"),
+            PathBuf::from("/repo.worktrees/feature"),
+        ]
+    );
+    assert!(disk_of(&runtime, "workspace-1").measuring);
+
+    let usage = |path: &str, bytes: u64| DiskUsageSnapshot {
+        path: Some(path.to_owned()),
+        total_bytes: Some(bytes),
+        ..DiskUsageSnapshot::default()
+    };
+    assert!(runtime.ingest_disk_usage(vec![
+        usage("/repo", 100),
+        usage("/repo.worktrees/feature", 20),
+        usage("/repo/.git", 3),
+    ]));
+    let disk = disk_of(&runtime, "workspace-1");
+    assert_eq!(disk.total_bytes, Some(123));
+    assert!(!disk.measuring);
+
+    let generation = runtime.disk_request().generation;
+    assert!(!runtime.dispatch_json(&measure(serde_json::json!({"workspace_id": "workspace-2"}))));
+    assert!(!runtime.dispatch_json(&measure(serde_json::json!({"workspace_id": "gone"}))));
+    assert_eq!(
+        runtime.disk_request().generation,
+        generation,
+        "a refusal measures nothing"
+    );
+    assert!(disk_of(&runtime, "workspace-2").is_empty());
+
+    for payload in [serde_json::json!({}), serde_json::Value::Null] {
+        assert!(runtime.dispatch_json(&measure(payload)));
+    }
+    assert_eq!(runtime.disk_request().generation, generation + 2);
+}
+
 #[test]
 fn sidebar_github_request_is_scoped_idempotent_and_does_not_move_focus() {
     let mut runtime = runtime();

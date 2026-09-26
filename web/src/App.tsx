@@ -28,7 +28,6 @@ import { TooltipProvider } from "./components/ui/tooltip";
 import { useUsageWindowHint } from "./components/weekly-usage";
 import { useUiStore } from "./ui";
 import { viewRefusal } from "./viewLayout";
-import { SessionsScreen } from "./SessionsScreen";
 import { WorkspaceScreen } from "./WorkspaceScreen";
 import { connectShell, type DispatchFn } from "./ws";
 
@@ -225,12 +224,12 @@ function ShortcutSheetGate({ actions }: { actions: Actions }) {
 }
 
 /**
- * Main, a Project's Overview, or the front Workspace (PRD S6 D-02, D-11). The
+ * All projects, a Project's Overview, or the front Workspace (PRD S6 D-02, D-11). The
  * page starts on the Workspace the core kept in front when it is the one used
- * last and still in the catalog, and on Main on a first run or when it is
+ * last and still in the catalog, and on All projects on a first run or when it is
  * gone; while the device in front is still being reached the choice waits,
- * so a Workspace that is about to appear does not first flash Main. A
- * Workspace that goes away while it is shown gives way to Main.
+ * so a Workspace that is about to appear does not first flash All projects. A
+ * Workspace that goes away while it is shown gives way to All projects.
  */
 function CenterScreen({ actions }: { actions: Actions }) {
   const screen = useUiStore((s) => s.screen);
@@ -241,9 +240,9 @@ function CenterScreen({ actions }: { actions: Actions }) {
   const remoteFront = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
   const opening = useUiStore((s) => s.opening);
   const progress = useShellStore((s) => (opening && !opening.failure ? openingProgress(s.rest, opening) : null));
-  // An open from Main, an Overview or the Agents list shows its Workspace
+  // An open from All projects, an Overview or the Agents list shows its Workspace
   // once the core has moved there; a refusal or no answer stays put and says
-  // why on Main or the Overview. On a Workspace the core's error notice
+  // why on All projects or the Overview. On a Workspace the core's error notice
   // already says it, so nothing is kept for later (B2, B21).
   useEffect(() => {
     if (!opening || opening.failure || progress === null) return;
@@ -288,7 +287,6 @@ function CenterScreen({ actions }: { actions: Actions }) {
     );
   }
   if (screen.kind === "overview") return <ProjectOverview projectId={screen.projectId} actions={actions} />;
-  if (screen.kind === "sessions") return <SessionsScreen projectId={screen.projectId} actions={actions} />;
   if (screen.kind === "workspace" && front && hasView) return <WorkspaceScreen actions={actions} />;
   return <MainScreen actions={actions} />;
 }

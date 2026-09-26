@@ -10,6 +10,7 @@ import {
   GitPullRequestDraftIcon,
   GitPullRequestIcon,
   HouseIcon,
+  LayoutGridIcon,
   SettingsIcon,
 } from "lucide-react";
 import { memo, useMemo } from "react";
@@ -28,7 +29,7 @@ import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { AgentRowItem } from "./components/agent-row";
 import { StatusMark } from "./components/status-mark";
 import { WeeklyUsage } from "./components/weekly-usage";
-import { agentSections, allAgents, liveDescendantCounts, type ListedAgent } from "./navigation";
+import { agentSections, allAgents, allProjectsCount, liveDescendantCounts, type ListedAgent } from "./navigation";
 import {
   activeCheckouts,
   activityLabel,
@@ -198,10 +199,12 @@ function catalogLineOf(rest: SnapshotRest | null) {
 }
 
 /**
- * The projects of the context on screen. A selected SSH device lists its
- * Herdr workspaces, one checkout each, with the one its host has focused
- * marked; the inactive folds and pins are this machine's and are not drawn
- * there (docs/UI_BEHAVIOR.md: the remote context carries no pins).
+ * The scope picker: All projects on top, then the projects of the context on
+ * screen. A selected SSH device lists its Herdr workspaces, one checkout
+ * each; the inactive folds and pins are this machine's and are not drawn
+ * there (docs/UI_BEHAVIOR.md: the remote context carries no pins). The row of
+ * the scope the center shows is marked: All projects, a project on its
+ * Overview, or the focused checkout and its agent while a Workspace is in front.
  */
 function ProjectList({ actions }: { actions: Actions }) {
   const remote = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
@@ -213,15 +216,27 @@ function ProjectList({ actions }: { actions: Actions }) {
   const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
   const openCheckouts = useShellStore((s) => s.rest?.ui_state?.expanded_checkout_ids ?? NO_IDS);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
+  const screenKind = useUiStore((s) => s.screen?.kind ?? null);
+  const overviewProjectId = useUiStore((s) => (s.screen?.kind === "overview" ? s.screen.projectId : null));
   const catalogState = useShellStore((s) => catalogLineOf(s.rest)?.state ?? null);
   const catalogText = useShellStore((s) => catalogLineOf(s.rest)?.text ?? null);
   const catalogLine = catalogState && catalogText ? { state: catalogState, text: catalogText } : null;
   const rows = projectRows(workspaces, groups);
   // The folds are this machine's choices, like the inactive groups, so a
   // selected SSH device's tree is drawn open with every checkout's line two.
-  const context: ListContext = { agents, focusedCheckoutId, focusedPaneId, openCheckouts, disclosure: !remote, actions };
+  const context: ListContext = {
+    agents,
+    focusedCheckoutId,
+    focusedPaneId,
+    workspaceScreen: screenKind === "workspace",
+    overviewProjectId,
+    openCheckouts,
+    disclosure: !remote,
+    actions,
+  };
   return (
     <ul className="min-h-0 flex-1 overflow-auto" data-project-list="true">
+      <AllProjectsRow selected={screenKind === "main"} />
       {catalogLine ? (
         <li role="status" className="px-md py-xs text-caption text-muted-foreground" data-device-catalog={catalogLine.state}>
           {catalogLine.text}
@@ -241,12 +256,43 @@ type ListContext = {
   agents: AgentRow[];
   focusedCheckoutId: string | null;
   focusedPaneId: string | null;
+  /** A Workspace is in front, so the focused checkout and agent are the scope shown. */
+  workspaceScreen: boolean;
+  /** The project whose Overview is in front. */
+  overviewProjectId: string | null;
   /** Checkouts whose agent rows the operator opened; every other checkout names its agents on line two. */
   openCheckouts: string[];
   /** False over a selected SSH device, whose tree is drawn with nothing folded. */
   disclosure: boolean;
   actions: Actions;
 };
+
+/** The top row: every project on every device, the scope All projects shows. */
+function AllProjectsRow({ selected }: { selected: boolean }) {
+  const count = useShellStore((s) => allProjectsCount(s.rest));
+  return (
+    <li>
+      <button
+        type="button"
+        data-all-projects="true"
+        aria-current={selected ? "page" : undefined}
+        className={cn(
+          "flex h-(--size-control-regular) w-full items-center gap-sm pr-xs pl-md text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+          selected ? "bg-secondary" : "hover:bg-accent",
+        )}
+        onClick={() => useUiStore.getState().setScreen({ kind: "main" })}
+      >
+        <Lane width="chevron" />
+        <LayoutGridIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
+        <span className="min-w-0 flex-1 truncate text-title font-semibold text-foreground">All projects</span>
+        <span className="shrink-0 text-body text-muted-foreground">
+          {count} {count === 1 ? "project" : "projects"}
+        </span>
+        <Lane width="slot" />
+      </button>
+    </li>
+  );
+}
 
 function rowKey(row: ProjectRow): string {
   switch (row.kind) {
@@ -344,13 +390,14 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
         workspace={workspace}
         checkout={folder}
         agentRows={rowsByCheckout.get(folder.id) ?? NO_BOARD_ROWS}
-        focused={folder.id === context.focusedCheckoutId}
+        focused={(context.workspaceScreen && folder.id === context.focusedCheckoutId) || context.overviewProjectId === workspace.id}
         inset={inset}
         context={context}
       />
     );
   }
   const ProjectIcon = workspace.is_git ? FolderGit2Icon : FolderIcon;
+  const selected = context.overviewProjectId === workspace.id;
   const Chevron = expanded ? ChevronDownIcon : ChevronRightIcon;
   const checkoutRow = (checkout: Checkout) => (
     <CheckoutRowView
@@ -358,7 +405,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
       workspace={workspace}
       checkout={checkout}
       agentRows={rowsByCheckout.get(checkout.id) ?? NO_BOARD_ROWS}
-      focused={checkout.id === context.focusedCheckoutId}
+      focused={context.workspaceScreen && checkout.id === context.focusedCheckoutId}
       context={context}
     />
   );
@@ -371,7 +418,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
         data-project-menu={workspace.id}
       >
         {(trigger) => (
-          <div className="flex h-(--size-control-regular) w-full items-center pr-xs pl-md hover:bg-accent">
+          <div className={cn("flex h-(--size-control-regular) w-full items-center pr-xs pl-md", selected ? "bg-secondary" : "hover:bg-accent")}>
             {disclosure ? (
               <button
                 type="button"
@@ -389,6 +436,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
             <button
               type="button"
               data-project-row={workspace.id}
+              aria-current={selected ? "page" : undefined}
               className="flex h-full min-w-0 flex-1 items-center gap-sm pl-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
               onClick={() => useUiStore.getState().setScreen({ kind: "overview", projectId: workspace.id })}
             >
@@ -534,9 +582,10 @@ const CheckoutRowView = memo(function CheckoutRowView({
  * A plain folder (`folderCheckout`): the project and its only checkout are
  * one row. Line one is the project's name and activity, line two the
  * checkout's agents and purpose, in the checkout row's columns; the row opens
- * the checkout and is marked when that checkout is focused, and its menu is
+ * the checkout and is marked while that checkout is the Workspace in front or
+ * the project's Overview is, and its menu is
  * the project's followed by the checkout's. With no fold of its own it keeps
- * the fold's lane, and its Overview is reached from Main.
+ * the fold's lane, and its Overview is reached from All projects.
  */
 const FolderRowView = memo(function FolderRowView({
   workspace,
@@ -715,7 +764,7 @@ function OpenAgentRows({ checkoutId, agentRows, context }: { checkoutId: string;
           depth={row.depth}
           descendants={0}
           childRows={NO_AGENT_ROWS}
-          selected={row.agent.pane_id === context.focusedPaneId}
+          selected={context.workspaceScreen && row.agent.pane_id === context.focusedPaneId}
           onOpen={context.actions.openAgent}
           onToggleTree={null}
           inset={NAME_COLUMN}

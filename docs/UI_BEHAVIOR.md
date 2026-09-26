@@ -11,7 +11,7 @@ Where a rule is currently native-only, its Swift owner is named below; a web own
 The web shell's Workspace screen follows the approved S6 proposal, and its View areas follow the approved boards of PRD S7 (`agents/prd/workspace-views-layout/prd.md`).
 Web owner: `web/src/WorkspaceScreen.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, `web/src/viewLayout.ts`, `web/src/viewDrag.ts`, `web/src/viewFocus.ts`.
 
-The toolbar reads left to right: the path back (`Main / Project / Workspace`, naming the device when it is not this Mac), the layout switch, then the two tool toggles.
+The toolbar reads left to right: the path back (`All projects / Project / Workspace`, naming the device when it is not this Mac), the layout switch, then the two tool toggles.
 The layout switch offers three adjacent choices in one group - Agents only, Agents and Views, Views only - with the chosen one visually distinct from the others; the same three names appear in its menu and as palette commands, and each choice's tooltip is its accessible name.
 Explorer and History are independent toggles that open and close on their own, drawn pressed while shown; with both shown they share the tool column, Explorer above History, each with its own close.
 A right-click or the menu key on the toolbar offers the layouts, each tool, Copy Workspace path, and Open Project Overview.
@@ -90,8 +90,8 @@ A restored view whose device or root is not ready says what it waits for (such a
 A view whose file cannot be read shows why, with Close view and Retry, and its tab title reads as struck through; either action acts on that view alone and leaves the active area where it was.
 Each state belongs to its view alone, so one missing file never blanks another view or area.
 After a restart the app reopens the last Workspace as it was left: its areas and their sizes, each area's tabs in order with its preview, pinned views, and active view, the active area, the layout, and the tools; unsaved text returns from the browser's drafts, and Herdr's current tabs and panes are used as they are.
-A first run, or a last Workspace that no longer exists, starts on Main.
-A layout file that cannot be read is kept aside and the app starts on Main, where the operator picks a Workspace and continues with a new layout.
+A first run, or a last Workspace that no longer exists, starts on All projects.
+A layout file that cannot be read is kept aside and the app starts on All projects, where the operator picks a Workspace and continues with a new layout.
 
 ### Browser displays
 
@@ -145,15 +145,15 @@ Web owner: `web/src/agentRow.ts` (rules, reusable by any list of agents), `web/s
 
 ## Web Project Sessions
 
-A Project's Sessions is a web screen of its own (PRD S8): the Overview's header offers `Sessions`, and the path back reads `Main / Project / Sessions`, naming the device the way Overview does.
-Web owner: `web/src/SessionsScreen.tsx`, `web/src/sessions.ts`.
+A Project's Sessions is the Project Overview's Sessions tab (PRD S8), under the Overview's own path back, title and facts line.
+Web owner: `web/src/ProjectSessions.tsx`, `web/src/sessions.ts`.
 
 It lists the history of every Workspace the Project has, works for a Project with no Workspace, and never runs an agent or sends a session to a Workspace.
 Above the list are the `All / Codex / Claude Code` choice, the search, and the count (`N sessions` or `N of M sessions` while a filter narrows it); a read in flight adds `Reading…` beside the count and keeps the rows.
 Each row shows the provider mark and name, the time, the first request or title in at most two lines with the full text in its tooltip, and the checkout it ran in.
 A session with neither request nor title reads `Untitled session`, muted, and a time it never carried is left out.
 A row's accessible name reads provider, first request, checkout, time, and availability, in that order.
-The open session's row is the list's one Tab stop; the arrows, Home, and End move between rows, ArrowDown from the search lands on that row, and Escape in the search clears it.
+The open session's row is the list's one Tab stop; the arrows, Home, and End move between rows, ArrowDown from the search lands on that row, and Escape in the search clears it, so only an Escape in an empty search leaves the Overview.
 The provider choice is one Tab stop whose arrows choose the neighbouring provider.
 An unreadable session dims only its own row, marks it unavailable, and keeps its reason, Retry, and Copy source location under it, copying the provider file's own path.
 A session whose file is no longer found after the history listed it stays listed the same way, with an explanation that it may have been moved or deleted, and its last location to copy.
@@ -203,9 +203,16 @@ GitHub's age appears only in the issue chip's tooltip, as the last successful re
 Merged and Seen columns start collapsed and list only their names while folded.
 The board scrolls horizontally below its column minimum, and titles wrap to two lines; branch labels truncate at the tail with the full text in a shared tooltip and accessibility help.
 
-On the web, the board is the Project Overview: the sidebar's project name (a plain folder's one row opens its checkout instead), Main's project row, the palette and the Workspace toolbar menu open it, and ⌘⇧H opens it for the checkout in front.
-Escape, once no dialog or menu is open, returns to the Workspace in front, or to Main when there is none; an agent row opens its pane and a card header opens its checkout.
-The header carries the path back, the Tasks/Agents choice, the worktree count, the open pull-request count once GitHub has answered, main's distance behind origin only above zero, Sessions, and New agent.
+On the web, the sidebar picks the scope and the tabs under the title pick the view.
+All projects is every project on every device, a project is its Overview, and a checkout is its Workspace, which has no views of its own.
+The board is the Project Overview: the sidebar's project name (a plain folder's one row opens its checkout instead), All projects' project row, the palette and the Workspace toolbar menu open it, and ⌘⇧H opens it for the checkout in front.
+Escape, once no dialog or menu is open and no text field holds text, returns to the Workspace in front, or to All projects when there is none; an agent row opens its pane and a card header opens its checkout.
+The title row carries the path back (`All projects / Project`) and New agent; directly under it is one line of facts, then the `Tasks · Agents · Sessions` tabs, which show even while the project has no agent.
+The facts line holds only numbers the system has: the worktree count, the open pull-request count once GitHub has answered, the disk every worktree and the shared Git directory occupy, main's distance behind origin only above zero, and the merged worktrees only above zero.
+Opening a local Git project's Overview asks the core to measure its disk; the size reads `… GB` while that runs and is left out, with the reason only in the diagnostic log, when a part cannot be read, and there is no refresh control.
+The merged count opens the Merged column of Tasks, where each merged worktree is removed; it builds no cleanup flow of its own.
+The view is the page's, so choosing another project keeps Tasks, Agents or Sessions, and a scope without that view shows its first one.
+All projects has one view today, its project list, so it draws no tab control; its title row carries Add project, and its facts line the project count and, only when every project can give its part, the open pull-request and merged totals, which are plain facts there.
 New agent opens the New worktree dialog on a Git project and the folder's Workspace otherwise.
 A project with no agent at all shows only an empty state with New agent, a folder with agents only the ad hoc strip, and before the first snapshot the shell's own connecting state shows instead.
 While hided or a device is unreachable the board keeps the last snapshot and the existing connection or device line is the only signal.
@@ -318,9 +325,11 @@ Workspaces with nested agent rows toggle disclosure across the whole row; worksp
 In the web shell a checkout row always opens its checkout: a trailing chevron, drawn only while agents run there, opens and closes their rows, and the row's `⋯` menu takes the last-commit age's place while the pointer is over the row.
 A web checkout's agent rows start closed, so its second line names them, and the checkouts the operator opens are kept in the core's ui state across launches; the Swift shell keeps its own disclosure until it is removed.
 A web project row folds its checkouts from its leading chevron, and the rest of the row opens the project's Overview; both folds are this machine's, so a selected SSH device's tree is drawn with nothing folded.
+The web Projects list is the scope picker: an All projects row heads it, with the layout-grid glyph and `N projects`, and opens All projects.
+One row carries the selected fill at a time, the row of the scope the center shows: All projects, a project row on its Overview, or the focused checkout and its open agent row only while a Workspace is in front.
 A plain folder, a project that is not a Git repository and holds one checkout, is one web row instead of a project row over an identical checkout row.
 Its first line is the project's folder glyph, name and activity, set in the checkout row's columns with the activity where the age stands; its second line and trailing chevron are the checkout's.
-It has no fold of its own and keeps the fold's lane; the row opens the checkout and is marked while that checkout is in front, its menu lists the project's items and then the checkout's, and its Overview is reached from Main, the palette or the Workspace toolbar.
+It has no fold of its own and keeps the fold's lane; the row opens the checkout and is marked while that checkout's Workspace or the project's Overview is in front, its menu lists the project's items and then the checkout's, and its Overview is reached from All projects, the palette or the Workspace toolbar.
 While a checkout's agent rows are closed, its second line names them, the representative agent's mark and provider and `+N` for the rest, before the purpose; a checkout with neither, or one whose Git facts have not been read yet, is one line.
 Workspace disclosure persists across launches and hides only the nested agent rows, preserving selection, running panes, and raised attention rows.
 An agent row's title is its identity label at both densities: the rolling task, or the workspace label when no task exists; a Herdr agent name remains a control identifier and never becomes display copy.
