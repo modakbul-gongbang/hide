@@ -730,19 +730,3 @@ private extension Process {
         return data
     }
 }
-
-@Test func consequencePromptListsWorkingPanesButNotTheContentConsequenceSentence() {
-    let hosted = DestructiveTarget(
-        id: "w1:p1", label: "Viewer", statusLabel: "Idle",
-        requiresCloseConfirmation: true, summary: "Closing stops its host.", contentConsequence: "Closing stops its host."
-    )
-    let working = DestructiveTarget(
-        id: "w1:p2", label: "claude", statusLabel: "Working",
-        requiresCloseConfirmation: true, summary: "Editing files", contentConsequence: nil
-    )
-    let pane = ConsequencePolicy.notice(kind: .pane, targets: [hosted])
-    #expect(pane.message == "Closing stops its host.")
-    let tab = ConsequencePolicy.notice(kind: .tab, targets: [hosted, working])
-    #expect(tab.message.hasSuffix("\nclaude - Working"))
-    #expect(!tab.message.contains("Viewer - Idle"))
-}

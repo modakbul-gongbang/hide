@@ -414,7 +414,6 @@ struct DestructiveTarget: Identifiable, Equatable, Sendable {
     /// Whether the core needs a fresh activity status before this target can
     /// be closed safely.
     var requiresStatusCheck: Bool = false
-    var contentConsequence: String? = nil
 }
 
 struct ConsequenceNotice: Equatable, Identifiable, Sendable {
@@ -426,10 +425,8 @@ struct ConsequenceNotice: Equatable, Identifiable, Sendable {
     var id: String { title }
 
     /// The prompt body: the consequence, then the working panes it lists.
-    /// A target whose consequence is already the sentence (a browser pane)
-    /// is not repeated as a line under it.
     var message: String {
-        let listed = affected.filter { $0.contentConsequence == nil }.map { "\($0.label) - \($0.statusLabel)" }
+        let listed = affected.map { "\($0.label) - \($0.statusLabel)" }
         return ([consequence] + listed).joined(separator: "\n")
     }
 }
@@ -439,12 +436,6 @@ enum ConsequencePolicy {
         let risky = targets.filter(\.requiresCloseConfirmation)
         switch kind {
         case .pane:
-            if let consequence = targets.first?.contentConsequence {
-                return ConsequenceNotice(
-                    title: "Close this pane?", consequence: consequence,
-                    affected: targets, requiresConfirmation: true
-                )
-            }
             return ConsequenceNotice(
                 title: risky.isEmpty ? "Close idle pane" : "Stop the active pane?",
                 consequence: risky.isEmpty
@@ -469,12 +460,9 @@ enum ConsequencePolicy {
 
     private static func aggregate(_ title: String, _ consequence: String, _ targets: [DestructiveTarget]) -> ConsequenceNotice {
         let affected = targets.filter(\.requiresCloseConfirmation)
-        let contentConsequences = targets.compactMap(\.contentConsequence).reduce(into: [String]()) { values, value in
-            if !values.contains(value) { values.append(value) }
-        }
         return ConsequenceNotice(
             title: title,
-            consequence: ([consequence] + contentConsequences).joined(separator: " "),
+            consequence: consequence,
             affected: affected,
             requiresConfirmation: !affected.isEmpty
         )
