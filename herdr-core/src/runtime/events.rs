@@ -525,6 +525,9 @@ pub(super) struct UiStateUpdatePayload {
     pub(super) collapsed_workspace_ids: Vec<String>,
     #[serde(default)]
     pub(super) collapsed_checkout_ids: Option<Vec<String>>,
+    /// Absent keeps the web's opened checkouts: the Swift shell does not carry them.
+    #[serde(default)]
+    pub(super) expanded_checkout_ids: Option<Vec<String>>,
     #[serde(default)]
     pub(super) expanded_agent_pane_ids: Option<Vec<String>>,
     pub(super) selected_path: Option<String>,
@@ -2926,6 +2929,9 @@ impl Runtime {
                     collapsed_checkout_ids: payload
                         .collapsed_checkout_ids
                         .unwrap_or(current.collapsed_checkout_ids),
+                    expanded_checkout_ids: payload
+                        .expanded_checkout_ids
+                        .unwrap_or(current.expanded_checkout_ids),
                     expanded_inactive_checkout_project_paths: current
                         .expanded_inactive_checkout_project_paths,
                     expanded_inactive_project_device_ids: current
