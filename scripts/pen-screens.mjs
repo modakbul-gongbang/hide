@@ -263,6 +263,34 @@ function screenField(id, label, control) {
   ]);
 }
 
+// -- the status mark --------------------------------------------------------------
+// status-mark.tsx: `●` and `○` are a dot and a ring of one diameter, and every other
+// mark is its glyph in the same box, so no mark renders larger than another. The two
+// masters that carry a mark (Agent identity, Checkout row) hold the three as siblings
+// in one box, and a row's mark enables the one it draws.
+const MARK_NODES = {
+  identity: {dot: 'sWhWS', ring: 'i9p0pi', glyph: 'PCeNa'},
+  checkout: {dot: 'J5xdha', ring: 'G3d9T', glyph: 'aFPLo'},
+};
+
+function markOverrides(nodes, symbol, fill) {
+  if (symbol === '●') return {[nodes.dot]: {enabled: true, fill}, [nodes.ring]: {enabled: false}, [nodes.glyph]: {enabled: false}};
+  if (symbol === '○') return {[nodes.dot]: {enabled: false}, [nodes.ring]: {enabled: true, stroke: fill}, [nodes.glyph]: {enabled: false}};
+  return {[nodes.dot]: {enabled: false}, [nodes.ring]: {enabled: false}, [nodes.glyph]: {enabled: true, content: symbol, fill}};
+}
+
+// The same mark for a row this document draws itself rather than from a master.
+function screenStatusMark(tokens, id, symbol, fill) {
+  const box = num(tokens, '--size-agent-mark');
+  const size = num(tokens, '--size-status-mark');
+  const shape = symbol === '●'
+    ? {type: 'ellipse', id: `${id}-dot`, name: 'Dot', width: size, height: size, fill}
+    : symbol === '○'
+      ? {type: 'ellipse', id: `${id}-ring`, name: 'Ring', width: size, height: size, stroke: fill, strokeWidth: num(tokens, '--size-hairline'), strokeAlignment: 'inner'}
+      : text(`${id}-glyph`, symbol, {fill, mono: true, size: '$--text-caption'});
+  return frame(id, 'Status mark', {width: box, height: box, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [shape]);
+}
+
 // -- composite Component masters: themedXref restates every internal default color,
 // so only content (and any state that changes what the master would not restate on
 // its own, like the status dot's color) needs to be named at each call site. -------
@@ -272,9 +300,9 @@ function screenField(id, label, control) {
 // of the canvas instead of flowing in this frame, so they stay at the master's
 // own disabled default and only the flowing fields (status, relationship count)
 // carry location/age content in this proposal.
-function screenAgentIdentity(id, {title, status, statusColor = '$--agent-working'}) {
+function screenAgentIdentity(id, {title, status, symbol = '●', statusColor = '$--agent-working'}) {
   return themedXref(id, 'HXWFK', title, {width: 260}, {
-    PCeNa: {fill: statusColor}, x0h40: {content: title}, X6LdE: {content: status},
+    ...markOverrides(MARK_NODES.identity, symbol, statusColor), x0h40: {content: title}, X6LdE: {content: status},
   });
 }
 
@@ -363,7 +391,7 @@ function buildMain(tokens) {
   function build(suffix) {
     const sidebar = screenSidebar(tokens, 'main-sidebar', suffix, [
       {title: '두 번째 에이전트', status: 'Working'},
-      {title: 'Agent one', status: 'Seen', statusColor: '$--muted-foreground'},
+      {title: 'Agent one', status: 'Seen', symbol: '○', statusColor: '$--muted-foreground'},
     ]);
     const list = frame(`main-list-${suffix}`, 'Projects', {width: 480, layout: 'vertical', gap: '$--spacing-md'}, [
       frame(`main-listhdr-${suffix}`, 'Header', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center'}, [
@@ -391,7 +419,7 @@ function buildProjectOverview(tokens) {
   function agentRow(id, {mark, markFill, title, time, detail, detailFill, width}) {
     return frame(id, 'Agent row', {layout: 'vertical', gap: '$--spacing-xxs', width}, [
       frame(`${id}-line`, 'Line', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width}, [
-        text(`${id}-mark`, mark, {fill: markFill, mono: true}),
+        screenStatusMark(tokens, `${id}-mark`, mark, markFill),
         frame(`${id}-kind`, 'Provider', {width: 16, height: 16, fill: '$--secondary', cornerRadius: '$--radius-xs'}, []),
         text(`${id}-title`, title, {weight: '500'}),
         frame(`${id}-gap`, 'Spacer', {width: 'fill_container', height: 1}, []),
@@ -504,7 +532,7 @@ function buildWorkspace(tokens) {
   function chrome(suffix) {
     const sidebar = screenSidebar(tokens, 'ws-sidebar', suffix, [
       {title: 'Agent two', status: 'Working'},
-      {title: 'Agent one', status: 'Seen', statusColor: '$--muted-foreground'},
+      {title: 'Agent one', status: 'Seen', symbol: '○', statusColor: '$--muted-foreground'},
     ]);
     const crumb = frame(`ws-crumb-${suffix}`, 'Breadcrumb', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
       text(`ws-c1-${suffix}`, 'Main', {fill: '$--muted-foreground'}),
@@ -759,7 +787,7 @@ function buildPalette(tokens) {
         text(id('side-sect'), 'NEEDS YOU · 1', {size: '$--text-micro', fill: '$--muted-foreground'}),
       ]),
       frame(id('side-a0'), 'Agent row', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: ['$--spacing-xs', '$--spacing-md']}, [
-        text(id('side-a0s'), '?', {size: '$--text-caption', fill: '$--warning', mono: true}),
+        screenStatusMark(tokens, id('side-a0s'), '?', '$--warning'),
         mark('side-a0m', 'claude'),
         text(id('side-a0t'), 'hcoord 원격 에이전트 구현', {weight: '500'}),
       ]),
@@ -916,6 +944,7 @@ function buildProjectsSidebar(tokens) {
   const markSlot = num(tokens, '--size-agent-mark');
   const artwork = provider => `../web/src/assets/agent-${provider}.png`;
   const STATUS = {working: '$--agent-working', asking: '$--warning', done: '$--success', seen: '$--muted-foreground'};
+  const SYMBOL = {working: '●', asking: '?', done: '✓', seen: '○'};
   const KIND = {
     primary: {icon: 'house', fill: '$--subtle-foreground'},
     branch: {icon: 'git-branch', fill: '$--subtle-foreground'},
@@ -946,7 +975,7 @@ function buildProjectsSidebar(tokens) {
     const summary = agents
       ? {
           FtZyp: {enabled: true},
-          J5xdha: {fill: STATUS[agents.status]},
+          ...markOverrides(MARK_NODES.checkout, SYMBOL[agents.status], STATUS[agents.status]),
           N7YbJ: {fill: {type: 'image', enabled: true, url: artwork(agents.provider ?? 'claude'), mode: 'fit'}},
           fklVZ: {enabled: false},
           ExMsH: agents.more ? {content: `+${agents.more}`, enabled: true} : {enabled: false},
@@ -987,9 +1016,9 @@ function buildProjectsSidebar(tokens) {
   }
 
   // agent-row.tsx's AgentRowItem at the name column: mark, provider, title, age.
-  function agentRow(id, {title, status, symbol, provider = 'claude', age}) {
+  function agentRow(id, {title, status, provider = 'claude', age}) {
     return frame(id, 'Agent row', {width, layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: ['$--spacing-xs', '$--spacing-md', '$--spacing-xs', nameColumn]}, [
-      text(`${id}-mark`, symbol, {fill: STATUS[status], mono: true, size: '$--text-caption'}),
+      screenStatusMark(tokens, `${id}-mark`, SYMBOL[status], STATUS[status]),
       frame(`${id}-art`, 'Provider', {width: 16, height: 16, cornerRadius: '$--radius-xs', fill: {type: 'image', enabled: true, url: artwork(provider), mode: 'fit'}}, []),
       text(`${id}-title`, title, {fill: '$--subtle-foreground'}),
       frame(`${id}-gap`, 'Spacer', {width: 'fill_container', height: 1}, []),
@@ -1021,12 +1050,12 @@ function buildProjectsSidebar(tokens) {
       folderRow(`psb-p-notes-${s}`, {name: 'team-notes', meta: '1 agent · 2h', agents: {status: 'seen'}, purpose: '회의록 요약 정리'}),
       section(`psb-sec-recent-${s}`, 'PROJECTS · RECENT ACTIVITY · 12'),
       projectRow(`psb-p-herdr-${s}`, {name: 'herdr-ide', meta: '11 agents · now', expanded: true, hover: true}),
-      checkoutRow(`psb-c1-${s}`, {name: 'electron-shortcut-bindings', kind: 'open', age: '2h', agents: {status: 'working'}, purpose: 'Electron desktop host for the we…'}),
       checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', agents: {status: 'working', more: 1, provider: 'codex'}, expanded: true, selected: true}),
-      agentRow(`psb-a1-${s}`, {title: 'S5.5 PRD 초안 정리', status: 'working', symbol: '●', provider: 'codex', age: '3m'}),
-      agentRow(`psb-a2-${s}`, {title: '후속 UX 계획 인터뷰', status: 'seen', symbol: '○', age: '1h'}),
+      agentRow(`psb-a1-${s}`, {title: 'S5.5 PRD 초안 정리', status: 'working', provider: 'codex', age: '3m'}),
+      agentRow(`psb-a2-${s}`, {title: '후속 UX 계획 인터뷰', status: 'seen', age: '1h'}),
       checkoutRow(`psb-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', agents: {status: 'asking'}, purpose: '#155 browser display (WebCon…'}),
       checkoutRow(`psb-c4-${s}`, {name: 'quick/154-search-palette', kind: 'draft', age: '1h', agents: {status: 'done'}, purpose: '#154 ⌘K search palette UI'}),
+      checkoutRow(`psb-c1-${s}`, {name: 'electron-shortcut-bindings', kind: 'open', age: '2h', agents: {status: 'working'}, purpose: 'Electron desktop host for the we…'}),
       checkoutRow(`psb-c5-${s}`, {name: 'design/workspace-ux-prop…', age: '5h', purpose: 'Workspace UX 제안과 상태 소유…'}),
       checkoutRow(`psb-c6-${s}`, {name: 'fix/registered-projects-only', age: '1d'}),
       checkoutRow(`psb-c7-${s}`, {name: 'legacy-shell', kind: 'missing'}),
@@ -1049,7 +1078,7 @@ function buildProjectsSidebar(tokens) {
     ]);
     return [frame(`psb-sidebar-${s}`, 'Sidebar', {width, layout: 'vertical', fill: '$--sidebar', clip: true}, [header, list, footer])];
   }
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, projects.ts: the Projects tab. A project row folds its checkouts from its chevron and opens the Overview from the rest of the row; a checkout row opens the checkout, and its trailing chevron, shown only when agents run there, opens their rows in place of line two. Line two is the agents (the representative’s mark and provider, +N) and the purpose. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.', build, build);
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, projects.ts: the Projects tab. A project’s primary checkout comes first, then the rest by activity. A project row folds its checkouts from its chevron and opens the Overview from the rest of the row; a checkout row opens the checkout, and its trailing chevron, shown only when agents run there, opens their rows in place of line two. Line two is the agents (the representative’s mark and provider, +N) and the purpose. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.', build, build);
 }
 
 // -- assembly ---------------------------------------------------------------------
