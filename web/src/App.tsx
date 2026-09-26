@@ -24,6 +24,7 @@ import { applyEditorTheme } from "./editor/theme";
 import { applyTerminalTheme, attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
 import { primaryValue, readTheme, resolveTheme } from "./theme";
 import { TooltipProvider } from "./components/ui/tooltip";
+import { useUsageWindowHint } from "./components/weekly-usage";
 import { useUiStore } from "./ui";
 import { viewRefusal } from "./viewLayout";
 import { SessionsScreen } from "./SessionsScreen";
@@ -35,6 +36,7 @@ const noop: DispatchFn = () => {};
 export function App() {
   const dispatchRef = useRef<DispatchFn>(noop);
   const actions: Actions = useMemo(() => createActions((event) => dispatchRef.current(event)), []);
+  useUsageWindowHint(actions);
 
   useEffect(() => {
     const session = connectShell({

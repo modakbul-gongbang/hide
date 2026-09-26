@@ -410,6 +410,23 @@ Empty lists say `No devices available`, long names truncate in their title line,
 The list scrolls once its rows exceed the shared height cap.
 The web shell draws the same trigger and list at the bottom of its sidebar from the shared tokens, with line icons standing in for the native SF Symbols.
 
+## Weekly usage
+
+Web owner: `web/src/components/weekly-usage.tsx`, `web/src/usage.ts`. Native owner: the sidebar utility bar's usage button and `HideUsagePopover`.
+The core reads the numbers and names each row's state (`navigator.provider_usage`, [AI_PROVIDERS.md: weekly usage display](AI_PROVIDERS.md#weekly-usage-display)); the shells only draw them.
+
+The sidebar footer carries one chip per provider at its right, beside the device picker: the provider mark and the rounded percent of the seven-day window.
+A percent reads in the success color below 70, the warning color from 70 and the destructive color from 90.
+A provider that is loading or unavailable is a dimmed mark with no percent; a stale or fallback reading keeps its percent.
+The chips' accessible name lists every provider with its reading.
+Clicking the chips opens the Weekly Usage popover above them, titled `Weekly Usage` with `7 days`: one row per provider with its mark, name, the time left before the reset (`in 5d 4h`, `in 3h 12m`, `in 7m`), the percent and a bar, and each scoped bucket such as Fable indented under its provider with `└`.
+A loading row reads `…` and an unavailable row reads `Unavailable`, each with the core's message in place of the bar; a stale or fallback row keeps its bar and shows its message under it.
+No usage state becomes a banner, toast or alert (design principle 13).
+The countdown advances once a minute while the popover is open, and nothing ticks while it is closed.
+
+The web page tells the core when a read is worth making, through two hints on `ui_state_update`: `usage_window_visible` follows the page's visibility and is sent on every live connection and on each change, and `usage_popover_open` is sent when the popover opens and again when it closes or leaves the screen.
+The core keeps one value of each, so with several pages open the last page to report decides.
+
 ## Search keyboard navigation
 
 Native owner: Command+K (agent/workspace search) and Command+P (file search). Web owner: `web/src/search.ts`, `web/src/Palette.tsx`.

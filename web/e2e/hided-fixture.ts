@@ -23,16 +23,17 @@ export type Daemon = {
   restart: (beforeStart?: (stateDir: string) => void) => Promise<Daemon>;
 };
 
-export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride?: string): Promise<Daemon> {
+/** `extraEnv` is laid over the daemon's environment; an undefined value leaves that variable unset. */
+export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride?: string, extraEnv: NodeJS.ProcessEnv = {}): Promise<Daemon> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), `hide-e2e-${label}-`));
   const home = homeOverride ?? path.join(dir, "home");
   fs.mkdirSync(path.join(home, "projects", "alpha"), { recursive: true });
   fs.mkdirSync(path.join(home, "projects", ".hidden"), { recursive: true });
   fs.writeFileSync(path.join(home, "projects", "notes.txt"), "x");
-  return launch(herdr, label, dir, home, "0");
+  return launch(herdr, label, dir, home, "0", extraEnv);
 }
 
-async function launch(herdr: HerdrFixture, label: string, dir: string, home: string, port: string): Promise<Daemon> {
+async function launch(herdr: HerdrFixture, label: string, dir: string, home: string, port: string, extraEnv: NodeJS.ProcessEnv): Promise<Daemon> {
   const env = { ...process.env };
   for (const key of ["HERDR_SOCKET_PATH", "HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "HERDR_ENV"]) delete env[key];
   const statePath = path.join(dir, "hide", "hided.json");
@@ -49,6 +50,7 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
       HERDR_BIN_PATH: herdr.bin,
       // `open_external` must not launch a GUI application on the runner.
       HIDE_OPEN_COMMAND: "/usr/bin/true",
+      ...extraEnv,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -89,7 +91,7 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
             child.kill();
             await exited;
             beforeStart?.(path.join(dir, "hide"));
-            return launch(herdr, label, dir, home, String(state.port));
+            return launch(herdr, label, dir, home, String(state.port), extraEnv);
           };
           return { origin, token: state.token, home: fs.realpathSync(home), hostId, stop, restart };
         }

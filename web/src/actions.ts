@@ -2,6 +2,7 @@
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
+import type { UiStateUsageHints } from "./generated/hided-ws";
 import type { ThemeChoice } from "./theme";
 import {
   closeWithSaveOutcome,
@@ -714,6 +715,15 @@ export function createActions(dispatch: DispatchFn) {
     /** Whether this page is looking at the Agents tab; the daemon owns the core's flag. */
     observeAgents(observing: boolean) {
       dispatch({ schema_version: 2, kind: "ai_settings", payload: { observing } });
+    },
+
+    /**
+     * Whether the window is on screen and whether the Weekly Usage popover is
+     * open, the two hints the core's usage timer reads. They ride the UI-state
+     * event, which replaces the whole state, so they go with its echo.
+     */
+    observeUsage(hints: UiStateUsageHints) {
+      updateUiState(hints);
     },
 
     chooseAi(provider: string, model?: string) {

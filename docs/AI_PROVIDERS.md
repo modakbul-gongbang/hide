@@ -146,7 +146,7 @@ The context-label plugin treats `OverBudget` as an environmental failure: it kee
 
 ## Weekly usage display
 
-The toolbar's Weekly Usage popover is a separate read-only capability owned by `herdr-core/src/usage.rs`.
+The sidebar footer's Weekly Usage chips and popover ([UI_BEHAVIOR.md: Weekly usage](UI_BEHAVIOR.md#weekly-usage)) show a separate read-only capability owned by `herdr-core/src/usage.rs`.
 It uses the user's existing CLI logins to read each provider's seven-day account window, and it never routes a model request through `hide-ai`.
 
 For Claude Code, the core runs `claude -p "/usage" --output-format json --no-session-persistence` through `ClaudeCliBackend::usage_text` and parses the `result` text the CLI prints.
@@ -183,7 +183,8 @@ The access token exists only long enough to build the HTTPS authorization header
 The Codex usage endpoint is called outside `Mutex<Runtime>`; a 429 honors `Retry-After` in either delay-seconds or HTTP-date form, or falls back to bounded 5, 10, and 15 minute delays.
 An offline response keeps a non-expired success for at most 15 minutes; Codex can then fall back to the latest weekly window in a local session JSONL file.
 
-Both providers are first read one second after launch, every five minutes while the main window is visible, and at once when a popover older than a minute is reopened.
+Both providers are first read one second after launch, every five minutes while a shell window is visible, and at once when the popover opens on a read older than a minute.
+The Swift shell reports its main window and its popover, and the web shell its page visibility and its popover, through the two `ui_state_update` hints `contracts/hided-ws.schema.json` declares as `uiStateUsageHints`.
 The previous Claude `.usage-cache.json` input is not read.
 Failures produce one structured event containing only provider, HTTP status where there is one, and error kind.
 

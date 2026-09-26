@@ -8,6 +8,7 @@ import { DevicePicker } from "./DevicePicker";
 import { NewWorkspace } from "./NewWorkspace";
 import { directChildren, sectionCount, sectionTree } from "./agentRow";
 import { AgentRowItem } from "./components/agent-row";
+import { WeeklyUsage } from "./components/weekly-usage";
 import { agentSections, allAgents, liveDescendantCounts, type ListedAgent } from "./navigation";
 import { activeCheckouts, activityLabel, inactiveCheckouts, projectRows, pullRequestBadge, type ProjectRow } from "./projects";
 import { hostKind } from "./host";
@@ -72,7 +73,11 @@ export function Sidebar({ actions }: { actions: Actions }) {
       >
         + 새 워크스페이스 <span className="text-muted-foreground">{displayCommand("new_workspace", hostKind())}</span>
       </button>
-      <DevicePicker actions={actions} />
+      <div className="flex shrink-0 items-center gap-xs border-t border-border px-md py-xs">
+        <DevicePicker actions={actions} />
+        <span className="flex-1" />
+        <WeeklyUsage actions={actions} />
+      </div>
     </nav>
   );
 }

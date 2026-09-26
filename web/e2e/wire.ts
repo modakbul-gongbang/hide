@@ -32,7 +32,10 @@ export function countSent(page: Page, last: Map<string, Record<string, unknown>>
         if (event.kind) {
           trace?.(`sent ${event.kind} ${JSON.stringify(event.payload ?? {}).slice(0, 100)}`);
           const action = typeof event.payload?.action === "string" ? `${event.kind}.${event.payload.action}` : null;
-          for (const key of action ? [event.kind, action] : [event.kind]) {
+          // The usage hints ride their own UI-state update, which the page
+          // sends on its own schedule, not for an action; it is counted apart.
+          const hint = event.kind === "ui_state_update" && ["usage_window_visible", "usage_popover_open"].some((field) => field in (event.payload ?? {}));
+          for (const key of hint ? ["ui_state_update.usage_hint"] : action ? [event.kind, action] : [event.kind]) {
             counts.set(key, (counts.get(key) ?? 0) + 1);
             last.set(key, event.payload ?? {});
           }

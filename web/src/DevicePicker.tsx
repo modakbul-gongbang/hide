@@ -41,7 +41,7 @@ export function DevicePicker({ actions }: { actions: Actions }) {
 
   const label = selected?.label ?? "No device";
   return (
-    <div className="shrink-0 border-t border-border px-md py-xs">
+    <div className="min-w-0">
       <DropdownMenu open={open} onOpenChange={setOpen}>
         <Hint label={`Choose device, ${label}`}>
           <DropdownMenuTrigger
