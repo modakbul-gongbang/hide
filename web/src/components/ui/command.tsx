@@ -1,6 +1,6 @@
 import { Command as CommandPrimitive } from "cmdk";
 import { SearchIcon } from "lucide-react";
-import type { ComponentProps } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { cn } from "../../lib/utils";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "./dialog";
 
@@ -35,7 +35,8 @@ function CommandDialog({
   );
 }
 
-function CommandInput({ className, ...props }: ComponentProps<typeof CommandPrimitive.Input>) {
+/** `trailing` sits at the end of the field's row, such as a palette's Esc keycap. */
+function CommandInput({ className, trailing, ...props }: ComponentProps<typeof CommandPrimitive.Input> & { trailing?: ReactNode }) {
   return (
     <div data-slot="command-input-wrapper" className="flex h-(--size-control-lg) items-center gap-sm border-b border-border px-md">
       <SearchIcon className="size-(--size-icon) shrink-0 text-muted-foreground" />
@@ -44,6 +45,7 @@ function CommandInput({ className, ...props }: ComponentProps<typeof CommandPrim
         className={cn("flex h-full w-full bg-transparent text-body text-foreground outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-(--opacity-disabled)", className)}
         {...props}
       />
+      {trailing}
     </div>
   );
 }

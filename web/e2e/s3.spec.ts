@@ -950,7 +950,7 @@ test("⌘P opens a file by name and ⌘K switches checkout", async ({ page }) =>
     const search = page.locator('[data-palette="Search"] [data-palette-input]');
     await expect(search).toBeVisible();
     await search.fill("fixture");
-    const projectRow = page.locator("[data-palette-list] button").filter({ hasText: "fixture" }).filter({ hasText: "checkout" }).first();
+    const projectRow = page.locator('[data-palette-group="checkouts"] [data-palette-row]').filter({ hasText: "fixture" }).first();
     await expect(projectRow).toBeVisible();
     await screenshot(page, "s3-palette-search");
     await projectRow.click();
