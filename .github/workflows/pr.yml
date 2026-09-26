@@ -184,6 +184,14 @@ jobs:
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
           pnpm --dir web exec playwright test
+      - name: Desktop app end-to-end
+        # The desktop app against the same isolated Herdr, starting its own
+        # hided through the hide CLI built above. Electron downloads its
+        # runtime on first launch.
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
+        run: pnpm --dir desktop e2e
       - name: Keep the e2e run's logs
         # The daemon, Herdr server and PTY input logs behind a failed flow
         # (with the screenshots the specs take, under the same directory),
@@ -198,11 +206,35 @@ jobs:
           path: |
             ${{ runner.temp }}/hide-e2e
             web/test-results
+            desktop/test-results
           if-no-files-found: ignore
+
+  desktop:
+    name: desktop app
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install desktop dependencies
+        run: pnpm --dir desktop install --frozen-lockfile
+      - name: Typecheck, lint, and unit test
+        # The menu is built from the web registry, so a registry change is
+        # typechecked and tested here too.
+        run: |
+          pnpm --dir desktop typecheck
+          pnpm --dir desktop lint
+          pnpm --dir desktop test
 
   verify:
     name: verify
-    needs: [rust, swift, scripts, web]
+    needs: [rust, swift, scripts, web, desktop]
     if: always()
     runs-on: ubuntu-latest
     steps:

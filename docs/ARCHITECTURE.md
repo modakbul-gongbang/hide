@@ -265,6 +265,8 @@ No HTTP request dispatches a core event.
 The first frame after a valid handshake is `daemon` (`version`, `pid`, `schema_version`, `host_name`, the state paths, the Herdr binary and socket, the idle policy); Settings > General reads it, and it never carries the token.
 The daemon owns the core's one Settings observation flag (`ai_settings.observing`, which runs the provider probe and the hook diagnosis): a client's `observing` is only that connection's demand (`hided/src/demand.rs`), the flag follows the first observer in and the last one out, and a connection that closes releases its demand, so a closed tab never leaves the probe running.
 `hide` owns lifecycle: instance lock, `~/.local/state/hide/hided.json` mode 0600, default-browser open with `#token=`, idle exit ten minutes after the last client, and `hide serve --keep-alive`.
+`hide connect` is `hide open` for a host that loads the shell itself: the same discovery (the live daemon the state file names, else one started and waited for), answered as one JSON line (`ok`, `url`, `port`, `pid`, or `reason` `start_failed`/`no_response` with `detail`) instead of a browser; `hide status --json` is the attach-only probe and never starts a daemon.
+The daemon leads its own process group, so an interrupt to the terminal job or host that ran the CLI never reaches it.
 It does not start a Herdr server.
 A release `hided` carries `web/dist` inside the binary (`hided/build.rs`); a debug build reads the directory from disk, so `pnpm build` shows up without a cargo rebuild.
 The core spawns `herdr terminal session control` for every pane attach and refuses without a binary, so `hided` resolves one from `HERDR_BIN_PATH`, the variable Herdr sets in every pane it manages, then from the first `herdr` on PATH; with neither it logs `herdr_bin.missing` and no pane terminal can attach.
@@ -572,6 +574,20 @@ A device's checkouts are found in the same catalog lookup as this machine's (`ca
 Each device authenticates as its own ssh config says: an absent `SSH_AUTH_SOCK` stops only a device whose config names no `IdentityFile` or `IdentityAgent`, and that device's row says so.
 A local path is judged inside its checkout after resolving the folder that holds it, so a shell that spells `/var` for `/private/var` still opens it, while the document keeps the path as the shell sent it.
 
+### The desktop host
+
+`desktop/` is an Electron app that shows the web shell hided serves in its own window; it holds no UI state and embeds no daemon.
+It meets the daemon only through the `hide` CLI: `hide connect` (reuse the daemon the state file names, or start one) and the attach-only `hide status --json`, so there is one discovery path and never a second daemon.
+The CLI is found in this order, every tried path logged: `HIDE_CLI_PATH` (an unusable value ends the search), this worktree's newest `target/{debug,release}/hide` when run unpackaged, then PATH, which for a packaged app launched from Finder is the login shell's PATH resolved once (`desktop/src/main/cli.ts`).
+The host is a small state machine (`desktop/src/main/host.ts`): `connecting` shows the host's own status page and becomes `attached` or `failed` with one of `cli_missing`, `start_failed` or `no_response` and a Retry; `attached` polls `/health` every two seconds without forking and becomes `lost` after two misses, leaving the shell's own disconnected state on screen; `lost` asks `hide status --json` every three seconds and loads the next daemon's URL when it names a different one.
+Only `connecting` may start a daemon; Retry, a second launch and a Dock click run it again from `failed` or `lost`.
+Quitting the app never stops hided, and the daemon leads its own process group, so an interrupt to the host that ran the CLI never reaches it.
+Every child the host starts goes through one helper with a cap of one in flight, a hard timeout and a kill on quit (`desktop/src/main/spawn.ts`), and every environment key it reads is in one registry (`desktop/src/main/env.ts`).
+The renderer is sandboxed with context isolation and no Node integration; the preload exposes only `window.hideHost` (`kind` and `onCommand`, the app-menu channel); navigation and new windows are held to the daemon origin and anything else goes to the default browser; only the daemon origin gets clipboard permissions.
+One instance runs per profile, closing the last window keeps the app, window bounds persist in `window-state.json` under the profile and fall back to a centered default when missing, unreadable or off every display, and the profile is `~/Library/Application Support/hide-desktop` (or `HIDE_DESKTOP_USER_DATA_DIR`), apart from the Swift app's folders.
+The host log is JSON lines in `<profile>/logs/desktop.log`, rotated once at 5 MB; it never carries the daemon URL, because the URL carries the token.
+Signing, notarization, auto-update, installers, a tray item, global shortcuts, Dock badges, the pet, the Browser pane, file drops and the usage display are not part of this host yet.
+
 ### The shortcut registry
 
 `web/src/shortcuts.ts` is one table, command to chord per host, matched on `KeyboardEvent.code` at the window capture phase ahead of xterm and Chrome's defaults and never during IME composition (`web/src/keyboard.ts`).
@@ -581,24 +597,29 @@ Settings > Shortcuts rebinds the seven browser pane commands (split right and do
 The overrides live in the core's `ui_state.browser_shortcut_bindings`, apart from the Swift host's `shortcut_bindings`, because the hosts reserve different keys; a save that omits the field keeps them.
 The window listener, the sheet and the editor all read one effective registry (`effectiveRegistry`), and a chord is refused in its row before it is saved when it has no ⌘, ⌥ or ⌃, is one Chrome or macOS keeps, or is another command's; a stored map that fails the same rules is dropped whole and the defaults run with a diagnostic.
 While a row records, the listener runs no command, and IME composition never records.
-The Electron column is empty until that host exists (TODO: fill it from `ShellMenuCommand.swift` and `PaneShortcutSettings.swift` when the Electron host lands).
+The Electron column is the Swift chord set (`ShellMenuCommand.swift`, `PaneShortcutSettings.swift`), with ⌘/ kept from the browser because Swift has none: the desktop app has no browser keeping chords, so the moved ones return to ⌘.
+Each surface reads the running host's column (`web/src/host.ts`: `window.hideHost` means the desktop app): the window listener, the ⌘/ sheet, which drops the "moved for Chrome" note there, and every hint that names a chord.
+The browser overrides in `browser_shortcut_bindings` apply on the browser host only; the desktop app runs its column as it stands, and its Settings > Shortcuts says so.
+The desktop app menu is built from the same column (`desktop/src/main/menu.ts`), and a click reaches the same `run` path as a chord through the bridge; a chord the listener answers calls `preventDefault` in the page.
+The design relies on Electron handing a key to the page first and to the menu only when the page leaves it unhandled, so one press runs one command; that order is an assumption, not a verified fact here.
+The e2e covers each path alone (a Playwright chord, a main-process menu click, one `create_tab` each), neither reaches NSMenu, and a native keystroke against the app has not been checked: if one press runs twice, the listener stops answering the chords the menu owns in Electron.
 
 | Command | Swift | Browser | Electron |
 | --- | --- | --- | --- |
-| New tab | ⌘T | ⌥T (moved: Chrome reserves ⌘T) | TODO |
-| Close tab | ⌘W | ⌥W (moved) | TODO |
-| Reopen closed tab | ⌘⇧T | ⌥⇧T (moved) | TODO |
-| New workspace | ⌘⇧N | ⌥⇧N (moved) | TODO |
-| Next / previous recent tab | ⌃Tab / ⌃⇧Tab | ⌥` / ⌥⇧` (moved) | TODO |
-| Next / previous recent project | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab | TODO |
-| Search, Open file, Toggle right panel | ⌘K, ⌘P, ⌘⇧B | same chords; ⌘K and ⌘P answered by the palettes | TODO |
-| Project home | ⌘⇧H | same chord; opens the front checkout's Project Overview | TODO |
-| Save file | ⌘S | ⌘S | TODO |
-| Toggle left sidebar, Toggle sidebar view, Toggle right panel, Find in pane, Keep open | ⌘B, ⌘E, ⌘⇧B, ⌘F, ⌘⇧K | same chords | TODO |
-| Split right / down | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D | TODO |
-| Zoom pane | ⌘⌥↩ | ⌘⌥↩ | TODO |
-| Close pane | ⌘⇧W | ⌥⇧W (moved: Chrome reserves ⌘⇧W) | TODO |
-| Larger / smaller / reset text | ⌘= / ⌘- / ⌘0 | same chords | TODO |
-| Move to Trash | ⌘⌫ (Explorer tree only) | not intercepted; a terminal gets ^U | TODO |
-| Settings | ⌘, | ⌥, (moved: Chrome keeps ⌘,) | TODO |
-| Keyboard shortcuts | - | ⌘/ | TODO |
+| New tab | ⌘T | ⌥T (moved: Chrome reserves ⌘T) | ⌘T |
+| Close tab | ⌘W | ⌥W (moved) | ⌘W |
+| Reopen closed tab | ⌘⇧T | ⌥⇧T (moved) | ⌘⇧T |
+| New workspace | ⌘⇧N | ⌥⇧N (moved) | ⌘⇧N |
+| Next / previous recent tab | ⌃Tab / ⌃⇧Tab | ⌥` / ⌥⇧` (moved) | ⌃Tab / ⌃⇧Tab, committed on releasing ⌃ |
+| Next / previous recent project | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab | ⌥Tab / ⌥⇧Tab |
+| Search, Open file, Toggle right panel | ⌘K, ⌘P, ⌘⇧B | same chords; ⌘K and ⌘P answered by the palettes | same chords |
+| Project home | ⌘⇧H | same chord; opens the front checkout's Project Overview | same chord |
+| Save file | ⌘S | ⌘S | ⌘S |
+| Toggle left sidebar, Toggle sidebar view, Toggle right panel, Find in pane, Keep open | ⌘B, ⌘E, ⌘⇧B, ⌘F, ⌘⇧K | same chords | same chords |
+| Split right / down | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D |
+| Zoom pane | ⌘⌥↩ | ⌘⌥↩ | ⌘⌥↩ |
+| Close pane | ⌘⇧W | ⌥⇧W (moved: Chrome reserves ⌘⇧W) | ⌘⇧W |
+| Larger / smaller / reset text | ⌘= / ⌘- / ⌘0 | same chords | same chords |
+| Move to Trash | ⌘⌫ (Explorer tree only) | not intercepted; a terminal gets ^U | same as the browser |
+| Settings | ⌘, | ⌥, (moved: Chrome keeps ⌘,) | ⌘, (in the app menu) |
+| Keyboard shortcuts | - | ⌘/ | ⌘/ |

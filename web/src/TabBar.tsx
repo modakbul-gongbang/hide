@@ -8,6 +8,8 @@ import { Hint } from "./components/ui/tooltip";
 import type { AgentRow, AsyncOperation, Checkout, StripTab } from "./snapshot";
 import { useShellStore } from "./store";
 import { agentEntries, tabAgent, tabIdentity } from "./workspace";
+import { hostKind } from "./host";
+import { displayCommand } from "./shortcuts";
 
 // The Agent area's tab strip (PRD S6 D-04, B17): the checkout's Herdr tabs,
 // in the order the core put them in its strip; the web joins no lists of its
@@ -106,7 +108,7 @@ export function AgentTabBar({ checkout, activeTabId, agents, device = false, act
           </EntryContextMenu>
         );
       })}
-      <Hint label="New tab" shortcut="⌥T">
+      <Hint label="New tab" shortcut={displayCommand("new_tab", hostKind())}>
         <Button
           variant="ghost"
           className="h-full w-(--size-tab-overflow-control) shrink-0 rounded-none px-none hover:text-foreground focus-visible:bg-accent"

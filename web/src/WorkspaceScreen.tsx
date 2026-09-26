@@ -20,6 +20,8 @@ import { useUiStore, type WorkingRegion } from "./ui";
 import { ViewAreas } from "./ViewAreas";
 import { narrowWorkspace, shownTools } from "./viewLayout";
 import { LAYOUTS, agentEntries, agentWidth, drawnMode, layoutLabel, shareAt, workspaceViewOf, type ViewMode } from "./workspace";
+import { hostKind } from "./host";
+import { displayCommand } from "./shortcuts";
 
 // A Workspace (PRD S6 D-01..D-05, B4-B11; S7 B12, B13): one checkout's Agent
 // area (its Herdr tabs and their panes) and View areas (its files and diffs),
@@ -384,7 +386,7 @@ function LocalAgentArea({ checkout, actions }: { checkout: Checkout; actions: Ac
       ) : (
         <AreaEmpty state="no-agent-tab" text="No agent tab is open in this Workspace.">
           <Button variant="secondary" onClick={() => actions.createTab()} data-empty-new-tab="true">
-            New tab <span className="text-muted-foreground">⌥T</span>
+            New tab <span className="text-muted-foreground">{displayCommand("new_tab", hostKind())}</span>
           </Button>
         </AreaEmpty>
       )}

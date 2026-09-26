@@ -11,9 +11,16 @@ use crate::state_file::{self, DaemonState};
 #[derive(Debug, Eq, PartialEq)]
 pub enum CommandKind {
     Open,
-    Status,
+    /// `hide connect`: `open` without the browser, answered as one JSON line
+    /// for a host that loads the shell itself (the desktop app).
+    Connect,
+    Status {
+        json: bool,
+    },
     Stop,
-    Serve { keep_alive: bool },
+    Serve {
+        keep_alive: bool,
+    },
     Dev,
 }
 
@@ -21,7 +28,11 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
     let mut iter = args.iter().skip(1);
     match iter.next().map(String::as_str) {
         None | Some("open") => Ok(CommandKind::Open),
-        Some("status") => Ok(CommandKind::Status),
+        Some("connect") => Ok(CommandKind::Connect),
+        Some("status") => {
+            let json = iter.any(|arg| arg == "--json");
+            Ok(CommandKind::Status { json })
+        }
         Some("stop") => Ok(CommandKind::Stop),
         Some("serve") => {
             let keep_alive = iter.any(|arg| arg == "--keep-alive");
@@ -42,21 +53,95 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
     })?;
     match kind {
         CommandKind::Open => open(&env),
-        CommandKind::Status => status(&env),
+        CommandKind::Connect => connect_json(&env),
+        CommandKind::Status { json: true } => status_json(&env),
+        CommandKind::Status { json: false } => status(&env),
         CommandKind::Stop => stop(&env),
         CommandKind::Serve { keep_alive } => serve(env, keep_alive),
         CommandKind::Dev => dev(env),
     }
 }
 
-fn open(env: &Env) -> Result<(), String> {
-    if let Some(state) = healthy_state(env) {
-        return open_browser(&state);
+/// Why no daemon could be reached or started, in the categories a host shows.
+#[derive(Debug, Eq, PartialEq)]
+pub enum ConnectError {
+    /// The coexistence check refused, or the daemon process could not start.
+    StartFailed(String),
+    /// A daemon was started but never answered its health check.
+    NoResponse(String),
+}
+
+impl ConnectError {
+    fn reason(&self) -> &'static str {
+        match self {
+            ConnectError::StartFailed(_) => "start_failed",
+            ConnectError::NoResponse(_) => "no_response",
+        }
     }
-    confirm_coexist(env)?;
-    spawn_daemon(env, false)?;
-    let state = wait_healthy(env)?;
+
+    fn detail(&self) -> &str {
+        match self {
+            ConnectError::StartFailed(detail) | ConnectError::NoResponse(detail) => detail,
+        }
+    }
+}
+
+/// The one discovery path: the live daemon the state file names, or a new
+/// one started and waited for. `open` and `connect` both run it, so a host
+/// that loads the shell itself can never start a second daemon.
+fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
+    if let Some(state) = healthy_state(env) {
+        return Ok(state);
+    }
+    confirm_coexist(env).map_err(ConnectError::StartFailed)?;
+    spawn_daemon(env, false).map_err(ConnectError::StartFailed)?;
+    wait_healthy(env).map_err(ConnectError::NoResponse)
+}
+
+fn open(env: &Env) -> Result<(), String> {
+    let state = connect(env).map_err(|error| error.detail().to_owned())?;
     open_browser(&state)
+}
+
+fn connect_json(env: &Env) -> Result<(), String> {
+    let (line, result) = match connect(env) {
+        Ok(state) => (attached_json(&state, "ok"), Ok(())),
+        Err(error) => (
+            serde_json::json!({
+                "ok": false,
+                "reason": error.reason(),
+                "detail": error.detail(),
+            }),
+            Err(format!("{}: {}", error.reason(), error.detail())),
+        ),
+    };
+    println!("{line}");
+    result
+}
+
+/// The attach-only probe: never starts a daemon.
+fn status_json(env: &Env) -> Result<(), String> {
+    let line = match healthy_state(env) {
+        Some(state) => attached_json(&state, "running"),
+        None => serde_json::json!({ "running": false }),
+    };
+    println!("{line}");
+    Ok(())
+}
+
+/// A live daemon as a host loads it. The URL carries the token in its hash,
+/// exactly as `open` hands it to a browser.
+fn attached_json(state: &DaemonState, flag: &str) -> serde_json::Value {
+    serde_json::json!({
+        flag: true,
+        "url": daemon_url(state),
+        "port": state.port,
+        "pid": state.pid,
+    })
+}
+
+fn daemon_url(state: &DaemonState) -> String {
+    format!("http://127.0.0.1:{}/#token={}", state.port, state.token)
 }
 
 fn status(env: &Env) -> Result<(), String> {
@@ -129,14 +214,22 @@ fn dev(mut env: Env) -> Result<(), String> {
     serve(env, true)
 }
 
-fn spawn_daemon(env: &Env, keep_alive: bool) -> Result<(), String> {
-    let exe = std::env::current_exe().map_err(|error| error.to_string())?;
-    let hided = exe
-        .parent()
+/// The `hided` beside this CLI's real file. A CLI reached through a symlink
+/// (a desktop host's `HIDE_CLI_PATH`, a PATH entry) resolves to the build it
+/// names; there is no other daemon to run, and running this CLI in its place
+/// would start one more CLI per attempt, each starting the next.
+fn daemon_binary() -> Result<std::path::PathBuf, String> {
+    let exe = std::env::current_exe()
+        .and_then(|path| path.canonicalize())
+        .map_err(|error| error.to_string())?;
+    exe.parent()
         .map(|dir| dir.join("hided"))
-        .filter(|path| path.exists())
-        .unwrap_or(exe);
-    let mut command = Command::new(hided);
+        .filter(|path| path.is_file())
+        .ok_or_else(|| format!("no hided beside {}", exe.display()))
+}
+
+fn spawn_daemon(env: &Env, keep_alive: bool) -> Result<(), String> {
+    let mut command = Command::new(daemon_binary()?);
     command.env("HIDE_STATE_DIR", &env.state_dir);
     if keep_alive {
         command.env("HIDE_KEEP_ALIVE", "1");
@@ -187,7 +280,7 @@ fn health_json(port: u16) -> Result<serde_json::Value, String> {
 }
 
 fn open_browser(state: &DaemonState) -> Result<(), String> {
-    let url = format!("http://127.0.0.1:{}/#token={}", state.port, state.token);
+    let url = daemon_url(state);
     Command::new("/usr/bin/open")
         .arg(&url)
         .status()
@@ -245,6 +338,43 @@ mod tests {
         assert_eq!(
             parse_args(&args).unwrap(),
             CommandKind::Serve { keep_alive: true }
+        );
+    }
+
+    #[test]
+    fn parse_connect_and_status_json() {
+        let parse = |line: &[&str]| {
+            let args = line.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+            parse_args(&args).unwrap()
+        };
+        assert_eq!(parse(&["hide", "connect"]), CommandKind::Connect);
+        assert_eq!(
+            parse(&["hide", "status", "--json"]),
+            CommandKind::Status { json: true }
+        );
+        assert_eq!(
+            parse(&["hide", "status"]),
+            CommandKind::Status { json: false }
+        );
+    }
+
+    #[test]
+    fn attached_json_carries_the_token_url() {
+        let state = DaemonState {
+            pid: 42,
+            port: 7001,
+            token: "abc".into(),
+            socket: None,
+            started_at: "now".into(),
+        };
+        assert_eq!(
+            attached_json(&state, "ok"),
+            serde_json::json!({
+                "ok": true,
+                "url": "http://127.0.0.1:7001/#token=abc",
+                "port": 7001,
+                "pid": 42,
+            })
         );
     }
 

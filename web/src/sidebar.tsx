@@ -10,7 +10,8 @@ import { directChildren, sectionCount, sectionTree } from "./agentRow";
 import { AgentRowItem } from "./components/agent-row";
 import { agentSections, allAgents, liveDescendantCounts, type ListedAgent } from "./navigation";
 import { activeCheckouts, activityLabel, inactiveCheckouts, projectRows, pullRequestBadge, type ProjectRow } from "./projects";
-import { displayBrowser } from "./shortcuts";
+import { hostKind } from "./host";
+import { displayCommand } from "./shortcuts";
 import { contextAgents, contextWorkspaces, deviceCatalogLine, remoteContext, remoteView } from "./remote";
 import { checkoutMenu, projectMenu, remotePurposeProblem, type MenuItem } from "./workspaceManage";
 import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
@@ -52,7 +53,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
         ))}
         <span className="flex-1" />
         <span className="text-muted-foreground">⌘E</span>
-        <Hint label={`Settings (${displayBrowser("settings")})`}>
+        <Hint label={`Settings (${displayCommand("settings", hostKind())})`}>
           <Button variant="ghost" size="icon-sm" data-open-settings="true" onClick={() => actions.openSettings()}>
             <SettingsIcon />
           </Button>
@@ -69,7 +70,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
         className="shrink-0 border-t border-border px-md py-sm text-left text-caption text-subtle-foreground hover:text-foreground"
         onClick={() => actions.openNewWorkspace()}
       >
-        + 새 워크스페이스 <span className="text-muted-foreground">⌥⇧N</span>
+        + 새 워크스페이스 <span className="text-muted-foreground">{displayCommand("new_workspace", hostKind())}</span>
       </button>
       <DevicePicker actions={actions} />
     </nav>

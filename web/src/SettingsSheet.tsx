@@ -74,6 +74,7 @@ import type { AgentHookRuntime, Device } from "./snapshot";
 import { latestDraft } from "./editor/draft";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
+import { hostKind } from "./host";
 
 /** The core's newest error, if it arrived after `since` and is one of `kinds`' prefixes. */
 function useErrorSince(since: number | null, prefixes: readonly string[]): string | null {
@@ -916,7 +917,11 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
     <>
       <Group
         title="Pane chords"
-        note="These chords are this browser host's own; the macOS app keeps its own set. A chord needs ⌘, ⌥ or ⌃, and one Chrome keeps is refused before it is saved."
+        note={
+          hostKind() === "electron"
+            ? "These chords apply when hide runs in a browser; this desktop app uses the chords its menus show."
+            : "These chords are this browser host's own; the macOS app keeps its own set. A chord needs ⌘, ⌥ or ⌃, and one Chrome keeps is refused before it is saved."
+        }
       >
         {EDITABLE_PANE_COMMANDS.map((id) => (
           <ShortcutRow

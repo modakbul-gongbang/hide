@@ -4,11 +4,17 @@
 // before xterm's textarea sees it and before Chrome's default (bookmark,
 // find, zoom) runs (PRD S2 B12). A keydown during IME composition is never a
 // chord: Korean input composes through the same keys.
+//
+// In the desktop app the same table runs its Electron column, and the app
+// menu's commands arrive through the host bridge into the same `run`: a
+// chord the listener answers is consumed here, so the menu's own
+// accelerator for it never fires as well.
 
 import type { Actions } from "./actions";
+import { hostBridge, hostKind } from "./host";
 import { recentCheckoutOrder, recentTabOrder } from "./recent";
 import { contextWorkspaces, remoteContext, remoteView } from "./remote";
-import { matchBrowser, resolvedRegistry, type CommandId } from "./shortcuts";
+import { hostRegistry, matchHost, REGISTRY, type CommandId } from "./shortcuts";
 import { editorFor, focusedCheckout, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type Cycle } from "./ui";
@@ -52,8 +58,12 @@ function advance(cycle: Cycle, backward: boolean): Cycle {
 
 export function installKeyboard(actions: Actions): () => void {
   const ui = () => useUiStore.getState();
+  const host = hostKind();
+  // The modifier whose release commits the running cycle: ⌥ for the ⌥ family,
+  // ⌃ for the desktop app's ⌃Tab.
+  let cycleRelease = "Alt";
 
-  const run = (id: CommandId, event: KeyboardEvent) => {
+  const run = (id: CommandId, event: KeyboardEvent | null) => {
     switch (id) {
       case "new_tab":
         return actions.createTab();
@@ -67,7 +77,9 @@ export function installKeyboard(actions: Actions): () => void {
       case "previous_recent_tab":
       case "recent_project":
       case "previous_recent_project": {
+        if (!event) return;
         const backward = id.startsWith("previous");
+        cycleRelease = event.ctrlKey ? "Control" : "Alt";
         const kind = id.endsWith("tab") ? "tabs" : "projects";
         const current = ui().cycle;
         const cycle = current?.kind === kind ? current : kind === "tabs" ? tabCycle(useShellStore.getState().rest) : projectCycle(useShellStore.getState().rest);
@@ -125,7 +137,7 @@ export function installKeyboard(actions: Actions): () => void {
         return;
       default: {
         const never: never = id;
-        useShellStore.getState().noteDiagnostic(`shortcut without an action: ${String(never)} (${event.code})`);
+        useShellStore.getState().noteDiagnostic(`shortcut without an action: ${String(never)} (${event?.code ?? "menu"})`);
       }
     }
   };
@@ -173,17 +185,18 @@ export function installKeyboard(actions: Actions): () => void {
       }
       return;
     }
-    const command = matchBrowser(event, resolvedRegistry(useShellStore.getState().rest?.ui_state?.browser_shortcut_bindings).registry);
+    const { registry } = hostRegistry(useShellStore.getState().rest?.ui_state?.browser_shortcut_bindings, host);
+    const command = matchHost(event, registry, host);
     if (!command) return;
     event.preventDefault();
     event.stopPropagation();
     run(command.id, event);
   };
 
-  // Releasing ⌥ commits the cycle: one focus event for the row the operator
-  // stopped on, none when they stopped where they started.
+  // Releasing the held modifier commits the cycle: one focus event for the
+  // row the operator stopped on, none when they stopped where they started.
   const onKeyUp = (event: KeyboardEvent) => {
-    if (event.key !== "Alt") return;
+    if (event.key !== cycleRelease) return;
     const cycle = ui().cycle;
     if (!cycle) return;
     ui().setCycle(null);
@@ -199,10 +212,19 @@ export function installKeyboard(actions: Actions): () => void {
     if (ui().cycle) ui().setCycle(null);
   };
 
+  // A menu item names a command id; one this registry does not know is a
+  // host/shell version mismatch, recorded rather than guessed at.
+  const unsubscribeMenu = hostBridge()?.onCommand((id) => {
+    const command = REGISTRY.find((row) => row.id === id);
+    if (command) run(command.id, null);
+    else useShellStore.getState().noteDiagnostic(`menu command the shell does not know: ${id}`);
+  });
+
   window.addEventListener("keydown", onKeyDown, true);
   window.addEventListener("keyup", onKeyUp, true);
   window.addEventListener("blur", onBlur);
   return () => {
+    unsubscribeMenu?.();
     window.removeEventListener("keydown", onKeyDown, true);
     window.removeEventListener("keyup", onKeyUp, true);
     window.removeEventListener("blur", onBlur);

@@ -6,6 +6,8 @@ import { AGENT_GROUPS, mainSections, type DeviceAvailability, type DeviceSection
 import type { Device } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
+import { hostKind } from "./host";
+import { displayCommand } from "./shortcuts";
 
 // Main (PRD S6 D-02, B1-B4, B21). Main lists every registered Project by
 // device; a Project opens its Overview (`ProjectOverview.tsx`), which also
@@ -23,7 +25,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
       <header className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border bg-sidebar px-md">
         <h1 className="flex-1 text-subhead font-semibold text-foreground">Projects</h1>
         <Button variant="ghost" onClick={() => actions.openNewWorkspace()} data-main-add-project="true">
-          Add project <span className="text-muted-foreground">⌥⇧N</span>
+          Add project <span className="text-muted-foreground">{displayCommand("new_workspace", hostKind())}</span>
         </Button>
       </header>
       <OpeningStatus actions={actions} />

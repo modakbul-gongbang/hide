@@ -1,0 +1,7 @@
+{
+  // The smoke imports the web e2e fixtures, which the web package does not
+  // typecheck under noUncheckedIndexedAccess; everything else is as src.
+  "extends": "../tsconfig.json",
+  "compilerOptions": { "noUncheckedIndexedAccess": false },
+  "include": [".", "../playwright.config.ts"]
+}
