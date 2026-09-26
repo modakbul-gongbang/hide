@@ -40,7 +40,7 @@ fn paths(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
 fn write_swift(path: &std::path::Path, bindings: serde_json::Value) {
     let store = serde_json::json!({
         "schema_version": 1,
-        "expanded_paths": ["/Users/operator/project"],
+        "expanded_paths": ["/tmp/project"],
         "selected_path": null,
         "selected_pane_id": null,
         "workspace_registrations": [],
