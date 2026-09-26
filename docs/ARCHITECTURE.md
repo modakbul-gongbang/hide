@@ -478,6 +478,7 @@ A device's `file_bytes` names the checkout `root` beside the path: hided admits 
 A helper's range is accepted only as the range asked for (the same offset and file size, never longer, and shorter only where the read ends), so a helper cannot stretch one read into millions of round trips or end it early as if the file were shorter.
 One client runs at most two device reads at once: a third ends the oldest, which is answered `file_bytes_error` with reason `superseded` and its own request id, so whatever waited on it settles (D-15).
 Every frame and reason code lives in `contracts/hided-ws.schema.json`.
+A snapshot section is declared there once the web reads it through the contract (`providerUsage`, `uiStateUsageHints`); the type generator emits only what a frame reaches, so `web/scripts/gen-types.mjs` names each such `$def` to emit beside the frames.
 
 ### The Explorer, editor and viewers
 
