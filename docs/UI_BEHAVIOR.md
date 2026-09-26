@@ -189,7 +189,7 @@ Reintroducing a shared attachment shelf requires a supported provider contract f
 ## Project Home
 
 Native owner: `HideTheme.Home` and the SwiftUI Project Home views.
-Web owner: `web/src/ProjectOverview.tsx` (the Project Overview screen), `web/src/MainScreen.tsx` (All projects), `web/src/TaskBoards.tsx` (the Tasks and Agents boards both scopes draw), `web/src/projectBoard.ts` (the board rules); a card's agent row is the Agents list's `web/src/components/agent-row.tsx`.
+Web owner: `web/src/ProjectOverview.tsx` (the Project Overview screen), `web/src/MainScreen.tsx` (All projects), `web/src/TaskBoards.tsx` (the Tasks and Agents boards both scopes draw), `web/src/WaitingBand.tsx` (the waiting band), `web/src/projectBoard.ts` (the board rules); a card's agent row is the Agents list's `web/src/components/agent-row.tsx`.
 The web boards follow PRD task-agents-views (`agents/prd/task-agents-views/prd.md`); the frozen Swift Project Home keeps its four Git columns and no longer shares the web's rules.
 
 Project Home uses the shared tab choice, badges, agent identity marks, settings field, icon buttons, and command tooltip.
@@ -210,6 +210,10 @@ Needs You uses the warning halo and an error uses danger, and raises the card to
 When the source cannot be read the board keeps the last tasks it read and each task card carries a small warning mark whose tooltip says the read failed and how old the tasks are; there is no banner, and the reason is in the diagnostic log.
 A column past 40 cards shows the first 40 and `스크롤 · N개 더 보기`, and a tall column scrolls inside itself; the board scrolls horizontally below its column minimum, and titles wrap.
 With no task source and no agent, Tasks is one sentence and `GitHub 이슈 연결`, whose popover says, in `gh`'s own words, why no source is connected.
+
+While an agent of the scope waits on the operator, a band between the header's facts line and the tabs lists each one, and there is no band when none does.
+It lists the agents asking first (an error before a question or approval), then the finished ones not yet looked at, each in the core's order; a delegated agent is never one of them, since its parent is the one that waits.
+A row is the agent's mark, where it works in mono (`#id · branch`, with the project first on All projects), its request in one line, its age and `>`, and the whole row opens that agent's pane as one event; the answer is given in the pane, and the band has no label, hint or separate open button.
 
 `Board | Dependencies` on the right of the tab row is a mode of the Tasks view, not a tab; like the view it belongs to the page, so another scope keeps it.
 Dependencies draws the Board's task cards left to right with a quiet stage word at each card's top right: a task sits one column right of the longest chain of tasks it waits on, and an arrow runs from the blocker's right middle to the blocked card's left middle.

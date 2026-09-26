@@ -397,7 +397,7 @@ function factsLine(id, facts) {
 
 // A project's Overview header (ProjectOverview.tsx): the path back and New
 // agent, the facts line, then the view tabs, the chosen one `view`.
-function overviewHeader(tokens, id, suffix, {project, facts, view, width, mode}) {
+function overviewHeader(tokens, id, suffix, {project, facts, view, width, mode, waiting = []}) {
   return frame(`${id}-${suffix}`, 'Header', {layout: 'vertical', gap: '$--spacing-sm', width}, [
     frame(`${id}-title-${suffix}`, 'Title row', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'center', width}, [
       frame(`${id}-crumb-${suffix}`, 'Path', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
@@ -409,9 +409,26 @@ function overviewHeader(tokens, id, suffix, {project, facts, view, width, mode})
       screenButton(`${id}-new-${suffix}`, 'New agent', {height: num(tokens, '--size-control-sm'), icon: 'plus'}),
     ]),
     factsLine(`${id}-facts-${suffix}`, facts),
+    ...waitingBand(tokens, `${id}-band-${suffix}`, waiting, width),
     frame(`${id}-rule-${suffix}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
     viewRow(`${id}-row-${suffix}`, screenTabs(`${id}-tabs-${suffix}`, ['Tasks', 'Agents', 'Sessions'], ['tasks', 'agents', 'sessions'].indexOf(view)), view === 'tasks' ? mode ?? 'board' : null, width),
   ]);
+}
+
+// The waiting band (WaitingBand.tsx, PRD task-agents-views D-11): one row per
+// agent waiting on the operator - its mark, where it works in mono, its
+// request, its age and a chevron - drawn only while one waits.
+function waitingBand(tokens, id, rows, width) {
+  if (rows.length === 0) return [];
+  return [frame(id, 'Waiting band', {layout: 'vertical', gap: '$--spacing-xxs', width}, rows.map((row, index) =>
+    frame(`${id}-${index}`, 'Waiting row', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: ['$--spacing-xs', '$--spacing-md'], width, fill: '$--card', cornerRadius: '$--radius-md'}, [
+      screenStatusMark(tokens, `${id}-${index}-mark`, row.mark, row.markFill),
+      text(`${id}-${index}-where`, row.where, {size: '$--text-caption', fill: '$--subtle-foreground', mono: true}),
+      text(`${id}-${index}-line`, row.line, {fill: '$--foreground'}),
+      frame(`${id}-${index}-gap`, 'Spacer', {width: 'fill_container', height: 1}, []),
+      text(`${id}-${index}-age`, row.age, {size: '$--text-micro', fill: '$--muted-foreground', mono: true}),
+      icon(`${id}-${index}-g`, 'chevron-right', {size: 12, fill: '$--muted-foreground'}),
+    ])))];
 }
 
 // The tab row: the view tabs, and on the Tasks view its Board | Dependencies
@@ -422,6 +439,10 @@ function viewRow(id, tabs, mode, width) {
     ...(mode ? [screenToggleGroup(`${id}-mode`, ['Board', 'Dependencies'], mode === 'board' ? 0 : 1)] : []),
   ]);
 }
+
+const OV_WAITING = [
+  {mark: '?', markFill: '$--warning', where: '#170 · feat/waiting-band', line: 'WebContentsView 크기를 창 기준으로 할까요?', age: '20m'},
+];
 
 const HERDR_FACTS = [
   {glyph: 'folder-git-2', label: '5 worktrees'},
@@ -455,6 +476,7 @@ function buildMain(tokens) {
           {glyph: 'git-pull-request', label: '5 open PRs'},
           {glyph: 'git-merge', label: '7 merged', fill: '$--pr-merged'},
         ]),
+        ...waitingBand(tokens, `main-band-${suffix}`, [{mark: '?', markFill: '$--warning', where: 'herdr-ide · #170 · feat/waiting-band', line: 'WebContentsView 크기를 창 기준으로 할까요?', age: '20m'}], width),
         frame(`main-rule-${suffix}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
         viewRow(`main-row-${suffix}`, screenTabs(`main-tabs-${suffix}`, ['Tasks', 'Agents', 'Projects'], 0), 'board', width),
       ]),
@@ -506,7 +528,7 @@ function buildMain(tokens) {
     ]);
     return [sidebar, frame(`main-views-${suffix}`, 'Views', {layout: 'vertical', gap: '$--spacing-xl'}, [board, dependencies])];
   }
-  return screenSheet('screen-main', 'Screen / Main', 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx, TaskBoards.tsx: All projects, the scope the sidebar’s top row opens - its title with Add project, the facts line (the project count, and the open-PR and merged totals only when every project can give its part), the Tasks · Agents · Projects tabs, every project’s tasks on one board, and a project with agents and no task source gathered under it; its Dependencies mode names each card’s project above its title and draws a blocker in another project as an arrow. The Projects view is the project list grouped by device.', s => build(s), s => build(s));
+  return screenSheet('screen-main', 'Screen / Main', 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx, TaskBoards.tsx, WaitingBand.tsx: All projects, the scope the sidebar’s top row opens - its title with Add project, the facts line (the project count, and the open-PR and merged totals only when every project can give its part), the waiting band while an agent waits, the Tasks · Agents · Projects tabs, every project’s tasks on one board, and a project with agents and no task source gathered under it; its Dependencies mode names each card’s project above its title and draws a blocker in another project as an arrow. The Projects view is the project list grouped by device.', s => build(s), s => build(s));
 }
 
 // -- Screen / Project Overview -------------------------------------------------
@@ -627,7 +649,7 @@ function buildProjectOverview(tokens) {
   const pr = (number, fill = '$--pr-open') => ({label: `PR #${number}`, glyph: 'git-pull-request', fill});
   function build(suffix) {
     const tasks = frame(`ov-tasks-${suffix}`, 'Tasks', {layout: 'vertical', gap: '$--spacing-lg', width: 1560}, [
-      overviewHeader(tokens, 'ov-head', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'tasks', width: 1560}),
+      overviewHeader(tokens, 'ov-head', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'tasks', width: 1560, waiting: OV_WAITING}),
       frame(`ov-cols-${suffix}`, 'Columns', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
         stageColumn(`ov-backlog-${suffix}`, '백로그', '2', [
           taskCard(`ov-b1-${suffix}`, {taskId: '#172', title: 'Graph 뷰', locked: '#171'}),
@@ -648,7 +670,7 @@ function buildProjectOverview(tokens) {
       ]),
     ]);
     const dependencies = frame(`ov-deps-${suffix}`, 'Dependencies', {layout: 'vertical', gap: '$--spacing-lg', width: 1560}, [
-      overviewHeader(tokens, 'ov-dhead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'tasks', mode: 'dependencies', width: 1560}),
+      overviewHeader(tokens, 'ov-dhead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'tasks', mode: 'dependencies', width: 1560, waiting: OV_WAITING}),
       legend(`ov-dlegend-${suffix}`),
       chain(`ov-dchain-${suffix}`, [
         taskCard(`ov-d1-${suffix}`, {taskId: '#170', title: '기다리는 것 띠', word: '진행 중', halo: true, facts: facts(4), rows: [{...WAITING, title: 'Implementor'}, {...SEEN, title: 'Observer'}]}),
@@ -664,7 +686,7 @@ function buildProjectOverview(tokens) {
       ]),
     ]);
     const agents = frame(`ov-agents-${suffix}`, 'Agents', {layout: 'vertical', gap: '$--spacing-lg', width: 1000}, [
-      overviewHeader(tokens, 'ov-ahead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'agents', width: 1000}),
+      overviewHeader(tokens, 'ov-ahead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'agents', width: 1000, waiting: OV_WAITING}),
       frame(`ov-acols-${suffix}`, 'Columns', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
         stageColumn(`ov-active-${suffix}`, '진행 중', '3', [
           agentCard(`ov-a1-${suffix}`, {...WAITING, title: 'Implementor', time: '3m', where: 'feat/waiting-band', task: '#170', halo: true}),
@@ -681,7 +703,7 @@ function buildProjectOverview(tokens) {
     ]);
     return [frame(`ovw-${suffix}`, 'Overview', {layout: 'vertical', gap: '$--spacing-xl'}, [tasks, dependencies, agents])];
   }
-  return screenSheet('screen-project-overview', 'Screen / Project Overview', 'web/src/ProjectOverview.tsx, TaskBoards.tsx, projectBoard.ts: a project’s Tasks board in five columns (백로그 · 준비 · 진행 중 · 리뷰 · 완료, Done folded) with task cards - the id before the title, the lock line naming what it waits on, the delivery facts, at most two agents and +N, Start agent on a ready card only on hover, an untracked checkout titled by its branch with 태스크 없음, the pull request as the result - its Dependencies mode (the same cards with a stage word, blockers left of what they block, a blocked or done card dimmed, unrelated tasks below), and the Agents board with each agent’s checkout, task chip and device.', s => build(s), s => build(s));
+  return screenSheet('screen-project-overview', 'Screen / Project Overview', 'web/src/ProjectOverview.tsx, TaskBoards.tsx, WaitingBand.tsx, projectBoard.ts: a project’s waiting band under its header while an agent waits, its Tasks board in five columns (백로그 · 준비 · 진행 중 · 리뷰 · 완료, Done folded) with task cards - the id before the title, the lock line naming what it waits on, the delivery facts, at most two agents and +N, Start agent on a ready card only on hover, an untracked checkout titled by its branch with 태스크 없음, the pull request as the result - its Dependencies mode (the same cards with a stage word, blockers left of what they block, a blocked or done card dimmed, unrelated tasks below), and the Agents board with each agent’s checkout, task chip and device.', s => build(s), s => build(s));
 }
 
 // -- Screen / Workspace ---------------------------------------------------------

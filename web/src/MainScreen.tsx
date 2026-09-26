@@ -6,17 +6,19 @@ import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Hint } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
 import { AGENT_GROUPS, boardProjects, mainSections, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
-import { allProjectsStats, buildAgents, buildTasks, type AllProjectsStats, type TaskCard } from "./projectBoard";
+import { allProjectsStats, buildAgents, buildTasks, buildWaiting, type AllProjectsStats, type TaskCard } from "./projectBoard";
 import type { Device } from "./snapshot";
 import { useShellStore } from "./store";
 import { AgentsView, DependenciesView, TasksModeToggle, TasksView } from "./TaskBoards";
+import { WaitingBand } from "./WaitingBand";
 import { scopeView, useUiStore, type ProjectView } from "./ui";
 import { hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
 
 // All projects (PRD S6 D-02, B1-B4, B21; `screen.kind === "main"`), the scope
 // the sidebar's top row opens. Its facts line totals what every Project can
-// give; its views are every Project's tasks on one board, every agent, and
+// give, and the waiting band lists every agent that waits on the operator;
+// its views are every Project's tasks on one board, every agent, and
 // the registered Projects by device (PRD task-agents-views D-01, D-10); a
 // Project opens its Overview (`ProjectOverview.tsx`), which also uses the
 // facts line style and the opening and device notices below.
@@ -43,6 +45,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const projects = useMemo(() => boardProjects(rest, agents), [rest, agents]);
   const tasks = useMemo(() => buildTasks(projects, "all", Date.now()), [projects]);
   const agentBoard = useMemo(() => buildAgents(projects, "all"), [projects]);
+  const waiting = useMemo(() => buildWaiting(projects, "all"), [projects]);
   // Every local Git project's tasks are read once the boards are on screen.
   const localGit = useMemo(() => projects.filter(({ workspace }) => workspace.is_git && !workspace.remote_target_id).map(({ workspace }) => workspace.id).join("\n"), [projects]);
   const boards = view !== "projects";
@@ -67,6 +70,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
           </Button>
         </div>
         <Facts stats={stats} />
+        <WaitingBand rows={waiting} onOpen={actions.openAgent} />
       </header>
       <OpeningStatus actions={actions} />
       <div className="flex shrink-0 items-center justify-between gap-md px-lg py-sm">
