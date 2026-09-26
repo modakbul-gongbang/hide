@@ -1140,6 +1140,10 @@ pub struct Runtime {
     /// Bumped when visible Git rows must be measured again: section opening,
     /// explicit refresh, and opening the delete confirmation.
     disk_generation: u64,
+    /// The local Git project a web Overview named for measuring, by its
+    /// navigator path (`card_measure_disk` with a `workspace_id`). One for
+    /// every window of the daemon: naming another replaces it.
+    disk_project: Option<String>,
     cleanup: Option<live::cleanup::CleanupSnapshot>,
     next_cleanup_id: u64,
     /// Bumped when the worktree list itself is known to have changed through a
@@ -1396,6 +1400,7 @@ impl Runtime {
             github_generations: HashMap::new(),
             sidebar_github_projects: HashSet::new(),
             disk_generation: 0,
+            disk_project: None,
             cleanup: None,
             next_cleanup_id: 0,
             worktree_generation: 0,

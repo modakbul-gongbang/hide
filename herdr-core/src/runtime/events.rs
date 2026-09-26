@@ -566,6 +566,15 @@ pub(super) struct SessionsRefreshPayload {
     pub(super) device_id: Option<String>,
 }
 
+/// Without a `workspace_id` the measurement is the Swift right panel's, the
+/// focused checkout's project. With one it names that local Git project for
+/// a web Overview's facts line, whatever is focused, and measures it again.
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct CardMeasureDiskPayload {
+    #[serde(default)]
+    pub(super) workspace_id: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub(super) struct ArchiveOpenPayload {
     pub(super) kind: String,
@@ -929,7 +938,7 @@ pub(super) enum Event {
     CleanupConfirm(CleanupConfirmPayload),
     CleanupDismiss,
     CardRefresh,
-    CardMeasureDisk,
+    CardMeasureDisk(CardMeasureDiskPayload),
     ReconnectPane(FocusPanePayload),
     PetSetVisible(PetVisibilityPayload),
     PetToggleVisible,
@@ -1091,7 +1100,10 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "overview_open_section" => decode!(OverviewOpenSectionPayload, OverviewOpenSection),
         "agent_start_in_checkout" => decode!(AgentStartInCheckoutPayload, AgentStartInCheckout),
         "card_refresh" => Ok(Event::CardRefresh),
-        "card_measure_disk" => Ok(Event::CardMeasureDisk),
+        // The Swift shell sends `{}`; a payload that is absent reads the same.
+        "card_measure_disk" => serde_json::from_value::<Option<CardMeasureDiskPayload>>(payload)
+            .map(|payload| Event::CardMeasureDisk(payload.unwrap_or_default()))
+            .map_err(|_| invalid_payload(&kind)),
         "reconnect_pane" => decode!(FocusPanePayload, ReconnectPane),
         "pet_set_visible" => decode!(PetVisibilityPayload, PetSetVisible),
         "pet_toggle_visible" => Ok(Event::PetToggleVisible),
@@ -2701,13 +2713,16 @@ impl Runtime {
                 self.remeasure_disk();
                 true
             }
-            Event::CardMeasureDisk => {
-                // The delete confirmation states the size it is about to
-                // delete, so it is measured when the dialog opens rather than
-                // shown from whenever the card last looked.
-                self.remeasure_disk();
-                true
-            }
+            Event::CardMeasureDisk(payload) => match payload.workspace_id {
+                Some(workspace_id) => self.measure_project_disk(&workspace_id),
+                None => {
+                    // The delete confirmation states the size it is about to
+                    // delete, so it is measured when the dialog opens rather
+                    // than shown from whenever the card last looked.
+                    self.remeasure_disk();
+                    true
+                }
+            },
             Event::GitWorktreeOpen(payload) => self.open_git_worktree(payload.checkout_path),
             Event::GitWorktreeSetBase(payload) => {
                 self.set_git_worktree_base(payload.repository_root, payload.branch)

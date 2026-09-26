@@ -315,6 +315,7 @@ mod tests {
             pinned: false,
             inactive_checkouts: InactiveCheckoutGroupSnapshot::default(),
             removal: Default::default(),
+            disk: Default::default(),
         }
     }
 

@@ -396,6 +396,7 @@ pub(crate) fn apply_registrations(
             }],
             inactive_checkouts: Default::default(),
             removal: Default::default(),
+            disk: Default::default(),
         });
     }
     let running = session
