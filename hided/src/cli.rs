@@ -22,7 +22,15 @@ pub enum CommandKind {
         keep_alive: bool,
     },
     Dev,
+    /// `hide browser open <url-or-path> [--pane <id>]`: shows a page in a
+    /// View area of the running hide. Attach-only; it never starts a daemon.
+    BrowserOpen {
+        target: String,
+        pane: Option<String>,
+    },
 }
+
+const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--pane <pane-id>]";
 
 pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
     let mut iter = args.iter().skip(1);
@@ -39,8 +47,28 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
             Ok(CommandKind::Serve { keep_alive })
         }
         Some("dev") => Ok(CommandKind::Dev),
+        Some("browser") => parse_browser(iter),
         Some(other) => Err(format!("unknown command: {other}")),
     }
+}
+
+fn parse_browser<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandKind, String> {
+    if iter.next().map(String::as_str) != Some("open") {
+        return Err(BROWSER_USAGE.to_owned());
+    }
+    let (mut target, mut pane) = (None, None);
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--pane" => match iter.next() {
+                Some(id) if !id.is_empty() && pane.is_none() => pane = Some(id.clone()),
+                _ => return Err(BROWSER_USAGE.to_owned()),
+            },
+            _ if target.is_none() => target = Some(arg.clone()),
+            _ => return Err(BROWSER_USAGE.to_owned()),
+        }
+    }
+    let target = target.ok_or_else(|| BROWSER_USAGE.to_owned())?;
+    Ok(CommandKind::BrowserOpen { target, pane })
 }
 
 pub fn run(kind: CommandKind) -> Result<(), String> {
@@ -59,6 +87,31 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         CommandKind::Stop => stop(&env),
         CommandKind::Serve { keep_alive } => serve(env, keep_alive),
         CommandKind::Dev => dev(env),
+        CommandKind::BrowserOpen { target, pane } => browser_open(&env, &target, pane),
+    }
+}
+
+/// Prints the core's receipt, or the refusal, as one JSON line, and fails on
+/// anything but an opened page. A page has nowhere to show without a running
+/// hide, so this attaches to one and never starts it.
+fn browser_open(env: &Env, target: &str, pane: Option<String>) -> Result<(), String> {
+    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
+    let url = crate::browser_cli::address(target, &cwd)?;
+    let state = healthy_state(env).ok_or_else(|| "hide is not running".to_owned())?;
+    let pane = pane.or_else(|| env.pane_id.clone());
+    let mut id = [0_u8; 16];
+    getrandom::getrandom(&mut id).map_err(|error| error.to_string())?;
+    let payload = crate::browser_cli::payload(&url, pane.as_deref(), &hex::encode(id));
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| error.to_string())?;
+    let answer = runtime.block_on(crate::browser_cli::request(&state, payload))?;
+    println!("{answer}");
+    if answer["ok"] == true {
+        Ok(())
+    } else {
+        Err("the page did not open".to_owned())
     }
 }
 
@@ -376,6 +429,47 @@ mod tests {
                 "pid": 42,
             })
         );
+    }
+
+    #[test]
+    fn parse_browser_open() {
+        let parse = |line: &[&str]| {
+            let args = line.iter().map(|arg| arg.to_string()).collect::<Vec<_>>();
+            parse_args(&args)
+        };
+        assert_eq!(
+            parse(&["hide", "browser", "open", "index.html"]),
+            Ok(CommandKind::BrowserOpen {
+                target: "index.html".into(),
+                pane: None
+            })
+        );
+        assert_eq!(
+            parse(&[
+                "hide",
+                "browser",
+                "open",
+                "--pane",
+                "w1:p2",
+                "localhost:3000"
+            ]),
+            Ok(CommandKind::BrowserOpen {
+                target: "localhost:3000".into(),
+                pane: Some("w1:p2".into())
+            })
+        );
+        for bad in [
+            &["hide", "browser"][..],
+            &["hide", "browser", "close", "a"],
+            &["hide", "browser", "open"],
+            &["hide", "browser", "open", "a", "b"],
+            &["hide", "browser", "open", "a", "--pane"],
+            &[
+                "hide", "browser", "open", "a", "--pane", "p1", "--pane", "p2",
+            ],
+        ] {
+            assert_eq!(parse(bad), Err(BROWSER_USAGE.to_owned()), "{bad:?}");
+        }
     }
 
     #[test]

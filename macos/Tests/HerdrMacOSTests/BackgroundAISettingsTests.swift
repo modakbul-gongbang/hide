@@ -61,8 +61,6 @@ import Testing
     let payload = """
     {
         "herdr": {"state": "connected", "message": null},
-        "chromux": {"state": "idle", "profile": "hide", "current_url": null,
-                    "current_title": null, "message": null, "last_checked_at_unix_ms": null},
         "background_ai": {"provider": "codex", "chosen": false,
             "providers": [{"id": "codex", "label": "Codex", "state": "unread",
                            "headline": "Not checked yet", "message": null,
@@ -82,9 +80,7 @@ import Testing
 @Test func aStatusSnapshotWithoutTheSectionStillDecodes() throws {
     let payload = """
     {
-        "herdr": {"state": "connected", "message": null},
-        "chromux": {"state": "idle", "profile": "hide", "current_url": null,
-                    "current_title": null, "message": null, "last_checked_at_unix_ms": null}
+        "herdr": {"state": "connected", "message": null}
     }
     """
     let status = try JSONDecoder().decode(CoreStatusSnapshot.self, from: Data(payload.utf8))

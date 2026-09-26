@@ -21,6 +21,7 @@ fn test_env(keep_alive: bool) -> (tempfile::TempDir, Env) {
         idle_secs: 600,
         open_command: None,
         host_helper_root: None,
+        pane_id: None,
     };
     (dir, env)
 }

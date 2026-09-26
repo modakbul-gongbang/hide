@@ -17,8 +17,6 @@ import Testing
         var moved: [(URL, URL)] = []
         var trashPrompts: [WorkspaceOutlineTrashPrompt] = []
         var openedWithDefaultApp: [URL] = []
-        var openedInBrowserPane: [URL] = []
-        var browserPaneAvailability = BrowserPaneOpenAvailability.available
     }
 
     @MainActor struct Host {
@@ -112,9 +110,7 @@ import Testing
                 rename: { calls.renamed.append(($0, $1)) },
                 move: { calls.moved.append(($0, $1)) },
                 requestTrash: { calls.trashPrompts.append($0) },
-                openWithDefaultApp: { calls.openedWithDefaultApp.append($0) },
-                openInBrowserPane: { calls.openedInBrowserPane.append($0) },
-                browserPaneAvailability: { _ in calls.browserPaneAvailability }
+                openWithDefaultApp: { calls.openedWithDefaultApp.append($0) }
             )
         )
         let scroll = WorkspaceOutlineView.makeScrollView(coordinator: coordinator)
@@ -207,7 +203,7 @@ import Testing
         let rowMenu = try #require(host.menu(forRowNamed: "README.md"))
         #expect(
             rowMenu.items.map { $0.isSeparatorItem ? "-" : $0.title }
-                == ["New File", "New Folder", "-", "Open with Default App", "Open in Browser Pane", "-", "Reveal in Finder", "Copy Path", "Copy Relative Path", "-", "Rename", "-", "Delete"]
+                == ["New File", "New Folder", "-", "Open with Default App", "-", "Reveal in Finder", "Copy Path", "Copy Relative Path", "-", "Rename", "-", "Delete"]
         )
         let delete = try #require(rowMenu.items.last)
         #expect(delete.keyEquivalent == "\u{8}")
@@ -228,32 +224,14 @@ import Testing
         #expect(NSPasteboard.general.string(forType: .string) == host.root.appendingPathComponent("README.md").path)
     }
 
-    /// B5, B6, B8, B12, B14: the two open items act on the clicked file, and
-    /// Open in Browser Pane is disabled with the presentation's reason as
-    /// its tooltip for as long as that reason holds.
-    @Test func openItemsActOnTheFileAndBrowserPaneCarriesItsReasonWhenOff() async throws {
+    /// B5, B6, B8, B12, B14: the open item acts on the clicked file.
+    @Test func openWithDefaultAppActsOnTheClickedFile() async throws {
         let host = try await Self.makeHost()
         defer { host.tearDown() }
         let readme = host.root.appendingPathComponent("README.md")
 
         host.choose("Open with Default App", in: try #require(host.menu(forRowNamed: "README.md")))
         #expect(host.calls.openedWithDefaultApp == [readme])
-        host.choose("Open in Browser Pane", in: try #require(host.menu(forRowNamed: "README.md")))
-        #expect(host.calls.openedInBrowserPane == [readme])
-
-        host.calls.browserPaneAvailability = .unavailable("Node.js is not on PATH")
-        let menu = try #require(host.menu(forRowNamed: "README.md"))
-        #expect(!menu.autoenablesItems)
-        let item = try #require(menu.items.first { $0.title == "Open in Browser Pane" })
-        #expect(!item.isEnabled)
-        #expect(item.toolTip == "Node.js is not on PATH")
-        let defaultApp = try #require(menu.items.first { $0.title == "Open with Default App" })
-        #expect(defaultApp.isEnabled)
-        #expect(defaultApp.toolTip == nil)
-        host.calls.browserPaneAvailability = .unavailable("Opening…")
-        let opening = try #require(host.menu(forRowNamed: "README.md")).items.first { $0.title == "Open in Browser Pane" }
-        #expect(opening?.isEnabled == false)
-        #expect(opening?.toolTip == "Opening…")
     }
 
     @Test func newFileOpensADraftRowAndEnterSendsTheNameToTheCore() async throws {
@@ -387,8 +365,7 @@ import Testing
             openFile: { _, _ in }, updateExpandedPaths: { _ in },
             fileOperations: WorkspaceFileOperations(
                 createFile: { _, _ in }, createDirectory: { _, _ in }, rename: { _, _ in }, move: { _, _ in },
-                requestTrash: { _ in }, openWithDefaultApp: { _ in }, openInBrowserPane: { _ in },
-                browserPaneAvailability: { _ in .available }
+                requestTrash: { _ in }, openWithDefaultApp: { _ in }
             )
         )
         host.outline.delegate = nil

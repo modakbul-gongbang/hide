@@ -835,7 +835,6 @@ struct CoreTabSnapshot: Decodable, Identifiable {
 
 struct CorePaneSnapshot: Decodable, Identifiable {
     let id: String
-    let content: CorePaneContent
     /// The three names a pane can be shown by. The core ships all three and
     /// `PaneHeaderPresentation` picks; see its ladder for the order.
     let herdrLabel: String?
@@ -864,7 +863,6 @@ struct CorePaneSnapshot: Decodable, Identifiable {
 
     enum CodingKeys: String, CodingKey {
         case id
-        case content
         case fork
         case ports
         case herdrLabel = "herdr_label"
@@ -882,7 +880,6 @@ struct CorePaneSnapshot: Decodable, Identifiable {
 
     init(
         id: String,
-        content: CorePaneContent = .terminal,
         herdrLabel: String? = nil,
         terminalTitle: String? = nil,
         workspaceLabel: String? = nil,
@@ -898,7 +895,6 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         lineagePath: [CoreLineageStep] = []
     ) {
         self.id = id
-        self.content = content
         self.herdrLabel = herdrLabel
         self.terminalTitle = terminalTitle
         self.workspaceLabel = workspaceLabel
@@ -914,14 +910,12 @@ struct CorePaneSnapshot: Decodable, Identifiable {
         self.lineagePath = lineagePath
     }
 
-    /// Terminal is the default content when no native content is specified.
     /// `fork` and `ports` are optional capabilities. Every other
     /// field describes the pane itself, and a pane missing one of those is a
     /// snapshot worth rejecting.
     init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         id = try container.decode(String.self, forKey: .id)
-        content = try container.decodeIfPresent(CorePaneContent.self, forKey: .content) ?? .terminal
         herdrLabel = try container.decodeIfPresent(String.self, forKey: .herdrLabel)
         terminalTitle = try container.decodeIfPresent(String.self, forKey: .terminalTitle)
         workspaceLabel = try container.decodeIfPresent(String.self, forKey: .workspaceLabel)

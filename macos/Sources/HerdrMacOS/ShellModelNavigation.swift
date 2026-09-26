@@ -90,7 +90,7 @@ struct RecentSurface: Identifiable {
 
     var symbol: String {
         switch item.kind {
-        case .herdr(let tab): tab.panes.contains { $0.content != .terminal } ? "globe" : "terminal"
+        case .herdr: "terminal"
         case .editor(let tab): tab.kind == .diff ? "doc.text.magnifyingglass" : "doc.text"
         }
     }

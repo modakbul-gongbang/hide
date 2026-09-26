@@ -1,7 +1,8 @@
-import { ChevronDownIcon, EllipsisIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, EllipsisIcon, GlobeIcon, XIcon } from "lucide-react";
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AreaEmpty } from "./AreaEmpty";
+import { BrowserDisplay } from "./BrowserDisplay";
 import { EntryContextMenu, EntryDropdown, type MenuEntry } from "./components/entry-menu";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
@@ -40,6 +41,7 @@ import {
   type Rect,
   type TabSlot,
   type ViewMenuId,
+  type ViewWorkspace,
 } from "./viewLayout";
 import { workspaceViewOf } from "./workspace";
 
@@ -74,6 +76,7 @@ type Tree = {
   sizes: LayoutSizes;
   /** The Workspace's key, since display ids are only unique within one. */
   workspaceKey: string;
+  workspace: ViewWorkspace;
   actions: Actions;
   draggingId: string | null;
   press: (displayId: string, event: React.PointerEvent<HTMLElement>) => void;
@@ -324,6 +327,7 @@ function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnaps
     geometry,
     sizes,
     workspaceKey: key,
+    workspace,
     actions,
     draggingId: session.phase === "dragging" ? session.displayId : null,
     press: (displayId, event) => {
@@ -477,7 +481,7 @@ function AreaView({ area, index, count, switcher }: { area: ViewAreaSnapshot; in
           if (focusFromKeyboard()) claim();
         }}
       >
-        {display ? <DisplayBody key={display.id} display={display} /> : <AreaEmpty state="no-view" text="No file or diff is open in this area." />}
+        {display ? <DisplayBody key={display.id} display={display} /> : <AreaEmpty state="no-view" text="No file, diff or page is open in this area." />}
       </div>
     </section>
   );
@@ -486,6 +490,7 @@ function AreaView({ area, index, count, switcher }: { area: ViewAreaSnapshot; in
 /** A display's body: its document or diff, or the state it is in (B16, contract 3). */
 function DisplayBody({ display }: { display: ViewDisplaySnapshot }) {
   const tree = useTree();
+  if (display.kind === "browser") return <BrowserDisplay display={display} workspace={tree.workspace} actions={tree.actions} />;
   if (display.state === "open") {
     return <DisplayEditor display={display} placeKey={placeKey(tree.workspaceKey, display)} actions={tree.actions} />;
   }
@@ -632,6 +637,7 @@ function DisplayTab({ display, selected, areaActive }: { display: ViewDisplaySna
 
 /** A file's type mark or the diff's comparison mark; never colour alone (D-15). */
 function displayMark(display: ViewDisplaySnapshot) {
+  if (display.kind === "browser") return <GlobeIcon aria-hidden="true" data-view-mark="browser" className="size-(--size-icon) shrink-0 text-muted-foreground" />;
   if (display.kind === "diff") {
     return (
       <span aria-hidden="true" data-view-mark="diff" className="shrink-0 font-mono text-warning">

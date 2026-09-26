@@ -9,6 +9,10 @@
 //! that holds its document (`tab_id`, never stored); several displays may
 //! bind one tab, which is how two areas show one buffer (D-03).
 //!
+//! A browser display (issue 155) shows a page instead: it has no document
+//! and no tab, and names its page by the address it holds. The desktop host
+//! draws the page; this tree only says where it sits.
+//!
 //! Nothing here knows the runtime. Every operation applies completely or
 //! returns why it cannot and leaves the tree as it was, so one operator
 //! action is one change (B18). The caps are the core's; the shell enforces
@@ -28,12 +32,62 @@ pub const MAX_VIEW_DISPLAYS: usize = 64;
 pub const MIN_SPLIT_RATIO: f32 = 0.15;
 pub const MAX_SPLIT_RATIO: f32 = 0.85;
 const DEFAULT_SPLIT_RATIO: f32 = 0.5;
+/// The longest address a browser display holds, in bytes; the desktop host
+/// drops a longer one too.
+pub const MAX_BROWSER_URL_BYTES: usize = 8192;
+/// A page title past this many characters is cut; a tab shows far fewer.
+pub const MAX_BROWSER_TITLE_CHARS: usize = 512;
+/// The page a browser display shows when it has nothing else to show.
+pub const BLANK_PAGE: &str = "about:blank";
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DisplayKind {
     File,
     Diff,
+    /// A page the desktop host draws; `path` is empty and `url` names it.
+    Browser,
+}
+
+/// Whether a browser display may hold `url`: the web, a local file, or the
+/// blank page, spelled on one line within the cap. The desktop host loads
+/// only these too.
+pub fn browser_address(url: &str) -> bool {
+    if url.is_empty()
+        || url.len() > MAX_BROWSER_URL_BYTES
+        || url.chars().any(|c| c.is_control() || c.is_whitespace())
+    {
+        return false;
+    }
+    if url == BLANK_PAGE {
+        return true;
+    }
+    let Some((scheme, rest)) = url.split_once(':') else {
+        return false;
+    };
+    matches!(
+        scheme.to_ascii_lowercase().as_str(),
+        "http" | "https" | "file"
+    ) && rest.starts_with("//")
+        && rest.len() > 2
+}
+
+/// Whether `url` names a local file, which only a Workspace on this Mac can
+/// show.
+pub fn is_file_address(url: &str) -> bool {
+    url.get(..5)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("file:"))
+}
+
+/// A page title as a browser display keeps it: one line, cut at the cap.
+pub fn browser_title(title: &str) -> String {
+    title
+        .chars()
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .take(MAX_BROWSER_TITLE_CHARS)
+        .collect::<String>()
+        .trim()
+        .to_owned()
 }
 
 /// `row` puts the first child left of the second, `column` above it.
@@ -85,13 +139,26 @@ pub struct Display {
     /// never stored: a restart mints new tab ids.
     #[serde(skip)]
     pub tab_id: Option<String>,
+    /// A browser display's address: the one its page last reported, or the
+    /// one the operator last asked for. Absent for a file or a diff.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// The title its page last reported; absent until it reports one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    /// Raised each time the operator asks a browser display to load `url`,
+    /// which is how the host tells a request from the page's own
+    /// navigation. Never stored: a restart loads every page once anyway.
+    #[serde(skip)]
+    pub load: u64,
 }
 
 impl Display {
     /// Whether this display shows the document named by `path`, `kind` and,
-    /// for a diff, its Changes group.
+    /// for a diff, its Changes group. A browser display shows no document.
     pub fn shows(&self, path: &str, kind: DisplayKind, committed: Option<bool>) -> bool {
-        self.path == path
+        self.kind != DisplayKind::Browser
+            && self.path == path
             && self.kind == kind
             && (kind == DisplayKind::File || self.committed == committed)
     }
@@ -509,6 +576,19 @@ impl Layout {
             preview,
             last_focused_unix_ms: 0,
             tab_id: None,
+            url: None,
+            title: None,
+            load: 0,
+        }
+    }
+
+    /// A new browser display for `url` with a fresh id, not yet in any area.
+    /// It is never a preview: a page is opened on purpose.
+    pub fn new_browser_display(&mut self, url: &str, load: u64) -> Display {
+        Display {
+            url: Some(url.to_owned()),
+            load,
+            ..self.new_display("", DisplayKind::Browser, None, false)
         }
     }
 
@@ -941,6 +1021,7 @@ impl Layout {
         let mut renamed = 0usize;
         let mut ratios = 0usize;
         let mut groups = 0usize;
+        let mut addresses = 0usize;
         let Layout { root, next_id, .. } = self;
         let mut claim = |id: &mut String, prefix: char| {
             if !seen.insert(id.clone()) {
@@ -960,11 +1041,38 @@ impl Layout {
                     // without its group would never find its tab again.
                     let group = match display.kind {
                         DisplayKind::Diff => Some(display.committed.unwrap_or(false)),
-                        DisplayKind::File => None,
+                        DisplayKind::File | DisplayKind::Browser => None,
                     };
                     if display.committed != group {
                         display.committed = group;
                         groups += 1;
+                    }
+                    // A page has an address it may load and no path; a
+                    // document has neither address nor title.
+                    if display.kind == DisplayKind::Browser {
+                        let valid = display.url.as_deref().is_some_and(browser_address);
+                        let title = display
+                            .title
+                            .as_deref()
+                            .map(browser_title)
+                            .filter(|title| !title.is_empty());
+                        if !valid
+                            || !display.path.is_empty()
+                            || display.preview
+                            || title != display.title
+                        {
+                            if !valid {
+                                display.url = Some(BLANK_PAGE.to_owned());
+                            }
+                            display.path.clear();
+                            display.preview = false;
+                            display.title = title;
+                            addresses += 1;
+                        }
+                    } else if display.url.is_some() || display.title.is_some() {
+                        display.url = None;
+                        display.title = None;
+                        addresses += 1;
                     }
                 }
             }
@@ -986,6 +1094,11 @@ impl Layout {
         if groups > 0 {
             notes.push(format!(
                 "{groups} views had a Changes group that did not fit their kind"
+            ));
+        }
+        if addresses > 0 {
+            notes.push(format!(
+                "{addresses} views had an address or path that did not fit their kind"
             ));
         }
 
@@ -1475,5 +1588,115 @@ mod tests {
             layout.clone().repair().is_empty(),
             "a repaired tree is stable"
         );
+    }
+
+    /// A page is not a document: a browser display never stands for a file
+    /// or another page, so a move never takes one out as a twin, and a
+    /// stored one keeps its address and title but no load stamp.
+    #[test]
+    fn a_browser_display_is_named_by_its_address_and_never_a_twin() {
+        let mut layout = with_files(&["a"]);
+        let first = layout.new_browser_display("https://a.test/", 7);
+        let first_id = first.id.clone();
+        layout.insert("a1", first, 1).unwrap();
+        let second = layout.new_browser_display("https://a.test/", 8);
+        let fresh = layout.split_new("a1", Edge::Right, second, 2).unwrap();
+        assert!(
+            !layout
+                .display(&first_id)
+                .unwrap()
+                .shows("", DisplayKind::Browser, None)
+        );
+        assert!(layout.move_display(&first_id, &fresh, 0, 3).unwrap());
+        assert_eq!(
+            layout.area(&fresh).unwrap().displays.len(),
+            2,
+            "both pages stay"
+        );
+
+        let mut stored = layout.clone();
+        stored.display_mut(&first_id).unwrap().title = Some("A page".to_owned());
+        let text = serde_json::to_string(&stored).unwrap();
+        let back: Layout = serde_json::from_str(&text).unwrap();
+        let page = back.display(&first_id).unwrap();
+        assert_eq!(
+            (
+                page.kind,
+                page.url.as_deref(),
+                page.title.as_deref(),
+                page.load
+            ),
+            (
+                DisplayKind::Browser,
+                Some("https://a.test/"),
+                Some("A page"),
+                0
+            )
+        );
+        assert!(
+            !text.contains("\"url\":null"),
+            "a document stores no address: {text}"
+        );
+    }
+
+    #[test]
+    fn a_browser_display_holds_only_an_address_a_page_may_load() {
+        for url in [
+            "https://a.test/x?y#z",
+            "http://localhost:3000",
+            "file:///Users/example/a.html",
+            "about:blank",
+        ] {
+            assert!(browser_address(url), "{url}");
+        }
+        let long = format!("https://a.test/{}", "x".repeat(MAX_BROWSER_URL_BYTES));
+        for url in [
+            "",
+            "javascript:alert(1)",
+            "data:text/html,x",
+            "about:config",
+            "https://",
+            "https://a b",
+            "https://a\nb",
+            "a.test",
+            long.as_str(),
+        ] {
+            assert!(!browser_address(url), "{url}");
+        }
+        assert_eq!(browser_title(" A\ttab\n "), "A tab");
+        assert_eq!(
+            browser_title(&"가".repeat(600)).chars().count(),
+            MAX_BROWSER_TITLE_CHARS
+        );
+    }
+
+    /// A stored page with an address it may not load shows the blank page;
+    /// a document that carries an address, or a page a path, loses it.
+    #[test]
+    fn repair_keeps_addresses_to_pages() {
+        let mut layout = with_files(&["a"]);
+        let mut page = layout.new_browser_display("https://a.test/", 0);
+        page.url = Some("javascript:alert(1)".to_owned());
+        page.path = "/repo/x".to_owned();
+        page.preview = true;
+        let page_id = page.id.clone();
+        layout.insert("a1", page, 1).unwrap();
+        let file = id(&layout, "a");
+        layout.display_mut(&file).unwrap().url = Some("https://a.test/".to_owned());
+
+        let notes = layout.repair();
+        assert!(
+            notes
+                .iter()
+                .any(|note| note.starts_with("2 views had an address")),
+            "{notes:?}"
+        );
+        let page = layout.display(&page_id).unwrap();
+        assert_eq!(
+            (page.url.as_deref(), page.path.as_str(), page.preview),
+            (Some(BLANK_PAGE), "", false)
+        );
+        assert_eq!(layout.display(&file).unwrap().url, None);
+        assert!(layout.repair().is_empty(), "a repaired tree needs nothing");
     }
 }

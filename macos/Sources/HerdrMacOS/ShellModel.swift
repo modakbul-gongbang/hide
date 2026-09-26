@@ -200,18 +200,6 @@ final class ShellModel: ObservableObject {
     /// Panes with a fork in flight, which is what puts "forking…" in the
     /// header and what a failure is attributed to.
     @Published private(set) var panesForking: Set<String> = []
-    /// Files with an Open in Browser Pane request in flight, keyed by path,
-    /// which is what disables the item for that file until the host answers
-    /// (D-09: one request per file at a time).
-    @Published private(set) var browserPaneOpensInFlight: Set<String> = []
-    /// Resolved once per launch, like the agent CLIs: PATH does not change
-    /// under a running app, and the menu asks on every right-click.
-    private lazy var browserPaneHost: BrowserPaneOpener.Host? = {
-        guard let node = BrowserPaneOpener.nodeExecutable(),
-              let script = BrowserPaneOpener.hostScript()
-        else { return nil }
-        return BrowserPaneOpener.Host(node: node, script: script)
-    }()
 
     /// Relationship Open and parent Return share this target-scoped outcome.
     /// Generic bridge errors remain available to the status bar, but are not
@@ -232,10 +220,8 @@ final class ShellModel: ObservableObject {
     @Published private(set) var shortcutHintState = HideHintState()
 
     let core: CoreBridge
-    let browser: BrowserRuntimeModel
     let remote: RemoteRuntimeModel
     private var coreSubscription: AnyCancellable?
-    private var browserSubscription: AnyCancellable?
     private var remoteSubscription: AnyCancellable?
     private var pendingPaneCloseTarget: PaneCloseTarget?
     private var pendingTabCloseTarget: TabCloseTarget?
@@ -256,11 +242,9 @@ final class ShellModel: ObservableObject {
 
     init(
         core: CoreBridge = CoreBridge(),
-        browser: BrowserRuntimeModel = BrowserRuntimeModel(),
         remote: RemoteRuntimeModel = RemoteRuntimeModel()
     ) {
         self.core = core
-        self.browser = browser
         self.remote = remote
         let shortcutResolution = PaneShortcutPolicy.resolve(
             stored: core.snapshot?.uiState.shortcutBindings ?? [:]
@@ -282,17 +266,8 @@ final class ShellModel: ObservableObject {
             self.settleCheckoutStart()
             self.objectWillChange.send()
         }
-        browserSubscription = browser.objectWillChange.sink { [weak self] _ in
-            self?.objectWillChange.send()
-        }
         remoteSubscription = remote.objectWillChange.sink { [weak self] _ in
             self?.objectWillChange.send()
-        }
-        browser.environmentStateProvider = { [weak core] key in
-            core?.environmentState(for: key)
-        }
-        browser.onReceipt = { [weak core] receipt in
-            core?.recordBrowserStatus(receipt)
         }
         core.localHerdrMutationRejectionHandler = { [weak self] readiness in
             self?.presentLocalHerdrMutationRejection(readiness)
@@ -1608,64 +1583,6 @@ final class ShellModel: ObservableObject {
         }
     }
 
-    /// What the Explorer item reads when the menu opens (D-08).
-    func browserPaneAvailability(for file: URL) -> BrowserPaneOpenAvailability {
-        WorkspaceOutlineMenuPresentation.browserPaneAvailability(.init(
-            isRemote: isRemoteContext,
-            nodeOnPath: browserPaneHost != nil,
-            herdrConnected: herdrIsConnected,
-            hasFocusedPane: focusedPaneID != nil,
-            opening: browserPaneOpensInFlight.contains(file.standardizedFileURL.path)
-        ))
-    }
-
-    /// Shows the file in a browser pane split right of the focused pane.
-    ///
-    /// A pane already bound to this file is left exactly as it is, without a
-    /// host call, so choosing the item twice converges on one pane (D-07,
-    /// B9). Otherwise one host process runs under the opener's deadline and
-    /// its refusal, verbatim, is the notice (B13).
-    func openInBrowserPane(_ file: URL) {
-        let path = file.standardizedFileURL.path
-        interactionNotice = nil
-        if let reason = browserPaneAvailability(for: file).reason {
-            interactionNotice = reason
-            return
-        }
-        guard let host = browserPaneHost, let targetPane = focusedPaneID else { return }
-        let key = BrowserPaneOpener.bindingKey(for: file)
-        let bound = workspaces.lazy
-            .flatMap(\.checkouts)
-            .flatMap(\.tabs)
-            .flatMap(\.panes)
-            .contains { pane in
-                if case .browser(let binding) = pane.content { return binding.bindingID == key }
-                return false
-            }
-        if bound {
-            HideLaunchTrace.mark("explorer.browser_pane.reused", detail: key)
-            return
-        }
-        browserPaneOpensInFlight.insert(path)
-        HideLaunchTrace.mark("explorer.browser_pane.opening", detail: key)
-        BrowserPaneOpener.open(
-            file: file,
-            targetPane: targetPane,
-            host: host,
-            environment: HideRuntimeEnvironment.childEnvironment()
-        ) { [weak self] result in
-            guard let self else { return }
-            self.browserPaneOpensInFlight.remove(path)
-            switch result {
-            case .success:
-                HideLaunchTrace.mark("explorer.browser_pane.opened", detail: key)
-            case .failure(let failure):
-                HideLaunchTrace.mark("explorer.browser_pane.failed", detail: key)
-                self.interactionNotice = failure.message
-            }
-        }
-    }
-
     /// The one call that sends `path_trash`. Cancel and Esc clear the
     /// prompt through the alert binding and send nothing (D-03).
     func confirmExplorerTrash() {
@@ -2750,15 +2667,13 @@ final class ShellModel: ObservableObject {
 
     private func destructiveTarget(for pane: CorePaneSnapshot) -> DestructiveTarget {
         let agent = agents.first { $0.paneID == pane.id }
-        let contentConsequence = pane.content.closeConsequence
         return DestructiveTarget(
             id: pane.id,
             label: pane.herdrLabel ?? pane.id,
             statusLabel: agent?.statusLabel ?? "Idle",
-            requiresCloseConfirmation: contentConsequence != nil || (agent?.requiresCloseConfirmation ?? false),
-            summary: contentConsequence ?? agent?.detail ?? "No working or attention state is reported for this pane.",
-            requiresStatusCheck: pane.requiresCloseStatusCheck || (agent?.requiresCloseStatusCheck ?? false),
-            contentConsequence: contentConsequence
+            requiresCloseConfirmation: agent?.requiresCloseConfirmation ?? false,
+            summary: agent?.detail ?? "No working or attention state is reported for this pane.",
+            requiresStatusCheck: pane.requiresCloseStatusCheck || (agent?.requiresCloseStatusCheck ?? false)
         )
     }
 

@@ -281,7 +281,6 @@ fn snapshot_exposes_the_production_schema_and_status() {
     // The default test options leave the herdr socket unconfigured.
     assert_eq!(snapshot["status"]["herdr"]["state"], "unconfigured");
     assert_eq!(snapshot["status"]["remote"], json!([]));
-    assert_eq!(snapshot["status"]["chromux"]["profile"], "default");
     let environment = snapshot["status"]["environment"]
         .as_array()
         .expect("environment registry array");
@@ -290,13 +289,7 @@ fn snapshot_exposes_the_production_schema_and_status() {
             .iter()
             .map(|entry| entry["key"].as_str().expect("environment key"))
             .collect::<Vec<_>>(),
-        [
-            "HOME",
-            "SSH_AUTH_SOCK",
-            "PATH",
-            "HERDR_SOCKET_PATH",
-            "CODEX_HOME",
-        ]
+        ["HOME", "SSH_AUTH_SOCK", "HERDR_SOCKET_PATH", "CODEX_HOME",]
     );
     assert!(environment.iter().all(|entry| entry.get("value").is_none()));
     let provider_usage = snapshot["navigator"]["provider_usage"]

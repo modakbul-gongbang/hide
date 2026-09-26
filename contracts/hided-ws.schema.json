@@ -163,7 +163,7 @@
       }
     },
     "pathRefused": {
-      "description": "Payload of a path_refused frame: the event kind that carried the path, the path as sent, and why hided did not forward it. A `file_create` or `dir_create` whose name failed the shape check, and a `path_rename` whose new name did, carry that name as the path.",
+      "description": "Payload of a path_refused frame: the event kind that carried the path, the path as sent, and why hided did not forward it. A `file_create` or `dir_create` whose name failed the shape check, and a `path_rename` whose new name did, carry that name as the path. A `browser_open`, a `browser_state`, or a `view_layout` navigate whose `url` is a `file:` address is checked like any path: the path it decodes to has to be under a registered checkout root, and the event reaches the core with the `file:` URL of the checked path; a refusal carries the decoded path, or the address as sent when it names another host or does not decode (`invalid_path`).",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "path", "reason"],
@@ -184,7 +184,10 @@
             "path_trash",
             "file_bytes",
             "file_index",
-            "open_external"
+            "open_external",
+            "browser_open",
+            "browser_state",
+            "view_layout"
           ]
         },
         "path": { "type": "string" },

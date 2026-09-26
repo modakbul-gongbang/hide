@@ -102,7 +102,6 @@ EXPECTED_DECLARATIONS: dict[str, tuple[Declaration, ...]] = {
         ("struct", "CoreBackgroundAI", "internal"),
         ("struct", "CoreBackgroundAIProvider", "internal"),
         ("struct", "CoreHerdrStatus", "internal"),
-        ("struct", "CoreChromuxStatus", "internal"),
         ("struct", "CoreEnvironmentStatus", "internal"),
         ("struct", "CoreDiagnostic", "internal"),
         ("struct", "CoreLastError", "internal"),

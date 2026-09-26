@@ -3,7 +3,6 @@ import Foundation
 struct CoreStatusSnapshot: Decodable {
     let herdr: CoreHerdrStatus
     let remote: [CoreRemoteStatus]
-    let chromux: CoreChromuxStatus
     let environment: [CoreEnvironmentStatus]
     let agentHooks: CoreAgentHooks
     let backgroundAI: CoreBackgroundAI
@@ -15,7 +14,6 @@ struct CoreStatusSnapshot: Decodable {
     enum CodingKeys: String, CodingKey {
         case herdr
         case remote
-        case chromux
         case environment
         case agentHooks = "agent_hooks"
         case backgroundAI = "background_ai"
@@ -29,7 +27,6 @@ struct CoreStatusSnapshot: Decodable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         herdr = try container.decode(CoreHerdrStatus.self, forKey: .herdr)
         remote = try container.decodeIfPresent([CoreRemoteStatus].self, forKey: .remote) ?? []
-        chromux = try container.decode(CoreChromuxStatus.self, forKey: .chromux)
         environment = try container.decodeIfPresent([CoreEnvironmentStatus].self, forKey: .environment) ?? []
         agentHooks = try container.decodeIfPresent(CoreAgentHooks.self, forKey: .agentHooks)
             ?? CoreAgentHooks()
@@ -208,12 +205,6 @@ struct CoreHerdrStatus: Decodable {
         case receivedProtocol = "received_protocol"
         case receivedVersion = "received_version"
     }
-}
-
-struct CoreChromuxStatus: Decodable {
-    let state: String
-    let profile: String
-    let message: String?
 }
 
 struct CoreEnvironmentStatus: Decodable, Identifiable {

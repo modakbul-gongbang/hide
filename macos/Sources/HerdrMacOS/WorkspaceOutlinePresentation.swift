@@ -92,7 +92,6 @@ enum WorkspaceOutlineMenuItem: Equatable {
     case newFile
     case newFolder
     case openWithDefaultApp
-    case openInBrowserPane
     case revealInFinder
     case copyPath
     case copyRelativePath
@@ -105,7 +104,6 @@ enum WorkspaceOutlineMenuItem: Equatable {
         case .newFile: "New File"
         case .newFolder: "New Folder"
         case .openWithDefaultApp: "Open with Default App"
-        case .openInBrowserPane: "Open in Browser Pane"
         case .revealInFinder: "Reveal in Finder"
         case .copyPath: "Copy Path"
         case .copyRelativePath: "Copy Relative Path"
@@ -133,21 +131,6 @@ enum WorkspaceOutlineMenuTarget: Equatable {
     case emptyArea
 }
 
-/// Whether Open in Browser Pane can act right now, and if not the one
-/// reason its tooltip gives (D-08). The item stays in the menu either way,
-/// so the operator learns what to fix rather than wondering where it went.
-enum BrowserPaneOpenAvailability: Equatable {
-    case available
-    case unavailable(String)
-
-    var reason: String? {
-        switch self {
-        case .available: nil
-        case .unavailable(let reason): reason
-        }
-    }
-}
-
 /// Decides the menu from what was clicked and where the tree lives.
 ///
 /// A remote tree is read-only, so it offers only the two copies; the empty
@@ -168,7 +151,7 @@ enum WorkspaceOutlineMenuPresentation {
             return [
                 .newFile, .newFolder,
                 .separator,
-            ] + (isDirectory ? [] : [.openWithDefaultApp, .openInBrowserPane, .separator]) + [
+            ] + (isDirectory ? [] : [.openWithDefaultApp, .separator]) + [
                 .revealInFinder, .copyPath, .copyRelativePath,
                 .separator,
                 .rename,
@@ -176,29 +159,6 @@ enum WorkspaceOutlineMenuPresentation {
                 .delete,
             ]
         }
-    }
-
-    /// The conditions Open in Browser Pane needs, each read from the shell's
-    /// snapshot-backed state by the caller, so the decision is a value.
-    struct BrowserPaneConditions: Equatable {
-        var isRemote: Bool
-        var nodeOnPath: Bool
-        var herdrConnected: Bool
-        var hasFocusedPane: Bool
-        /// The same file is already being opened (D-09: one request per file).
-        var opening: Bool
-    }
-
-    /// One reason at a time, in the order the operator can act on it: an open
-    /// already in flight finishes on its own, a missing tool is fixed once,
-    /// and the connection and the pane come back with the session.
-    static func browserPaneAvailability(_ conditions: BrowserPaneConditions) -> BrowserPaneOpenAvailability {
-        if conditions.isRemote { return .unavailable("Remote files open on their device") }
-        if conditions.opening { return .unavailable("Opening…") }
-        if !conditions.nodeOnPath { return .unavailable("Node.js is not on PATH") }
-        if !conditions.herdrConnected { return .unavailable("Not connected to Herdr") }
-        if !conditions.hasFocusedPane { return .unavailable("No focused pane to open beside") }
-        return .available
     }
 }
 

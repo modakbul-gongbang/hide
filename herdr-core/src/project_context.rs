@@ -331,7 +331,6 @@ mod tests {
                     .iter()
                     .map(|pane_id| PaneSnapshot {
                         id: (*pane_id).to_owned(),
-                        content: Default::default(),
                         herdr_label: None,
                         terminal_title: None,
                         workspace_label: None,

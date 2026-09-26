@@ -440,8 +440,11 @@ function displayCommands(layout: ViewLayoutSnapshot, drawn: { geometry: Geometry
       hidden = unavailable !== null;
     } else if (id === "reveal") {
       unavailable = revealBlocked(display);
+      // A page is not a file of the checkout.
+      hidden = display.kind === "browser";
     }
-    return { id, label, unavailable, hidden, separated: id === "copy_path" || id === "close_view" };
+    const named = id === "copy_path" && display.kind === "browser" ? "Copy address" : label;
+    return { id, label: named, unavailable, hidden, separated: id === "copy_path" || id === "close_view" };
   });
 }
 
@@ -484,6 +487,7 @@ export function menuEdge(id: ViewMenuId): Edge | null {
 
 /** What a display is, for its tooltip and accessible name (B21): kind, full path and state. */
 export function displayIdentity(display: ViewDisplaySnapshot): string {
+  if (display.kind === "browser") return `Page: ${display.title ? `${display.title} · ` : ""}${display.url ?? ""}`;
   const kind = display.kind === "diff" ? `${display.committed ? "Branch" : "Working"} diff` : "File";
   const reason = display.reason ? `: ${display.reason}` : "";
   const state =
