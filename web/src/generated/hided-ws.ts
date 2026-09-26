@@ -3,11 +3,53 @@
 /**
  * Handshake, server frames, close reason codes, path refusal reason codes, and client dispatch events for hided.
  */
-export type HidedWebSocketContract = Handshake | ServerFrame | ClientEvent;
+export type HidedWebSocketContract =
+  Handshake | ServerFrame | ClientEvent | WorkspaceQuery | WorkspaceAction | WorkspaceResult;
+export type WorkspaceRequestId = string;
+export type WorkspaceCommand =
+  | {
+      action: "open_file";
+      path: string;
+      beside: boolean;
+      reveal: boolean;
+    }
+  | {
+      action: "open_diff";
+      path: string;
+      beside: boolean;
+      reveal: boolean;
+    }
+  | {
+      action: "open_browser";
+      url: string;
+      reveal: boolean;
+    }
+  | {
+      action: "select";
+      view_id: string;
+      reveal: boolean;
+    }
+  | {
+      action: "close";
+      view_id: string;
+    }
+  | {
+      action: "split";
+      view_id: string;
+      area_id: string;
+      edge: "left" | "right" | "up" | "down";
+    }
+  | {
+      action: "move";
+      view_id: string;
+      area_id: string;
+      index: number;
+    };
 
 export interface Handshake {
   token: string;
   schema_version: 2;
+  client_kind?: "web" | "desktop";
   have_revision?: number;
   have_terminal_sequence?: number;
 }
@@ -39,6 +81,36 @@ export interface ClientEvent {
   payload: {
     [k: string]: unknown;
   };
+  [k: string]: unknown;
+}
+/**
+ * A pane-scoped query on a capability-authenticated WebSocket. The daemon derives device, pane, and Workspace from the credential and current core projection.
+ */
+export interface WorkspaceQuery {
+  type: "workspace_query";
+  request_id: WorkspaceRequestId;
+  query: "info" | "view_list";
+}
+/**
+ * One pane-scoped document or View transition. Repeating the same request ID and command returns its recorded result within the ten-minute retry window.
+ */
+export interface WorkspaceAction {
+  type: "workspace_action";
+  request_id: WorkspaceRequestId;
+  command: WorkspaceCommand;
+}
+/**
+ * A pane-scoped request outcome. A successful action result includes context, request_id, changed, view_id, and optionally area_id; a refusal names reason and next_action.
+ */
+export interface WorkspaceResult {
+  type: "workspace_result";
+  request_id?: WorkspaceRequestId;
+  ok: boolean;
+  result?: {
+    [k: string]: unknown;
+  };
+  reason?: string;
+  next_action?: string;
   [k: string]: unknown;
 }
 /**

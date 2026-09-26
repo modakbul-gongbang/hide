@@ -1303,6 +1303,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "cap-std",
+ "hide-herdr-client",
  "hide-project",
  "ignore",
  "libc",
@@ -1361,6 +1362,7 @@ dependencies = [
  "getrandom 0.2.16",
  "herdr-core",
  "hex",
+ "hide-herdr-client",
  "hide-host",
  "http-body-util",
  "hyper",

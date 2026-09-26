@@ -23,13 +23,29 @@ Five events are registered: `SessionStart`, `UserPromptSubmit`, `SubagentStart`,
 `SessionEnd` is not registered by either, so the `Stop` sweep is what closes a turn out.
 
 Every entry carries `--runtime claude-code|codex` and `--source hide-subagents@<version>` inside its command.
-The runtime argument selects that runtime's stdout envelope; the version-3 marker makes an installation without `UserPromptSubmit` outdated so Settings offers to refresh the stored commands.
+The runtime argument selects that runtime's stdout envelope; the version-5 marker makes an installation without the conditional Workspace probe outdated so Settings offers to refresh the stored commands.
 That marker is the whole basis for judging what is installed: the source name proves the entry is Hide's, and the version after the `@` separates a current hook from an outdated one.
 Nothing parses the rest of the command, and the helper does not pass the marker on: it is an install marker, not the metadata source (see below).
 
 ## What the hook returns and reports back
 
 On `SessionStart`, the helper writes one runtime JSON envelope whose `hookSpecificOutput.additionalContext` combines the existing one-line worktree-purpose instruction with the bounded Project Memory capsule when Memory is enabled.
+The same envelope adds Workspace commands only after `hide workspace bootstrap` and `hide workspace info` confirm a live, renderer-connected pane and report its actual capabilities.
+The helper uses the `hide` CLI beside its own bundled executable, or the CLI on `PATH` for an independently installed helper on an SSH device.
+The app bundle carries that CLI beside the helper; the hook does not start Hide or install a remote hook.
+An ordinary Claude Code or Codex session started in a connected Herdr pane receives the same conditional guidance as a Hide-managed session when Hide's hook is installed in that runtime's configuration on that machine.
+A plain terminal, disconnected pane, unavailable renderer, or unsupported Browser surface receives no Workspace capability claim.
+The guidance scopes every command to the calling pane's Workspace and lists only capabilities returned by the daemon; `hide workspace info` remains the live check and `hide --help` gives the full syntax.
+The hook creates an owner-only, finite-lived credential reference and includes its path as a shell environment prefix for the listed commands, so Codex tools detached into a shared app-server can still use the same pane-scoped capability.
+The path is a credential reference and should be handled as private session context, even though it contains no bearer bytes itself.
+The credential's bearer bytes and file contents never enter hook stdout, arguments, or the agent context, and each command rechecks pane membership and renderer availability.
+The SessionStart command hook has an eight-second timeout, including two bounded two-second CLI probes; a failed probe leaves the existing purpose and Memory context intact.
+An issued credential remains unclaimed for at most 30 seconds until a CLI receives and acknowledges a Workspace response.
+The CLI writes the claimed marker only after the daemon acknowledges that claim, so a caller killed before acknowledgement leaves an unclaimed reference that expires.
+A repeated SessionStart in the same attested pane reuses its live persistent reference, including when an earlier hook stopped after claiming but before delivering context.
+The SSH bridge tracks every reference it issues and revokes the corresponding daemon token when its file disappears, its unclaimed period expires, its eight-hour lifetime ends, its pane shell exits, or its one-shot caller exits.
+A failed bootstrap reply revokes only a newly issued reference; it leaves a reused live reference intact.
+Late bridge replies are matched by request ID so one timed-out attestation cannot poison the next bootstrap.
 On `UserPromptSubmit`, it parses at most 256 KiB of runtime input, resolves the same durable Project identity as the app, and performs a read-only local lookup against the materialized active projection.
 The prompt text, up to two recent human topics, and current checkout metadata are search inputs only; the original prompt is never replaced.
 An item is eligible only after a lexical match, a bounded two- or three-character literal match, or meaningful path overlap below the Project root; extraction confidence never stands in for semantic similarity and only breaks ties after relevance.

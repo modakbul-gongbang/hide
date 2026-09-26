@@ -24,6 +24,8 @@ pub const HOME: &str = "HOME";
 pub const HIDE_OPEN_COMMAND: &str = "HIDE_OPEN_COMMAND";
 pub const HIDE_HOST_HELPER_ROOT: &str = "HIDE_HOST_HELPER_ROOT";
 pub const HERDR_PANE_ID: &str = "HERDR_PANE_ID";
+pub const HIDE_CAP_REF: &str = "HIDE_CAP_REF";
+pub const HIDE_WORKSPACE_BRIDGE_DIR: &str = "HIDE_WORKSPACE_BRIDGE_DIR";
 
 pub const REGISTRY: &[EnvKey] = &[
     EnvKey {
@@ -96,7 +98,19 @@ pub const REGISTRY: &[EnvKey] = &[
         key: HERDR_PANE_ID,
         required: false,
         format: "the Herdr pane id; Herdr sets it in every pane it manages",
-        absent_behavior: "`hide browser open` without `--pane` opens the page in the Workspace in front",
+        absent_behavior: "Pane-scoped Workspace commands refuse because the caller cannot identify a connected Herdr pane",
+    },
+    EnvKey {
+        key: HIDE_CAP_REF,
+        required: false,
+        format: "absolute path to a regular, owner-only pane credential reference",
+        absent_behavior: "Direct Herdr pane callers try kernel peer bootstrap; detached agent tools require a session-scoped reference",
+    },
+    EnvKey {
+        key: HIDE_WORKSPACE_BRIDGE_DIR,
+        required: false,
+        format: "absolute owner-only directory path on the SSH device",
+        absent_behavior: "The remote helper and remote hide CLI use $HOME/.local/state/hide/workspace-bridges; isolated verification may set a separate directory on both ends",
     },
     EnvKey {
         key: HOME,
@@ -125,9 +139,10 @@ pub struct Env {
     /// Where the device helper is installed on each SSH device; part of the
     /// consent scope the operator agrees to (PRD S5.5 D-23).
     pub host_helper_root: Option<String>,
-    /// The pane a CLI command runs in, which `hide browser open` names so
-    /// the page opens in that pane's Workspace; the daemon never reads it.
+    /// The pane a Workspace CLI command runs in; the daemon verifies its
+    /// live membership and never trusts a caller-supplied Workspace.
     pub pane_id: Option<String>,
+    pub workspace_bridge_dir: Option<PathBuf>,
 }
 
 #[derive(Debug)]
@@ -289,6 +304,19 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         }
         other => other,
     };
+    let workspace_bridge_dir = match read(HIDE_WORKSPACE_BRIDGE_DIR) {
+        Some(value)
+            if !Path::new(&value).is_absolute() || value.bytes().any(|b| b.is_ascii_control()) =>
+        {
+            errors.push(EnvError {
+                key: HIDE_WORKSPACE_BRIDGE_DIR,
+                kind: "invalid",
+            });
+            None
+        }
+        Some(value) => Some(PathBuf::from(value)),
+        None => None,
+    };
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -304,6 +332,7 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         open_command,
         host_helper_root,
         pane_id,
+        workspace_bridge_dir,
     })
 }
 

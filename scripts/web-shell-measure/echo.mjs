@@ -6,11 +6,11 @@ import { performance } from "node:perf_hooks";
 import { spawnSync } from "node:child_process";
 import { connectPage } from "./cdp.mjs";
 
-const cdpPort = process.env.MEASURE_CDP_PORT ?? "9333";
+const cdpPort = process.env.MEASURE_CDP_PORT;
 const repeats = Number(process.env.MEASURE_ECHO_REPEATS ?? 50);
 const paneId = process.env.MEASURE_PANE_ID;
 const herdrBin = process.env.HERDR_BIN_PATH;
-if (!paneId || !herdrBin) throw new Error("MEASURE_PANE_ID and HERDR_BIN_PATH are required");
+if (!cdpPort || !paneId || !herdrBin) throw new Error("MEASURE_CDP_PORT, MEASURE_PANE_ID and HERDR_BIN_PATH are required");
 
 const page = await connectPage(cdpPort);
 const probePane = await page.evaluate("window.__hideProbe && window.__hideProbe.paneId()");

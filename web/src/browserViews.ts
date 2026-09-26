@@ -13,7 +13,7 @@
 
 import { create } from "zustand";
 import { browserBridge, type BrowserBridge, type BrowserHostEvent, type BrowserPageState, type BrowserPlacement, type BrowserRect, type BrowserSync } from "./host";
-import type { ViewDisplaySnapshot, ViewLayoutSnapshot } from "./snapshot";
+import type { ViewLayoutSnapshot } from "./snapshot";
 import { areasOf, workspaceKey, type ViewWorkspace } from "./viewLayout";
 
 // --- pure rules ---------------------------------------------------------------
@@ -76,30 +76,9 @@ export function addressShown(url: string): string {
  * already holds it: the address the page moved to, and its title once it
  * has one. `sent` is the last report still waiting for the core's echo.
  */
-export function stateReport(
-  core: Pick<ViewDisplaySnapshot, "url" | "title">,
-  page: BrowserPageState,
-  sent: { url: string; title: string } | null,
-): { url: string; title: string } | null {
-  const url = page.url || core.url || "";
-  const title = page.title || core.title || "";
-  if (!url) return null;
-  if (url === (core.url ?? "") && title === (core.title ?? "")) return null;
-  if (sent && sent.url === url && sent.title === title) return null;
-  return { url, title };
-}
-
 /** Whether Explorer offers Open in Browser for a file. */
 export function isHtmlFile(path: string): boolean {
   return /\.x?html?$/i.test(path);
-}
-
-/**
- * Why Explorer's Open in Browser cannot run for a file on `device`, or null.
- * A page loads on this Mac, and a device's file is not here.
- */
-export function browserOpenUnavailable(device: string): string | null {
-  return device === "local" ? null : "Pages load on this Mac, so a file on a device cannot be opened as one";
 }
 
 /** How the host places each display: its rect, and whether the page itself shows there. */
@@ -167,6 +146,7 @@ type Front = { workspace: string; rows: BrowserDisplayRow[] };
 
 class BrowserSyncLoop {
   private front: Front | null = null;
+  private retained: { workspace: string; id: string }[] = [];
   private readonly slots = new Map<string, HTMLElement>();
   private readonly freezes = new Map<string, Freeze>();
   private readonly resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => this.schedule());
@@ -176,7 +156,7 @@ class BrowserSyncLoop {
 
   constructor(private readonly bridge: BrowserBridge) {}
 
-  setFront(front: Front | null): void {
+  setFront(front: Front | null, retained: { workspace: string; id: string }[]): void {
     if (front?.workspace !== this.front?.workspace) {
       this.freezes.clear();
       useBrowserStore.setState({ stills: {} });
@@ -189,6 +169,7 @@ class BrowserSyncLoop {
       });
     }
     this.front = front;
+    this.retained = retained;
     this.schedule();
   }
 
@@ -239,7 +220,7 @@ class BrowserSyncLoop {
       this.follow(row.id, covered, hidden.has(row.id));
       if (this.freezes.get(row.id) === "frozen") hidden.add(row.id);
     }
-    const sync: BrowserSync = front ? { workspace: front.workspace, displays: placements(front.rows, rects, hidden) } : { workspace: null, displays: [] };
+    const sync: BrowserSync = front ? { workspace: front.workspace, displays: placements(front.rows, rects, hidden), retained: this.retained } : { workspace: null, displays: [], retained: this.retained };
     const text = JSON.stringify(sync);
     if (text !== this.lastSent) {
       this.lastSent = text;
@@ -301,8 +282,9 @@ function syncLoop(): BrowserSyncLoop | null {
 }
 
 /** The front Workspace's browser displays, whenever the snapshot changes them. */
-export function syncBrowserFront(workspace: ViewWorkspace | null, layout: ViewLayoutSnapshot | null | undefined): void {
-  syncLoop()?.setFront(workspace ? { workspace: workspaceKey(workspace), rows: browserDisplays(layout) } : null);
+export function syncBrowserFront(workspace: ViewWorkspace | null, layout: ViewLayoutSnapshot | null | undefined, inventory: { device_id: string; path: string; view_id: string }[]): void {
+  syncLoop()?.setFront(workspace ? { workspace: workspaceKey(workspace), rows: browserDisplays(layout) } : null,
+    inventory.map((row) => ({ workspace: workspaceKey(row), id: row.view_id })));
 }
 
 /** A display's page slot: the host places the page over this element. */

@@ -2,14 +2,14 @@ import { ArrowLeftIcon, ArrowRightIcon, RotateCwIcon, XIcon } from "lucide-react
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AreaEmpty } from "./AreaEmpty";
-import { addressShown, addressUrl, hostKey, notePageState, parseWorkspaceKey, registerBrowserSlot, stateReport, syncBrowserFront, useBrowserStore, withoutClosed } from "./browserViews";
+import { addressShown, addressUrl, hostKey, notePageState, parseWorkspaceKey, registerBrowserSlot, syncBrowserFront, useBrowserStore } from "./browserViews";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Hint } from "./components/ui/tooltip";
 import { browserBridge, type BrowserCommand } from "./host";
 import type { ViewDisplaySnapshot } from "./snapshot";
 import { useShellStore } from "./store";
-import { areasOf, locateDisplay, workspaceKey, type ViewWorkspace } from "./viewLayout";
+import { locateDisplay, workspaceKey, type ViewWorkspace } from "./viewLayout";
 import { workspaceViewOf } from "./workspace";
 
 // A browser display (issue 155): its toolbar and the place its page shows.
@@ -147,45 +147,26 @@ function AddressField({ address, onSubmit }: { address: string; onSubmit: (url: 
  */
 export function BrowserHost({ actions }: { actions: Actions }) {
   const view = useShellStore((s) => workspaceViewOf(s.rest));
+  const inventory = useShellStore((s) => s.rest?.browser_views);
   const front = view ? workspaceKey({ device_id: view.device_id, path: view.path }) : null;
   const layout = view?.layout ?? null;
   useEffect(() => {
-    syncBrowserFront(front ? parseWorkspaceKey(front) : null, layout);
-  }, [front, layout]);
+    syncBrowserFront(front ? parseWorkspaceKey(front) : null, layout, inventory ?? []);
+  }, [front, layout, inventory]);
 
   const latest = useRef(actions);
   latest.current = actions;
-  // The last report per page still waiting for the core's echo, so it is not sent twice.
-  const sent = useRef<Readonly<Record<string, { url: string; title: string }>>>({});
-  const record = () => {
-    const current = workspaceViewOf(useShellStore.getState().rest);
-    if (!current?.layout) return;
-    const workspace = { device_id: current.device_id, path: current.path };
-    const key = workspaceKey(workspace);
-    const pages = useBrowserStore.getState().pages;
-    const shown = new Set<string>();
-    for (const area of areasOf(current.layout.root)) {
-      for (const display of area.displays) {
-        if (display.kind === "browser") shown.add(display.id);
-        const page = display.kind === "browser" ? pages[hostKey(key, display.id)] : undefined;
-        const next = page ? stateReport(display, page, sent.current[hostKey(key, display.id)] ?? null) : null;
-        if (!next) continue;
-        sent.current = { ...sent.current, [hostKey(key, display.id)]: next };
-        latest.current.reportBrowserState(workspace, display.id, next.url, next.title);
-      }
-    }
-    sent.current = withoutClosed(sent.current, key, shown);
-  };
-  // A page of a Workspace that was not in front reports once it is.
-  useEffect(record, [front, layout]);
-
   useEffect(() => {
     const bridge = browserBridge();
     if (!bridge) return undefined;
     return bridge.onEvent((event) => {
       if (event.kind === "state") {
         notePageState(event);
-        record();
+        const workspace = parseWorkspaceKey(event.workspace);
+        if (workspace) latest.current.reportBrowserState(workspace, event.id, event.state.url, event.state.title, event.load, event.state.loading, event.state.failure, true);
+      } else if (event.kind === "gone") {
+        const workspace = parseWorkspaceKey(event.workspace);
+        if (workspace) latest.current.reportBrowserState(workspace, event.id, event.url, "", event.load, false, null, false);
       } else if (event.kind === "open") {
         const workspace = parseWorkspaceKey(event.workspace);
         if (workspace) latest.current.openBrowser(event.url, workspace);

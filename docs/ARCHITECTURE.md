@@ -260,13 +260,37 @@ When the core cannot serve the cursor, because it dropped terminal chunks the cl
 A frame the daemon cannot produce at all (the core owner thread gone, an empty read, bytes that do not decode) ends that client's loop, which the browser sees as a bare close and answers by reconnecting; the daemon logs it as `ws.snapshot_failed` with the stage, the only trace of why.
 The web shell counts snapshots (`viewGeneration`) and re-requests its terminal view on each one, so a resync redraws the pane instead of trusting what it had drawn.
 The token comparison is constant in the token's length (`subtle`), so a refusal does not leak how much of the token a caller guessed.
+The Workspace CLI uses the same `/ws` for pane-scoped commands and results, without giving an agent the shell's unrestricted token or snapshot stream.
+Its local bootstrap socket lives in a random private short directory under `/tmp` so a long state path cannot exceed the Unix socket limit or let another user reserve a predictable path.
+An owner-only record in `pane-capabilities` publishes the socket path atomically; daemon shutdown removes both.
+It only attests a kernel peer PID against Herdr's live pane shell and issues a protected file reference; the socket does not accept control commands.
+The scoped credential records the device, Workspace, checkout, pane terminal identity, and shell process birth, which are checked again for each command; closing or recreating a pane invalidates the credential.
+Direct CLI calls own one-shot credentials and release them after their request, while repeated agent session starts in the same attested pane reuse one reference until its pane ends or the eight-hour limit expires.
+Once a Workspace action result has reached the CLI, a lost credential-claim acknowledgement cannot turn that result into a claim that the action was not applied; the claim failure is logged and a later command rechecks its capability.
+The registry has a 64-reference cap, the bootstrap path has an eight-worker cap, and daemon shutdown revokes every reference.
+The shell handshake marks actual web and desktop renderer connections with `client_kind`; Workspace commands refuse when only the daemon or another CLI client is connected.
+Pane-scoped `hide view select`, `split`, `move`, and `close` resolve the live device and checkout in the core, then apply one existing View layout transition without using the front Workspace as an authorization shortcut.
+They leave keyboard pane focus alone; a last View holding an unsaved document refuses close, while a second View of the same document may close by itself.
+One request ID carries an action result for up to ten minutes, and the 128-result cap refuses new commands instead of evicting an answer that a retry may need; a second intent uses a new ID.
+The CLI returns the request ID on uncertain transport outcomes so the caller can retry that same action or inspect `hide view list`.
+Pane-scoped file and working-diff opens resolve a caller-cwd path on the calling machine, then use the checkout's existing host channel to read a document or Git status off the core lock.
+The core rechecks pane membership when it places the result into that checkout's View tree; a missing file, unavailable host, unchanged diff, or layout refusal has a request-scoped CLI outcome.
+An open without `--reveal` leaves the front Workspace and keyboard pane alone, and an open with `--reveal` brings its verified local or remote checkout and chosen View forward.
+Pane-scoped `hide browser open` requires a connected desktop renderer and places a Browser View in the caller's checkout with the same bounded retry result as other actions.
+The core checks HTML paths against the caller device's checkout and reads them outside its lock through the consented host channel.
+The native host reports page load, completion, failure, and eviction with a load stamp; `hide view status` and `--wait` distinguish page state from View placement.
+The desktop host creates pages only when a View has a visible slot, so waiting on a hidden View expires without taking focus.
+For a remote Browser View, the desktop host asks hided for the current core-owned address and a route bound to its own process, View, and load stamp.
+A remote loopback URL gets an SSH local forward with bounded connections, while a remote HTML file gets an owner-only loopback server whose assets are read through the device host's pinned checkout root.
+Neither route falls back to this Mac's same path or port; close, device loss, or desktop process exit releases the route.
 Client frames are core events (`schema_version`, `kind`, `payload`).
-HTTP is static assets and `GET /health` (`pid`, `version`, `schema_version`, `clients`).
+HTTP serves static assets, `GET /health` (`pid`, `version`, `schema_version`, `clients`), and token-authenticated Browser route resolution and release for the desktop host.
 No HTTP request dispatches a core event.
 The first frame after a valid handshake is `daemon` (`version`, `pid`, `schema_version`, `host_name`, the state paths, the Herdr binary and socket, the idle policy); Settings > General reads it, and it never carries the token.
 The daemon owns the core's one Settings observation flag (`ai_settings.observing`, which runs the provider probe and the hook diagnosis): a client's `observing` is only that connection's demand (`hided/src/demand.rs`), the flag follows the first observer in and the last one out, and a connection that closes releases its demand, so a closed tab never leaves the probe running.
 `hide` owns lifecycle: instance lock, `~/.local/state/hide/hided.json` mode 0600, default-browser open with `#token=`, idle exit ten minutes after the last client, and `hide serve --keep-alive`.
 `hide connect` is `hide open` for a host that loads the shell itself: the same discovery (the live daemon the state file names, else one started and waited for), answered as one JSON line (`ok`, `url`, `port`, `pid`, or `reason` `start_failed`/`no_response` with `detail`) instead of a browser; `hide status --json` is the attach-only probe and never starts a daemon.
+Daemon startup gets a bounded ten-second health wait, and the desktop host allows up to 25 seconds for the whole discovery command before showing a retryable failure.
 The daemon leads its own process group, so an interrupt to the terminal job or host that ran the CLI never reaches it.
 It does not start a Herdr server.
 A release `hided` carries `web/dist` inside the binary (`hided/build.rs`); a debug build reads the directory from disk, so `pnpm build` shows up without a cargo rebuild.
@@ -369,8 +393,9 @@ A document that becomes dirty, is saving or has a save state promotes every disp
 In web mode the per-checkout preview slot of `place_editor_tab` gives way to one preview display per area: a preview open retargets the active area's preview display in place, and its old document is retired when no other display shows it, like the preview replacement before it, with no Recent Closed entry; the Swift shell keeps the per-checkout slot.
 
 A browser display binds to nothing (issue 155, [BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md)): it is `open` from the moment it exists, the reconcile never removes it for want of a document tab, and a restore reads nothing for it.
-`browser_open` (the CLI, the Explorer, a page's new window) places one in the named Workspace, the Workspace of the pane that asked, or the front one, focusing a display that already shows the address; `browser_state` records the address and title a page reports in any Workspace, since a page keeps loading while another is in front; and the `view_layout` `navigate` action loads the operator's own address.
-Each answer to a `browser_open` is a receipt in `status.browser_opens`, the last 8 kept in memory, carrying the request's id, so the CLI reads its own answer from the frames it is sent.
+`browser_open` from the Explorer or a page's new window places a display in the named Workspace or the front one; pane CLI requests use the separate scoped Workspace action.
+`browser_state` records the address, title, and native load state a page reports, while `view_layout` `navigate` loads the operator's own address.
+UI `browser_open` receipts remain in `status.browser_opens`; pane CLI requests receive their own scoped action result.
 A load stamp (`load`, never saved) is how the core asks the desktop app to load a display's address again, and the address, capped at 8 KiB, holds only `http`, `https`, `file` or `about:blank`; loading repairs a stored display that breaks this to `about:blank`.
 A build from before browser displays reads a file that holds one as a file that does not parse, and so takes the unreadable path above: the file is renamed aside and the page starts on Main.
 

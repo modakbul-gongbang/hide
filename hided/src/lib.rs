@@ -1,6 +1,8 @@
 pub mod attachments;
 pub mod boundary;
+mod browser_assets;
 pub mod browser_cli;
+pub mod browser_routes;
 pub mod cli;
 pub mod coexist;
 pub mod core;
@@ -10,10 +12,13 @@ pub mod env;
 pub mod file_url;
 pub mod index;
 pub mod opener;
+pub mod pane_auth;
+pub mod remote_bridge;
 pub mod server;
 pub mod spawn;
 pub mod state_file;
 pub mod watch;
+pub mod workspace_cli;
 
 use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::{Arc, Mutex};
@@ -93,11 +98,35 @@ pub struct RunningDaemon {
     pub token: String,
     pub _lock: std::fs::File,
     shutdown: Arc<Notify>,
+    pane_capabilities: Arc<pane_auth::Registry>,
+    pane_bootstrap_socket: std::path::PathBuf,
+    pane_bootstrap_record: std::path::PathBuf,
+    remote_bridges: Arc<remote_bridge::Supervisor>,
 }
 
 impl RunningDaemon {
+    fn remove_bootstrap_socket(&self) {
+        let _ = std::fs::remove_file(&self.pane_bootstrap_record);
+        let _ = std::fs::remove_file(&self.pane_bootstrap_socket);
+        if let Some(directory) = self.pane_bootstrap_socket.parent() {
+            let _ = std::fs::remove_dir(directory);
+        }
+    }
+
     pub fn stop(&self) {
+        self.remote_bridges.stop_all();
+        self.pane_capabilities.revoke_all();
+        self.remove_bootstrap_socket();
         self.shutdown.notify_waiters();
+    }
+}
+
+impl Drop for RunningDaemon {
+    fn drop(&mut self) {
+        self.remote_bridges.stop_all();
+        self.shutdown.notify_waiters();
+        self.pane_capabilities.revoke_all();
+        self.remove_bootstrap_socket();
     }
 }
 
@@ -183,6 +212,14 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     };
     let boundary = Arc::new(boundary::Boundary::new(&env.home)?);
     let core = Arc::new(CoreHandle::spawn(options)?);
+    let pane_capabilities = Arc::new(pane_auth::Registry::new(&env.state_dir)?);
+    let remote_bridges = remote_bridge::Supervisor::spawn(
+        Arc::clone(&core),
+        Arc::clone(&pane_capabilities),
+        port,
+        env.workspace_bridge_dir.clone(),
+    );
+    let (pane_listener, pane_bootstrap_socket) = pane_auth::bind(&env.state_dir)?;
     let watch = Arc::new(watch::WatchService::new(
         Arc::clone(&boundary),
         Arc::clone(&core),
@@ -203,8 +240,11 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         Arc::clone(&watch),
         Arc::clone(&index),
     ));
+    let browser_routes = browser_routes::BrowserRoutes::new(Arc::clone(&core));
+    let desktop_renderers = Arc::new(AtomicUsize::new(0));
+    browser_routes.spawn_reaper(Arc::clone(&desktop_renderers), Arc::clone(&shutdown));
     let app = AppState {
-        core,
+        core: Arc::clone(&core),
         boundary,
         roots,
         watch: Arc::clone(&watch),
@@ -212,8 +252,13 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         attachments: Arc::clone(&attachments),
         opener,
         token: Arc::new(token.clone()),
+        pane_capabilities: Arc::clone(&pane_capabilities),
+        browser_routes,
+        herdr_socket: env.herdr_socket_path.as_ref().map(std::path::PathBuf::from),
         allowed_origins: Arc::new(server::allowed_origins(port, env.vite_origin.as_deref())),
         clients: Arc::new(AtomicUsize::new(0)),
+        renderers: Arc::new(AtomicUsize::new(0)),
+        desktop_renderers,
         connections: Arc::new(AtomicU64::new(0)),
         last_client_gone: Arc::new(Mutex::new(Instant::now())),
         keep_alive: env.keep_alive,
@@ -250,6 +295,14 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         roots_failed(&error);
     }
     spawn_root_refresh(Arc::clone(&app.roots));
+    tokio::spawn(pane_auth::serve(
+        pane_listener,
+        Arc::clone(&pane_capabilities),
+        core,
+        env.herdr_socket_path.as_ref().map(std::path::PathBuf::from),
+        port,
+        Arc::clone(&shutdown),
+    ));
     tokio::spawn(async move {
         if let Err(error) = server::serve(listener, app).await {
             eprintln!(
@@ -264,6 +317,10 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         token,
         _lock: lock,
         shutdown,
+        pane_capabilities,
+        pane_bootstrap_socket,
+        pane_bootstrap_record: pane_auth::bootstrap_socket_record(&env.state_dir),
+        remote_bridges,
     })
 }
 

@@ -1,20 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { loadable, MAX_SYNCED_DISPLAYS, overCap, parseCommand, parseSync, parseTarget, toBounds } from "./browserSync";
+import { loadable, MAX_SYNCED_DISPLAYS, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds } from "./browserSync";
 
 const rect = { x: 0, y: 40, width: 800, height: 600 };
 const display = { id: "d1", url: "https://a.test/", load: 3, rect, visible: true };
 
 describe("what the shell may ask of the browser views (issue 155)", () => {
   it("takes a well-formed sync whole", () => {
-    const sync = { workspace: "local\u0000/r", displays: [display, { ...display, id: "d2", rect: null, visible: false }] };
+    const sync = { workspace: "local\u0000/r", displays: [display, { ...display, id: "d2", rect: null, visible: false }], retained: [{ workspace: "local\u0000/r", id: "d1" }, { workspace: "local\u0000/r", id: "d2" }, { workspace: "ssh\u0000/other", id: "d1" }] };
     expect(parseSync(sync)).toEqual(sync);
-    expect(parseSync({ workspace: null, displays: [] })).toEqual({ workspace: null, displays: [] });
+    expect(parseSync({ workspace: null, displays: [], retained: [] })).toEqual({ workspace: null, displays: [], retained: [] });
   });
 
   it("drops a sync whole when any part of it is out of shape", () => {
     const bad: unknown[] = [
       null,
       { workspace: "w", displays: "d1" },
+      { workspace: "w", displays: [display], retained: [] },
       { workspace: null, displays: [display] },
       { workspace: "", displays: [] },
       { workspace: "w", displays: [display, display] },
@@ -40,6 +41,18 @@ describe("what the shell may ask of the browser views (issue 155)", () => {
   it("loads only the web, a local file, or a blank page", () => {
     for (const url of ["https://a.test/", "http://localhost:3000/", "file:///Users/example/a.html", "about:blank"]) expect(loadable(url), url).toBe(true);
     for (const url of ["javascript:alert(1)", "data:text/html,x", "chrome://settings", "about:config", "not a url"]) expect(loadable(url), url).toBe(false);
+  });
+
+  it("keeps absolute remote loopback requests on the View's SSH route", () => {
+    const route = { source_url: "http://127.0.0.2:5173/app", url: "http://127.0.0.1:63001/app" };
+    expect(remoteRequest(route, "http://localhost:5173/app.js")).toEqual({ redirectURL: "http://127.0.0.1:63001/app.js" });
+    expect(remoteRequest(route, "ws://localhost:5173/live")).toEqual({ redirectURL: "ws://127.0.0.1:63001/live" });
+    expect(remoteRequest(route, "http://localhost:9000/private")).toEqual({ cancel: true });
+    expect(remoteRequest(route, "http://127.0.0.1:63001/app.js")).toEqual({});
+    expect(remoteRequest(route, "http://[::ffff:127.0.0.1]:5173/app.js")).toEqual({ redirectURL: "http://127.0.0.1:63001/app.js" });
+    expect(remoteRequest(route, "http://[::ffff:127.0.0.1]:9000/private")).toEqual({ cancel: true });
+    expect(remoteRequest({ source_url: "http://127.1:5173/", url: "http://127.1:5173/" }, "http://127.1:5173/")).toEqual({ cancel: true });
+    expect(remoteRequest({ source_url: "file:///checkout/page.html", url: "http://127.0.0.1:63002/secret/page.html" }, "https://example.com/leak")).toEqual({ cancel: true });
   });
 });
 

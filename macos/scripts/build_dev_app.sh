@@ -55,6 +55,11 @@ cargo build --manifest-path "$worktree_root/herdr-core/Cargo.toml" --release
 # own executable; a bundle without it can report hook state but not install one.
 cargo build --manifest-path "$worktree_root/Cargo.toml" --release \
     -p hide-agent-hooks --bin hide-agent-hooks
+# The SessionStart hook probes the pane-scoped CLI beside itself, even when
+# the operator has not placed a separate `hide` command on PATH.
+pnpm --dir "$worktree_root/web" build
+cargo build --manifest-path "$worktree_root/Cargo.toml" --release \
+    -p hided --bin hide
 # The device helper is what Hide installs on a device the operator allowed,
 # so the app carries the build for this Mac's platform (PRD S5.5 D-20).
 cargo build --manifest-path "$worktree_root/Cargo.toml" --release \
@@ -79,6 +84,9 @@ install -m 755 \
 install -m 755 \
     "$worktree_root/target/release/hide-agent-hooks" \
     "$app_root/Contents/MacOS/hide-agent-hooks"
+install -m 755 \
+    "$worktree_root/target/release/hide" \
+    "$app_root/Contents/MacOS/hide"
 # The helper is built for this machine's own target, so its package is named
 # for that architecture; a device of another architecture then finds no
 # package for it rather than one built for the wrong processor.
