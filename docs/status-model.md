@@ -164,6 +164,7 @@ They remain separate badges or Git indicators and never select the agent status 
 Agent rows, focused-agent tab marks, and Workspace summaries use the same status mark and semantic color mapping.
 Working uses a fixed blue status token, independent of the user's accent color; Done uses green, so running and completed work remain distinct.
 The symbol and accessible text accompany color, so color alone never carries the distinction.
+Every surface draws the mark in one box of one size: `●` and `○` as a filled dot and a ring of the same diameter, because the two glyphs render at different sizes in every face, and every other mark as its glyph in that box (`web/src/components/status-mark.tsx`).
 
 | Agent condition | Mark | Color | Text and behavior |
 | --- | --- | --- | --- |

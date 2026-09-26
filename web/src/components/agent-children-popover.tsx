@@ -4,6 +4,7 @@ import { branchChip, markTone } from "../agentRow";
 import type { AgentRow } from "../snapshot";
 import { Command, CommandGroup, CommandItem, CommandList, CommandSeparator } from "./ui/command";
 import { Kbd } from "./ui/kbd";
+import { StatusMark } from "./status-mark";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 
 /**
@@ -96,9 +97,7 @@ function ChildItem({ child, onOpen }: { child: AgentRow; onOpen: () => void }) {
   const tone = markTone(child);
   return (
     <CommandItem value={child.pane_id} onSelect={onOpen} data-agent-child={child.pane_id} className="group/child items-start">
-      <span className={`w-(--size-agent-mark) shrink-0 font-mono text-caption ${tone}`} aria-hidden="true">
-        {child.symbol}
-      </span>
+      <StatusMark symbol={child.symbol} className={`mt-xxs ${tone}`} />
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="flex items-baseline gap-xs">
           <span className="min-w-0 flex-1 truncate font-medium text-foreground">{child.identity_label}</span>

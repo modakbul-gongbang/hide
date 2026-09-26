@@ -50,7 +50,13 @@ test("a root waiting on its child, the badge's child list, and the progress line
     const parentRow = page.locator(`[data-agent-list] [data-pane="${parent}"]`);
     await expect(parentRow).toHaveAttribute("data-waiting", "true", { timeout: 20_000 });
     await expect(page.locator(`[data-agent-group="working"] [data-pane="${parent}"]`)).toBeVisible();
-    await expect(parentRow.locator('[data-badge-part="working"]')).toHaveText("●1");
+    const workingPart = parentRow.locator('[data-badge-part="working"]');
+    await expect(workingPart).toHaveText("1");
+    // One mark size: the waiting root's ring and the badge's working dot are
+    // drawn shapes of one diameter, not two glyphs that render apart.
+    const ring = await parentRow.locator('[data-agent-status-mark="waiting"][data-mark="○"] > span').boundingBox();
+    const dot = await workingPart.locator('[data-mark="●"] > span').boundingBox();
+    expect(ring && [ring.width, ring.height]).toEqual(dot && [dot.width, dot.height]);
     // The heading counts the folded child with its parent.
     await expect(page.locator("#agent-group-working")).toHaveText(/· 2$/);
     // Folded by default: the delegated child is drawn under its parent only once unfolded.

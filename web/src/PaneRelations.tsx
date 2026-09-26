@@ -5,6 +5,7 @@ import { AgentMark } from "./AgentMark";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { EntryPointMenu, type MenuEntry } from "./components/entry-menu";
+import { StatusMark } from "./components/status-mark";
 import { chipTitle, chipTone, directChildren, parentStep, relationEntries, relationState } from "./lineage";
 import type { PaneRow } from "./snapshot";
 import { useShellStore } from "./store";
@@ -82,9 +83,7 @@ export function ChildChipRow({ pane, actions }: { pane: PaneRow; actions: Action
               if (!pending) actions.followRelation(pane.id, chip.pane_id, chip.label);
             }}
           >
-            <span className={`font-mono ${chipTone(chip)}`} aria-hidden="true">
-              {pending ? "…" : chip.symbol}
-            </span>
+            <StatusMark symbol={pending ? "…" : chip.symbol} className={chipTone(chip)} />
             <AgentMark kind={chip.agent_kind} />
             <span className="truncate">{chip.label}</span>
           </button>
