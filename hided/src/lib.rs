@@ -10,10 +10,12 @@ pub mod env;
 pub mod file_url;
 pub mod index;
 pub mod opener;
+pub mod pane_auth;
 pub mod server;
 pub mod spawn;
 pub mod state_file;
 pub mod watch;
+pub mod workspace_cli;
 
 use std::sync::atomic::{AtomicU64, AtomicUsize};
 use std::sync::{Arc, Mutex};
@@ -93,11 +95,22 @@ pub struct RunningDaemon {
     pub token: String,
     pub _lock: std::fs::File,
     shutdown: Arc<Notify>,
+    pane_capabilities: Arc<pane_auth::Registry>,
+    pane_bootstrap_socket: std::path::PathBuf,
 }
 
 impl RunningDaemon {
     pub fn stop(&self) {
+        self.pane_capabilities.revoke_all();
+        let _ = std::fs::remove_file(&self.pane_bootstrap_socket);
         self.shutdown.notify_waiters();
+    }
+}
+
+impl Drop for RunningDaemon {
+    fn drop(&mut self) {
+        self.pane_capabilities.revoke_all();
+        let _ = std::fs::remove_file(&self.pane_bootstrap_socket);
     }
 }
 
@@ -183,6 +196,8 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     };
     let boundary = Arc::new(boundary::Boundary::new(&env.home)?);
     let core = Arc::new(CoreHandle::spawn(options)?);
+    let pane_capabilities = Arc::new(pane_auth::Registry::new(&env.state_dir)?);
+    let (pane_listener, pane_bootstrap_socket) = pane_auth::bind(&env.state_dir)?;
     let watch = Arc::new(watch::WatchService::new(
         Arc::clone(&boundary),
         Arc::clone(&core),
@@ -204,7 +219,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         Arc::clone(&index),
     ));
     let app = AppState {
-        core,
+        core: Arc::clone(&core),
         boundary,
         roots,
         watch: Arc::clone(&watch),
@@ -212,8 +227,11 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         attachments: Arc::clone(&attachments),
         opener,
         token: Arc::new(token.clone()),
+        pane_capabilities: Arc::clone(&pane_capabilities),
+        herdr_socket: env.herdr_socket_path.as_ref().map(std::path::PathBuf::from),
         allowed_origins: Arc::new(server::allowed_origins(port, env.vite_origin.as_deref())),
         clients: Arc::new(AtomicUsize::new(0)),
+        renderers: Arc::new(AtomicUsize::new(0)),
         connections: Arc::new(AtomicU64::new(0)),
         last_client_gone: Arc::new(Mutex::new(Instant::now())),
         keep_alive: env.keep_alive,
@@ -250,6 +268,14 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         roots_failed(&error);
     }
     spawn_root_refresh(Arc::clone(&app.roots));
+    tokio::spawn(pane_auth::serve(
+        pane_listener,
+        Arc::clone(&pane_capabilities),
+        core,
+        env.herdr_socket_path.as_ref().map(std::path::PathBuf::from),
+        port,
+        Arc::clone(&shutdown),
+    ));
     tokio::spawn(async move {
         if let Err(error) = server::serve(listener, app).await {
             eprintln!(
@@ -264,6 +290,8 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         token,
         _lock: lock,
         shutdown,
+        pane_capabilities,
+        pane_bootstrap_socket,
     })
 }
 

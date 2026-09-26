@@ -28,6 +28,9 @@ pub enum CommandKind {
         target: String,
         pane: Option<String>,
     },
+    WorkspaceBootstrap,
+    WorkspaceInfo,
+    ViewList,
 }
 
 const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--pane <pane-id>]";
@@ -48,6 +51,15 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
         }
         Some("dev") => Ok(CommandKind::Dev),
         Some("browser") => parse_browser(iter),
+        Some("workspace") => match (iter.next().map(String::as_str), iter.next()) {
+            (Some("bootstrap"), None) => Ok(CommandKind::WorkspaceBootstrap),
+            (Some("info"), None) => Ok(CommandKind::WorkspaceInfo),
+            _ => Err("usage: hide workspace info".to_owned()),
+        },
+        Some("view") => match (iter.next().map(String::as_str), iter.next()) {
+            (Some("list"), None) => Ok(CommandKind::ViewList),
+            _ => Err("usage: hide view list".to_owned()),
+        },
         Some(other) => Err(format!("unknown command: {other}")),
     }
 }
@@ -88,7 +100,54 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         CommandKind::Serve { keep_alive } => serve(env, keep_alive),
         CommandKind::Dev => dev(env),
         CommandKind::BrowserOpen { target, pane } => browser_open(&env, &target, pane),
+        CommandKind::WorkspaceBootstrap => {
+            let reference = crate::workspace_cli::bootstrap(&env, false)?;
+            println!("{}", serde_json::json!({"ok":true,"reference":reference}));
+            Ok(())
+        }
+        CommandKind::WorkspaceInfo => workspace_query(&env, "info"),
+        CommandKind::ViewList => workspace_query(&env, "view_list"),
     }
+}
+
+fn workspace_query(env: &Env, query: &str) -> Result<(), String> {
+    let (reference, ephemeral) = match std::env::var(env::HIDE_CAP_REF) {
+        Ok(value) if !value.is_empty() => (std::path::PathBuf::from(value), false),
+        Ok(_) => {
+            return workspace_refusal("invalid_reference", "Set a valid HIDE_CAP_REF and retry");
+        }
+        Err(_) => match crate::workspace_cli::bootstrap(env, true) {
+            Ok(path) => (path, true),
+            Err(reason) => {
+                return workspace_refusal(&reason, "Run Hide, reconnect this pane, and retry");
+            }
+        },
+    };
+    let _reference_owner =
+        ephemeral.then(|| crate::workspace_cli::OneShotReference(reference.clone()));
+    let answer = match crate::workspace_cli::request(&reference, query) {
+        Ok(answer) => answer,
+        Err(reason) => {
+            return workspace_refusal(&reason, "Check Hide status, reconnect the pane, and retry");
+        }
+    };
+    println!("{answer}");
+    if answer["ok"] == true {
+        Ok(())
+    } else {
+        Err(answer["reason"]
+            .as_str()
+            .unwrap_or("workspace_request_failed")
+            .to_owned())
+    }
+}
+
+fn workspace_refusal(reason: &str, next_action: &str) -> Result<(), String> {
+    println!(
+        "{}",
+        serde_json::json!({"ok":false,"reason":reason,"next_action":next_action})
+    );
+    Err(reason.to_owned())
 }
 
 /// Prints the core's receipt, or the refusal, as one JSON line, and fails on

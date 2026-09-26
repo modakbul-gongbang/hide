@@ -16,6 +16,7 @@
       "properties": {
         "token": { "type": "string", "minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]+$" },
         "schema_version": { "type": "integer", "const": 2 },
+        "client_kind": { "type": "string", "enum": ["web", "desktop"] },
         "have_revision": { "type": "integer", "minimum": 0 },
         "have_terminal_sequence": { "type": "integer", "minimum": 0 }
       }

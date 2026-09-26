@@ -24,6 +24,7 @@ use crate::boundary::{self, Boundary, Listing, Refusal};
 use crate::core::CoreHandle;
 use crate::index::{IndexAnswer, IndexService};
 use crate::opener::OpenHandler;
+use crate::pane_auth::Registry;
 use crate::state_file::{MAX_CLIENTS, SCHEMA_VERSION};
 use crate::watch::WatchService;
 
@@ -71,8 +72,12 @@ pub struct AppState {
     /// One bounded, daemon-owned path for OS file associations.
     pub opener: OpenHandler,
     pub token: Arc<String>,
+    pub pane_capabilities: Arc<Registry>,
+    pub herdr_socket: Option<PathBuf>,
     pub allowed_origins: Arc<HashSet<String>>,
     pub clients: Arc<AtomicUsize>,
+    /// Authenticated shell windows, distinct from CLI and non-rendering clients.
+    pub renderers: Arc<AtomicUsize>,
     /// Numbers connections so a stage can be released with its connection.
     pub connections: Arc<AtomicU64>,
     pub last_client_gone: Arc<Mutex<Instant>>,
@@ -93,6 +98,7 @@ pub struct AppState {
 struct Handshake {
     token: String,
     schema_version: u32,
+    client_kind: Option<String>,
     have_revision: Option<u64>,
     have_terminal_sequence: Option<u64>,
 }
@@ -261,12 +267,23 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
             return;
         }
     };
-    if !token_matches(&handshake.token, &state.token) {
-        refuse(&mut socket, CloseReason::InvalidToken, None).await;
-        return;
-    }
     if handshake.schema_version != SCHEMA_VERSION {
         refuse(&mut socket, CloseReason::SchemaMismatch, None).await;
+        return;
+    }
+    if !token_matches(&handshake.token, &state.token) {
+        if let Some(capability) = state.pane_capabilities.get(&handshake.token) {
+            scoped_client_loop(
+                socket,
+                state,
+                connection,
+                handshake.token,
+                capability.one_shot,
+            )
+            .await;
+        } else {
+            refuse(&mut socket, CloseReason::InvalidToken, None).await;
+        }
         return;
     }
     let previous = state.clients.fetch_add(1, Ordering::SeqCst);
@@ -274,6 +291,10 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
         state.clients.fetch_sub(1, Ordering::SeqCst);
         refuse(&mut socket, CloseReason::ClientLimit, Some(previous + 1)).await;
         return;
+    }
+    let renderer = matches!(handshake.client_kind.as_deref(), Some("web" | "desktop"));
+    if renderer {
+        state.renderers.fetch_add(1, Ordering::SeqCst);
     }
     // A reconnecting client resumes from the cursors it last applied, so the
     // first frame carries only what changed while it was away; a fresh client
@@ -300,14 +321,14 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
         .await
         .is_err()
     {
-        client_gone(&state, connection);
+        client_gone(&state, connection, renderer);
         return;
     }
     if send_snapshot(&mut socket, &state, &mut have_revision, &mut have_sequence)
         .await
         .is_err()
     {
-        client_gone(&state, connection);
+        client_gone(&state, connection, renderer);
         return;
     }
     loop {
@@ -427,7 +448,109 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
     for read in device_reads {
         read.task.abort();
     }
-    client_gone(&state, connection);
+    client_gone(&state, connection, renderer);
+}
+
+/// A pane capability can submit only Workspace commands. It never receives a
+/// snapshot, file bytes, or the shell's unrestricted dispatch channel.
+async fn scoped_client_loop(
+    mut socket: WebSocket,
+    state: AppState,
+    connection: u64,
+    token: String,
+    one_shot: bool,
+) {
+    let previous = state.clients.fetch_add(1, Ordering::SeqCst);
+    if previous >= MAX_CLIENTS {
+        state.clients.fetch_sub(1, Ordering::SeqCst);
+        refuse(&mut socket, CloseReason::ClientLimit, Some(previous + 1)).await;
+        return;
+    }
+    let incoming = tokio::time::timeout(Duration::from_secs(10), socket.recv()).await;
+    let response = match incoming {
+        Ok(Some(Ok(Message::Text(text)))) if text.len() <= 16 * 1024 => {
+            match serde_json::from_str::<Value>(&text) {
+                Ok(value) => {
+                    let request_id = value["request_id"].as_str().unwrap_or("");
+                    if value["type"] != "workspace_query"
+                        || request_id.is_empty()
+                        || request_id.len() > 64
+                        || !request_id
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                        || !matches!(value["query"].as_str(), Some("info" | "view_list"))
+                    {
+                        json!({"type":"workspace_result","ok":false,"reason":"invalid_request","next_action":"Run hide workspace info or hide view list with valid arguments"})
+                    } else {
+                        let request_id = request_id.to_owned();
+                        let query = if value["query"] == "info" {
+                            herdr_core::workspace_control::Query::Info
+                        } else {
+                            herdr_core::workspace_control::Query::ViewList
+                        };
+                        let core = Arc::clone(&state.core);
+                        let registry = Arc::clone(&state.pane_capabilities);
+                        let renderers = Arc::clone(&state.renderers);
+                        let herdr_socket = state.herdr_socket.clone();
+                        let query_token = token.clone();
+                        let outcome = tokio::task::spawn_blocking(move || {
+                            let socket = herdr_socket
+                                .as_deref()
+                                .ok_or(("pane_unavailable", "Reconnect Hide to Herdr and retry"))?;
+                            let cap = registry
+                                .validate(&query_token, socket, &core)
+                                .map_err(|reason| (reason, "Reconnect the pane and retry"))?;
+                            if renderers.load(Ordering::SeqCst) == 0 {
+                                return Err((
+                                    "renderer_unavailable",
+                                    "Open Hide's web or desktop shell and retry",
+                                ));
+                            }
+                            let result = core
+                                .workspace_query(&cap.context.device_id, &cap.pane_id, query)
+                                .map_err(|refusal| (refusal.reason, refusal.next_action))?;
+                            if result.context != cap.context {
+                                return Err(("pane_changed", "Reconnect the pane and retry"));
+                            }
+                            if renderers.load(Ordering::SeqCst) == 0 {
+                                return Err((
+                                    "renderer_unavailable",
+                                    "Open Hide's web or desktop shell and retry",
+                                ));
+                            }
+                            Ok::<_, (&str, &str)>(result)
+                        })
+                        .await;
+                        match outcome {
+                            Ok(Ok(result)) => {
+                                json!({"type":"workspace_result","request_id":request_id,"ok":true,"result":result})
+                            }
+                            Ok(Err((reason, next_action))) => {
+                                json!({"type":"workspace_result","request_id":request_id,"ok":false,"reason":reason,"next_action":next_action})
+                            }
+                            Err(_) => {
+                                json!({"type":"workspace_result","request_id":request_id,"ok":false,"reason":"query_unavailable","next_action":"Retry after reconnecting Hide"})
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    json!({"type":"workspace_result","ok":false,"reason":"invalid_request","next_action":"Check the command arguments and retry"})
+                }
+            }
+        }
+        _ => {
+            json!({"type":"workspace_result","ok":false,"reason":"request_timeout","next_action":"Check Hide status and retry"})
+        }
+    };
+    let _ = socket
+        .send(Message::Text(response.to_string().into()))
+        .await;
+    let _ = socket.send(Message::Close(None)).await;
+    if one_shot {
+        state.pane_capabilities.revoke(&token);
+    }
+    client_gone(&state, connection, false);
 }
 
 /// How many device file reads one client runs at once. A viewer asks for one
@@ -1981,7 +2104,10 @@ async fn send_snapshot(
     Ok(())
 }
 
-fn client_gone(state: &AppState, connection: u64) {
+fn client_gone(state: &AppState, connection: u64, renderer: bool) {
+    if renderer {
+        state.renderers.fetch_sub(1, Ordering::SeqCst);
+    }
     state.attachments.release(connection);
     state.demand.release(connection, |observing| {
         dispatch_observation(state, connection, observing)

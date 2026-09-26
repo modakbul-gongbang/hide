@@ -49,6 +49,7 @@ A check script calls the same two scripts rather than cargo or swift directly, s
 | --- | --- | --- |
 | test | `bash scripts/verify-cargo.sh test` | `target/debug`; locked workspace tests |
 | lint | `bash scripts/verify-cargo.sh lint` | `cargo fmt --check` then `cargo clippy -D warnings` over every target |
+| cli | `bash scripts/verify-cargo.sh cli` | `target/debug/hide` and `target/debug/hided` for isolated CLI and daemon checks |
 | build | `bash scripts/verify-swift.sh test` | `target/release/libherdr_core.a`, then `macos/.build`; the executable, resources and test targets compile and the tests execute |
 
 `verify-swift.sh` first invokes `verify-cargo.sh build`, so a Swift run never links a stale core.
