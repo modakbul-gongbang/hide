@@ -58,7 +58,29 @@ wait_js() {
   local deadline=$((SECONDS+30))
   until [[ "$(node -e "
 import('$measure_dir/cdp.mjs').then(async ({connectPage}) => { const p = await connectPage('$MEASURE_CDP_PORT'); console.log(await p.evaluate(process.argv[1])); p.close(); }).catch(() => console.log('unready'))" "$1")" == true ]]; do
-    (( SECONDS < deadline )) || { echo "browser unready: $1" >&2; exit 1; }
+    if (( SECONDS >= deadline )); then
+      node --input-type=module - "$measure_dir/cdp.mjs" "$MEASURE_CDP_PORT" <<'JS' >&2
+const { connectPage } = await import(process.argv[2]);
+const page = await connectPage(process.argv[3]);
+try {
+  console.log(JSON.stringify(await page.evaluate(`({
+    screen: document.querySelector('main')?.getAttribute('aria-label'),
+    mainView: document.querySelector('[data-main-screen]')?.getAttribute('data-main-view'),
+    overviewState: document.querySelector('[data-overview-screen]')?.getAttribute('data-overview-state'),
+    projectRows: document.querySelectorAll('[data-main-project]').length,
+    workspaceRows: document.querySelectorAll('[data-overview-workspace]').length,
+    sidebarMode: document.querySelector('[data-sidebar]')?.getAttribute('data-sidebar'),
+    sidebarProjects: document.querySelectorAll('[data-project-row]').length,
+    sidebarCheckouts: document.querySelectorAll('[data-checkout]').length,
+    workspaceVisible: Boolean(document.querySelector('[data-workspace-screen]'))
+  })`)));
+} finally {
+  page.close();
+}
+JS
+      echo "browser unready: $1" >&2
+      exit 1
+    fi
     sleep 0.3
   done
 }
@@ -99,6 +121,11 @@ if [[ ! -d "$MEASURE_FIXTURE/.git" ]]; then
   git -C "$MEASURE_FIXTURE" add README
   git -C "$MEASURE_FIXTURE" -c commit.gpgsign=false -c user.email="measure@example.invalid" -c user.name="measure" commit --quiet -m "measure fixture"
 fi
+measure_checkout="$(cd "$MEASURE_RUN_DIR" && pwd)/checkout"
+if [[ ! -f "$measure_checkout/.git" ]]; then
+  git -C "$MEASURE_FIXTURE" worktree add --quiet -b measure-worktree "$measure_checkout"
+fi
+export MEASURE_FIXTURE="$measure_checkout"
 env HOME="$MEASURE_PRIVATE/home" "$HERDR_BIN_PATH" server >"$MEASURE_RUN_DIR/logs/herdr-server.log" 2>&1 &
 server_pid=$!
 server_started=true
@@ -149,9 +176,9 @@ page_url="http://127.0.0.1:$hided_port/?probe=1#token=$hided_token"
 spawn_owned chrome "$chrome_bin" --user-data-dir="$MEASURE_RUN_DIR/chrome-profile" --remote-debugging-port="$MEASURE_CDP_PORT" --remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check --disable-sync --disable-background-networking --disable-component-update --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --window-size=1280,900 "$page_url"
 chrome_pid=$owned_pid
 wait_url "http://127.0.0.1:$MEASURE_CDP_PORT/json/list"
-# A first run opens on Main's Tasks tab (PRD S6 D-11). Select Projects, then
-# the fixture's Project and its Workspace, one click per poll until it shows.
-wait_js "(() => { if (document.querySelector('[data-workspace-screen]')) return true; const projects = document.querySelector('[data-main-tab=\"projects\"]:not([data-state=\"active\"])'); if (projects) { projects.click(); return false; } const next = document.querySelector('[data-overview-workspace]') ?? document.querySelector('[data-main-project]:not([disabled])'); if (next) next.click(); return false; })()"
+# A first run opens on Main (PRD S6 D-11). Open the one fixture checkout
+# through the Projects sidebar, one click per poll until its Workspace shows.
+wait_js "(() => { if (document.querySelector('[data-workspace-screen]')) return true; const projects = document.querySelector('[data-sidebar-mode=\"projects\"]'); if (projects?.getAttribute('aria-pressed') !== 'true') { projects?.click(); return false; } const checkout = document.querySelector('[data-checkout]:not([disabled])'); if (checkout) { checkout.click(); return false; } document.querySelector('[data-project-toggle][aria-expanded=\"false\"]')?.click(); return false; })()"
 wait_js 'Boolean(window.__hideProbe && window.__hideProbe.paneId())'
 sleep 2
 if [[ "$scenario" == multi ]]; then

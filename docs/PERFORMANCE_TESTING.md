@@ -419,7 +419,7 @@ Use a qualified verdict when coverage is bounded: “no whole-body blanking obse
 ## Web shell echo and frame measurement
 
 `scripts/web-shell-measure/run.sh` measures the product `hided` the way the S0 spike measured its prototype, so the numbers stay comparable to the S0 Swift baseline.
-It owns every process it starts: an isolated pinned Herdr server on a private socket under `/tmp` (`isolated-env.sh`, the same routing table as section 3), one workspace with a `stty -echo -icanon; cat` pane, the release `hided` with its embedded `web/dist`, and one Google Chrome with a CDP port on the page opened with `?probe=1`.
+It owns every process it starts: an isolated pinned Herdr server on a private socket under `/tmp` (`isolated-env.sh`, the same routing table as section 3), one linked Git checkout and workspace with a `stty -echo -icanon; cat` pane, the release `hided` with its embedded `web/dist`, and one Google Chrome with a CDP port on the page opened with `?probe=1`.
 The operator's socket is only read, before and after, for the topology counts written beside the results.
 
 Echo (PRD B8) is three trials of fifty `herdr pane send-text` markers.
@@ -430,8 +430,9 @@ Frames (PRD B12) is one 120 s window with the pane printing a line every 8 ms wh
 This is a live driven pipeline, not the in-page replay the spike used: a replay mode would put spike code into the product, and the threshold is absolute, so the live run is the stricter measurement.
 
 Run it as `HIDE_MEASURE_RUN_DIR=agents/runs/<slug>/measure/<attempt> bash scripts/web-shell-measure/run.sh` after `pnpm --dir web build` and `cargo build --release -p hided`.
-A first run opens on Main's Tasks tab (PRD S6), so the harness selects Projects, opens the fixture's Project, and then opens its Workspace before measuring.
+A first run opens on Main (PRD S6), so the harness uses the Projects sidebar to open its linked fixture checkout before measuring.
 The run directory keeps `identity.txt` (head, dirty count, binary hash, Herdr and Chrome versions, load), `echo-*.json`, `frames.json`, both summaries and the process list at cleanup.
+The harness resolves that directory to an absolute path before starting child panes, so their private HOME, state, and checkout paths remain valid after the pane changes directory.
 `MEASURE_SCENARIO=multi` is the S2 shape (PRD web-shell-pivot-s2 D-08): the measured pane shares its tab with four splits and four more tabs are shown once each so the core holds five attached tabs before the shell returns to the measured tab; `page.json` records the pane, split and tab counts, the attached pane ids and the live xterm instances the run started from (every attached pane keeps its instance parked while its tab is hidden, D-05).
 `memory.py` samples resident memory twice, after the shape settled and after the driven window (`memory-settled.json`, `memory-after-frames.json`): the Chrome process tree's RSS sum, hided's RSS, the page's JS heap and its live instance count; the two samples say whether the parked instances grow the tab under load, which is the D-05 revisit trigger.
 The driver and the marker still go to the one measured pane, so the other panes are idle shells with mounted xterm instances, and the gate is the same as the single-pane run.

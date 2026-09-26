@@ -11,6 +11,7 @@ measure_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 worktree_root="$(cd "$measure_dir/../.." && pwd)"
 run_dir="${HIDE_MEASURE_RUN_DIR:?set HIDE_MEASURE_RUN_DIR to a directory under agents/runs/<slug>/}"
 mkdir -p "$run_dir" "$run_dir/logs" "$run_dir/fixture" "$run_dir/chrome-profile"
+run_dir="$(cd "$run_dir" && pwd)"
 
 operator_socket="${HOME}/.config/herdr/herdr.sock"
 manifest="$worktree_root/macos/Sources/HerdrMacOS/Resources/herdr-bundle.json"
