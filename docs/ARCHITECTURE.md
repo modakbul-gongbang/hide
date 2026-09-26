@@ -273,6 +273,10 @@ The CLI returns the request ID on uncertain transport outcomes so the caller can
 Pane-scoped file and working-diff opens resolve a caller-cwd path on the calling machine, then use the checkout's existing host channel to read a document or Git status off the core lock.
 The core rechecks pane membership when it places the result into that checkout's View tree; a missing file, unavailable host, unchanged diff, or layout refusal has a request-scoped CLI outcome.
 An open without `--reveal` leaves the front Workspace and keyboard pane alone, and a local open with `--reveal` brings its checkout and chosen View forward.
+Pane-scoped `hide browser open` requires a connected desktop renderer and places a Browser View in the caller's checkout with the same bounded retry result as other actions.
+The core checks local HTML paths against that checkout and reads them outside its lock.
+The native host reports page load, completion, failure, and eviction with a load stamp; `hide view status` and `--wait` distinguish page state from View placement.
+The desktop host creates pages only when a View has a visible slot, so waiting on a hidden View expires without taking focus.
 Client frames are core events (`schema_version`, `kind`, `payload`).
 HTTP is static assets and `GET /health` (`pid`, `version`, `schema_version`, `clients`).
 No HTTP request dispatches a core event.
@@ -382,8 +386,9 @@ A document that becomes dirty, is saving or has a save state promotes every disp
 In web mode the per-checkout preview slot of `place_editor_tab` gives way to one preview display per area: a preview open retargets the active area's preview display in place, and its old document is retired when no other display shows it, like the preview replacement before it, with no Recent Closed entry; the Swift shell keeps the per-checkout slot.
 
 A browser display binds to nothing (issue 155, [BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md)): it is `open` from the moment it exists, the reconcile never removes it for want of a document tab, and a restore reads nothing for it.
-`browser_open` (the CLI, the Explorer, a page's new window) places one in the named Workspace, the Workspace of the pane that asked, or the front one, focusing a display that already shows the address; `browser_state` records the address and title a page reports in any Workspace, since a page keeps loading while another is in front; and the `view_layout` `navigate` action loads the operator's own address.
-Each answer to a `browser_open` is a receipt in `status.browser_opens`, the last 8 kept in memory, carrying the request's id, so the CLI reads its own answer from the frames it is sent.
+`browser_open` from the Explorer or a page's new window places a display in the named Workspace or the front one; pane CLI requests use the separate scoped Workspace action.
+`browser_state` records the address, title, and native load state a page reports, while `view_layout` `navigate` loads the operator's own address.
+UI `browser_open` receipts remain in `status.browser_opens`; pane CLI requests receive their own scoped action result.
 A load stamp (`load`, never saved) is how the core asks the desktop app to load a display's address again, and the address, capped at 8 KiB, holds only `http`, `https`, `file` or `about:blank`; loading repairs a stored display that breaks this to `about:blank`.
 A build from before browser displays reads a file that holds one as a file that does not parse, and so takes the unreadable path above: the file is renamed aside and the page starts on Main.
 

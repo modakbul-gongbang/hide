@@ -1,6 +1,6 @@
 //! Pane-scoped queries and actions against the live Herdr projection.
 
-use super::Runtime;
+use super::{AreaIntent, Runtime};
 use crate::view_layout::DisplayKind;
 use crate::workspace_control::{
     Action, ActionMaterial, ActionPreparation, ActionResult, ActionSource, Context, Query,
@@ -9,6 +9,12 @@ use crate::workspace_control::{
 
 const ACTION_RESULTS_KEPT: usize = 128;
 const ACTION_RETRY_WINDOW_MS: u64 = 10 * 60 * 1000;
+
+pub(super) struct ReportedBrowserPage {
+    pub load: u64,
+    pub loading: bool,
+    pub failure: Option<String>,
+}
 
 pub(super) struct RecordedAction {
     device_id: String,
@@ -104,6 +110,30 @@ impl Runtime {
         if let Some(cached) = cached {
             return Ok(ActionPreparation::Cached(cached));
         }
+        if let Action::OpenBrowser { url, .. } = action {
+            if !crate::view_layout::browser_address(url) {
+                return Err(Refusal {
+                    reason: "invalid_address",
+                    next_action: "Use an http, https, or checkout HTML address",
+                });
+            }
+            if crate::view_layout::is_file_address(url) {
+                let path = crate::workspace_control::local_file_path(url).ok_or(Refusal {
+                    reason: "invalid_address",
+                    next_action: "Use a local file URL with an absolute path",
+                })?;
+                let (root, channel) = self
+                    .document_source(&context.workspace_id, &context.checkout_id)
+                    .map_err(|_| Refusal {
+                        reason: "host_unavailable",
+                        next_action: "Reconnect the device and retry",
+                    })?;
+                return Ok(ActionPreparation::Read(ActionSource::browser(
+                    root, channel, path,
+                )));
+            }
+            return Ok(ActionPreparation::Ready);
+        }
         let (path, file) = match action {
             Action::OpenFile { path, .. } => (path, true),
             Action::OpenDiff { path, .. } => (path, false),
@@ -179,6 +209,72 @@ impl Runtime {
         action: &Action,
         material: Option<ActionMaterial>,
     ) -> Result<ActionResult, Refusal> {
+        if let Action::OpenBrowser { url, reveal } = action {
+            if !crate::view_layout::browser_address(url) {
+                return Err(Refusal {
+                    reason: "invalid_address",
+                    next_action: "Use an http, https, or checkout HTML address",
+                });
+            }
+            if crate::view_layout::is_file_address(url) && context.device_id != "local" {
+                return Err(Refusal {
+                    reason: "remote_page_unavailable",
+                    next_action: "Reconnect the remote page route and retry",
+                });
+            }
+            if crate::view_layout::is_file_address(url) && material.is_none() {
+                return Err(Refusal {
+                    reason: "html_unavailable",
+                    next_action: "Check the HTML file and retry",
+                });
+            }
+            if *reveal && context.device_id != "local" {
+                return Err(Refusal {
+                    reason: "reveal_unavailable",
+                    next_action: "Open without --reveal and select the remote Workspace in Hide",
+                });
+            }
+            let load = self.next_browser_load();
+            let view_id = self
+                .change_view_layout(key, |layout, stamp| {
+                    let existing = layout
+                        .displays()
+                        .find(|display| {
+                            display.kind == DisplayKind::Browser
+                                && display.url.as_deref() == Some(url)
+                        })
+                        .map(|display| display.id.clone());
+                    if let Some(id) = existing {
+                        layout.focus(&id, stamp)?;
+                        if let Some(display) = layout.display_mut(&id) {
+                            display.load = load;
+                        }
+                        return Ok((id, true));
+                    }
+                    let area_id = layout.active_area().id.clone();
+                    let display = layout.new_browser_display(url, load);
+                    let id = display.id.clone();
+                    layout.insert(&area_id, display, stamp)?;
+                    Ok((id, true))
+                })
+                .map_err(layout_refusal)?;
+            let area_id = self
+                .view_layout_of(key)
+                .and_then(|layout| layout.area_of(&view_id))
+                .map(|area| area.id.clone());
+            if *reveal {
+                self.bring_device_forward("local".to_owned());
+                self.focus_checkout(&context.workspace_id, &context.checkout_id);
+                self.apply_area_intent_to(key, AreaIntent::Views);
+            }
+            return Ok(ActionResult {
+                context: context.clone(),
+                request_id: request_id.to_owned(),
+                changed: true,
+                view_id,
+                area_id,
+            });
+        }
         if let Action::OpenFile {
             path: _,
             beside,
@@ -322,6 +418,7 @@ impl Runtime {
         }
         let (view_id, changed, area_id) = match action {
             Action::OpenFile { .. } | Action::OpenDiff { .. } => unreachable!("handled above"),
+            Action::OpenBrowser { .. } => unreachable!("handled above"),
             Action::Select { view_id, reveal } => {
                 if *reveal && context.device_id != "local" {
                     return Err(Refusal {
@@ -520,6 +617,25 @@ impl Runtime {
                         target: display.url.as_ref().unwrap_or(&display.path).clone(),
                         selected: area.active.as_deref() == Some(display.id.as_str()),
                         active_area: layout.active_area().id == area.id,
+                        page: (display.kind == DisplayKind::Browser).then(|| {
+                            let reported = self
+                                .browser_pages
+                                .get(&(
+                                    context.device_id.clone(),
+                                    context.checkout_path.clone(),
+                                    display.id.clone(),
+                                ))
+                                .filter(|page| page.load == display.load);
+                            crate::workspace_control::BrowserPage {
+                                state: match reported {
+                                    None => "pending",
+                                    Some(page) if page.failure.is_some() => "failed",
+                                    Some(page) if page.loading => "loading",
+                                    Some(_) => "loaded",
+                                },
+                                failure: reported.and_then(|page| page.failure.clone()),
+                            }
+                        }),
                     })
                 })
                 .collect()
@@ -531,6 +647,8 @@ impl Runtime {
             "view.split",
             "view.move",
             "view.close",
+            "browser.open",
+            "browser.status",
         ];
         if context.device_id == "local"
             || self

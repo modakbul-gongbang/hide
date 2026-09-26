@@ -523,6 +523,172 @@ fn file_open_reads_outside_the_runtime_then_places_once_in_the_callers_workspace
 }
 
 #[test]
+fn browser_load_status_tracks_the_current_load_and_retry_does_not_reload() {
+    let (mut runtime, _dir) = caller_fixture();
+    let expected = runtime
+        .workspace_control_query("local", "pane-b", Query::Info)
+        .unwrap()
+        .context;
+    let before = runtime.snapshot.navigator.focused_workspace_id.clone();
+    let action = Action::OpenBrowser {
+        url: "https://example.test/page".into(),
+        reveal: false,
+    };
+    let request_id = action_id("browser-open");
+    let first = runtime
+        .workspace_control_action(
+            "local",
+            "pane-b",
+            &expected,
+            &request_id,
+            action.clone(),
+            Ok(None),
+        )
+        .unwrap();
+    assert_eq!(runtime.snapshot.navigator.focused_workspace_id, before);
+    let key = ("local".to_owned(), expected.checkout_path.clone());
+    let load = runtime
+        .view_layout_of(&key)
+        .unwrap()
+        .display(&first.view_id)
+        .unwrap()
+        .load;
+    assert_eq!(
+        runtime
+            .workspace_control_action(
+                "local",
+                "pane-b",
+                &expected,
+                &request_id,
+                action.clone(),
+                Ok(None)
+            )
+            .unwrap(),
+        first
+    );
+    assert_eq!(
+        runtime
+            .view_layout_of(&key)
+            .unwrap()
+            .display(&first.view_id)
+            .unwrap()
+            .load,
+        load
+    );
+    let page = |runtime: &Runtime| {
+        runtime
+            .workspace_control_query("local", "pane-b", Query::ViewList)
+            .unwrap()
+            .views
+            .unwrap()
+            .into_iter()
+            .find(|view| view.view_id == first.view_id)
+            .unwrap()
+            .page
+            .unwrap()
+    };
+    assert_eq!(page(&runtime).state, "pending");
+    let report = |runtime: &mut Runtime, load: u64, loading: bool, failure: Option<&str>| {
+        let payload = serde_json::from_value(serde_json::json!({
+            "workspace":{"device_id":"local","path":expected.checkout_path},
+            "display_id":first.view_id,"url":"https://example.test/page","title":"Page",
+            "load":load,"loading":loading,"failure":failure,
+        }))
+        .unwrap();
+        runtime.record_browser_state(payload);
+    };
+    report(&mut runtime, load, true, None);
+    assert_eq!(page(&runtime).state, "loading");
+    report(&mut runtime, load, false, None);
+    assert_eq!(page(&runtime).state, "loaded");
+    runtime
+        .workspace_control_action(
+            "local",
+            "pane-b",
+            &expected,
+            &action_id("browser-reload"),
+            action,
+            Ok(None),
+        )
+        .unwrap();
+    let newer = runtime
+        .view_layout_of(&key)
+        .unwrap()
+        .display(&first.view_id)
+        .unwrap()
+        .load;
+    assert!(newer > load);
+    assert_eq!(page(&runtime).state, "pending");
+    report(&mut runtime, load, false, None);
+    assert_eq!(page(&runtime).state, "pending");
+    report(&mut runtime, newer, false, Some("Connection refused"));
+    assert_eq!(page(&runtime).state, "failed");
+    assert_eq!(
+        page(&runtime).failure.as_deref(),
+        Some("Connection refused")
+    );
+}
+
+#[test]
+fn browser_file_source_is_confined_to_the_calling_checkout() {
+    let (mut runtime, dir) = caller_fixture();
+    let checkout = dir.path().join("checkout");
+    std::fs::create_dir(&checkout).unwrap();
+    runtime.snapshot.navigator.workspaces[1].path = checkout.to_string_lossy().into_owned();
+    runtime.snapshot.navigator.workspaces[1].checkouts[0].path =
+        checkout.to_string_lossy().into_owned();
+    let expected = runtime
+        .workspace_control_query("local", "pane-b", Query::Info)
+        .unwrap()
+        .context;
+    let outside = dir.path().join("outside.html");
+    std::fs::write(&outside, "<title>Outside</title>").unwrap();
+    let action = Action::OpenBrowser {
+        url: format!("file://{}", outside.display()),
+        reveal: false,
+    };
+    let ActionPreparation::Read(source) = runtime
+        .workspace_control_prepare_action(
+            "local",
+            "pane-b",
+            &expected,
+            &action_id("outside-html"),
+            &action,
+        )
+        .unwrap()
+    else {
+        panic!("file URL must read outside the lock")
+    };
+    assert_eq!(source.read().err().unwrap().reason, "path_outside_checkout");
+    let inside = checkout.join("index.html");
+    std::fs::write(&inside, "<title>Inside</title>").unwrap();
+    let action = Action::OpenBrowser {
+        url: format!("file://{}", inside.display()),
+        reveal: false,
+    };
+    let id = action_id("inside-html");
+    let ActionPreparation::Read(source) = runtime
+        .workspace_control_prepare_action("local", "pane-b", &expected, &id, &action)
+        .unwrap()
+    else {
+        panic!("file URL must read outside the lock")
+    };
+    let material = source.read().unwrap();
+    assert!(
+        runtime
+            .workspace_control_action(
+                "local",
+                "pane-b",
+                &expected,
+                &id,
+                action,
+                Ok(Some(material))
+            )
+            .is_ok()
+    );
+}
+
+#[test]
 fn diff_open_requires_a_real_working_tree_change() {
     let (mut runtime, dir) = caller_fixture();
     let root = dir.path().to_string_lossy().into_owned();

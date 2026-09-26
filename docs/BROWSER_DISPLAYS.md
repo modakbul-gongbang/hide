@@ -9,8 +9,8 @@ There is no Herdr browser pane and no chromux profile behind it, and nothing is 
 
 | Owner | Holds | Code |
 | --- | --- | --- |
-| The core | Which browser displays exist, where they sit in the tree, the address each was asked to load and a load stamp, and the address and title the page last reported | `herdr-core/src/view_layout.rs` (`DisplayKind::Browser`, `browser_address`, `browser_title`), `herdr-core/src/runtime/view_areas.rs` (`open_browser`, `place_browser`, `navigate_browser`, `record_browser_state`) |
-| hided | The `file:` address boundary, and `hide browser open` | `hided/src/server.rs` (`browser_url`), `hided/src/file_url.rs`, `hided/src/browser_cli.rs` |
+| The core | Browser View layout, requested address and load stamp, and the native page's reported loading state | `herdr-core/src/view_layout.rs`, `herdr-core/src/runtime/view_areas.rs`, `herdr-core/src/runtime/workspace_control.rs` |
+| hided | The `file:` address boundary for UI events and pane-scoped Browser CLI transport | `hided/src/server.rs`, `hided/src/file_url.rs`, `hided/src/workspace_cli.rs` |
 | The web shell | Where each page sits, since only it has the geometry, the toolbar, the overlay freeze, and the notice in a plain browser tab | `web/src/BrowserDisplay.tsx`, `web/src/browserViews.ts`, `web/src/host.ts` |
 | The desktop app | The pages: one `WebContentsView` per display it was asked to show, their navigation, and their lifetime | `desktop/src/main/browser.ts`, `desktop/src/main/browserSync.ts`, `desktop/src/preload/index.ts` |
 
@@ -20,11 +20,13 @@ The stamp is not saved; a relaunched page loads its address once when it is firs
 
 ## Opening a page
 
-- `hide browser open <url-or-path> [--pane <id>]` from a terminal.
-  An argument with a scheme is used as written, an existing file or folder becomes its `file:` URL, a loopback host such as `localhost:3000` gets `http`, and any other host gets `https`.
-  The page opens in the Workspace of the pane that asked (`--pane`, else `HERDR_PANE_ID`), else in the Workspace in front.
-  The CLI prints one JSON line, the core's receipt (`ok`, `display_id`, `device_id`, `path`) or the refusal, and exits 2 on anything but `ok`, like every other `hide` command.
-  It only attaches: with no running hide it fails rather than starting one.
+- `hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]` from a connected Herdr pane in the desktop app.
+  The CLI resolves a relative file on the calling machine, gives loopback hosts `http` and other hosts `https`, and submits one pane-scoped action with no Workspace override.
+  The core checks a local HTML file against that pane's checkout and reads it outside the core lock before placing its Browser View.
+  The action result confirms View placement, while `hide view status <view-id>` returns `pending`, `loading`, `loaded`, `failed`, or `unsupported` for its native page.
+  `--wait` polls that state for at most ten seconds and returns a failure if the page fails or remains pending; it does not reveal a hidden View.
+  `--reveal` explicitly brings the caller's local checkout and selected Browser View forward.
+  The CLI returns one JSON line, exits nonzero on refusal, and never starts Hide.
 - Open in Browser in the Explorer's menu on an HTML file of this Mac's checkout.
   On a device's file it stays listed, disabled, with its reason, because pages load on this Mac.
 - A page that asks for a new window gets another browser display in the same Workspace.
@@ -52,6 +54,8 @@ The shell tells the host, in one sync, every browser display of the Workspace in
 A display the sync no longer names is closed, which ends its renderer process; a display of a Workspace not in front, or not shown in its area, is hidden and keeps its page, so moving a page between areas or Workspaces never reloads it.
 At most 12 pages live at once (`MAX_LIVE_VIEWS`); past that, the page shown least recently among the hidden ones is closed and loads its address again when it is next shown.
 The host checks every field of a sync before it places anything and drops a message that fails whole; only the shell the daemon serves may send one.
+Native page reports carry the display's current load stamp, so a late report from a previous reload cannot mark the new request loaded.
+An evicted page reports its disappearance and returns to pending until shown again.
 
 ## Overlays
 

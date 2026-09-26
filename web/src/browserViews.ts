@@ -13,7 +13,7 @@
 
 import { create } from "zustand";
 import { browserBridge, type BrowserBridge, type BrowserHostEvent, type BrowserPageState, type BrowserPlacement, type BrowserRect, type BrowserSync } from "./host";
-import type { ViewDisplaySnapshot, ViewLayoutSnapshot } from "./snapshot";
+import type { ViewLayoutSnapshot } from "./snapshot";
 import { areasOf, workspaceKey, type ViewWorkspace } from "./viewLayout";
 
 // --- pure rules ---------------------------------------------------------------
@@ -76,19 +76,6 @@ export function addressShown(url: string): string {
  * already holds it: the address the page moved to, and its title once it
  * has one. `sent` is the last report still waiting for the core's echo.
  */
-export function stateReport(
-  core: Pick<ViewDisplaySnapshot, "url" | "title">,
-  page: BrowserPageState,
-  sent: { url: string; title: string } | null,
-): { url: string; title: string } | null {
-  const url = page.url || core.url || "";
-  const title = page.title || core.title || "";
-  if (!url) return null;
-  if (url === (core.url ?? "") && title === (core.title ?? "")) return null;
-  if (sent && sent.url === url && sent.title === title) return null;
-  return { url, title };
-}
-
 /** Whether Explorer offers Open in Browser for a file. */
 export function isHtmlFile(path: string): boolean {
   return /\.x?html?$/i.test(path);

@@ -14,7 +14,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
-import { hostLog, isolate, launch, screenshot, type Isolated } from "./fixture";
+import { hostLog, isolate, launch, relaunch, screenshot, type Isolated } from "./fixture";
 
 test.describe.configure({ timeout: 240_000 });
 test.use({ actionTimeout: 15_000 });
@@ -24,6 +24,7 @@ let run: Isolated;
 let app: ElectronApplication | null = null;
 let server: http.Server;
 let origin: string;
+let cliSequence = 0;
 
 const PAGES: Record<string, string> = {
   "/a.html": '<!doctype html><meta charset="utf-8"><title>Page A</title><body style="background:lavender"><h1>Page A</h1><input id="q" aria-label="query">',
@@ -32,7 +33,7 @@ const PAGES: Record<string, string> = {
 };
 
 test.beforeAll(async () => {
-  herdr = await startHerdr();
+  herdr = await startHerdr({ agents: false });
   server = http.createServer((request, response) => {
     const body = PAGES[request.url ?? ""];
     response.writeHead(body ? 200 : 404, { "content-type": "text/html; charset=utf-8" });
@@ -120,12 +121,43 @@ async function windowShot(name: string): Promise<void> {
   const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
   if (!dir) return;
   const source = await app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getMediaSourceId());
-  spawnSync("/usr/sbin/screencapture", ["-x", "-o", "-l", source.split(":")[1]!, path.join(dir, `${name}.png`)]);
+  const shot = spawnSync("/usr/sbin/screencapture", ["-x", "-o", "-l", source.split(":")[1]!, path.join(dir, `${name}.png`)], { encoding: "utf8" });
+  if (shot.status !== 0) {
+    const png = await app!.evaluate(async ({ BrowserWindow }) => (await BrowserWindow.getAllWindows()[0]!.capturePage()).toPNG().toString("base64"));
+    fs.writeFileSync(path.join(dir, `${name}.png`), Buffer.from(png, "base64"));
+  }
+  expect(fs.existsSync(path.join(dir, `${name}.png`)), "native window capture is missing").toBe(true);
 }
 
-function openFromCli(target: string, extra: string[] = []): Record<string, unknown> {
-  const answer = run.hide(["browser", "open", target, ...extra]);
-  return { status: answer.status, ...(JSON.parse(answer.stdout.trim().split("\n").at(-1) || "{}") as Record<string, unknown>) };
+/** Capture the candidate's live native page when macOS denies window capture. */
+async function nativePageShot(url: string, name: string): Promise<void> {
+  const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
+  if (!dir) return;
+  const png = await app!.evaluate(async ({ BrowserWindow }, target) => {
+    const child = BrowserWindow.getAllWindows()[0]!.contentView.children.find(
+      (view) => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === target,
+    ) as unknown as { webContents: Electron.WebContents } | undefined;
+    if (!child) throw new Error(`native page missing: ${target}`);
+    return (await child.webContents.capturePage()).toPNG().toString("base64");
+  }, url);
+  fs.writeFileSync(path.join(dir, `${name}.png`), Buffer.from(png, "base64"));
+}
+
+function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
+
+async function cliFromPane(args: string[]): Promise<Record<string, unknown>> {
+  const sequence = ++cliSequence;
+  const output = path.join(herdr.root, `desktop-cli-${sequence}.json`);
+  const status = path.join(herdr.root, `desktop-cli-${sequence}.status`);
+  const command = `HIDE_STATE_DIR=${quote(run.env.HIDE_STATE_DIR!)} ${[path.resolve("..", "target", "debug", "hide"), ...args].map(quote).join(" ")} > ${quote(output)}; printf '%s' "$?" > ${quote(status)}\n`;
+  const sent = spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0], command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
+  expect(sent.status, sent.stderr).toBe(0);
+  await expect.poll(() => fs.existsSync(status) ? fs.readFileSync(status, "utf8") : null, { timeout: 20_000 }).not.toBeNull();
+  return { status: Number(fs.readFileSync(status, "utf8")), ...(JSON.parse(fs.readFileSync(output, "utf8").trim().split("\n").at(-1) || "{}") as Record<string, unknown>) };
+}
+
+function openFromCli(target: string, extra: string[] = []): Promise<Record<string, unknown>> {
+  return cliFromPane(["browser", "open", target, ...extra]);
 }
 
 /** Waits until the view showing `url` covers its display's slot as the shell lays it out now. */
@@ -162,8 +194,9 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
 
   // `hide browser open` from an agent's pane opens the page in that pane's
   // Workspace and answers with the core's receipt.
-  const opened = openFromCli(`${origin}/a.html`, ["--pane", herdr.panes[0]]);
-  expect(opened).toMatchObject({ status: 0, ok: true, device_id: "local", path: checkout });
+  const opened = await openFromCli(`${origin}/a.html`, ["--reveal", "--wait"]);
+  expect(opened).toMatchObject({ status: 0, ok: true, result: { context: { device_id: "local", checkout_path: checkout } }, page: { state: "loaded" } });
+  expect(await cliFromPane(["view", "status", (opened.result as { view_id: string }).view_id])).toMatchObject({ status: 0, ok: true, view: { page: { state: "loaded" } } });
   const a = await displayIdOf(page, "Page A");
   let pageA = await viewOf(`${origin}/a.html`);
   await expect.poll(async () => (await viewOf(`${origin}/a.html`)).visible).toBe(true);
@@ -178,8 +211,8 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   }, `${origin}/a.html`);
   expect(await inPage(`${origin}/a.html`, "document.getElementById('q').value")).toBe("한글 입력");
 
-  // A second page, without a pane, opens in the Workspace in front.
-  expect(openFromCli(`${origin}/b.html`)).toMatchObject({ status: 0, ok: true });
+  // A second page opens in the calling pane's Workspace.
+  expect(await openFromCli(`${origin}/b.html`)).toMatchObject({ status: 0, ok: true });
   const b = await displayIdOf(page, "Page B");
   await inPage(`${origin}/b.html`, "window.__hideMarker = 'b'");
   const pageB = await viewOf(`${origin}/b.html`);
@@ -204,6 +237,8 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   expect((await viewOf(`${origin}/a.html`)).pid).toBe(pageA.pid);
   expect((await viewOf(`${origin}/b.html`)).pid).toBe(pageB.pid);
   await expectOnSlot(page, `${origin}/b.html`, b);
+  await nativePageShot(`${origin}/a.html`, "browser-native-page-a");
+  await nativePageShot(`${origin}/b.html`, "browser-native-page-b");
 
   // A narrower window moves the pages with their slots.
   await app.evaluate(({ BrowserWindow }) => {
@@ -249,7 +284,9 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
 
   // A page that cannot load says so in its area, with Reload.
-  expect(openFromCli("http://127.0.0.1:1/")).toMatchObject({ status: 0, ok: true });
+  const failed = await openFromCli("http://127.0.0.1:1/", ["--wait"]);
+  expect(failed).toMatchObject({ status: 2, ok: false, applied: "applied", reason: "page_failed", page: { state: "failed" } });
+  expect(await cliFromPane(["view", "status", failed.view_id as string])).toMatchObject({ status: 0, ok: true, view: { page: { state: "failed" } } });
   await expect(page.locator('[data-area-empty="browser-failed"]')).toBeVisible({ timeout: 20_000 });
   await expect(page.locator("[data-browser-retry]")).toBeVisible();
   await windowShot("browser-load-failed");
@@ -263,7 +300,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   // A file outside every checkout is refused by the daemon and never shown.
   const outside = path.join(run.root, "outside.html");
   fs.writeFileSync(outside, "<title>Outside</title>");
-  expect(openFromCli(outside)).toMatchObject({ ok: false, reason: "outside_checkout" });
+  expect(await openFromCli(outside)).toMatchObject({ ok: false, reason: "path_outside_checkout" });
 
   // Closing B's display ends its renderer process. Without the Explorer both
   // areas show again, B's among them.
@@ -286,7 +323,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
 
   // A relaunch brings the pages back at the addresses they last showed.
   await app.close();
-  ({ app } = await launch(run.env, { switches: PAINT_WHILE_OCCLUDED }));
+  app = await relaunch(run.env, { switches: PAINT_WHILE_OCCLUDED });
   const again = await app.firstWindow();
   await enterWorkspace(again, "fixture");
   await expect(tab(again, "Page A")).toBeVisible({ timeout: 20_000 });
@@ -308,4 +345,18 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   } finally {
     await browser.close();
   }
+});
+
+test("browser: waiting for a hidden page does not take the operator's keyboard target", async () => {
+  ({ app } = await launch(run.env, { switches: PAINT_WHILE_OCCLUDED }));
+  const page = await app.firstWindow();
+  await enterWorkspace(page, "fixture");
+  const focused = await page.locator('[data-pane-view][data-focused="true"]').getAttribute("data-pane-view");
+  expect(focused).toBeTruthy();
+  const hidden = await openFromCli(`${origin}/b.html`, ["--wait"]);
+  expect(hidden).toMatchObject({ status: 2, ok: false, applied: "applied", reason: "page_wait_timeout", page: { state: "pending" } });
+  expect(await cliFromPane(["view", "status", hidden.view_id as string])).toMatchObject({ status: 0, ok: true, view: { page: { state: "pending" } } });
+  await expect(page.locator('[data-pane-view][data-focused="true"]')).toHaveAttribute("data-pane-view", focused!);
+  const revealed = await openFromCli(`${origin}/b.html`, ["--reveal", "--wait"]);
+  expect(revealed).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
 });

@@ -232,6 +232,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         allowed_origins: Arc::new(server::allowed_origins(port, env.vite_origin.as_deref())),
         clients: Arc::new(AtomicUsize::new(0)),
         renderers: Arc::new(AtomicUsize::new(0)),
+        desktop_renderers: Arc::new(AtomicUsize::new(0)),
         connections: Arc::new(AtomicU64::new(0)),
         last_client_gone: Arc::new(Mutex::new(Instant::now())),
         keep_alive: env.keep_alive,

@@ -25,22 +25,26 @@ pub enum CommandKind {
         keep_alive: bool,
     },
     Dev,
-    /// `hide browser open <url-or-path> [--pane <id>]`: shows a page in a
-    /// View area of the running hide. Attach-only; it never starts a daemon.
     BrowserOpen {
         target: String,
-        pane: Option<String>,
+        reveal: bool,
+        wait: bool,
+        request_id: Option<String>,
     },
     WorkspaceBootstrap,
     WorkspaceInfo,
     ViewList,
+    ViewStatus {
+        view_id: String,
+    },
     WorkspaceAction {
         action: Action,
         request_id: Option<String>,
     },
 }
 
-const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--pane <pane-id>]";
+const BROWSER_USAGE: &str =
+    "usage: hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]";
 
 pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
     let mut iter = args.iter().skip(1);
@@ -120,13 +124,23 @@ fn parse_open<'a>(
 }
 
 fn parse_view<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandKind, String> {
-    let usage = "usage: hide view list | select <view-id> [--reveal] [--request-id <id>] | close <view-id> [--request-id <id>] | split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>] | move <view-id> --area <area-id> --index <n> [--request-id <id>]";
+    let usage = "usage: hide view list | status <view-id> | select <view-id> [--reveal] [--request-id <id>] | close <view-id> [--request-id <id>] | split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>] | move <view-id> --area <area-id> --index <n> [--request-id <id>]";
     let verb = iter.next().map(String::as_str).ok_or(usage)?;
     if verb == "list" {
         return if iter.next().is_none() {
             Ok(CommandKind::ViewList)
         } else {
             Err(usage.to_owned())
+        };
+    }
+    if verb == "status" {
+        return match (iter.next(), iter.next()) {
+            (Some(view_id), None) if !view_id.is_empty() && !view_id.starts_with('-') => {
+                Ok(CommandKind::ViewStatus {
+                    view_id: view_id.clone(),
+                })
+            }
+            _ => Err(usage.to_owned()),
         };
     }
     let view_id = iter
@@ -192,25 +206,36 @@ fn parse_browser<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Comma
     if iter.next().map(String::as_str) != Some("open") {
         return Err(BROWSER_USAGE.to_owned());
     }
-    let (mut target, mut pane) = (None, None);
+    let (mut target, mut reveal, mut wait, mut request_id) = (None, false, false, None);
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "--pane" => match iter.next() {
-                Some(id) if !id.is_empty() && pane.is_none() => pane = Some(id.clone()),
-                _ => return Err(BROWSER_USAGE.to_owned()),
-            },
-            _ if target.is_none() => target = Some(arg.clone()),
+            "--reveal" if !reveal => reveal = true,
+            "--wait" if !wait => wait = true,
+            "--request-id" if request_id.is_none() => {
+                request_id = Some(
+                    iter.next()
+                        .filter(|id| !id.is_empty() && !id.starts_with('-'))
+                        .ok_or(BROWSER_USAGE)?
+                        .clone(),
+                )
+            }
+            _ if target.is_none() && !arg.starts_with('-') => target = Some(arg.clone()),
             _ => return Err(BROWSER_USAGE.to_owned()),
         }
     }
     let target = target.ok_or_else(|| BROWSER_USAGE.to_owned())?;
-    Ok(CommandKind::BrowserOpen { target, pane })
+    Ok(CommandKind::BrowserOpen {
+        target,
+        reveal,
+        wait,
+        request_id,
+    })
 }
 
 pub fn run(kind: CommandKind) -> Result<(), String> {
     if kind == CommandKind::Help {
         println!(
-            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide view list\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nEach Workspace command requires a live Hide renderer and an attested Herdr pane; it never starts Hide."
+            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nEach Workspace command requires a live Hide renderer and an attested Herdr pane; it never starts Hide."
         );
         return Ok(());
     }
@@ -222,6 +247,8 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
                 CommandKind::WorkspaceBootstrap
                     | CommandKind::WorkspaceInfo
                     | CommandKind::ViewList
+                    | CommandKind::ViewStatus { .. }
+                    | CommandKind::BrowserOpen { .. }
                     | CommandKind::WorkspaceAction { .. }
             ) =>
         {
@@ -247,7 +274,12 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         CommandKind::Stop => stop(&env),
         CommandKind::Serve { keep_alive } => serve(env, keep_alive),
         CommandKind::Dev => dev(env),
-        CommandKind::BrowserOpen { target, pane } => browser_open(&env, &target, pane),
+        CommandKind::BrowserOpen {
+            target,
+            reveal,
+            wait,
+            request_id,
+        } => browser_open(&env, &target, reveal, wait, request_id.as_deref()),
         CommandKind::WorkspaceBootstrap => {
             let reference = crate::workspace_cli::bootstrap(&env, false)?;
             println!("{}", serde_json::json!({"ok":true,"reference":reference}));
@@ -255,6 +287,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         }
         CommandKind::WorkspaceInfo => workspace_query(&env, "info"),
         CommandKind::ViewList => workspace_query(&env, "view_list"),
+        CommandKind::ViewStatus { view_id } => view_status(&env, &view_id),
         CommandKind::WorkspaceAction { action, request_id } => {
             workspace_action(&env, action, request_id.as_deref())
         }
@@ -262,6 +295,16 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
 }
 
 fn workspace_action(env: &Env, action: Action, request_id: Option<&str>) -> Result<(), String> {
+    let answer = workspace_action_value(env, action, request_id)?;
+    println!("{answer}");
+    Ok(())
+}
+
+fn workspace_action_value(
+    env: &Env,
+    action: Action,
+    request_id: Option<&str>,
+) -> Result<serde_json::Value, String> {
     let action = match action {
         Action::OpenFile {
             path,
@@ -316,10 +359,10 @@ fn workspace_action(env: &Env, action: Action, request_id: Option<&str>) -> Resu
         Ok(answer) => answer,
         Err(reason) => return workspace_action_refusal(&request_id, &reason),
     };
-    println!("{answer}");
     if answer["ok"] == true {
-        Ok(())
+        Ok(answer)
     } else {
+        println!("{answer}");
         Err(answer["reason"]
             .as_str()
             .unwrap_or("workspace_action_failed")
@@ -327,7 +370,7 @@ fn workspace_action(env: &Env, action: Action, request_id: Option<&str>) -> Resu
     }
 }
 
-fn workspace_action_before_send_refusal(request_id: &str, reason: &str) -> Result<(), String> {
+fn workspace_action_before_send_refusal<T>(request_id: &str, reason: &str) -> Result<T, String> {
     println!(
         "{}",
         serde_json::json!({
@@ -358,7 +401,7 @@ fn absolute_caller_path(path: &str) -> Result<String, String> {
     Ok(normalized.to_string_lossy().into_owned())
 }
 
-fn workspace_action_refusal(request_id: &str, reason: &str) -> Result<(), String> {
+fn workspace_action_refusal<T>(request_id: &str, reason: &str) -> Result<T, String> {
     let applied = if matches!(
         reason,
         "request_timeout" | "hide_unavailable" | "invalid_response"
@@ -389,6 +432,12 @@ fn workspace_reference(env: &Env) -> Result<(std::path::PathBuf, bool), String> 
 }
 
 fn workspace_query(env: &Env, query: &str) -> Result<(), String> {
+    let answer = workspace_query_value(env, query)?;
+    println!("{answer}");
+    Ok(())
+}
+
+fn workspace_query_value(env: &Env, query: &str) -> Result<serde_json::Value, String> {
     let (reference, ephemeral) = match workspace_reference(env) {
         Ok(reference) => reference,
         Err(reason) => {
@@ -403,10 +452,10 @@ fn workspace_query(env: &Env, query: &str) -> Result<(), String> {
             return workspace_refusal(&reason, "Check Hide status, reconnect the pane, and retry");
         }
     };
-    println!("{answer}");
     if answer["ok"] == true {
-        Ok(())
+        Ok(answer)
     } else {
+        println!("{answer}");
         Err(answer["reason"]
             .as_str()
             .unwrap_or("workspace_request_failed")
@@ -414,7 +463,7 @@ fn workspace_query(env: &Env, query: &str) -> Result<(), String> {
     }
 }
 
-fn workspace_refusal(reason: &str, next_action: &str) -> Result<(), String> {
+fn workspace_refusal<T>(reason: &str, next_action: &str) -> Result<T, String> {
     println!(
         "{}",
         serde_json::json!({"ok":false,"reason":reason,"next_action":next_action})
@@ -422,27 +471,91 @@ fn workspace_refusal(reason: &str, next_action: &str) -> Result<(), String> {
     Err(reason.to_owned())
 }
 
-/// Prints the core's receipt, or the refusal, as one JSON line, and fails on
-/// anything but an opened page. A page has nowhere to show without a running
-/// hide, so this attaches to one and never starts it.
-fn browser_open(env: &Env, target: &str, pane: Option<String>) -> Result<(), String> {
-    let cwd = std::env::current_dir().map_err(|error| error.to_string())?;
-    let url = crate::browser_cli::address(target, &cwd)?;
-    let state = healthy_state(env).ok_or_else(|| "hide is not running".to_owned())?;
-    let pane = pane.or_else(|| env.pane_id.clone());
-    let mut id = [0_u8; 16];
-    getrandom::getrandom(&mut id).map_err(|error| error.to_string())?;
-    let payload = crate::browser_cli::payload(&url, pane.as_deref(), &hex::encode(id));
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|error| error.to_string())?;
-    let answer = runtime.block_on(crate::browser_cli::request(&state, payload))?;
+fn view_status_value(env: &Env, view_id: &str) -> Result<serde_json::Value, String> {
+    let answer = workspace_query_value(env, "view_list")?;
+    let view = answer["result"]["views"]
+        .as_array()
+        .and_then(|views| views.iter().find(|view| view["view_id"] == view_id));
+    match view {
+        Some(view) => {
+            Ok(serde_json::json!({"ok":true,"context":answer["result"]["context"],"view":view}))
+        }
+        None => {
+            workspace_refusal(
+                "view_missing",
+                "Run hide view list and choose a current View",
+            )?;
+            unreachable!()
+        }
+    }
+}
+
+fn view_status(env: &Env, view_id: &str) -> Result<(), String> {
+    let answer = view_status_value(env, view_id)?;
     println!("{answer}");
-    if answer["ok"] == true {
-        Ok(())
-    } else {
-        Err("the page did not open".to_owned())
+    Ok(())
+}
+
+fn browser_open(
+    env: &Env,
+    target: &str,
+    reveal: bool,
+    wait: bool,
+    request_id: Option<&str>,
+) -> Result<(), String> {
+    let cwd = std::env::current_dir().map_err(|_| "cwd_unavailable".to_owned())?;
+    let url = match crate::browser_cli::address(target, &cwd) {
+        Ok(url) => url,
+        Err(_) => {
+            return workspace_refusal(
+                "invalid_address",
+                "Use an http, https, or readable checkout HTML address",
+            );
+        }
+    };
+    let answer = workspace_action_value(env, Action::OpenBrowser { url, reveal }, request_id)?;
+    if !wait {
+        println!("{answer}");
+        return Ok(());
+    }
+    let view_id = answer["result"]["view_id"]
+        .as_str()
+        .ok_or("invalid_response")?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let status = view_status_value(env, view_id)?;
+        let page = &status["view"]["page"];
+        match page["state"].as_str() {
+            Some("loaded") => {
+                println!(
+                    "{}",
+                    serde_json::json!({"ok":true,"request_id":answer["request_id"],"result":answer["result"],"page":page})
+                );
+                return Ok(());
+            }
+            Some("failed") => {
+                println!(
+                    "{}",
+                    serde_json::json!({"ok":false,"request_id":answer["request_id"],"applied":"applied","reason":"page_failed","view_id":view_id,"page":page,"next_action":"Inspect the page failure and retry with a new request ID"})
+                );
+                return Err("page_failed".to_owned());
+            }
+            Some("pending" | "loading") => {}
+            _ => {
+                return workspace_refusal(
+                    "page_status_unavailable",
+                    "Run hide view status for the returned View",
+                );
+            }
+        }
+        if std::time::Instant::now() >= deadline {
+            println!(
+                "{}",
+                serde_json::json!({"ok":false,"request_id":answer["request_id"],"applied":"applied","reason":"page_wait_timeout","view_id":view_id,"page":page,"next_action":format!("Run hide view status {view_id} or retry the same request ID")})
+            );
+            return Err("page_wait_timeout".to_owned());
+        }
+        std::thread::sleep(Duration::from_millis(200));
     }
 }
 
@@ -772,7 +885,9 @@ mod tests {
             parse(&["hide", "browser", "open", "index.html"]),
             Ok(CommandKind::BrowserOpen {
                 target: "index.html".into(),
-                pane: None
+                reveal: false,
+                wait: false,
+                request_id: None,
             })
         );
         assert_eq!(
@@ -780,13 +895,17 @@ mod tests {
                 "hide",
                 "browser",
                 "open",
-                "--pane",
-                "w1:p2",
-                "localhost:3000"
+                "localhost:3000",
+                "--reveal",
+                "--wait",
+                "--request-id",
+                "1234567890000-abc",
             ]),
             Ok(CommandKind::BrowserOpen {
                 target: "localhost:3000".into(),
-                pane: Some("w1:p2".into())
+                reveal: true,
+                wait: true,
+                request_id: Some("1234567890000-abc".into()),
             })
         );
         for bad in [

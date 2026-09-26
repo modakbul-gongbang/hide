@@ -39,6 +39,7 @@ const SPLIT_REQUESTS_KEPT: usize = 32;
 /// `browser_open` receipts kept for the requests that named themselves; a
 /// CLI waiting on one reads it within a frame or two of its event.
 const BROWSER_OPEN_RECEIPTS_KEPT: usize = 8;
+const BROWSER_PAGE_REPORTS_KEPT: usize = 128;
 
 const UNLOADABLE_ADDRESS: &str = "A page opens from an http, https or file address, or about:blank";
 const FILE_ELSEWHERE: &str = "A file on this Mac cannot open in a Workspace on another device";
@@ -96,6 +97,14 @@ pub(super) struct BrowserStatePayload {
     url: String,
     #[serde(default)]
     title: String,
+    #[serde(default)]
+    load: Option<u64>,
+    #[serde(default)]
+    loading: bool,
+    #[serde(default)]
+    failure: Option<String>,
+    #[serde(default)]
+    present: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1250,6 +1259,10 @@ impl Runtime {
             display_id,
             url,
             title,
+            load,
+            loading,
+            failure,
+            present,
         } = payload;
         let key = (workspace.device_id, workspace.path);
         let file_elsewhere = is_file_address(&url) && key.0 != workspace::LOCAL_DEVICE_ID;
@@ -1287,7 +1300,66 @@ impl Runtime {
             }));
             return false;
         };
-        if display.url.as_deref() == Some(url.as_str()) && display.title == title {
+        let same_address_and_title =
+            display.url.as_deref() == Some(url.as_str()) && display.title == title;
+        let current_load = display.load;
+        if let Some(load) = load {
+            if load != current_load {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "view_areas",
+                    "kind": "browser.state_load_stale",
+                    "device": key.0,
+                    "display": display_id,
+                }));
+                return false;
+            }
+            if present == Some(false) {
+                self.browser_pages.remove(&(key.0, key.1, display_id));
+                return false;
+            }
+            if self.browser_pages.len() >= BROWSER_PAGE_REPORTS_KEPT
+                && !self.browser_pages.contains_key(&(
+                    key.0.clone(),
+                    key.1.clone(),
+                    display_id.clone(),
+                ))
+            {
+                let active: std::collections::HashSet<_> = self
+                    .workspace_views
+                    .as_ref()
+                    .into_iter()
+                    .flat_map(|store| &store.views.workspaces)
+                    .flat_map(|view| {
+                        view.layout
+                            .displays()
+                            .filter(|display| display.kind == DisplayKind::Browser)
+                            .map(|display| {
+                                (
+                                    view.device_id.clone(),
+                                    view.path.clone(),
+                                    display.id.clone(),
+                                )
+                            })
+                    })
+                    .collect();
+                self.browser_pages.retain(|key, _| active.contains(key));
+                if self.browser_pages.len() >= BROWSER_PAGE_REPORTS_KEPT {
+                    crate::diagnostic!(
+                        serde_json::json!({"component":"view_areas","kind":"browser.state_capacity","limit":BROWSER_PAGE_REPORTS_KEPT})
+                    );
+                    return false;
+                }
+            }
+            self.browser_pages.insert(
+                (key.0.clone(), key.1.clone(), display_id.clone()),
+                super::workspace_control::ReportedBrowserPage {
+                    load,
+                    loading,
+                    failure: failure.map(|reason| reason.chars().take(300).collect()),
+                },
+            );
+        }
+        if same_address_and_title {
             return false;
         }
         self.change_view_layout(&key, |layout, _| {
@@ -1304,7 +1376,7 @@ impl Runtime {
     /// A load stamp later than every one given in this process, and than the
     /// clock, so a host that outlived a daemon restart still sees a new one
     /// as newer than any it loaded.
-    fn next_browser_load(&mut self) -> u64 {
+    pub(super) fn next_browser_load(&mut self) -> u64 {
         let now = unix_milliseconds();
         let Some(store) = self.workspace_views.as_mut() else {
             return now;

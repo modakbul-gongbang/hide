@@ -78,6 +78,7 @@ pub struct AppState {
     pub clients: Arc<AtomicUsize>,
     /// Authenticated shell windows, distinct from CLI and non-rendering clients.
     pub renderers: Arc<AtomicUsize>,
+    pub desktop_renderers: Arc<AtomicUsize>,
     /// Numbers connections so a stage can be released with its connection.
     pub connections: Arc<AtomicU64>,
     pub last_client_gone: Arc<Mutex<Instant>>,
@@ -293,8 +294,12 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
         return;
     }
     let renderer = matches!(handshake.client_kind.as_deref(), Some("web" | "desktop"));
+    let desktop = handshake.client_kind.as_deref() == Some("desktop");
     if renderer {
         state.renderers.fetch_add(1, Ordering::SeqCst);
+    }
+    if desktop {
+        state.desktop_renderers.fetch_add(1, Ordering::SeqCst);
     }
     // A reconnecting client resumes from the cursors it last applied, so the
     // first frame carries only what changed while it was away; a fresh client
@@ -321,14 +326,14 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
         .await
         .is_err()
     {
-        client_gone(&state, connection, renderer);
+        client_gone(&state, connection, renderer, desktop);
         return;
     }
     if send_snapshot(&mut socket, &state, &mut have_revision, &mut have_sequence)
         .await
         .is_err()
     {
-        client_gone(&state, connection, renderer);
+        client_gone(&state, connection, renderer, desktop);
         return;
     }
     loop {
@@ -448,7 +453,7 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
     for read in device_reads {
         read.task.abort();
     }
-    client_gone(&state, connection, renderer);
+    client_gone(&state, connection, renderer, desktop);
 }
 
 /// A pane capability can submit only Workspace commands. It never receives a
@@ -511,6 +516,7 @@ async fn scoped_client_loop(
                         let core = Arc::clone(&state.core);
                         let registry = Arc::clone(&state.pane_capabilities);
                         let renderers = Arc::clone(&state.renderers);
+                        let desktop_renderers = Arc::clone(&state.desktop_renderers);
                         let herdr_socket = state.herdr_socket.clone();
                         let query_token = token.clone();
                         let command_request_id = request_id.clone();
@@ -529,7 +535,7 @@ async fn scoped_client_loop(
                             }
                             let result = match command {
                                 ScopedRequest::Query(query) => {
-                                    let result = core
+                                    let mut result = core
                                         .workspace_query(
                                             &cap.context.device_id,
                                             &cap.pane_id,
@@ -542,11 +548,25 @@ async fn scoped_client_loop(
                                             "Reconnect the pane and retry",
                                         ));
                                     }
+                                    if desktop_renderers.load(Ordering::SeqCst) == 0 {
+                                        result.capabilities.retain(|capability| !capability.starts_with("browser."));
+                                        if let Some(views) = &mut result.views {
+                                            for view in views {
+                                                if let Some(page) = &mut view.page {
+                                                    page.state = "unsupported";
+                                                    page.failure = None;
+                                                }
+                                            }
+                                        }
+                                    }
                                     serde_json::to_value(result).map_err(|_| {
                                         ("result_encoding_failed", "Reconnect Hide and retry")
                                     })?
                                 }
                                 ScopedRequest::Action(action) => {
+                                    if matches!(action, herdr_core::workspace_control::Action::OpenBrowser { .. }) && desktop_renderers.load(Ordering::SeqCst) == 0 {
+                                        return Err(("browser_unsupported", "Open the Hide desktop app and retry"));
+                                    }
                                     let preparation = core
                                         .workspace_prepare_action(
                                             &cap.context.device_id,
@@ -621,7 +641,7 @@ async fn scoped_client_loop(
     if one_shot {
         state.pane_capabilities.revoke(&token);
     }
-    client_gone(&state, connection, false);
+    client_gone(&state, connection, false, false);
 }
 
 /// How many device file reads one client runs at once. A viewer asks for one
@@ -2175,9 +2195,12 @@ async fn send_snapshot(
     Ok(())
 }
 
-fn client_gone(state: &AppState, connection: u64, renderer: bool) {
+fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool) {
     if renderer {
         state.renderers.fetch_sub(1, Ordering::SeqCst);
+    }
+    if desktop {
+        state.desktop_renderers.fetch_sub(1, Ordering::SeqCst);
     }
     state.attachments.release(connection);
     state.demand.release(connection, |observing| {

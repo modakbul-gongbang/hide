@@ -44,7 +44,8 @@ export type BrowserPageState = {
 };
 
 export type BrowserHostEvent =
-  | { kind: "state"; workspace: string; id: string; state: BrowserPageState }
+  | { kind: "state"; workspace: string; id: string; load: number; state: BrowserPageState }
+  | { kind: "gone"; workspace: string; id: string; load: number; url: string }
   /** The page asked for a new window: it becomes another browser display. */
   | { kind: "open"; workspace: string; id: string; url: string }
   /** The operator clicked or tabbed into the page. */

@@ -222,7 +222,7 @@ export class BrowserViews {
     page.report = setTimeout(() => {
       page.report = null;
       if (this.pages.get(page.key) !== page) return;
-      this.emit({ kind: "state", workspace: page.workspace, id: page.id, state: page.state });
+      this.emit({ kind: "state", workspace: page.workspace, id: page.id, load: page.applied, state: page.state });
     }, REPORT_COALESCE_MS);
   }
 
@@ -242,6 +242,7 @@ export class BrowserViews {
   }
 
   private destroy(page: Page, reason: "closed" | "evicted" | "window_closed"): void {
+    if (reason === "evicted") this.emit({ kind: "gone", workspace: page.workspace, id: page.id, load: page.applied, url: page.state.url });
     this.pages.delete(page.key);
     if (page.report) clearTimeout(page.report);
     const window = this.window;

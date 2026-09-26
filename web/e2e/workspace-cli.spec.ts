@@ -11,6 +11,7 @@ test.describe.configure({ timeout: 90_000 });
 type CliView = { view_id: string; area_id: string; kind: string; target: string };
 type CliAnswer = {
   ok: boolean;
+  reason?: string;
   result: {
     context: { checkout_path: string };
     capabilities?: string[];
@@ -23,7 +24,7 @@ function quote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
-async function fromPane(herdr: HerdrFixture, daemon: Daemon, args: string[], sequence: number): Promise<CliAnswer> {
+async function fromPane(herdr: HerdrFixture, daemon: Daemon, args: string[], sequence: number, expectedStatus = 0): Promise<CliAnswer> {
   const answer = path.join(herdr.root, `cli-${sequence}.json`);
   const status = path.join(herdr.root, `cli-${sequence}.status`);
   const error = path.join(herdr.root, `cli-${sequence}.err`);
@@ -35,7 +36,7 @@ async function fromPane(herdr: HerdrFixture, daemon: Daemon, args: string[], seq
     timeout: 10_000,
   });
   expect(sent.status, sent.stderr).toBe(0);
-  await expect.poll(() => fs.existsSync(status) ? fs.readFileSync(status, "utf8") : null, { timeout: 20_000 }).toBe("0");
+  await expect.poll(() => fs.existsSync(status) ? fs.readFileSync(status, "utf8") : null, { timeout: 20_000 }).toBe(String(expectedStatus));
   return JSON.parse(fs.readFileSync(answer, "utf8")) as CliAnswer;
 }
 
@@ -87,6 +88,9 @@ test("pane CLI opens its own file and diff while another Workspace remains in fr
     expect(info.ok).toBe(true);
     expect(info.result.context.checkout_path).toBe(checkout);
     expect(info.result.capabilities).toContain("file.open");
+    expect(info.result.capabilities).not.toContain("browser.open");
+    const unsupported = await fromPane(herdr, daemon, ["browser", "open", "https://example.com/"], 20, 2);
+    expect(unsupported).toMatchObject({ ok: false, reason: "browser_unsupported" });
     const opened = await fromPane(herdr, daemon, ["file", "open", "보고서.md"], 2);
     expect(opened.ok).toBe(true);
     expect(opened.result.context.checkout_path).toBe(checkout);

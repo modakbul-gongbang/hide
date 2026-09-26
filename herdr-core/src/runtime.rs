@@ -1178,6 +1178,7 @@ pub struct Runtime {
     /// separate Agent and View areas (`CoreOptions::workspace_views_path`).
     workspace_views: Option<WorkspaceViewStore>,
     workspace_actions: VecDeque<workspace_control::RecordedAction>,
+    browser_pages: HashMap<(String, String, String), workspace_control::ReportedBrowserPage>,
 }
 
 #[derive(Clone)]
@@ -1416,6 +1417,7 @@ impl Runtime {
             delta: snapshot_delta::DeltaState::default(),
             workspace_views,
             workspace_actions: VecDeque::new(),
+            browser_pages: HashMap::new(),
         };
         runtime.resync_navigator_focus();
         runtime.apply_persisted_pet_state();

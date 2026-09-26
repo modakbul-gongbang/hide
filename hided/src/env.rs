@@ -97,7 +97,7 @@ pub const REGISTRY: &[EnvKey] = &[
         key: HERDR_PANE_ID,
         required: false,
         format: "the Herdr pane id; Herdr sets it in every pane it manages",
-        absent_behavior: "`hide browser open` without `--pane` opens the page in the Workspace in front",
+        absent_behavior: "Pane-scoped Workspace commands refuse because the caller cannot identify a connected Herdr pane",
     },
     EnvKey {
         key: HIDE_CAP_REF,
@@ -132,8 +132,8 @@ pub struct Env {
     /// Where the device helper is installed on each SSH device; part of the
     /// consent scope the operator agrees to (PRD S5.5 D-23).
     pub host_helper_root: Option<String>,
-    /// The pane a CLI command runs in, which `hide browser open` names so
-    /// the page opens in that pane's Workspace; the daemon never reads it.
+    /// The pane a Workspace CLI command runs in; the daemon verifies its
+    /// live membership and never trusts a caller-supplied Workspace.
     pub pane_id: Option<String>,
 }
 

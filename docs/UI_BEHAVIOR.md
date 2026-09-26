@@ -101,7 +101,7 @@ A layout file that cannot be read is kept aside and the app starts on All projec
 
 A web page is a view like a file: it opens in the active area, has a tab, splits, moves, and closes like one, and comes back after a restart at the address it last showed.
 Its tab carries a globe mark and the page's title, else its host, else a local file's name; its tooltip and accessible name carry `Page`, the title, and the full address.
-It opens from `hide browser open` in a terminal, from Open in Browser on an HTML file in the Explorer's menu (listed after Open to the side, and disabled with its reason on a device's file), from a page that asks for a new window, and from the address field.
+It opens from pane-scoped `hide browser open` in a connected Herdr pane, from Open in Browser on an HTML file in the Explorer's menu (listed after Open to the side, and disabled with its reason on a device's file), from a page that asks for a new window, and from the address field.
 Opening an address the Workspace already shows moves to that view and loads it again instead of adding a second one.
 The view's own toolbar holds Back, Forward, Reload (Stop while the page loads) and the address, which shows a web address without its scheme until it is focused; focusing it selects the whole address, Return loads what was typed, and Escape puts the page's address back.
 A page that cannot load says so in its place with the address and the reason, and Reload tries again; nothing else on screen changes.

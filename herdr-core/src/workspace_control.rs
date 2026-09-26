@@ -34,6 +34,10 @@ pub enum Action {
         beside: bool,
         reveal: bool,
     },
+    OpenBrowser {
+        url: String,
+        reveal: bool,
+    },
     Select {
         view_id: String,
         reveal: bool,
@@ -79,6 +83,15 @@ pub struct View {
     pub target: String,
     pub selected: bool,
     pub active_area: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub page: Option<BrowserPage>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct BrowserPage {
+    pub state: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub failure: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -101,8 +114,14 @@ pub struct ActionSource {
     root: DocumentRoot,
     channel: Arc<dyn HostChannel>,
     path: String,
-    file: bool,
+    kind: SourceKind,
     already_open: bool,
+}
+
+enum SourceKind {
+    File,
+    Diff,
+    Browser,
 }
 
 pub struct ActionMaterial {
@@ -127,7 +146,7 @@ impl ActionSource {
             root,
             channel,
             path,
-            file: true,
+            kind: SourceKind::File,
             already_open,
         }
     }
@@ -137,7 +156,17 @@ impl ActionSource {
             root,
             channel,
             path,
-            file: false,
+            kind: SourceKind::Diff,
+            already_open: false,
+        }
+    }
+
+    pub(crate) fn browser(root: DocumentRoot, channel: Arc<dyn HostChannel>, path: String) -> Self {
+        Self {
+            root,
+            channel,
+            path,
+            kind: SourceKind::Browser,
             already_open: false,
         }
     }
@@ -152,7 +181,29 @@ impl ActionSource {
             .join(relative)
             .to_string_lossy()
             .into_owned();
-        if self.file {
+        if matches!(self.kind, SourceKind::Browser) {
+            let extension = std::path::Path::new(&path)
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or("");
+            if !matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "html" | "htm" | "xhtml"
+            ) {
+                return Err(Refusal {
+                    reason: "not_html",
+                    next_action: "Choose a readable HTML file inside this checkout",
+                });
+            }
+            files::open_document(self.channel.as_ref(), &self.root, &path).map_err(|_| {
+                Refusal {
+                    reason: "html_unavailable",
+                    next_action: "Check that the HTML file is readable and retry",
+                }
+            })?;
+            return Ok(ActionMaterial { file: None, path });
+        }
+        if matches!(self.kind, SourceKind::File) {
             if self.already_open {
                 return Ok(ActionMaterial { file: None, path });
             }
@@ -202,4 +253,18 @@ impl ActionSource {
         }
         Ok(ActionMaterial { file: None, path })
     }
+}
+
+/// Decode a file URL without accepting an authority or an encoded NUL.
+pub fn local_file_path(url: &str) -> Option<String> {
+    let rest = url.strip_prefix("file://")?;
+    let (host, located) = rest.split_at(rest.find('/')?);
+    if !(host.is_empty() || host.eq_ignore_ascii_case("localhost")) {
+        return None;
+    }
+    let path = located.split(['?', '#']).next()?;
+    let decoded = percent_encoding::percent_decode_str(path)
+        .decode_utf8()
+        .ok()?;
+    (decoded.starts_with('/') && !decoded.contains('\0')).then(|| decoded.into_owned())
 }
