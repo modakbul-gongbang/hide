@@ -135,12 +135,12 @@ export async function sidebarOverflow(page: Page, width: string): Promise<string
     if (!nav) return ["no sidebar"];
     nav.style.width = value;
     const problems: string[] = [];
-    for (const list of document.querySelectorAll<HTMLElement>("[data-agent-list], [data-project-list]")) {
+    for (const list of Array.from(document.querySelectorAll<HTMLElement>("[data-agent-list], [data-project-list]"))) {
       if (list.scrollWidth > list.clientWidth) problems.push(`list scrolls sideways ${list.scrollWidth} > ${list.clientWidth}`);
     }
-    for (const row of document.querySelectorAll<HTMLElement>("[data-pane], [data-checkout-row] > *, [data-project] > *")) {
+    for (const row of Array.from(document.querySelectorAll<HTMLElement>("[data-pane], [data-checkout-row] > *, [data-project] > *"))) {
       const right = row.getBoundingClientRect().right;
-      for (const part of row.querySelectorAll<HTMLElement>("[data-agent-elapsed], [data-checkout-age], [data-project-activity], button")) {
+      for (const part of Array.from(row.querySelectorAll<HTMLElement>("[data-agent-elapsed], [data-checkout-age], [data-project-activity], button"))) {
         if (part.getBoundingClientRect().right > right + 0.5) problems.push(`${part.textContent ?? part.tagName} passes its row`);
       }
     }
@@ -161,10 +161,10 @@ export async function sidebarRowsFit(page: Page): Promise<string[]> {
     // Every element in the lists that holds text itself (names, lines, places,
     // times, chips), every icon, and every status and provider mark, so a
     // line drawn only in marks is measured too.
-    const parts = [...document.querySelectorAll<HTMLElement>("nav[data-sidebar] :is([data-agent-list], [data-project-list]) *")].filter(
+    const parts = Array.from(document.querySelectorAll<HTMLElement>("nav[data-sidebar] :is([data-agent-list], [data-project-list]) *")).filter(
       (part) =>
         part.getClientRects().length > 0 &&
-        (part.matches("svg, [data-mark], [data-agent-mark]") || [...part.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())),
+        (part.matches("svg, [data-mark], [data-agent-mark]") || Array.from(part.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim())),
     );
     const name = (part: Element) => part.textContent?.trim() || part.getAttribute("data-mark") || part.getAttribute("data-agent-mark") || part.getAttribute("class") || part.tagName;
     // What of a part can show: a box that clips its overflow (a badge, a
