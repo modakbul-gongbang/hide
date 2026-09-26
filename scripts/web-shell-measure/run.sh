@@ -15,6 +15,7 @@
 set -euo pipefail
 measure_dir="$(cd "$(dirname "$0")" && pwd)"
 source "$measure_dir/isolated-env.sh"
+trap 'rmdir "$MEASURE_SOCKET_DIR"' EXIT
 scenario="${MEASURE_SCENARIO:-single}"
 case "$scenario" in single|multi) ;; *) echo "MEASURE_SCENARIO must be single or multi" >&2; exit 2;; esac
 chrome_bin="${MEASURE_CHROME_BIN:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
@@ -27,14 +28,19 @@ note() { printf 'measure: %s\n' "$*"; }
 cleanup() {
   trap - EXIT INT TERM
   set +e
-  for pid in "${pids[@]:-}"; do [[ -n "$pid" ]] && kill "$pid" 2>/dev/null; done
+  kill_owned() {
+    local pid=$1
+    [[ -n "$pid" ]] || return 0
+    [[ "$(ps -p "$pid" -o ppid= | tr -d ' ')" == "$$" ]] && kill "$pid" 2>/dev/null
+  }
+  for pid in "${pids[@]:-}"; do kill_owned "$pid"; done
   if $server_started; then
-    "$HERDR_BIN_PATH" server stop >/dev/null 2>&1 || true
-    sleep 1
-    [[ -n "${server_pid:-}" ]] && kill "$server_pid" 2>/dev/null
+    kill_owned "${server_pid:-}"
+    [[ -n "${server_pid:-}" ]] && wait "$server_pid" 2>/dev/null
     rm -f "$HERDR_SOCKET_PATH" "${HERDR_SOCKET_PATH%.sock}-client.sock"
   fi
   for pid in "${pids[@]:-}"; do [[ -n "$pid" ]] && wait "$pid" 2>/dev/null; done
+  rmdir "$MEASURE_SOCKET_DIR"
   {
     for pid in "${pids[@]:-}" "${server_pid:-}"; do
       [[ -n "$pid" ]] || continue
@@ -97,13 +103,6 @@ reset_fixture() {
   sleep 0.5
 }
 
-# Never adopt an unrelated server on the CDP port.
-python3 - "$MEASURE_CDP_PORT" <<'PY'
-import socket,sys
-with socket.socket() as s:
-    s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
-    s.bind(('127.0.0.1',int(sys.argv[1])))
-PY
 {
   echo "worktree_head=$(git -C "$MEASURE_WORKTREE" rev-parse HEAD)"
   echo "worktree_dirty=$(git -C "$MEASURE_WORKTREE" status --porcelain | wc -l | tr -d ' ')"
@@ -179,9 +178,19 @@ hided_token="$(python3 -c "import json;print(json.load(open('$MEASURE_PRIVATE/hi
 wait_url "http://127.0.0.1:$hided_port/health"
 page_url="http://127.0.0.1:$hided_port/?probe=1#token=$hided_token"
 
-spawn_owned chrome "$chrome_bin" --user-data-dir="$MEASURE_RUN_DIR/chrome-profile" --remote-debugging-port="$MEASURE_CDP_PORT" --remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check --disable-sync --disable-background-networking --disable-component-update --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --window-size=1280,900 "$page_url"
+port_file="$MEASURE_RUN_DIR/chrome-profile/DevToolsActivePort"
+[[ ! -e "$port_file" ]] || { echo 'stale CDP port file; use a new run directory' >&2; exit 2; }
+spawn_owned chrome "$chrome_bin" --user-data-dir="$MEASURE_RUN_DIR/chrome-profile" --remote-debugging-port=0 --remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check --disable-sync --disable-background-networking --disable-component-update --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --window-size=1280,900 about:blank
 chrome_pid=$owned_pid
+deadline=$((SECONDS+20)); until [[ -s "$port_file" ]]; do
+  [[ "$(ps -p "$chrome_pid" -o ppid= | tr -d ' ')" == "$$" ]] || { echo 'owned Chrome exited before CDP became ready' >&2; exit 1; }
+  (( SECONDS < deadline )) || { echo 'owned Chrome CDP port did not appear' >&2; exit 1; }
+  sleep 0.1
+done
+export MEASURE_CDP_PORT="$(head -n 1 "$port_file")"
+[[ "$MEASURE_CDP_PORT" =~ ^[0-9]+$ ]] || { echo 'owned Chrome CDP port is invalid' >&2; exit 1; }
 wait_url "http://127.0.0.1:$MEASURE_CDP_PORT/json/list"
+printf '%s' "$page_url" | node "$measure_dir/navigate.mjs" "$MEASURE_CDP_PORT"
 # A first run opens on Main (PRD S6 D-11). Open the one fixture checkout
 # through the Projects sidebar, one click per poll until its Workspace shows.
 wait_js "(() => { if (document.querySelector('[data-workspace-screen]')) return true; const projects = document.querySelector('[data-sidebar-mode=\"projects\"]'); if (projects?.getAttribute('aria-pressed') !== 'true') { projects?.click(); return false; } const checkout = document.querySelector('[data-checkout-kind=\"branch\"]:not([disabled])'); if (checkout) { checkout.click(); return false; } document.querySelector('[data-project-toggle][aria-expanded=\"false\"]')?.click(); return false; })()"
