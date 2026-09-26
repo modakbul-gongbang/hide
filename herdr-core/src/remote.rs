@@ -32,7 +32,7 @@ use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::{Builder, Runtime};
-use tokio::sync::Semaphore;
+use tokio::sync::{Semaphore, oneshot};
 
 use crate::domain::{
     DomainEvent, DomainProjection, DomainSnapshot, EnvironmentContract, HostScope,
@@ -2390,6 +2390,7 @@ impl RusshRemoteClient {
         remote: SocketAddr,
         alternate: Option<SocketAddr>,
         preserve_numeric_host: bool,
+        mut canceled: oneshot::Receiver<()>,
     ) -> RemoteResult<RemoteLocalForward> {
         if !remote.ip().is_loopback()
             || remote.port() == 0
@@ -2418,10 +2419,35 @@ impl RusshRemoteClient {
         };
         // A pending route must not reserve a local port before SSH connects:
         // its View can close while the remote handshake is still waiting.
-        let session = Arc::new(
-            self.runtime
-                .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?,
-        );
+        let session = Arc::new(self.runtime.block_on(async {
+            tokio::select! {
+                _ = &mut canceled => Err(remote_error(
+                    "workspace-browser-forward", &self.host.host_id, RemoteStage::Tunnel,
+                    "browser route was canceled", true, false,
+                )),
+                result = self.connect(KnownHostHandler::new(&self.host, None)) => result,
+            }
+        })?);
+        if !matches!(
+            canceled.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ) {
+            let _ = self.runtime.block_on(async {
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    session.disconnect(Disconnect::ByApplication, "browser route canceled", "en"),
+                )
+                .await
+            });
+            return Err(remote_error(
+                "workspace-browser-forward",
+                &self.host.host_id,
+                RemoteStage::Tunnel,
+                "browser route was canceled",
+                true,
+                false,
+            ));
+        }
         let listeners = self.runtime.block_on(async {
             for _ in 0..16 {
                 let primary = TcpListener::bind(SocketAddr::new(local_ip, 0)).await?;

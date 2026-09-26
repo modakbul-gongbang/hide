@@ -28,6 +28,7 @@ use crate::pane_auth::process_start;
 use crate::state_file::new_token;
 
 const MAX_ROUTES: usize = 12;
+const MAX_ROUTE_BUILDS: usize = 4;
 const MAX_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_FILE_REQUESTS: usize = 8;
 
@@ -58,6 +59,7 @@ enum RouteEntry {
         owner_started: u64,
         source: BrowserRouteSource,
         result: watch::Sender<Option<RouteResult>>,
+        cancel: oneshot::Sender<()>,
     },
     Ready(Route),
 }
@@ -79,7 +81,8 @@ impl RouteEntry {
 
     fn close(self) {
         match self {
-            Self::Pending { result, .. } => {
+            Self::Pending { result, cancel, .. } => {
+                let _ = cancel.send(());
                 result.send_replace(Some(Err("view_unavailable")));
             }
             Self::Ready(route) => route.close(),
@@ -108,6 +111,7 @@ pub struct Resolved {
 pub struct BrowserRoutes {
     core: Arc<CoreHandle>,
     routes: Mutex<HashMap<Key, RouteEntry>>,
+    build_slots: Arc<Semaphore>,
 }
 
 impl BrowserRoutes {
@@ -115,6 +119,7 @@ impl BrowserRoutes {
         Arc::new(Self {
             core,
             routes: Mutex::new(HashMap::new()),
+            build_slots: Arc::new(Semaphore::new(MAX_ROUTE_BUILDS)),
         })
     }
 
@@ -169,21 +174,22 @@ impl BrowserRoutes {
                 }
             }
         }
-        let old = routes.remove(&key);
-        if routes.len() >= MAX_ROUTES {
-            drop(routes);
-            if let Some(old) = old {
-                old.close();
-            }
+        if routes.len() >= MAX_ROUTES && !routes.contains_key(&key) {
             return Err("browser_route_limit");
         }
+        let build_permit = Arc::clone(&self.build_slots)
+            .try_acquire_owned()
+            .map_err(|_| "browser_route_build_limit")?;
+        let old = routes.remove(&key);
         let (result, waiting) = watch::channel(None);
+        let (cancel, canceled) = oneshot::channel();
         routes.insert(
             key.clone(),
             RouteEntry::Pending {
                 owner_started,
                 source: source.clone(),
                 result: result.clone(),
+                cancel,
             },
         );
         drop(routes);
@@ -192,7 +198,10 @@ impl BrowserRoutes {
         }
         let routes = Arc::clone(self);
         tokio::spawn(async move {
-            let built = routes.build_route(&key, &source, owner_started).await;
+            let _build_permit = build_permit;
+            let built = routes
+                .build_route(&key, &source, owner_started, canceled)
+                .await;
             routes
                 .finish_route(key, source, owner_started, result, built)
                 .await;
@@ -205,6 +214,7 @@ impl BrowserRoutes {
         key: &Key,
         source: &BrowserRouteSource,
         owner_started: u64,
+        canceled: oneshot::Receiver<()>,
     ) -> Result<Option<Route>, &'static str> {
         let core = Arc::clone(&self.core);
         let device = key.device.clone();
@@ -281,7 +291,7 @@ impl BrowserRoutes {
             let preserve_numeric_host =
                 scheme == "https" && host != "localhost" && host != "0.0.0.0";
             let forward = tokio::task::spawn_blocking(move || {
-                client.start_local_workspace_forward(remote, alternate, preserve_numeric_host)
+                client.start_local_workspace_forward(remote, alternate, preserve_numeric_host, canceled)
             })
             .await
             .map_err(|_| "route_failed")?

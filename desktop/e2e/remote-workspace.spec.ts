@@ -553,10 +553,29 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
         });
         expect(released.status).toBe(204);
         await expect.poll(() => canBindLoopback(Number(new URL(activeRoute.url).port), "127.0.0.1"), { timeout: 2_500 }).toBe(true);
+        const discardCount = () => fs.readFileSync(daemonLog, "utf8").split("\n").filter((line) => line.includes('"kind":"route.discarded"')).length;
+        const beforeCancel = discardCount();
+        for (let attempt = 0; attempt < 6; attempt++) {
+          const waitingRoute = attempt === 0 ? pending! : fetch(`http://127.0.0.1:${state.port}/browser-route`, {
+            method: "POST", headers: { Authorization: `Bearer ${state.token}`, "Content-Type": "application/json" },
+            body: routeBody(stalledView.view_id, stalledView.load),
+          });
+          if (attempt > 0) {
+            expect(await Promise.race([waitingRoute.then(() => "completed"), new Promise((resolve) => setTimeout(() => resolve("pending"), 100))])).toBe("pending");
+          }
+          const canceled = await fetch(`http://127.0.0.1:${state.port}/browser-route`, {
+            method: "DELETE", headers: { Authorization: `Bearer ${state.token}`, "Content-Type": "application/json" },
+            body: routeBody(stalledView.view_id, stalledView.load), signal: AbortSignal.timeout(2_500),
+          });
+          expect(canceled.status).toBe(204);
+          const response = await waitingRoute;
+          expect(response.status).toBe(409);
+          expect(await response.json()).toMatchObject({ reason: "view_unavailable" });
+          await expect.poll(discardCount, { timeout: 2_500 }).toBe(beforeCancel + attempt + 1);
+        }
       } finally {
         process.kill(sshPid, "SIGCONT");
       }
-      expect((await pending!).status).toBe(200);
       expect((await commandFromPane(remote, run, bridge, ["view", "close", activeView.view_id], "remote-active-close")).status).toBe(0);
       expect((await commandFromPane(remote, run, bridge, ["view", "close", stalledView.view_id], "remote-stalled-close")).status).toBe(0);
     }
