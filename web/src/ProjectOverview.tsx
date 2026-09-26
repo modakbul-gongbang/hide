@@ -12,13 +12,14 @@ import { buildAgents, buildTasks, formatBytes, projectStats, type BoardProject, 
 import type { Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { ProjectSessions } from "./ProjectSessions";
-import { AgentsView, TasksView } from "./TaskBoards";
+import { AgentsView, DependenciesView, TasksModeToggle, TasksView } from "./TaskBoards";
 import { scopeView, useUiStore, type ProjectView } from "./ui";
 
 // A Project's Overview (PRD web-project-overview, task-agents-views): the
 // Project scope the sidebar's project row opens. Under its title sits one
 // line of facts, then the view: the Tasks board of its tasks in five columns
-// under an ad hoc strip, the Agents board of its agents with their tasks, or
+// under an ad hoc strip (or, in its Dependencies mode, the tasks that wait on
+// one another), the Agents board of its agents with their tasks, or
 // its Sessions. The view is the page's (`projectView`), so another Project
 // opens on the same one. The boards are `TaskBoards.tsx`'s, shared with All
 // projects.
@@ -37,6 +38,7 @@ export function ProjectOverview({ projectId, actions }: { projectId: string; act
   const setScreen = useUiStore((s) => s.setScreen);
   const view = scopeView(useUiStore((s) => s.projectView), VIEW_IDS);
   const setView = useUiStore((s) => s.setProjectView);
+  const tasksMode = useUiStore((s) => s.tasksMode);
   // The Project whose Done column is open; the facts line's merged count opens it.
   const [doneOpenFor, setDoneOpenFor] = useState<string | null>(null);
   const found = useMemo(() => overviewProject(rest, agents, projectId), [rest, agents, projectId]);
@@ -113,7 +115,7 @@ export function ProjectOverview({ projectId, actions }: { projectId: string; act
           {availability.text}
         </p>
       ) : null}
-      <div className="flex shrink-0 px-lg py-sm">
+      <div className="flex shrink-0 items-center justify-between gap-md px-lg py-sm">
         <Tabs value={view} onValueChange={(value) => setView(value as ProjectView)}>
           <TabsList aria-label="Project view">
             {VIEWS.map((choice) => (
@@ -123,12 +125,15 @@ export function ProjectOverview({ projectId, actions }: { projectId: string; act
             ))}
           </TabsList>
         </Tabs>
+        {view === "tasks" ? <TasksModeToggle /> : null}
       </div>
       {view === "sessions" ? (
         <div className="flex min-h-0 flex-1 border-t border-border">
           {/* Keyed by the Project, so another Project starts with its own filters and asks for itself. */}
           <ProjectSessions key={`${project.device_id}:${project.id}`} workspace={project} actions={actions} />
         </div>
+      ) : view === "tasks" && tasksMode === "dependencies" ? (
+        <DependenciesView board={tasks} scope="project" focusedPaneId={focusedPaneId} actions={actions} openCheckout={openCheckout} />
       ) : view === "tasks" ? (
         <TasksView board={tasks} focusedPaneId={focusedPaneId} actions={actions} openCheckout={openCheckout} doneOpen={doneOpen} onToggleDone={() => setDoneOpenFor(doneOpen ? null : project.id)} />
       ) : (

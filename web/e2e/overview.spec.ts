@@ -63,6 +63,16 @@ function fakeGh(dir: string): string {
     { number: 2, title: "태스크 출처 어댑터", url: "https://github.com/acme/repo/issues/2", state: "OPEN", projectItems: [], updatedAt: "2026-09-26T00:00:00Z" },
     { number: 3, title: "Graph 뷰", url: "https://github.com/acme/repo/issues/3", state: "OPEN", projectItems: [], updatedAt: "2026-09-25T00:00:00Z" },
   ]);
+  // Issue 3 waits on issue 2, the relation GitHub's blockedBy records (task-agents-views B8).
+  const dependencies = JSON.stringify({
+    data: {
+      r0: {
+        nameWithOwner: "acme/repo",
+        i2: { number: 2, blockedBy: { nodes: [] } },
+        i3: { number: 3, blockedBy: { nodes: [{ number: 2, state: "OPEN", repository: { nameWithOwner: "acme/repo" } }] } },
+      },
+    },
+  });
   fs.writeFileSync(
     path.join(bin, "gh"),
     `#!/bin/sh
@@ -71,6 +81,7 @@ case "$1 $2" in
   "pr list") echo '[]' ;;
   "repo view") echo '{"nameWithOwner":"acme/repo"}' ;;
   "issue list") echo '${issues}' ;;
+  "api graphql") echo '${dependencies}' ;;
   *) echo "unsupported: $*" >&2; exit 1 ;;
 esac
 `,
@@ -180,6 +191,9 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     // its title the checkout (task-agents-views B1, B5).
     await expect(column("backlog").locator("[data-overview-card]")).toHaveCount(1, { timeout: 20_000 });
     await expect(column("backlog")).toContainText("Graph 뷰");
+    // It waits on issue 2, so it carries the lock line naming it (B8).
+    await expect(column("backlog").locator("[data-blocked-by]")).toHaveAttribute("data-blocked-by", "github:acme/repo#2", { timeout: 20_000 });
+    await expect(column("backlog").locator("[data-blocked-by]")).toHaveText("#2");
     const linked = column("working").locator('[data-overview-card][data-task-key="github:acme/repo#2"]');
     await expect(linked).toContainText("태스크 출처 어댑터");
     await expect(linked.locator("[data-task-id]")).toHaveAttribute("href", "https://github.com/acme/repo/issues/2");
@@ -213,6 +227,43 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
       await chooseTheme(page, theme);
       await screenshot(page, `overview-tasks-${theme}`);
     }
+
+    // Dependencies draws the same task cards left to right: issue 2, which
+    // its worktree works on, before issue 3 it blocks, one arrow between them
+    // and each card's stage word; untracked checkouts stay on the Board (D-09).
+    await page.locator('[data-tasks-mode-item="dependencies"]').click();
+    const graph = page.locator("[data-dependency-graph]");
+    await expect(graph.locator("[data-dependency-layer]")).toHaveCount(2);
+    await expect(graph.locator('[data-dependency-layer="0"] [data-overview-card]')).toHaveAttribute("data-task-key", "github:acme/repo#2");
+    await expect(graph.locator('[data-dependency-layer="1"] [data-overview-card]')).toHaveAttribute("data-task-key", "github:acme/repo#3");
+    await expect(graph.locator('[data-dependency-layer="1"] [data-overview-card]')).toHaveAttribute("data-blocked", "true");
+    await expect(graph.locator('[data-dependency-layer="0"] [data-card-status]')).toHaveText("진행 중");
+    await expect(graph.locator('[data-dependency-layer="1"] [data-card-status]')).toHaveText("백로그");
+    await expect(graph.locator("[data-dependency-edge]")).toHaveCount(1);
+    await expect(graph.locator("[data-dependency-edge]")).toHaveAttribute("d", /^M \S+ \S+ C /);
+    await expect(page.locator("[data-dependency-unrelated]")).toHaveCount(0);
+    await expect(page.locator("[data-tasks-dependencies] [data-no-task]")).toHaveCount(0);
+    for (const theme of ["dark", "light"] as const) {
+      await chooseTheme(page, theme);
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await screenshot(page, `overview-dependencies-${theme}`);
+    }
+    // The mode is the page's: All projects opens on it too, with each card's
+    // project above its title and a project without a source saying it has
+    // nothing to draw (B9, D-10).
+    await page.locator("[data-go-main]").click();
+    const mainScreen = page.locator("[data-main-screen]");
+    await expect(mainScreen.locator("[data-tasks-mode]")).toHaveAttribute("data-tasks-mode", "dependencies");
+    await expect(mainScreen.locator("[data-dependency-edge]")).toHaveCount(1);
+    await expect(mainScreen.locator('[data-dependency-layer="0"] [data-card-project]')).toHaveText("repo");
+    await expect(mainScreen.locator("[data-unconnected-project]")).toContainText("의존 관계를 그릴 태스크가 없음");
+    await chooseTheme(page, "light");
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await screenshot(page, "all-projects-dependencies-light");
+    await page.locator('[data-tasks-mode-item="board"]').click();
+    await repoRow.click();
+    await expect(overview).toHaveAttribute("data-overview-view", "tasks");
+    await expect(page.locator('[data-overview-columns="tasks"]')).toBeVisible();
 
     // The Agents board: a card per agent in lifecycle columns, each naming its
     // checkout and its task, or that it has none (B11).

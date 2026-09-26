@@ -397,7 +397,7 @@ function factsLine(id, facts) {
 
 // A project's Overview header (ProjectOverview.tsx): the path back and New
 // agent, the facts line, then the view tabs, the chosen one `view`.
-function overviewHeader(tokens, id, suffix, {project, facts, view, width}) {
+function overviewHeader(tokens, id, suffix, {project, facts, view, width, mode}) {
   return frame(`${id}-${suffix}`, 'Header', {layout: 'vertical', gap: '$--spacing-sm', width}, [
     frame(`${id}-title-${suffix}`, 'Title row', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'center', width}, [
       frame(`${id}-crumb-${suffix}`, 'Path', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
@@ -410,7 +410,16 @@ function overviewHeader(tokens, id, suffix, {project, facts, view, width}) {
     ]),
     factsLine(`${id}-facts-${suffix}`, facts),
     frame(`${id}-rule-${suffix}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
-    screenTabs(`${id}-tabs-${suffix}`, ['Tasks', 'Agents', 'Sessions'], ['tasks', 'agents', 'sessions'].indexOf(view)),
+    viewRow(`${id}-row-${suffix}`, screenTabs(`${id}-tabs-${suffix}`, ['Tasks', 'Agents', 'Sessions'], ['tasks', 'agents', 'sessions'].indexOf(view)), view === 'tasks' ? mode ?? 'board' : null, width),
+  ]);
+}
+
+// The tab row: the view tabs, and on the Tasks view its Board | Dependencies
+// mode on the right (TaskBoards.tsx TasksModeToggle, PRD task-agents-views D-02).
+function viewRow(id, tabs, mode, width) {
+  return frame(id, 'View row', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', width}, [
+    tabs,
+    ...(mode ? [screenToggleGroup(`${id}-mode`, ['Board', 'Dependencies'], mode === 'board' ? 0 : 1)] : []),
   ]);
 }
 
@@ -428,7 +437,7 @@ const HERDR_FACTS = [
 // facts line, the Tasks · Agents · Projects tabs, every project's tasks on one
 // board, and a project with agents and no task source gathered below it.
 function buildMain(tokens) {
-  const {taskCard, stageColumn, doneColumn} = taskBoardParts(tokens);
+  const {taskCard, stageColumn, doneColumn, arrow, legend, chain} = taskBoardParts(tokens);
   function build(suffix) {
     const sidebar = screenSidebar(tokens, 'main-sidebar', suffix, [
       {title: '두 번째 에이전트', status: 'Working'},
@@ -447,11 +456,11 @@ function buildMain(tokens) {
           {glyph: 'git-merge', label: '7 merged', fill: '$--pr-merged'},
         ]),
         frame(`main-rule-${suffix}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
-        screenTabs(`main-tabs-${suffix}`, ['Tasks', 'Agents', 'Projects'], 0),
+        viewRow(`main-row-${suffix}`, screenTabs(`main-tabs-${suffix}`, ['Tasks', 'Agents', 'Projects'], 0), 'board', width),
       ]),
       frame(`main-cols-${suffix}`, 'Columns', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
-        stageColumn(`main-backlog-${suffix}`, '백로그', '1', [taskCard(`main-b1-${suffix}`, {taskId: '#172', title: 'Graph 뷰'})]),
-        stageColumn(`main-ready-${suffix}`, '준비', '1', [taskCard(`main-r1-${suffix}`, {taskId: '#171', title: '태스크 출처 어댑터'})]),
+        stageColumn(`main-backlog-${suffix}`, '백로그', '1', [taskCard(`main-b1-${suffix}`, {taskId: '#172', title: 'Graph 뷰', locked: '#171'})]),
+        stageColumn(`main-ready-${suffix}`, '준비', '1', [taskCard(`main-r1-${suffix}`, {taskId: '#171', title: '태스크 출처 어댑터', locked: '#170'})]),
         stageColumn(`main-working-${suffix}`, '진행 중', '2', [
           taskCard(`main-w1-${suffix}`, {taskId: '#170', title: '기다리는 것 띠', halo: true, facts: [{label: '4 files', fill: '$--warning', stroke: '$--warning'}], rows: [{...WAITING, title: 'Implementor'}]}),
           taskCard(`main-w2-${suffix}`, {title: 'quick/155', rows: [{...WORKING, title: '브라우저 표시 확인'}], noTask: true}),
@@ -470,9 +479,34 @@ function buildMain(tokens) {
         screenButton(`main-unconnected-b-${suffix}`, 'GitHub 이슈 연결', {variant: 'secondary', height: num(tokens, '--size-control-sm'), icon: 'link-2'}),
       ]),
     ]);
-    return [sidebar, board];
+    const dependencies = frame(`main-deps-${suffix}`, 'All projects · Dependencies', {width, layout: 'vertical', gap: '$--spacing-lg'}, [
+      frame(`main-dhdr-${suffix}`, 'Header', {layout: 'vertical', gap: '$--spacing-sm', width}, [
+        text(`main-dtitle-${suffix}`, 'All projects', {size: '$--text-headline', weight: '600'}),
+        frame(`main-drule-${suffix}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
+        viewRow(`main-drow-${suffix}`, screenTabs(`main-dtabs-${suffix}`, ['Tasks', 'Agents', 'Projects'], 0), 'dependencies', width),
+      ]),
+      legend(`main-dlegend-${suffix}`),
+      chain(`main-dchain1-${suffix}`, [
+        taskCard(`main-d1-${suffix}`, {project: 'herdr-ide', taskId: '#170', title: '기다리는 것 띠', word: '진행 중', halo: true, facts: [{label: '4 files', fill: '$--warning', stroke: '$--warning'}], rows: [{...WAITING, title: 'Implementor'}]}),
+        arrow(`main-da1-${suffix}`),
+        taskCard(`main-d2-${suffix}`, {project: 'sasu', title: 'judge 백엔드 전환', word: '백로그', locked: 'herdr-ide#170', dim: true}),
+      ]),
+      chain(`main-dchain2-${suffix}`, [
+        taskCard(`main-d3-${suffix}`, {project: 'herdr-ide', taskId: '#171', title: '태스크 출처 어댑터', word: '준비'}),
+        arrow(`main-da2-${suffix}`),
+        taskCard(`main-d4-${suffix}`, {project: 'herdr-ide', taskId: '#172', title: 'Graph 뷰', word: '백로그', locked: '#171', dim: true}),
+      ]),
+      frame(`main-dunconnected-${suffix}`, 'No task source', {layout: 'vertical', gap: '$--spacing-xs', padding: '$--spacing-sm', width, fill: '$--card', cornerRadius: '$--radius-md', stroke: '$--border', strokeWidth: '$--size-hairline'}, [
+        frame(`main-dunconnected-h-${suffix}`, 'Title', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+          icon(`main-dunconnected-g-${suffix}`, 'plug', {fill: '$--muted-foreground'}),
+          text(`main-dunconnected-t-${suffix}`, 'modakbul · 태스크 출처 연결 안 됨', {weight: '600'}),
+        ]),
+        text(`main-dunconnected-d-${suffix}`, '의존 관계를 그릴 태스크가 없음', {size: '$--text-caption', fill: '$--muted-foreground'}),
+      ]),
+    ]);
+    return [sidebar, frame(`main-views-${suffix}`, 'Views', {layout: 'vertical', gap: '$--spacing-xl'}, [board, dependencies])];
   }
-  return screenSheet('screen-main', 'Screen / Main', 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx, TaskBoards.tsx: All projects, the scope the sidebar’s top row opens - its title with Add project, the facts line (the project count, and the open-PR and merged totals only when every project can give its part), the Tasks · Agents · Projects tabs, every project’s tasks on one board, and a project with agents and no task source gathered under it. The Projects view is the project list grouped by device.', s => build(s), s => build(s));
+  return screenSheet('screen-main', 'Screen / Main', 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx, TaskBoards.tsx: All projects, the scope the sidebar’s top row opens - its title with Add project, the facts line (the project count, and the open-PR and merged totals only when every project can give its part), the Tasks · Agents · Projects tabs, every project’s tasks on one board, and a project with agents and no task source gathered under it; its Dependencies mode names each card’s project above its title and draws a blocker in another project as an arrow. The Projects view is the project list grouped by device.', s => build(s), s => build(s));
 }
 
 // -- Screen / Project Overview -------------------------------------------------
@@ -554,10 +588,27 @@ function taskBoardParts(tokens) {
       ]),
     ]);
   }
+  // One Dependencies arrow between two cards of a row: the blocker on the
+  // left, the task it blocks on the right (D-09).
+  function arrow(id) {
+    return frame(id, 'Blocks', {layout: 'horizontal', alignItems: 'center', width: num(tokens, '--home-dependency-gap')}, [
+      {type: 'line', id: `${id}-l`, name: 'Line', width: 'fill_container', height: 0, stroke: '$--warning', strokeWidth: '$--size-hairline', strokeAlignment: 'center'},
+      icon(`${id}-g`, 'chevron-right', {size: 12, fill: '$--warning'}),
+    ]);
+  }
+  function legend(id) {
+    return frame(id, 'Legend', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+      icon(`${id}-g`, 'arrow-right', {size: 12, fill: '$--warning'}),
+      text(`${id}-t`, '선행 · 왼쪽 태스크가 끝나야 화살표가 향하는 태스크를 시작할 수 있음', {size: '$--text-caption', fill: '$--muted-foreground'}),
+    ]);
+  }
+  function chain(id, parts) {
+    return frame(id, 'Chain', {layout: 'horizontal', alignItems: 'center'}, parts);
+  }
   function indented(id, card) {
     return frame(id, 'Delegated', {layout: 'horizontal', padding: [0, 0, 0, '$--size-lineage-indent']}, [card]);
   }
-  return {column, chip, taskCard, stageColumn, doneColumn, agentCard, indented};
+  return {column, chip, taskCard, stageColumn, doneColumn, agentCard, indented, arrow, legend, chain};
 }
 
 const WAITING = {mark: '?', markFill: '$--warning'};
@@ -571,7 +622,7 @@ const DONE = {mark: '✓', markFill: '$--success'};
 // hover, a needs-you card in the warning halo, an untracked checkout with no
 // task, the pull request as the result, Done folded - and the Agents board.
 function buildProjectOverview(tokens) {
-  const {taskCard, stageColumn, doneColumn, agentCard, indented} = taskBoardParts(tokens);
+  const {taskCard, stageColumn, doneColumn, agentCard, indented, arrow, legend, chain} = taskBoardParts(tokens);
   const facts = (files, ahead) => [...(files ? [{label: `${files} files`, fill: '$--warning', stroke: '$--warning'}] : []), ...(ahead ? [{label: `↑${ahead}`}] : [])];
   const pr = (number, fill = '$--pr-open') => ({label: `PR #${number}`, glyph: 'git-pull-request', fill});
   function build(suffix) {
@@ -579,11 +630,12 @@ function buildProjectOverview(tokens) {
       overviewHeader(tokens, 'ov-head', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'tasks', width: 1560}),
       frame(`ov-cols-${suffix}`, 'Columns', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
         stageColumn(`ov-backlog-${suffix}`, '백로그', '2', [
-          taskCard(`ov-b1-${suffix}`, {taskId: '#172', title: 'Graph 뷰'}),
+          taskCard(`ov-b1-${suffix}`, {taskId: '#172', title: 'Graph 뷰', locked: '#171'}),
           taskCard(`ov-b2-${suffix}`, {taskId: '#191', title: '설정 화면에서 원격 기기 재연결 흐름을 다듬고 오류 메시지를 정리하는 작업'}),
         ]),
-        stageColumn(`ov-ready-${suffix}`, '준비', '1', [
+        stageColumn(`ov-ready-${suffix}`, '준비', '2', [
           taskCard(`ov-r1-${suffix}`, {taskId: '#175', title: '모바일 레이아웃 검토', start: true}),
+          taskCard(`ov-r2-${suffix}`, {taskId: '#171', title: '태스크 출처 어댑터', locked: '#170'}),
         ]),
         stageColumn(`ov-working-${suffix}`, '진행 중', '2', [
           taskCard(`ov-w1-${suffix}`, {taskId: '#170', title: '기다리는 것 띠', halo: true, facts: facts(4), rows: [{...WAITING, title: 'Implementor'}, {...SEEN, title: 'Observer'}], more: '+1'}),
@@ -593,6 +645,22 @@ function buildProjectOverview(tokens) {
           taskCard(`ov-v1-${suffix}`, {taskId: '#173', title: '카드 상태 시트', facts: [pr(174), {label: 'CI', glyph: 'x', fill: '$--destructive'}], rows: [{...DONE, title: '리뷰 반영'}]}),
         ]),
         doneColumn(`ov-done-${suffix}`, ['웹 내비게이션']),
+      ]),
+    ]);
+    const dependencies = frame(`ov-deps-${suffix}`, 'Dependencies', {layout: 'vertical', gap: '$--spacing-lg', width: 1560}, [
+      overviewHeader(tokens, 'ov-dhead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'tasks', mode: 'dependencies', width: 1560}),
+      legend(`ov-dlegend-${suffix}`),
+      chain(`ov-dchain-${suffix}`, [
+        taskCard(`ov-d1-${suffix}`, {taskId: '#170', title: '기다리는 것 띠', word: '진행 중', halo: true, facts: facts(4), rows: [{...WAITING, title: 'Implementor'}, {...SEEN, title: 'Observer'}]}),
+        arrow(`ov-da1-${suffix}`),
+        taskCard(`ov-d2-${suffix}`, {taskId: '#171', title: '태스크 출처 어댑터', word: '준비', locked: '#170', dim: true}),
+        arrow(`ov-da2-${suffix}`),
+        taskCard(`ov-d3-${suffix}`, {taskId: '#172', title: 'Graph 뷰', word: '백로그', locked: '#171', dim: true}),
+      ]),
+      text(`ov-dunrel-${suffix}`, '관계 없는 태스크', {size: '$--text-subhead', weight: '600', fill: '$--subtle-foreground'}),
+      frame(`ov-dunrelrow-${suffix}`, 'Unrelated', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
+        taskCard(`ov-d4-${suffix}`, {taskId: '#173', title: '카드 상태 시트', word: '리뷰', facts: [pr(174), {label: 'CI', glyph: 'x', fill: '$--destructive'}], rows: [{...DONE, title: '리뷰 반영'}]}),
+        taskCard(`ov-d5-${suffix}`, {taskId: '#169', title: '웹 내비게이션', word: '완료', facts: [pr(168, '$--pr-merged')], dim: true}),
       ]),
     ]);
     const agents = frame(`ov-agents-${suffix}`, 'Agents', {layout: 'vertical', gap: '$--spacing-lg', width: 1000}, [
@@ -611,9 +679,9 @@ function buildProjectOverview(tokens) {
         ]),
       ]),
     ]);
-    return [frame(`ovw-${suffix}`, 'Overview', {layout: 'vertical', gap: '$--spacing-xl'}, [tasks, agents])];
+    return [frame(`ovw-${suffix}`, 'Overview', {layout: 'vertical', gap: '$--spacing-xl'}, [tasks, dependencies, agents])];
   }
-  return screenSheet('screen-project-overview', 'Screen / Project Overview', 'web/src/ProjectOverview.tsx, TaskBoards.tsx, projectBoard.ts: a project’s Tasks board in five columns (백로그 · 준비 · 진행 중 · 리뷰 · 완료, Done folded) with task cards - the id before the title, the delivery facts, at most two agents and +N, Start agent on a ready card only on hover, an untracked checkout titled by its branch with 태스크 없음, the pull request as the result - and the Agents board with each agent’s checkout, task chip and device.', s => build(s), s => build(s));
+  return screenSheet('screen-project-overview', 'Screen / Project Overview', 'web/src/ProjectOverview.tsx, TaskBoards.tsx, projectBoard.ts: a project’s Tasks board in five columns (백로그 · 준비 · 진행 중 · 리뷰 · 완료, Done folded) with task cards - the id before the title, the lock line naming what it waits on, the delivery facts, at most two agents and +N, Start agent on a ready card only on hover, an untracked checkout titled by its branch with 태스크 없음, the pull request as the result - its Dependencies mode (the same cards with a stage word, blockers left of what they block, a blocked or done card dimmed, unrelated tasks below), and the Agents board with each agent’s checkout, task chip and device.', s => build(s), s => build(s));
 }
 
 // -- Screen / Workspace ---------------------------------------------------------

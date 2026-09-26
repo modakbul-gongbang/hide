@@ -95,7 +95,11 @@ export type TaskCard = {
   idHelp: string;
   /** Why the card's source could not be read, drawn as a small mark with this tooltip (D-13). */
   sourceFailure: string | null;
+  /** The open tasks this one waits on, the lock line (D-04): each by its id, else its title when the scope has it. */
+  blockedBy: Blocker[];
 };
+
+export type Blocker = { key: string; label: string };
 
 export type AgentColumn = "active" | "done" | "seen";
 
@@ -271,7 +275,15 @@ function card(
     canStart: stage === "ready" && rows.length === 0 && checkout !== null && !workspace.remote_target_id,
     idHelp: [sourceLabel, scope === "all" ? workspace.label : null, branch].filter(Boolean).join(" · "),
     sourceFailure: task ? sourceFailure(workspace, now) : null,
+    blockedBy: [],
   };
+}
+
+/** Names each card's blockers once every project's tasks are known, since a blocker may be another project's task (D-10). */
+function nameBlockers(cards: TaskCard[], titles: Map<string, string>) {
+  for (const value of cards) {
+    value.blockedBy = (value.task?.blocked_by ?? []).map((ref) => ({ key: ref.key, label: ref.id ?? titles.get(ref.key) ?? ref.key }));
+  }
 }
 
 /** The Tasks board for one Project or for All projects (D-03, D-07, D-10). */
@@ -283,8 +295,10 @@ export function buildTasks(projects: readonly BoardProject[], scope: BoardScope,
   let connected = false;
   let agentsAnywhere = false;
   let unconnectedReason: string | null = null;
+  const titles = new Map<string, string>();
   for (const { workspace, agents } of projects) {
     const { checkoutRows } = lineage(workspace, agents);
+    for (const task of workspace.tasks?.tasks ?? []) titles.set(task.key, task.title);
     const source = workspace.tasks?.source ?? null;
     const tasks = new Map((workspace.tasks?.tasks ?? []).map((task) => [task.key, task]));
     const working = workspace.checkouts.reduce((total, checkout) => total + checkoutRows(checkout).length, 0);
@@ -324,6 +338,8 @@ export function buildTasks(projects: readonly BoardProject[], scope: BoardScope,
       cards.push(card(`task:${workspace.id}:${task.key}`, workspace, scope, null, task, "backlog", [], now));
     }
   }
+  nameBlockers(cards, titles);
+  nameBlockers(adHoc, titles);
   return {
     empty: !connected && !agentsAnywhere,
     columns: projects.some(({ workspace }) => workspace.is_git === true),
@@ -338,6 +354,78 @@ export function buildTasks(projects: readonly BoardProject[], scope: BoardScope,
 /** The cards of one Tasks column. */
 export function stageCards(board: TasksBoard, stage: Stage): TaskCard[] {
   return board.cards.filter((value) => value.stage === stage);
+}
+
+/** One arrow of the Dependencies mode: from the blocker's card to the card it blocks. */
+export type DependencyEdge = { from: string; to: string };
+
+export type DependencyGraph = {
+  /** The tasks that wait on or block another in scope, in columns left to right by how many blockers precede them. */
+  layers: TaskCard[][];
+  edges: DependencyEdge[];
+  /** The tasks with no relation in scope, gathered below the graph (D-09). */
+  unrelated: TaskCard[];
+};
+
+/**
+ * The Dependencies mode (D-09, D-10): the Board's task cards, laid out left
+ * to right. A card's column is the longest chain of blockers before it, and
+ * each column is ordered by the mean row of the blockers it hangs from, so
+ * arrows mostly run straight. Keys name tasks across projects, so a blocker in
+ * another project of the scope is an arrow too; one outside the scope is only
+ * the lock line. Untracked checkouts are Board-only. A cycle, which a source
+ * should not allow, drops the arrow that closes it rather than looping.
+ */
+export function buildDependencies(board: TasksBoard): DependencyGraph {
+  const byKey = new Map<string, TaskCard>();
+  for (const value of board.cards) if (value.task && !byKey.has(value.task.key)) byKey.set(value.task.key, value);
+  const nodes = [...byKey.values()];
+  const blockers = new Map<string, TaskCard[]>();
+  const edges: DependencyEdge[] = [];
+  const related = new Set<string>();
+  for (const value of nodes) {
+    const before = value.blockedBy.flatMap((blocker) => {
+      const from = byKey.get(blocker.key);
+      return from && from !== value ? [from] : [];
+    });
+    blockers.set(value.id, before);
+    for (const from of before) {
+      edges.push({ from: from.id, to: value.id });
+      related.add(from.id);
+      related.add(value.id);
+    }
+  }
+  const depth = new Map<string, number>();
+  const visiting = new Set<string>();
+  const depthOf = (value: TaskCard): number => {
+    const known = depth.get(value.id);
+    if (known !== undefined) return known;
+    if (visiting.has(value.id)) return -1;
+    visiting.add(value.id);
+    const found = Math.max(-1, ...(blockers.get(value.id) ?? []).map(depthOf)) + 1;
+    visiting.delete(value.id);
+    depth.set(value.id, found);
+    return found;
+  };
+  const layers: TaskCard[][] = [];
+  for (const value of nodes) {
+    if (!related.has(value.id)) continue;
+    const layer = depthOf(value);
+    (layers[layer] ??= []).push(value);
+  }
+  const row = new Map<string, number>();
+  const dense = layers.filter((layer) => layer !== undefined);
+  for (const layer of dense) {
+    const weight = (value: TaskCard) => {
+      const rows = (blockers.get(value.id) ?? []).flatMap((from) => (row.has(from.id) ? [row.get(from.id) as number] : []));
+      return rows.length > 0 ? rows.reduce((sum, at) => sum + at, 0) / rows.length : Number.POSITIVE_INFINITY;
+    };
+    const ordered = layer.map((value, index) => ({ value, index, weight: weight(value) })).sort((a, b) => a.weight - b.weight || a.index - b.index);
+    layer.splice(0, layer.length, ...ordered.map(({ value }) => value));
+    layer.forEach((value, index) => row.set(value.id, index));
+  }
+  const forward = edges.filter((edge) => (depth.get(edge.from) ?? 0) < (depth.get(edge.to) ?? 0));
+  return { layers: dense, edges: forward, unrelated: nodes.filter((value) => !related.has(value.id)) };
 }
 
 /**

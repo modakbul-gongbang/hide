@@ -80,6 +80,11 @@ pub struct ProjectIssuesSnapshot {
     pub repository: Option<String>,
     pub issues: Vec<IssueSnapshot>,
     pub overflow: bool,
+    /// Why the issues' dependencies could not be read on the last pass, when
+    /// they could not; each issue then keeps the blockers read before it.
+    /// Reader provenance, not a wire field.
+    #[serde(skip)]
+    pub dependencies_failure: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -90,6 +95,9 @@ pub struct IssueSnapshot {
     pub state: String,
     pub project_status: Option<String>,
     pub updated_at_unix_ms: Option<u64>,
+    /// The open issues GitHub records as blocking this one (its "blocked by"
+    /// dependencies), in GitHub's order; a closed blocker no longer blocks.
+    pub blocked_by: Vec<IssueReference>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -160,6 +168,7 @@ pub fn parse_issues(output: &str) -> Result<Vec<IssueSnapshot>, String> {
                     .updated_at
                     .as_deref()
                     .and_then(crate::github::parse_rfc3339_ms),
+                blocked_by: Vec::new(),
             })
         })
         .collect()

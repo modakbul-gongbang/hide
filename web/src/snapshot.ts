@@ -128,7 +128,12 @@ export type Task = {
   url: string | null;
   title: string;
   open: boolean;
+  /** The open tasks this one waits on, possibly of another project (`TaskRefSnapshot`). */
+  blocked_by?: TaskRef[];
 };
+
+/** Another task, by its key and the id this task's source shows for it. */
+export type TaskRef = { key: string; id: string | null };
 
 /** Where a project's tasks come from and how the last read went (`TaskSourceSnapshot`). */
 export type TaskSource = {

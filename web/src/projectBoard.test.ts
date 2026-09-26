@@ -3,7 +3,7 @@
 // as the result, at most two agents per card, and both scopes.
 
 import { describe, expect, it } from "vitest";
-import { agentColumnCards, allProjectsStats, buildAgents, buildTasks, formatBytes, projectStats, shownAgents, stageCards, stageOf, type BoardProject } from "./projectBoard";
+import { agentColumnCards, allProjectsStats, buildAgents, buildDependencies, buildTasks, formatBytes, projectStats, shownAgents, stageCards, stageOf, type BoardProject } from "./projectBoard";
 import type { AgentRow, Checkout, PullRequest, Task, Workspace } from "./snapshot";
 
 const NOW = 1_800_000_000_000;
@@ -195,6 +195,70 @@ describe("the Tasks board", () => {
     expect(board.cards[0]?.idHelp).toBe("GitHub · herdr · feat");
     expect(board.unconnected).toEqual([{ place: { projectId: "modakbul", projectLabel: "modakbul" }, agents: 1, reason: "gh is not logged in" }]);
     expect(board.adHoc).toEqual([]);
+  });
+});
+
+describe("the Dependencies mode", () => {
+  const key = (number: number, repository = "acme/project") => `github:${repository}#${number}`;
+  const blocked = (value: Task, ...blockers: { key: string; id: string | null }[]): Task => ({ ...value, blocked_by: blockers });
+  const ids = (cards: { task: Task | null }[]) => cards.map((card) => card.task?.id ?? card.task?.title);
+
+  it("locks a task on the tasks it waits on and lays the chain out left to right, unrelated tasks apart and untracked checkouts left out (B8)", () => {
+    const board = buildTasks(
+      one(
+        workspace([checkout("feat", { task: key(170), changed: 1 }), checkout("quick", { changed: 1 })], {
+          tasks: [task(170), blocked(task(171), { key: key(170), id: "#170" }), blocked(task(172), { key: key(171), id: "#171" }), task(173)],
+        }),
+      ),
+      "project",
+      NOW,
+    );
+    expect(stageCards(board, "backlog").find((card) => card.task?.id === "#171")?.blockedBy).toEqual([{ key: key(170), label: "#170" }]);
+    const graph = buildDependencies(board);
+    expect(graph.layers.map(ids)).toEqual([["#170"], ["#171"], ["#172"]]);
+    expect(graph.edges).toEqual([
+      { from: "checkout:feat", to: `task:project:${key(171)}` },
+      { from: `task:project:${key(171)}`, to: `task:project:${key(172)}` },
+    ]);
+    expect(ids(graph.unrelated)).toEqual(["#173"]);
+  });
+
+  it("draws a blocker in another project of the scope as an arrow and one outside the scope as the lock line only (D-10)", () => {
+    const sasu = { ...task(5, true, "judge 백엔드 전환"), key: key(5, "acme/sasu"), id: null };
+    const board = buildTasks(
+      [
+        { workspace: workspace([], { id: "herdr", tasks: [task(170), task(171)] }), agents: [], device: null },
+        { workspace: workspace([], { id: "sasu", tasks: [blocked(sasu, { key: key(170), id: "acme/project#170" }, { key: key(9, "acme/elsewhere"), id: "acme/elsewhere#9" })] }), agents: [], device: null },
+      ],
+      "all",
+      NOW,
+    );
+    const graph = buildDependencies(board);
+    expect(graph.layers.map(ids)).toEqual([["#170"], ["judge 백엔드 전환"]]);
+    expect(graph.edges).toEqual([{ from: `task:herdr:${key(170)}`, to: `task:sasu:${key(5, "acme/sasu")}` }]);
+    expect(graph.layers[1]?.[0]?.blockedBy.map((blocker) => blocker.label)).toEqual(["acme/project#170", "acme/elsewhere#9"]);
+    expect(ids(graph.unrelated)).toEqual(["#171"]);
+  });
+
+  it("names a blocker with no id by its title, orders a column by the rows it hangs from, and drops the arrow that closes a cycle", () => {
+    const local = { ...task(1, true, "verify 슬롯 병렬화"), id: null };
+    const board = buildTasks(
+      one(
+        workspace([], {
+          tasks: [task(10), local, blocked(task(11), { key: key(1), id: null }), blocked(task(12), { key: key(10), id: "#10" }), blocked(task(20), { key: key(21), id: "#21" }), blocked(task(21), { key: key(20), id: "#20" })],
+        }),
+      ),
+      "project",
+      NOW,
+    );
+    expect(board.cards.find((card) => card.task?.id === "#11")?.blockedBy).toEqual([{ key: key(1), label: "verify 슬롯 병렬화" }]);
+    const graph = buildDependencies(board);
+    // #10 comes first in the source and #12 hangs from it, so #12 sits on #10's row.
+    expect(graph.layers.map(ids)).toEqual([
+      ["#10", "verify 슬롯 병렬화", "#21"],
+      ["#12", "#11", "#20"],
+    ]);
+    expect(graph.edges.filter((edge) => edge.from.includes("#2") && edge.to.includes("#2"))).toHaveLength(1);
   });
 });
 
