@@ -8,12 +8,13 @@ import type { SnapshotRest } from "./snapshot";
 import type { Geometry, LayoutSizes, ViewFrame } from "./viewLayout";
 import { workspaceViewOf } from "./workspace";
 
-/** The View area when only Views show or the keyboard is inside it, else the Agent area. */
+/** The View area when only Views show, they cover the agents, or the keyboard is inside it; else the Agent area. */
 export function viewAreaInUse(rest: SnapshotRest | null): boolean {
   const view = workspaceViewOf(rest);
   if (!view) return false;
   if (view.mode === "views") return true;
-  if (view.mode === "agents") return false;
+  // Drawn over the agents (issue 170), the View areas are all that shows.
+  if (view.mode === "agents") return view.views_over_agents === true && drawnViews() !== null;
   if (typeof document === "undefined") return false;
   // A narrow Together draws one working region (B13); while it is the View
   // areas, they are all that shows, wherever the keyboard is.
