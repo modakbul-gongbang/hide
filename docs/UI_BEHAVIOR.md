@@ -93,6 +93,18 @@ After a restart the app reopens the last Workspace as it was left: its areas and
 A first run, or a last Workspace that no longer exists, starts on Main.
 A layout file that cannot be read is kept aside and the app starts on Main, where the operator picks a Workspace and continues with a new layout.
 
+### Browser displays
+
+A web page is a view like a file: it opens in the active area, has a tab, splits, moves, and closes like one, and comes back after a restart at the address it last showed.
+Its tab carries a globe mark and the page's title, else its host, else a local file's name; its tooltip and accessible name carry `Page`, the title, and the full address.
+It opens from `hide browser open` in a terminal, from Open in Browser on an HTML file in the Explorer's menu (listed after Open to the side, and disabled with its reason on a device's file), from a page that asks for a new window, and from the address field.
+Opening an address the Workspace already shows moves to that view and loads it again instead of adding a second one.
+The view's own toolbar holds Back, Forward, Reload (Stop while the page loads) and the address, which shows a web address without its scheme until it is focused; focusing it selects the whole address, Return loads what was typed, and Escape puts the page's address back.
+A page that cannot load says so in its place with the address and the reason, and Reload tries again; nothing else on screen changes.
+While the palette, a menu, a dialog, or a dragged tab covers a page, the page is shown as a still picture of itself, so the overlay draws over it, and it comes back live when the overlay closes.
+In a plain browser tab the view reads `Pages open in the hide desktop app.` with its address, and a web address offers Open in browser; nothing else is drawn in its place.
+[BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md) owns which addresses a page may hold, the `file:` boundary, and the page's lifetime.
+
 ### Narrow windows
 
 When the window cannot give the working regions their minimum beside the tool column, Explorer and History open as a temporary overlay above the working regions instead of a column; Escape or a click outside closes it and returns focus to the toggle that opened it.
@@ -104,6 +116,7 @@ Widening the window brings back the chosen layout, the area sizes, and the tool 
 
 The View area masters in `design/hide-ui.lib.pen` are `Component / View tab`, `Component / View insertion line`, `Component / View split overlay`, `Component / View tab menu`, and `Component / View area message`.
 Their sheets draw every state as refs: the View tab sheet draws preview, pinned, hover, active-in-the-active-area, active-in-another-area, dirty, unavailable, diff, a long title, and the floating drag copy; the placement sheet draws a reorder, a move into another area, a right and a down split, and an ineligible target; the tab menu sheet draws a preview's menu and a pinned view's menu with a disabled Split and its reason; the area states sheet draws the empty Views state and each view's opening, waiting, and unavailable states.
+The browser display's toolbar and its loading, load failed, and plain browser tab states are on `Component / Browser file diff toolbars`.
 
 ### Agent panes and the Agents explorer
 
@@ -203,15 +216,11 @@ The whole lineage is drawn inside its card whatever the sidebar has folded, so a
 
 Web owner: `web/src/ExplorerTree.tsx`, `web/src/explorer.ts`. Native owner: `WorkspaceOutlineView.swift`, `WorkspaceOutlinePresentation.swift`, `changes.rs`.
 
-The tree's context menu follows VS Code's order: New File, New Folder, a separator, then on a file row Open with Default App, Open in Browser Pane and a separator, then Reveal in Finder, Copy Path, Copy Relative Path, a separator, Rename, a separator, Delete.
+The tree's context menu follows VS Code's order: New File, New Folder, a separator, then on a file row Open with Default App and a separator, then Reveal in Finder, Copy Path, Copy Relative Path, a separator, Rename, a separator, Delete.
 A folder row has no open items, because its open is Reveal in Finder; the empty area below the rows stands for the root and offers only the two creations; a remote tree is read-only and offers only the two copies.
 The item set the menu offers is a presentation decision a test can check directly, not something the platform decides implicitly.
 
 Open with Default App hands the file to the OS through the existing external opener, and a refusal is reported with the path and the reason.
-Open in Browser Pane stays in the menu whether or not it can act; when it cannot, the item is disabled with its one reason in the order the operator can act on it: remote files open on their device, opening in progress, Node.js is not on PATH, not connected to Herdr, no focused pane to open beside.
-The menu does not auto-enable; the disabled state is the presentation's decision.
-The outcome of an open is a notice: the host's own sentence when it refused, a message that no chromux profile is running with the launch command to fix it, or a timeout message after thirty seconds.
-`docs/BROWSER_PANES.md` owns how the pane is opened and which profile is chosen.
 
 Delete has two entry points, the menu item and a delete shortcut while the tree holds the keyboard, and both end in the same confirmation: an alert asking to move the item to Trash, telling the operator everything in a folder goes too, and that the item can be restored from Finder, with Cancel as the default action and Move to Trash as the destructive one.
 Nothing reaches the core without that alert; Cancel and Escape send nothing.
@@ -382,13 +391,13 @@ An add that lands mid-removal cancels the removal and says so, rather than losin
 
 Native owner: `AgentMRU.swift`, `ShellModel.swift`, `ShellModelNavigation.swift`. Web owner: `web/src/recent.ts`.
 
-Cycling recent surfaces walks every unified surface in recent-use order, across every project, checkout, and device the session holds: terminal, Browser plugin, file/editor, and diff tabs.
+Cycling recent surfaces walks every unified surface in recent-use order, across every project, checkout, and device the session holds: terminal, file/editor, and diff tabs.
 The overlay ("Recent Panels") returns to the actually previous surface on a single chord, and repeated chords toggle between the last two surfaces; holding the modifier while repeating the chord walks older visits rather than tab-strip or agent-list order.
 A second cycle scopes to projects globally and restores each project's last used surface.
 Holding the chord's modifier previews; releasing it commits; Escape keeps the original selection; a menu action commits immediately.
 Reopen Closed Tab is disabled when the session-local recent-close stack is empty or a restore is already running, and restoration works regardless of which surface currently owns focus.
 Restoration is one action with no confirmation: an in-flight pane shows inline progress, and a restore without a target pane shows a compact inline warning.
-Missing cwd, an unavailable prior conversation, a pruned Browser pane, a missing file, and a retryable failure all use the same inline notice vocabulary, without a banner, card, or modal.
+Missing cwd, an unavailable prior conversation, a missing file, and a retryable failure all use the same inline notice vocabulary, without a banner, card, or modal.
 A definitive close refusal removes its reserved reopen entry, while an unconfirmed result keeps the entry and explains inline that Hide could not determine whether the item closed.
 With no other project or tab available, navigation keeps the current selection without a modal; selecting an empty project shows its existing empty state.
 Automatic pruning and concurrent-selection recovery use structured diagnostics without a modal.
@@ -418,7 +427,7 @@ The web shell draws the same trigger and list at the bottom of its sidebar from 
 Web owner: `web/src/components/weekly-usage.tsx`, `web/src/usage.ts`. Native owner: the sidebar utility bar's usage button and `HideUsagePopover`.
 The core reads the numbers and names each row's state (`navigator.provider_usage`, [AI_PROVIDERS.md: weekly usage display](AI_PROVIDERS.md#weekly-usage-display)); the shells only draw them.
 
-The sidebar footer carries one chip per provider at its right, beside the device picker: the provider mark and the rounded percent of the seven-day window.
+The sidebar footer reads, as the native utility bar does, the device picker at its left, then one chip per provider and the Settings gear at its right; a chip is the provider mark and the rounded percent of the seven-day window.
 A percent reads in the success color below 70, the warning color from 70 and the destructive color from 90.
 A provider that is loading or unavailable is a dimmed mark with no percent; a stale or fallback reading keeps its percent.
 The chips' accessible name lists every provider with its reading.

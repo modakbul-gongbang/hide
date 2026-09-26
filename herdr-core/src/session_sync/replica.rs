@@ -323,10 +323,6 @@ impl SessionReplica {
                                     agents.iter().find(|agent| agent.pane_id == pane.pane_id);
                                 PaneSnapshot {
                                     id: remote_pane_id(target_id, &pane.pane_id),
-                                    content: crate::pane_content::PaneContent::from_tokens(
-                                        &pane.tokens,
-                                        true,
-                                    ),
                                     herdr_label: non_blank(pane.label.as_deref()),
                                     terminal_title: non_blank(
                                         pane.terminal_title_stripped

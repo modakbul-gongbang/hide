@@ -103,9 +103,7 @@ struct RightPanel: View {
                         rename: { path, name in model.core.renamePath(root: activeRoot, path: path, name: name) },
                         move: { path, destination in model.core.movePath(root: activeRoot, path: path, destination: destination) },
                         requestTrash: model.requestExplorerTrash,
-                        openWithDefaultApp: model.openWithDefaultApp,
-                        openInBrowserPane: model.openInBrowserPane,
-                        browserPaneAvailability: model.browserPaneAvailability
+                        openWithDefaultApp: model.openWithDefaultApp
                     )
                 )
             }

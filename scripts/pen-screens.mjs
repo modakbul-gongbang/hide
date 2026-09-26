@@ -332,9 +332,11 @@ function screenUsageChip(id, {provider, value}) {
 // The Agents/Projects sidebar App.tsx/sidebar.tsx always shows beside a
 // screen's own content; every sheet that draws a whole screen (Main,
 // Workspace) includes it so a reader sees the whole thing, not just its
-// own feature in isolation.
-function screenSidebar(id, suffix, agents) {
-  return frame(`${id}-${suffix}`, 'Sidebar', {width: 220, layout: 'vertical', gap: '$--spacing-md', fill: '$--sidebar', padding: '$--spacing-md', cornerRadius: '$--radius-md'}, [
+// own feature in isolation. It is --size-sidebar-ideal wide, as sidebar.tsx
+// draws it, so its footer holds the device picker, the usage chips and the
+// Settings gear side by side.
+function screenSidebar(tokens, id, suffix, agents) {
+  return frame(`${id}-${suffix}`, 'Sidebar', {width: num(tokens, '--size-sidebar-ideal'), layout: 'vertical', gap: '$--spacing-md', fill: '$--sidebar', padding: '$--spacing-md', cornerRadius: '$--radius-md'}, [
     frame(`${id}-tabs-${suffix}`, 'Tabs', {layout: 'horizontal', gap: '$--spacing-md'}, [
       text(`${id}-agentstab-${suffix}`, 'Agents', {weight: '600'}),
       text(`${id}-projectstab-${suffix}`, 'Projects', {fill: '$--muted-foreground'}),
@@ -350,6 +352,7 @@ function screenSidebar(id, suffix, agents) {
       frame(`${id}-footergap-${suffix}`, 'Gap', {width: 'fill_container', height: 1}, []),
       screenUsageChip(`${id}-usage0-${suffix}`, {provider: 'claude', value: '62%'}),
       screenUsageChip(`${id}-usage1-${suffix}`, {provider: 'codex', value: '59%'}),
+      screenIconButton(`${id}-settings-${suffix}`, 'settings', {size: 20}),
     ]),
   ]);
 }
@@ -358,7 +361,7 @@ function screenSidebar(id, suffix, agents) {
 
 function buildMain(tokens) {
   function build(suffix) {
-    const sidebar = screenSidebar('main-sidebar', suffix, [
+    const sidebar = screenSidebar(tokens, 'main-sidebar', suffix, [
       {title: '두 번째 에이전트', status: 'Working'},
       {title: 'Agent one', status: 'Seen', statusColor: '$--muted-foreground'},
     ]);
@@ -495,11 +498,11 @@ function screenPaneHeader(id, {label, status, width}) {
   ]);
 }
 
-function buildWorkspace() {
-  const SIDEBAR_W = 220, AGENT_W = 300, VIEW_W = 380, EXPLORER_W = 240;
+function buildWorkspace(tokens) {
+  const SIDEBAR_W = num(tokens, '--size-sidebar-ideal'), AGENT_W = 300, VIEW_W = 380, EXPLORER_W = 240;
   const TOTAL_W = SIDEBAR_W + AGENT_W + VIEW_W + EXPLORER_W + 3 * 12;
   function chrome(suffix) {
-    const sidebar = screenSidebar('ws-sidebar', suffix, [
+    const sidebar = screenSidebar(tokens, 'ws-sidebar', suffix, [
       {title: 'Agent two', status: 'Working'},
       {title: 'Agent one', status: 'Seen', statusColor: '$--muted-foreground'},
     ]);
@@ -741,7 +744,6 @@ function buildPalette(tokens) {
         text(id('side-projects'), 'Projects', {size: '$--text-caption', fill: '$--muted-foreground'}),
         frame(id('side-gap'), 'Spacer', {width: 'fill_container', height: 1}, []),
         text(id('side-e'), '⌘E', {size: '$--text-caption', fill: '$--muted-foreground'}),
-        icon(id('side-settings'), 'settings', {size: num(tokens, '--size-icon'), fill: '$--muted-foreground'}),
       ]),
       frame(id('side-searchwrap'), 'Search', {width: SIDEBAR, padding: [0, '$--spacing-md']}, [
         frame(id('side-search'), 'Search field', {
@@ -1058,7 +1060,7 @@ export function screenSheets(tokens, root) {
   return [
     {name: 'Screen / Main', build: () => buildMain(tokens)},
     {name: 'Screen / Project Overview', build: () => buildProjectOverview(tokens)},
-    {name: 'Screen / Workspace', build: () => buildWorkspace()},
+    {name: 'Screen / Workspace', build: () => buildWorkspace(tokens)},
     {name: 'Screen / Project Sessions', build: () => buildSessions()},
     {name: 'Screen / Settings', build: () => buildSettings(tokens)},
     {name: 'Screen / Palette', build: () => buildPalette(tokens)},

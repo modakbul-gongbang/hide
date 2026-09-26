@@ -1467,27 +1467,6 @@ impl Runtime {
     /// Starts one control attempt. Repeated sync updates are no-ops while any
     /// official control or observer session is starting or active.
     pub(super) fn request_terminal_control(&mut self, pane_id: &str) {
-        let native_content = self
-            .snapshot
-            .navigator
-            .workspaces
-            .iter()
-            .flat_map(|workspace| workspace.checkouts.iter())
-            .flat_map(|checkout| checkout.tabs.iter())
-            .flat_map(|tab| tab.panes.iter())
-            .find(|pane| pane.id == pane_id)
-            .is_some_and(|pane| !pane.content.is_terminal());
-        if native_content {
-            // A host may report its browser identity after the first layout.
-            // Release any early PTY attachment rather than holding invisible
-            // terminal control behind the native content surface.
-            self.terminal_sessions.remove(pane_id);
-            self.terminal_session_lifecycles.remove(pane_id);
-            self.terminal_sizes.remove(pane_id);
-            self.panes_awaiting_size.remove(pane_id);
-            self.terminal_recovery.remove(pane_id);
-            return;
-        }
         let current = self
             .terminal_session_lifecycles
             .get(pane_id)

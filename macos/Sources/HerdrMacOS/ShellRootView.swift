@@ -198,8 +198,8 @@ struct ShellView: View {
         } message: {
             Text(model.interactionNotice ?? "")
         }
-        // A close with a consequence - a browser pane, whose Chromium tab goes
-        // with it, or a working agent - waits here for the operator's answer.
+        // A close with a consequence - a working agent - waits here for the
+        // operator's answer.
         // The model holds the pending target, so the header X and ⌘W share
         // one prompt. The destructive action is explicit, while Escape and
         // the cancel action keep the pane open.

@@ -775,34 +775,26 @@ fn capture_close_item(
                 .find(|pane| pane.pane_id == *pane_id)
                 .cloned()
                 .ok_or_else(|| format!("pane {pane_id} disappeared before close capture"))?;
-            if pane.browser {
-                None
-            } else {
-                let placement = layout.root.placement_for(pane_id).unwrap_or(PanePlacement {
-                    neighbor_pane_id: None,
-                    parent_path: Vec::new(),
-                    direction: crate::recent_closed::ClosedSplitDirection::Right,
-                    ratio: 0.5,
-                    target_was_first: false,
-                });
-                Some(ClosedItem::Pane {
-                    key: request.key.clone(),
-                    context: request.context.clone(),
-                    pane,
-                    placement,
-                })
-            }
-        }
-        CloseCaptureTarget::Tab { .. } => {
-            let browser_count = request.panes.iter().filter(|pane| pane.browser).count();
-            (browser_count < request.panes.len()).then(|| ClosedItem::Tab {
+            let placement = layout.root.placement_for(pane_id).unwrap_or(PanePlacement {
+                neighbor_pane_id: None,
+                parent_path: Vec::new(),
+                direction: crate::recent_closed::ClosedSplitDirection::Right,
+                ratio: 0.5,
+                target_was_first: false,
+            });
+            Some(ClosedItem::Pane {
                 key: request.key.clone(),
                 context: request.context.clone(),
-                layout,
-                panes: request.panes.clone(),
-                browser_count,
+                pane,
+                placement,
             })
         }
+        CloseCaptureTarget::Tab { .. } => Some(ClosedItem::Tab {
+            key: request.key.clone(),
+            context: request.context.clone(),
+            layout,
+            panes: request.panes.clone(),
+        }),
     };
     Ok(CloseCaptureOutcome { item })
 }
@@ -1136,8 +1128,7 @@ fn run_herdr_reopen(
             context,
             layout,
             panes,
-            browser_count,
-        } => reopen_tab(connector, key, context, &layout.root, panes, *browser_count),
+        } => reopen_tab(connector, key, context, &layout.root, panes),
         ClosedItem::File { .. } => unreachable!("file reopen uses the filesystem worker"),
     }
 }
@@ -1484,19 +1475,17 @@ fn reopen_tab(
     context: &ClosedContext,
     root: &ClosedLayoutNode,
     panes: &[ClosedPane],
-    browser_count: usize,
 ) -> Result<ReopenOutcome, String> {
     let pane_map = panes
         .iter()
         .map(|pane| (pane.pane_id.clone(), pane.clone()))
         .collect();
     let mut terminal_ids = Vec::new();
-    root.terminal_pane_ids(&pane_map, &mut terminal_ids);
+    root.known_pane_ids(&pane_map, &mut terminal_ids);
     let mut common_notices = Vec::new();
-    let Some(root) =
-        root.prune_browser_panes(&pane_map, &context.checkout_path, &mut common_notices)
+    let Some(root) = root.resolve_panes(&pane_map, &context.checkout_path, &mut common_notices)
     else {
-        return Err("the closed tab contained only Browser panes".into());
+        return Err("the closed tab contained no panes".into());
     };
     let layout =
         ensure_workspace_and_tab(connector, key, context, false, &root, &mut common_notices)?;
@@ -1523,12 +1512,6 @@ fn reopen_tab(
             pane_id: Some(new_id.clone()),
             message,
         }));
-    }
-    if browser_count > 0 {
-        common_notices.push(format!(
-            "{browser_count} Browser pane{} could not be reopened",
-            if browser_count == 1 { "" } else { "s" }
-        ));
     }
     let first = new_ids.first().cloned();
     notices.extend(common_notices.into_iter().map(|message| ReopenNotice {
@@ -3387,7 +3370,6 @@ mod tests {
             label: None,
             cwd: "/tmp".into(),
             agent: None,
-            browser: false,
         };
         let placement = PanePlacement {
             neighbor_pane_id: None,
@@ -3562,7 +3544,6 @@ mod tests {
             label: None,
             cwd: "/tmp".into(),
             agent: None,
-            browser: false,
         };
         let placement = PanePlacement {
             neighbor_pane_id: Some("w1:p1".into()),

@@ -139,102 +139,73 @@ private struct HideTabCanvas: View {
             onResize: model.resizePane
         ) { item in
             if let pane = model.paneMetadata(for: item.paneID) {
-                switch pane.content {
-                case .browser(let binding):
-                    BrowserPaneView(
-                        pane: pane, binding: binding,
-                        isFocused: item.isFocused,
-                        isKeyboardFocused: item.isFocused && model.activeSurface == .terminal,
-                        isZoomed: isZoomed,
-                        activity: model.paneActivity(for: pane.id),
-                        notice: model.paneNotice(for: pane.id),
-                        onFocus: { model.focusPane(pane.id) },
-                        onToggleZoom: { model.togglePaneZoom(pane.id) },
-                        onClose: { model.closePaneFromHeader(pane.id) }
-                    )
-                case .unavailable(let reason):
-                    HideTerminalPaneCard(
-                        paneID: pane.id, kind: "unavailable", title: pane.herdrLabel ?? "Pane unavailable",
-                        status: "ready", isFocused: item.isFocused,
-                        isKeyboardFocused: item.isFocused && model.activeSurface == .terminal,
-                        isZoomed: isZoomed,
-                        activity: model.paneActivity(for: pane.id),
-                        notice: model.paneNotice(for: pane.id),
-                        onFocus: { model.focusPane(pane.id) },
-                        onClose: { model.closePaneFromHeader(pane.id) },
-                        onToggleZoom: { model.togglePaneZoom(pane.id) }
-                    ) {
-                        HideEmptyState("Pane unavailable", systemImage: "exclamationmark.triangle", description: Text(reason))
-                    }
-                case .terminal:
-                    PaneTerminalCell(
-                        pane: pane,
-                        lineagePath: model.resolvedLineagePath(for: pane),
-                        agent: model.agents.first { $0.paneID == pane.id },
-                        status: model.paneStatus(for: pane.id),
-                        statusMessage: model.paneTransportMessage(for: pane.id),
-                        isFocused: item.isFocused,
-                        isKeyboardFocused: item.isFocused && model.activeSurface == .terminal,
-                        isZoomed: isZoomed,
-                        isConversation: model.isConversation(for: pane.id),
-                        canShowConversation: model.canShowConversation(for: pane.id),
-                        showsFork: model.canForkPane(pane),
-                        activity: model.paneActivity(for: pane.id),
-                        notice: model.paneNotice(for: pane.id),
-                        connected: model.agentsConnected,
-                        paneSelectionOperation: model.paneSelectionOperation,
-                        onFocus: { model.focusPane(pane.id) },
-                        onReconnect: { model.reconnectPane(pane.id) },
-                        onClose: { model.closePaneFromHeader(pane.id) },
-                        onToggleZoom: { model.togglePaneZoom(pane.id) },
-                        onToggleConversation: { model.toggleConversation(pane.id) },
-                        onFork: { model.forkPaneFromHeader(pane.id) },
-                        onOpenPort: { model.openPanePort($0) },
-                        // A child chip, a breadcrumb step and a sibling are
-                        // the same intent: show that pane instead of this one.
-                        // The core moves the visible tab to whichever tab
-                        // holds it, so the screen is replaced rather than
-                        // split (PRD B7, D-16).
-                        onSelectPane: { model.requestPaneSelection(from: pane.id, to: $0) }
-                    ) {
-                        VStack(spacing: HideTheme.spacingNone) {
-                        TerminalAttachmentNotice(bridge: model.core, paneID: pane.id)
-                        if model.isConversation(for: pane.id),
-                           model.canShowConversation(for: pane.id),
-                           let agent = model.agents.first(where: { $0.paneID == pane.id }),
-                           let provider = ConversationProvider(agentKind: agent.agentKind)
-                        {
-                            ConversationPaneView(
-                                provider: provider,
-                                sessionID: model.conversationSessionID(for: pane.id),
-                                cwd: pane.cwd,
-                                agent: agent,
-                                textScale: model.textScale(for: pane.id),
-                                isKeyboardFocused: item.isFocused && model.activeSurface == .terminal,
-                                onShowTerminal: { model.toggleConversation(pane.id) },
-                                openLink: { model.openTerminalLink($0, paneID: pane.id) }
-                            ) {
-                                TerminalHost(
-                                    bridge: model.core,
-                                    paneID: pane.id,
-                                    textScale: model.textScale(for: pane.id),
-                                    onFocus: { model.focusPane(pane.id) },
-                                    onOpenLink: { model.openTerminalLink($0, paneID: pane.id) },
-                                    allowsInput: ConversationInputPolicy.terminalInputAllowed(isConversation: true)
-                                )
-                                .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
-                            }
-                        } else {
+                PaneTerminalCell(
+                    pane: pane,
+                    lineagePath: model.resolvedLineagePath(for: pane),
+                    agent: model.agents.first { $0.paneID == pane.id },
+                    status: model.paneStatus(for: pane.id),
+                    statusMessage: model.paneTransportMessage(for: pane.id),
+                    isFocused: item.isFocused,
+                    isKeyboardFocused: item.isFocused && model.activeSurface == .terminal,
+                    isZoomed: isZoomed,
+                    isConversation: model.isConversation(for: pane.id),
+                    canShowConversation: model.canShowConversation(for: pane.id),
+                    showsFork: model.canForkPane(pane),
+                    activity: model.paneActivity(for: pane.id),
+                    notice: model.paneNotice(for: pane.id),
+                    connected: model.agentsConnected,
+                    paneSelectionOperation: model.paneSelectionOperation,
+                    onFocus: { model.focusPane(pane.id) },
+                    onReconnect: { model.reconnectPane(pane.id) },
+                    onClose: { model.closePaneFromHeader(pane.id) },
+                    onToggleZoom: { model.togglePaneZoom(pane.id) },
+                    onToggleConversation: { model.toggleConversation(pane.id) },
+                    onFork: { model.forkPaneFromHeader(pane.id) },
+                    onOpenPort: { model.openPanePort($0) },
+                    // A child chip, a breadcrumb step and a sibling are
+                    // the same intent: show that pane instead of this one.
+                    // The core moves the visible tab to whichever tab
+                    // holds it, so the screen is replaced rather than
+                    // split (PRD B7, D-16).
+                    onSelectPane: { model.requestPaneSelection(from: pane.id, to: $0) }
+                ) {
+                    VStack(spacing: HideTheme.spacingNone) {
+                    TerminalAttachmentNotice(bridge: model.core, paneID: pane.id)
+                    if model.isConversation(for: pane.id),
+                       model.canShowConversation(for: pane.id),
+                       let agent = model.agents.first(where: { $0.paneID == pane.id }),
+                       let provider = ConversationProvider(agentKind: agent.agentKind)
+                    {
+                        ConversationPaneView(
+                            provider: provider,
+                            sessionID: model.conversationSessionID(for: pane.id),
+                            cwd: pane.cwd,
+                            agent: agent,
+                            textScale: model.textScale(for: pane.id),
+                            isKeyboardFocused: item.isFocused && model.activeSurface == .terminal,
+                            onShowTerminal: { model.toggleConversation(pane.id) },
+                            openLink: { model.openTerminalLink($0, paneID: pane.id) }
+                        ) {
                             TerminalHost(
                                 bridge: model.core,
                                 paneID: pane.id,
                                 textScale: model.textScale(for: pane.id),
                                 onFocus: { model.focusPane(pane.id) },
-                                onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
+                                onOpenLink: { model.openTerminalLink($0, paneID: pane.id) },
+                                allowsInput: ConversationInputPolicy.terminalInputAllowed(isConversation: true)
                             )
                             .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
                         }
-                        }
+                    } else {
+                        TerminalHost(
+                            bridge: model.core,
+                            paneID: pane.id,
+                            textScale: model.textScale(for: pane.id),
+                            onFocus: { model.focusPane(pane.id) },
+                            onOpenLink: { model.openTerminalLink($0, paneID: pane.id) }
+                        )
+                        .accessibilityLabel("SwiftTerm terminal for \(pane.id)")
+                    }
                     }
                 }
             } else {

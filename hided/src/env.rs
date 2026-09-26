@@ -23,6 +23,7 @@ pub const HIDE_IDLE_SECS: &str = "HIDE_IDLE_SECS";
 pub const HOME: &str = "HOME";
 pub const HIDE_OPEN_COMMAND: &str = "HIDE_OPEN_COMMAND";
 pub const HIDE_HOST_HELPER_ROOT: &str = "HIDE_HOST_HELPER_ROOT";
+pub const HERDR_PANE_ID: &str = "HERDR_PANE_ID";
 
 pub const REGISTRY: &[EnvKey] = &[
     EnvKey {
@@ -92,6 +93,12 @@ pub const REGISTRY: &[EnvKey] = &[
         absent_behavior: "The device helper installs under ~/.local/share/hide/host-helper on each consented device; a different value is a different consent scope, so every device asks again (isolated verification sets it to a temporary folder)",
     },
     EnvKey {
+        key: HERDR_PANE_ID,
+        required: false,
+        format: "the Herdr pane id; Herdr sets it in every pane it manages",
+        absent_behavior: "`hide browser open` without `--pane` opens the page in the Workspace in front",
+    },
+    EnvKey {
         key: HOME,
         required: true,
         format: "absolute home-directory path",
@@ -118,6 +125,9 @@ pub struct Env {
     /// Where the device helper is installed on each SSH device; part of the
     /// consent scope the operator agrees to (PRD S5.5 D-23).
     pub host_helper_root: Option<String>,
+    /// The pane a CLI command runs in, which `hide browser open` names so
+    /// the page opens in that pane's Workspace; the daemon never reads it.
+    pub pane_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -269,6 +279,16 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         }
         other => other,
     };
+    let pane_id = match read(HERDR_PANE_ID) {
+        Some(value) if value.is_empty() => {
+            errors.push(EnvError {
+                key: HERDR_PANE_ID,
+                kind: "empty",
+            });
+            None
+        }
+        other => other,
+    };
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -283,6 +303,7 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         idle_secs,
         open_command,
         host_helper_root,
+        pane_id,
     })
 }
 

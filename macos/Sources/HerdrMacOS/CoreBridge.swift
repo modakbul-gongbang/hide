@@ -987,20 +987,6 @@ final class CoreBridge: ObservableObject, @unchecked Sendable {
         return dispatch(kind: "remote_control", payload: payload)
     }
 
-    func recordBrowserStatus(_ receipt: BrowserRuntimeReceipt) {
-        let checkedMilliseconds = UInt64(
-            (ISO8601DateFormatter().date(from: receipt.checkedAt)?.timeIntervalSince1970 ?? Date().timeIntervalSince1970) * 1_000
-        )
-        dispatch(kind: "browser_status", payload: [
-            "state": receipt.phase.rawValue,
-            "profile": receipt.profile,
-            "current_url": receipt.currentURL.map { $0 as Any } ?? NSNull(),
-            "current_title": receipt.currentTitle.map { $0 as Any } ?? NSNull(),
-            "message": receipt.message,
-            "last_checked_at_unix_ms": NSNumber(value: checkedMilliseconds),
-        ])
-    }
-
     /// One clicked path, with everything it changes on screen decided by the
     /// core in a single event.
     ///

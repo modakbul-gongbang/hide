@@ -53,7 +53,8 @@ test("attach: the app starts hided, shows the shell, and runs the native chords 
   await expect(page.locator("[data-pane-view] .xterm").first()).toBeVisible();
   await screenshot(page, "desktop-attached");
 
-  // B11: no Node API in the page; the bridge is the host kind, the menu channel and the pane-chord report.
+  // B11: no Node API in the page; the bridge is the host kind, the menu
+  // channel, the pane-chord report and the browser displays' views (issue 155).
   expect(
     await page.evaluate(() => ({
       require: typeof (globalThis as { require?: unknown }).require,
@@ -61,7 +62,7 @@ test("attach: the app starts hided, shows the shell, and runs the native chords 
       bridge: Object.keys(window.hideHost ?? {}).sort(),
       kind: window.hideHost?.kind,
     })),
-  ).toEqual({ require: "undefined", process: "undefined", bridge: ["kind", "onCommand", "reportBindings"], kind: "electron" });
+  ).toEqual({ require: "undefined", process: "undefined", bridge: ["browser", "kind", "onCommand", "reportBindings"], kind: "electron" });
 
   // B9: ⌘T is one create_tab here; the browser's ⌥T is not a chord in the app.
   const tabs = await page.locator("[role=tab]").count();
@@ -196,14 +197,14 @@ test("discovery: with hide on no PATH, the app finds it where it is installed an
   const before = [...["debug", "release"].map((profile) => path.join(run.root, "target", profile, "hide")), ...bare.map((dir) => path.join(dir, "hide"))];
   const resolved = () => hostLog(env).filter((line) => line.event === "cli.resolved");
 
-  ({ app } = await launch(env, appDir));
+  ({ app } = await launch(env, { appDir }));
   await shellShown(await app.firstWindow());
   expect(resolved().at(-1)).toMatchObject({ source: "well-known", path: installed, tried: [...before, installed].join(":") });
   const remembered = path.join(env.HIDE_DESKTOP_USER_DATA_DIR!, "cli-path.json");
   expect(JSON.parse(fs.readFileSync(remembered, "utf8"))).toEqual({ schema: 1, path: installed });
   await app.close();
 
-  ({ app } = await launch(env, appDir));
+  ({ app } = await launch(env, { appDir }));
   await shellShown(await app.firstWindow());
   expect(resolved().at(-1)).toMatchObject({ source: "remembered", path: installed, tried: [...before, installed].join(":") });
 });

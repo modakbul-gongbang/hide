@@ -29,7 +29,7 @@ It brings local and remote workspaces, checkouts, terminal panes, files, and cod
 - **Agents start in the right checkout.** Launch Claude Code or Codex from the selected workspace without rebuilding its context by hand.
 - **Local and remote stay distinct.** Work on this Mac or an SSH-connected Mac while keeping remote file writes inside the attached terminal.
 - **Files remain understandable.** Browse and edit existing local files in the Explorer, with remote trees exposed as read-only context.
-- **Browser QA stays beside the agent.** Open a Chromium pane from an existing chromux profile, then control the same target through CDP.
+- **A browser shows beside the work.** `hide browser open <url>` opens a browser as a View area display in the desktop app.
 - **Attention is visible.** Agent state, blocked work, failures, and the optional desktop pet make the next action easy to spot.
 
 ## How it works
@@ -72,7 +72,7 @@ It also bundles the pinned Herdr v0.9.1 runtime, so a separate Herdr install is 
 
 See [Install hide](docs/INSTALL.md) for prerequisites, release checksum verification, Gatekeeper steps, first-launch behavior, updates, and troubleshooting.
 
-See [Browser panes](docs/BROWSER_PANES.md) for the agent-facing open command, explicit profile selection, and browser-tab ownership rules.
+See [Browser displays](docs/BROWSER_DISPLAYS.md) for `hide browser open`, the pages the desktop app draws in View areas, and the `file:` address boundary.
 
 ## Runtime boundaries
 

@@ -404,15 +404,23 @@ export type ViewDisplaySnapshot = {
   id: string;
   /** The editor tab (document buffer) it shows; null while it is opening or waiting. */
   tab_id: string | null;
+  /** The file or diff it shows; empty for a browser display. */
   path: string;
+  /** The document's name, or a browser page's title (its host until it has one). */
   label: string;
-  kind: "file" | "diff";
+  kind: "file" | "diff" | "browser";
   /** Which History group a diff shows; null for a file. */
   committed: boolean | null;
   preview: boolean;
   state: ViewDisplayState;
   /** Why it is waiting or unavailable. */
   reason: string | null;
+  /** A browser display's address as the core last recorded it; absent for a file or diff. */
+  url?: string | null;
+  /** A browser display's page title as the core last recorded it. */
+  title?: string | null;
+  /** A browser display's load stamp: it moves when the core asks the page to load `url` (an open or a navigate). */
+  load?: number | null;
 };
 
 export type ViewAreaSnapshot = { id: string; active: string | null; displays: ViewDisplaySnapshot[] };

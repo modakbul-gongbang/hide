@@ -27,7 +27,7 @@ pub use snapshot_delta::serialize_snapshot_delta;
 
 use events::*;
 use operations::*;
-use view_areas::ViewLayoutPayload;
+use view_areas::{BrowserOpenPayload, BrowserStatePayload, ViewLayoutPayload};
 use workspace_view::{AreaIntent, WorkspaceViewPayload, WorkspaceViewStore};
 
 use crate::ffi::ChangeNotifier;
@@ -51,7 +51,7 @@ use crate::model::{
 use crate::recent_closed::{ClosedAgent, ClosedContext, ClosedItem, ClosedPane, push_bounded};
 use crate::remote::RusshSftpTransport;
 use crate::sidebar::{ReadRecordScope, SessionSnapshotPayload, project_agents};
-use crate::{chromux, environment, files, live, persistence, pet, session_sync, workspace};
+use crate::{environment, files, live, persistence, pet, session_sync, workspace};
 
 fn conversation_agent_kind(kind: &str) -> bool {
     matches!(
@@ -1617,11 +1617,6 @@ fn project_layout_panes(
             let ports = crate::ports::attributed_ports(&cwd, listening_ports);
             PaneSnapshot {
                 id: pane.pane_id.clone(),
-                content: source
-                    .map(|source| {
-                        crate::pane_content::PaneContent::from_tokens(&source.tokens, false)
-                    })
-                    .unwrap_or_default(),
                 herdr_label: source.and_then(|source| source.label.clone()),
                 terminal_title: source.and_then(|source| source.terminal_title.clone()),
                 workspace_label: agent.map(|agent| agent.workspace_label.clone()),

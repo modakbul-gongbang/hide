@@ -72,7 +72,7 @@ export function WeeklyUsage({ actions }: { actions: Actions }) {
           ))}
         </PopoverTrigger>
       </Hint>
-      <PopoverContent side="top" className="flex w-(--size-agent-children-popover) flex-col gap-md p-lg" data-usage-popover="true">
+      <PopoverContent side="top" className="flex w-(--size-usage-popover) flex-col gap-md p-lg" data-usage-popover="true">
         <div className="flex items-baseline gap-sm">
           <span className="min-w-0 flex-1 text-subhead font-semibold text-foreground">Weekly Usage</span>
           <span className="shrink-0 font-mono text-micro font-semibold text-muted-foreground">7 days</span>

@@ -9787,7 +9787,7 @@
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "Agent capability never leaks into browser, plain terminal, file or diff. Reuse toolbar buttons; keep each surface’s own editing semantics.",
+          "content": "Agent capability never leaks into browser, plain terminal, file or diff. A browser display is a View area tab: Back, Forward, Reload (Stop while loading) and the page address above the page, and the page title as the tab label.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -9801,41 +9801,48 @@
           "layout": "vertical",
           "children": [
             {
-              "id": "leFn9",
-              "type": "ref",
-              "ref": "Z3BnL",
-              "name": "Browser header",
-              "width": "fill_container",
-              "descendants": {
-                "M2zJMH": {
-                  "fill": "$--card"
-                },
-                "PIKFA/PCeNa": {
-                  "enabled": false
-                },
-                "PIKFA/YYqJe": {
-                  "enabled": false
-                },
-                "PIKFA/x0h40": {
-                  "content": "Browser · preview"
-                }
-              }
-            },
-            {
               "type": "frame",
               "id": "eMlZD",
               "name": "Component / Browser address toolbar",
               "reusable": true,
               "width": "fill_container",
-              "height": 24,
-              "fill": "$--secondary",
-              "gap": "$--spacing-sm",
+              "height": 32,
+              "fill": "$--background",
+              "stroke": "$--border",
+              "strokeWidth": {
+                "bottom": "$--size-hairline"
+              },
+              "strokeAlignment": "inner",
+              "gap": "$--spacing-xs",
               "padding": [
                 "$--spacing-none",
                 "$--spacing-sm"
               ],
               "alignItems": "center",
               "children": [
+                {
+                  "id": "ixeXa",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Back",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "arrow-left"
+                    }
+                  }
+                },
+                {
+                  "id": "o62ICI",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Forward",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "arrow-right",
+                      "fill": "$--muted-foreground"
+                    }
+                  }
+                },
                 {
                   "id": "R55Ywy",
                   "type": "ref",
@@ -9848,31 +9855,155 @@
                   }
                 },
                 {
-                  "type": "text",
-                  "id": "NN6Wp",
-                  "name": "Editable page address",
-                  "fill": "$--subtle-foreground",
-                  "textGrowth": "fixed-width",
-                  "width": "fill_container",
-                  "content": "http://localhost:5173",
-                  "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-body",
-                  "fontWeight": "normal"
-                },
-                {
-                  "id": "uobdL",
+                  "id": "HQfLF",
                   "type": "ref",
-                  "ref": "Nyvom",
-                  "name": "Copy CDP endpoint",
+                  "ref": "inp-m",
+                  "name": "Page address",
+                  "width": "fill_container",
+                  "height": 24,
                   "descendants": {
-                    "ZIZFR": {
-                      "icon": "copy"
+                    "inp-t": {
+                      "content": "http://localhost:5173",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-caption",
+                      "fill": "$--foreground"
                     }
                   }
                 }
               ]
+            },
+            {
+              "type": "frame",
+              "id": "sL932",
+              "name": "Page",
+              "width": "fill_container",
+              "height": 160,
+              "fill": "$--card",
+              "layout": "vertical",
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "text",
+                  "id": "W5bAB",
+                  "name": "Page note",
+                  "fill": "$--muted-foreground",
+                  "content": "The page: a native view the desktop app places over this area. Its title is the area tab label.",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal"
+                }
+              ]
             }
           ]
+        },
+        {
+          "type": "text",
+          "id": "C9T200",
+          "name": "Loading label",
+          "fill": "$--subtle-foreground",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Loading: Stop takes Reload’s place until the page stops loading.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "G0A30",
+          "type": "ref",
+          "ref": "eMlZD",
+          "name": "Loading",
+          "width": 740,
+          "descendants": {
+            "R55Ywy/ZIZFR": {
+              "icon": "x"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "G9Yife",
+          "name": "Load failed label",
+          "fill": "$--subtle-foreground",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Load failed: the page gives its place to a notice with Reload.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "iumcR",
+          "type": "ref",
+          "ref": "view-area-message",
+          "name": "Load failed",
+          "width": 740,
+          "height": 112,
+          "descendants": {
+            "view-area-message-icon": {
+              "enabled": true
+            },
+            "view-area-message-text": {
+              "content": "http://localhost:5173 could not be shown: ERR_CONNECTION_REFUSED",
+              "fill": "$--subtle-foreground"
+            },
+            "view-area-message-show-explorer": {
+              "enabled": false
+            },
+            "view-area-message-open-file": {
+              "enabled": false
+            },
+            "view-area-message-close": {
+              "enabled": false
+            },
+            "view-area-message-retry": {
+              "enabled": true
+            },
+            "view-area-message-retry/btn-lb": {
+              "content": "Reload"
+            }
+          }
+        },
+        {
+          "type": "text",
+          "id": "dFuaD",
+          "name": "Plain browser tab label",
+          "fill": "$--subtle-foreground",
+          "textGrowth": "fixed-width",
+          "width": "fill_container",
+          "content": "Plain browser tab: a page cannot be drawn in a View area there, so the display says where it opens and offers the address in a tab of its own.",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-subhead",
+          "fontWeight": "normal"
+        },
+        {
+          "id": "gMOcb",
+          "type": "ref",
+          "ref": "view-area-message",
+          "name": "Plain browser tab",
+          "width": 740,
+          "height": 112,
+          "descendants": {
+            "view-area-message-text": {
+              "content": "Pages open in the hide desktop app. http://localhost:5173"
+            },
+            "view-area-message-show-explorer": {
+              "enabled": false
+            },
+            "view-area-message-open-file": {
+              "enabled": false
+            },
+            "view-area-message-close": {
+              "enabled": false
+            },
+            "view-area-message-retry": {
+              "enabled": true
+            },
+            "view-area-message-retry/btn-lb": {
+              "content": "Open in browser"
+            }
+          }
         },
         {
           "type": "text",
@@ -10178,7 +10309,7 @@
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "Browser connecting / disconnected: body notice + reconnect; URL input stays distinct from terminal focus. File loading, conflict, missing text and stale diff stay in their existing notice surfaces.",
+          "content": "A shell layer that meets a page (the palette, a menu, a dialog, a popover, a tab drag) draws over a still of the page until it closes. File loading, conflict, missing text and stale diff stay in their existing notice surfaces.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -28554,7 +28685,7 @@
               "id": "usage-row",
               "name": "Component / Usage row",
               "reusable": true,
-              "width": 248,
+              "width": 218,
               "layout": "vertical",
               "gap": "$--spacing-xs",
               "children": [
@@ -28644,7 +28775,7 @@
                       "type": "frame",
                       "id": "usage-row-fill",
                       "name": "Used share",
-                      "width": 154,
+                      "width": 135,
                       "height": 4,
                       "fill": "$--success",
                       "cornerRadius": "$--radius-xs",
@@ -28800,7 +28931,7 @@
               "type": "frame",
               "id": "usage-popover-available",
               "name": "Popover",
-              "width": 280,
+              "width": 250,
               "layout": "vertical",
               "gap": "$--spacing-md",
               "padding": "$--spacing-lg",
@@ -28887,7 +29018,7 @@
                           "enabled": true
                         },
                         "usage-row-fill": {
-                          "width": 154,
+                          "width": 135,
                           "fill": "$--success"
                         },
                         "usage-row-note": {
@@ -28927,7 +29058,7 @@
                           "enabled": true
                         },
                         "usage-row-fill": {
-                          "width": 15,
+                          "width": 13,
                           "fill": "$--success"
                         },
                         "usage-row-note": {
@@ -28976,7 +29107,7 @@
                           "enabled": true
                         },
                         "usage-row-fill": {
-                          "width": 146,
+                          "width": 129,
                           "fill": "$--success"
                         },
                         "usage-row-note": {
@@ -29012,7 +29143,7 @@
               "type": "frame",
               "id": "usage-popover-first-read",
               "name": "Popover",
-              "width": 280,
+              "width": 250,
               "layout": "vertical",
               "gap": "$--spacing-md",
               "padding": "$--spacing-lg",
@@ -29216,7 +29347,7 @@
                       "enabled": true
                     },
                     "usage-row-fill": {
-                      "width": 201,
+                      "width": 177,
                       "fill": "$--warning"
                     },
                     "usage-row-note": {
@@ -29256,7 +29387,7 @@
                       "enabled": true
                     },
                     "usage-row-fill": {
-                      "width": 233,
+                      "width": 205,
                       "fill": "$--destructive"
                     },
                     "usage-row-note": {
@@ -29295,7 +29426,7 @@
                       "enabled": true
                     },
                     "usage-row-fill": {
-                      "width": 57,
+                      "width": 50,
                       "fill": "$--success"
                     },
                     "usage-row-note": {
@@ -30848,6 +30979,10 @@
     "--size-agent-children-popover": {
       "type": "number",
       "value": 280
+    },
+    "--size-usage-popover": {
+      "type": "number",
+      "value": 250
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4",

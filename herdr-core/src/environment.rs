@@ -11,13 +11,12 @@ pub struct EnvironmentVariableSpec {
     pub absent_behavior: &'static str,
 }
 
-pub const PATH_KEY: &str = "PATH";
 pub const HOME_KEY: &str = "HOME";
 pub const SSH_AUTH_SOCK_KEY: &str = "SSH_AUTH_SOCK";
 pub const HERDR_SOCKET_PATH_KEY: &str = "HERDR_SOCKET_PATH";
 pub const CODEX_HOME_KEY: &str = "CODEX_HOME";
 
-pub const REGISTRY: [EnvironmentVariableSpec; 5] = [
+pub const REGISTRY: [EnvironmentVariableSpec; 4] = [
     EnvironmentVariableSpec {
         key: HOME_KEY,
         required: false,
@@ -29,12 +28,6 @@ pub const REGISTRY: [EnvironmentVariableSpec; 5] = [
         required: false,
         format: "absolute Unix-domain socket path",
         absent_behavior: "A device whose ssh config names no IdentityFile or IdentityAgent cannot authenticate and says so on its row; every other device connects",
-    },
-    EnvironmentVariableSpec {
-        key: PATH_KEY,
-        required: false,
-        format: "colon-separated executable search path containing the chromux install directory",
-        absent_behavior: "Chromux actions are disabled with visible guidance",
     },
     EnvironmentVariableSpec {
         key: HERDR_SOCKET_PATH_KEY,
@@ -54,7 +47,6 @@ pub const REGISTRY: [EnvironmentVariableSpec; 5] = [
 pub struct EnvironmentReport {
     pub statuses: Vec<EnvironmentStatusSnapshot>,
     pub home_path: Option<PathBuf>,
-    pub chromux_enabled: bool,
     pub herdr_socket_path_override: Option<String>,
     pub codex_home: Option<PathBuf>,
 }
@@ -65,20 +57,7 @@ pub fn read_and_validate() -> EnvironmentReport {
 
 fn validate_with(mut read: impl FnMut(&str) -> Option<OsString>) -> EnvironmentReport {
     let home = read(HOME_KEY);
-    let chromux_path = home
-        .as_ref()
-        .map(PathBuf::from)
-        .map(|home| home.join("Library/pnpm/chromux"));
-    validate_with_chromux_path(&mut read, home, chromux_path.as_deref())
-}
-
-fn validate_with_chromux_path(
-    mut read: impl FnMut(&str) -> Option<OsString>,
-    home: Option<OsString>,
-    chromux_path: Option<&Path>,
-) -> EnvironmentReport {
     let mut statuses = Vec::with_capacity(REGISTRY.len());
-    let mut chromux_enabled = true;
     let mut herdr_socket_path_override = None;
     let mut home_path = None;
     let mut codex_home = None;
@@ -113,23 +92,6 @@ fn validate_with_chromux_path(
                     "SSH agent socket configuration is invalid; only devices whose ssh config names an IdentityFile or IdentityAgent can authenticate",
                 ),
                 Some(_) => ("available", "SSH agent socket configuration is available"),
-            },
-            PATH_KEY => match value {
-                None => {
-                    chromux_enabled = false;
-                    (
-                        "absent",
-                        "Executable search path is unavailable; chromux actions are disabled",
-                    )
-                }
-                Some(value) if !path_exposes_chromux(&value, chromux_path) => {
-                    chromux_enabled = false;
-                    (
-                        "invalid",
-                        "Executable search path does not expose chromux; chromux actions are disabled",
-                    )
-                }
-                Some(_) => ("available", "Executable search path exposes chromux"),
             },
             HERDR_SOCKET_PATH_KEY => match value {
                 None => (
@@ -177,17 +139,9 @@ fn validate_with_chromux_path(
     EnvironmentReport {
         statuses,
         home_path,
-        chromux_enabled,
         herdr_socket_path_override,
         codex_home,
     }
-}
-
-fn path_exposes_chromux(value: &OsString, chromux_path: Option<&Path>) -> bool {
-    let Some(chromux_path) = chromux_path else {
-        return false;
-    };
-    std::env::split_paths(value).any(|component| component.join("chromux") == chromux_path)
 }
 
 #[cfg(test)]
@@ -197,35 +151,24 @@ mod tests {
 
     #[test]
     fn registry_is_enumerable_and_does_not_expose_values() {
-        assert_eq!(REGISTRY.len(), 5);
+        assert_eq!(REGISTRY.len(), 4);
         assert_eq!(REGISTRY[0].key, "HOME");
         let secret_like_value = OsString::from("/private/tmp/private-agent.sock");
-        let chromux_path = Path::new("/private/tmp/hide-environment-test/Library/pnpm/chromux");
-        let report = validate_with_chromux_path(
-            |key| match key {
-                SSH_AUTH_SOCK_KEY | HERDR_SOCKET_PATH_KEY => Some(secret_like_value.clone()),
-                PATH_KEY => Some(OsString::from(
-                    "/private/tmp/hide-environment-test/Library/pnpm:/usr/bin",
-                )),
-                _ => None,
-            },
-            Some(OsString::from("/private/tmp/hide-environment-test")),
-            Some(chromux_path),
-        );
+        let report = validate_with(|key| match key {
+            SSH_AUTH_SOCK_KEY | HERDR_SOCKET_PATH_KEY => Some(secret_like_value.clone()),
+            _ => None,
+        });
         let encoded = serde_json::to_string(&report.statuses).unwrap();
-        assert!(report.chromux_enabled);
         assert!(!encoded.contains("private-agent.sock"));
-        assert!(!encoded.contains("/private/tmp/hide-environment-test/Library/pnpm"));
     }
 
     #[test]
     fn an_absent_agent_socket_is_reported_without_disabling_devices() {
         let report = validate_with(|_| None);
-        assert!(!report.chromux_enabled);
         assert_eq!(report.statuses[1].state, "absent");
         assert!(!report.statuses[1].required);
         assert!(report.statuses[1].message.contains("IdentityFile"));
-        assert_eq!(report.statuses[3].state, "default");
+        assert_eq!(report.statuses[2].state, "default");
         assert!(report.home_path.is_none());
         assert!(report.herdr_socket_path_override.is_none());
         assert!(report.codex_home.is_none());
@@ -244,21 +187,19 @@ mod tests {
     }
 
     #[test]
-    fn socket_override_and_path_capability_share_the_registry_boundary() {
+    fn socket_override_is_reported_alongside_the_ssh_agent_socket() {
         let report = validate_with(|key| match key {
             SSH_AUTH_SOCK_KEY => Some(OsString::from("/private/tmp/agent.sock")),
-            PATH_KEY => Some(OsString::from("/usr/bin")),
             HERDR_SOCKET_PATH_KEY => Some(OsString::from("/private/tmp/herdr.sock")),
             _ => None,
         });
 
-        assert!(!report.chromux_enabled);
         assert_eq!(
             report.herdr_socket_path_override.as_deref(),
             Some("/private/tmp/herdr.sock")
         );
-        assert_eq!(report.statuses[2].state, "invalid");
-        assert_eq!(report.statuses[3].state, "available");
+        assert_eq!(report.statuses[1].state, "available");
+        assert_eq!(report.statuses[2].state, "available");
     }
 
     #[test]
@@ -274,6 +215,6 @@ mod tests {
             Some(PathBuf::from("/private/tmp/hide-home"))
         );
         assert!(report.codex_home.is_none());
-        assert_eq!(report.statuses[4].state, "invalid");
+        assert_eq!(report.statuses[3].state, "invalid");
     }
 }
