@@ -3,6 +3,7 @@ import { memo, useMemo } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
 import { RowMenu } from "./components/entry-menu";
+import { SearchField } from "./components/search-field";
 import { Hint } from "./components/ui/tooltip";
 import { DevicePicker } from "./DevicePicker";
 import { NewWorkspace } from "./NewWorkspace";
@@ -59,6 +60,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
           </Button>
         </Hint>
       </div>
+      <SearchField onOpen={() => actions.openSearch()} />
       {status ? (
         <div className="border-b border-border px-md py-sm text-caption text-muted-foreground">{status}</div>
       ) : null}

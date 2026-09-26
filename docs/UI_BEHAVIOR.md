@@ -412,10 +412,15 @@ The web shell draws the same trigger and list at the bottom of its sidebar from 
 
 ## Search keyboard navigation
 
-Native owner: Command+K (agent/workspace search) and Command+P (file search). Web owner: `web/src/search.ts`, `web/src/Palette.tsx`.
+Native owner: Command+K (agent/workspace search) and Command+P (file search). Web owner: `web/src/search.ts`, `web/src/Palette.tsx`, `web/src/components/search-field.tsx`.
 
 Agent/workspace search and file search share the same focused query field and first-result selection behavior.
 An agent result is titled by the identity every other surface uses and subtitled by the row's second line, falling back to the status word when the state chose no sentence; the pane id leaves the printed row but still matches the query and is read by accessibility, so a result can be found by title, sentence, or id.
+On the web, the sidebar's `Search` field with its `⌘K` keycap opens the same palette Command+K opens, and the query row carries an `Esc` keycap.
+Results sit under headers in the form `<project> > AGENTS` (an agent under the first project whose checkouts hold its pane, `AGENTS` when none does), `WORKSPACE > COMMANDS`, `WORKSPACES > PROJECTS`, and `WORKSPACES > CHECKOUTS`.
+A group stands where its best result ranked and keeps its results in rank order, so grouping never moves the best match off the first row.
+An agent row is the agent's own mark, its title, and the state line under it; a project or checkout row carries its path under the title; the selected row shows `↵`.
+With nothing to search the list says `No agents or workspaces yet`, and a query with no match says `No matching agents or workspaces`.
 Up and Down move the selection in display order, stopping at either end, while typing continues in the query field.
 Return executes the highlighted result through the existing agent, checkout, or file-opening action; Escape closes the sheet.
 The selected row scrolls into view.

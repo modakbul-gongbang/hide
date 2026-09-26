@@ -1,18 +1,32 @@
 // The two palettes' data (PRD B12, B13, D-05): ⌘K searches the snapshot the
 // shell already holds, and ⌘P shows what hided's index ranked. The search
-// entries and the fuzzy score are pure functions, so the palette's behavior is
-// testable without a browser; ⌘P's ranking happens in hided, beside the walk.
+// entries, the fuzzy score and the grouping are pure functions, so the
+// palette's behavior is testable without a browser; ⌘P's ranking happens in
+// hided, beside the walk.
 
+import { projectPaneIds } from "./navigation";
 import { contextAgents, contextWorkspaces } from "./remote";
 import type { SnapshotRest } from "./snapshot";
 import { besideUnavailable, shownTools, viewCommands, type Geometry, type LayoutSizes, type ToolsPlacement, type ViewCommandId } from "./viewLayout";
 import { LAYOUTS, workspaceViewOf, type ViewMode } from "./workspace";
+
+/** The header an entry is drawn under, in the Swift search view's form (`herdr-ide > AGENTS`). */
+export type SearchGroup = { id: string; label: string };
+
+const COMMANDS_GROUP: SearchGroup = { id: "commands", label: "WORKSPACE > COMMANDS" };
+const PROJECTS_GROUP: SearchGroup = { id: "projects", label: "WORKSPACES > PROJECTS" };
+const CHECKOUTS_GROUP: SearchGroup = { id: "checkouts", label: "WORKSPACES > CHECKOUTS" };
+/** An agent whose pane is in none of the listed projects' checkouts. */
+const AGENTS_GROUP: SearchGroup = { id: "agents", label: "AGENTS" };
 
 export type SearchEntry = {
   id: string;
   title: string;
   subtitle: string;
   kind: "agent" | "project" | "checkout" | "command";
+  group: SearchGroup;
+  /** An agent's kind, which picks its mark. */
+  agentKind?: string;
   /** The ids the entry activates: a pane, or a workspace/checkout pair. */
   paneId?: string;
   workspaceId?: string;
@@ -67,6 +81,7 @@ export function workspaceCommands(rest: SnapshotRest | null, screen: WorkspaceOn
     title: `Layout: ${layout.label}`,
     subtitle: "Workspace layout",
     kind: "command",
+    group: COMMANDS_GROUP,
     command: { layout: layout.mode },
   }));
   entries.push({
@@ -74,6 +89,7 @@ export function workspaceCommands(rest: SnapshotRest | null, screen: WorkspaceOn
     title: shown.explorer ? "Hide Explorer" : "Show Explorer",
     subtitle: "Workspace tool",
     kind: "command",
+    group: COMMANDS_GROUP,
     command: { tool: "explorer", visible: !shown.explorer },
   });
   entries.push({
@@ -81,6 +97,7 @@ export function workspaceCommands(rest: SnapshotRest | null, screen: WorkspaceOn
     title: shown.changes ? "Hide History" : "Show History",
     subtitle: "Workspace tool",
     kind: "command",
+    group: COMMANDS_GROUP,
     command: { tool: "changes", visible: !shown.changes },
   });
   if (!view.layout) return entries;
@@ -90,6 +107,7 @@ export function workspaceCommands(rest: SnapshotRest | null, screen: WorkspaceOn
       title: command.title,
       subtitle: "View areas",
       kind: "command",
+      group: COMMANDS_GROUP,
       command: { view: command.id },
       unavailable: command.unavailable,
     });
@@ -99,6 +117,7 @@ export function workspaceCommands(rest: SnapshotRest | null, screen: WorkspaceOn
     title: "Open file to the side",
     subtitle: "View areas",
     kind: "command",
+    group: COMMANDS_GROUP,
     command: { openBeside: true },
     unavailable: besideUnavailable(view.layout, screen.drawn),
   });
@@ -109,26 +128,36 @@ export function workspaceCommands(rest: SnapshotRest | null, screen: WorkspaceOn
  * The snapshot rows ⌘K searches: Workspace commands when a Workspace is on
  * screen, then agents, projects and checkouts of the context on screen, so a
  * pick on a selected SSH device focuses that host's row rather than one on
- * this machine behind it.
+ * this machine behind it. An agent is grouped under the first project whose
+ * checkouts hold its pane, as the Swift search view groups it.
  */
 export function searchEntries(rest: SnapshotRest | null, screen: WorkspaceOnScreen | null = null): SearchEntry[] {
   if (!rest) return [];
   const entries: SearchEntry[] = screen ? workspaceCommands(rest, screen) : [];
+  const workspaces = contextWorkspaces(rest);
+  const agentGroups = new Map<string, SearchGroup>();
+  for (const workspace of workspaces) {
+    const group = { id: `agents:${workspace.id}`, label: `${workspace.label} > AGENTS` };
+    for (const paneId of projectPaneIds(workspace)) if (!agentGroups.has(paneId)) agentGroups.set(paneId, group);
+  }
   for (const agent of contextAgents(rest, rest.navigator?.agents ?? [])) {
     entries.push({
       id: `agent:${agent.pane_id}`,
       title: agent.identity_label,
       subtitle: agent.detail || agent.status_label,
       kind: "agent",
+      group: agentGroups.get(agent.pane_id) ?? AGENTS_GROUP,
+      agentKind: agent.agent_kind,
       paneId: agent.pane_id,
     });
   }
-  for (const workspace of contextWorkspaces(rest)) {
+  for (const workspace of workspaces) {
     entries.push({
       id: `project:${workspace.id}`,
       title: workspace.label,
       subtitle: workspace.path,
       kind: "project",
+      group: PROJECTS_GROUP,
       workspaceId: workspace.id,
     });
     for (const checkout of workspace.checkouts) {
@@ -137,6 +166,7 @@ export function searchEntries(rest: SnapshotRest | null, screen: WorkspaceOnScre
         title: `${workspace.label} / ${checkout.label}`,
         subtitle: checkout.path,
         kind: "checkout",
+        group: CHECKOUTS_GROUP,
         workspaceId: workspace.id,
         checkoutId: checkout.id,
       });
@@ -154,4 +184,21 @@ export function filterEntries(entries: SearchEntry[], query: string, limit = 80)
     .filter((row): row is { entry: SearchEntry; score: number } => row.score !== null);
   scored.sort((left, right) => right.score - left.score || left.entry.title.localeCompare(right.entry.title));
   return scored.slice(0, limit).map((row) => row.entry);
+}
+
+export type SearchSection = { group: SearchGroup; entries: SearchEntry[] };
+
+/**
+ * The ranked entries under their headers. A group stands where its best entry
+ * ranked and its entries keep their rank, so the first row is still the best
+ * match and grouping never reorders what `filterEntries` ranked inside a group.
+ */
+export function groupEntries(entries: SearchEntry[]): SearchSection[] {
+  const sections = new Map<string, SearchSection>();
+  for (const entry of entries) {
+    const section = sections.get(entry.group.id);
+    if (section) section.entries.push(entry);
+    else sections.set(entry.group.id, { group: entry.group, entries: [entry] });
+  }
+  return [...sections.values()];
 }
