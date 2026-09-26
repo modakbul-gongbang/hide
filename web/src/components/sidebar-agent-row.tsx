@@ -12,12 +12,13 @@ import { Hint } from "./ui/tooltip";
 /**
  * A control on the right of a sidebar row that waits for the pointer: its
  * slot is always there, so the title and the time never move, and it shows
- * under the pointer, while focus is anywhere inside the row, while the
- * row's menu is open, and always on an input with no hover (PRD
- * sidebar-readability D-3, B2, B3).
+ * under the pointer, while focus is anywhere inside the row, and always on
+ * an input with no hover (PRD sidebar-readability D-3, B2, B3). An agent row
+ * has no menu of its own; the Projects rows' `ROW_REVEALED` in sidebar.tsx
+ * adds the menu-open case for rows that have one.
  */
 export const REVEALED_CONTROL =
-  "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 group-has-[[data-state=open]]/row:opacity-100 focus-visible:opacity-100 hoverless:opacity-100";
+  "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:opacity-100 hoverless:opacity-100";
 
 /**
  * One agent in the sidebar, in Agents and under a checkout in Projects (PRD

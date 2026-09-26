@@ -269,7 +269,7 @@ function ProjectList({ actions }: { actions: Actions }) {
       ))}
       {!remote && workspaces.length === 0 ? (
         <li className="flex flex-col items-start gap-sm px-sm py-sm text-caption text-muted-foreground" data-projects-empty="true">
-          No project is registered yet.
+          No project on this machine yet.
           <Button variant="secondary" size="sm" onClick={() => actions.openNewWorkspace()} data-projects-empty-add="true">
             Add project
           </Button>
@@ -381,10 +381,11 @@ const CHECKOUT_NAME_COLUMN = "calc(var(--spacing-sm) + var(--size-lineage-indent
  * A row control that waits for the pointer, inside a row `RowMenu` wraps: its
  * slot is always kept, and it shows under the pointer, with focus inside
  * the row, while the row's menu is open, and always on an input with no hover
- * (PRD sidebar-readability D-3, B2, B3).
+ * (PRD sidebar-readability D-3, B2, B3). `REVEALED_CONTROL` in
+ * sidebar-agent-row.tsx is the same rule for an agent row, which has no menu.
  */
 const ROW_REVEALED =
-  "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-has-[[data-state=open]]:opacity-100 group-data-[state=open]:opacity-100 focus-visible:opacity-100 hoverless:opacity-100";
+  "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-has-[[data-menu-open]]:opacity-100 group-data-[state=open]:opacity-100 focus-visible:opacity-100 hoverless:opacity-100";
 
 /** One disclosure for both inactive folds, the project level's and the checkout level's; its chevron stands in the fold slot. */
 function FoldRow({

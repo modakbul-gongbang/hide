@@ -152,7 +152,9 @@ export function EntryPointMenu<Id extends string>({
  * trigger shows while the row is under the pointer, while focus is anywhere
  * inside it, while either menu is open, and always on an input with no
  * hover; the row places it in a positioned slot of its own, kept at rest so
- * nothing beside it moves when it shows.
+ * nothing beside it moves when it shows. The open dropdown marks its trigger
+ * with `data-menu-open`, because the Hint around the trigger overwrites the
+ * trigger's own `data-state` with the tooltip's.
  */
 export function RowMenu<Id extends string>({
   label,
@@ -178,6 +180,7 @@ export function RowMenu<Id extends string>({
               ? "text-foreground"
               : "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-data-[state=open]:opacity-100 focus-visible:opacity-100 hoverless:opacity-100",
           )}
+          data-menu-open={open || undefined}
           {...data}
         >
           <EllipsisIcon className="size-(--size-icon)" />
