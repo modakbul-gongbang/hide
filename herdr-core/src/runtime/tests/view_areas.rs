@@ -1081,15 +1081,12 @@ fn closing_the_last_display_of_a_dirty_document_saves_it_first() {
     let mut runtime = shared.lock().unwrap();
     let emptied = tree(&mut runtime);
     assert_eq!(emptied.display_count, 0);
-    // B10: the Views empty out without the mode changing, and the last area
-    // stays, empty; the View areas the open drew over the agents come down
-    // with the last view (issue 170).
+    // B10: the Views empty out without the panel changing, and the last
+    // area stays, empty (issue 170: the panel narrows to its tools or says
+    // nothing is open).
     assert!(matches!(emptied.root, ViewNodeSnapshot::Area(_)));
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert_eq!(
-        (view.mode, view.views_over_agents),
-        (crate::workspace_views::ViewMode::Agents, false)
-    );
+    assert_eq!(view.panel, crate::workspace_views::PanelState::Open);
 }
 
 /// B5: a draft in one display keeps every display of that document open.
@@ -1349,7 +1346,7 @@ fn a_restart_restores_the_view_tree_and_marks_a_missing_file_unavailable() {
     );
     layout(
         &mut runtime,
-        serde_json::json!({"mode": "views", "changes": true}),
+        serde_json::json!({"panel": "expanded", "changes": true}),
     );
     let before = tree(&mut runtime);
     drop(runtime);
@@ -1401,8 +1398,8 @@ fn a_restart_restores_the_view_tree_and_marks_a_missing_file_unavailable() {
     );
     let view = restarted.snapshot.workspace_view.clone().unwrap();
     assert_eq!(
-        (view.mode, view.changes),
-        (crate::workspace_views::ViewMode::Views, true)
+        (view.panel, view.changes),
+        (crate::workspace_views::PanelState::Expanded, true)
     );
     assert_eq!(active_label(&restarted).as_deref(), Some("a.md"));
 
@@ -1701,7 +1698,7 @@ fn the_changes_read_takes_every_diff_on_screen() {
             .collect::<Vec<_>>()
     );
 
-    layout(&mut runtime, serde_json::json!({"mode": "agents"}));
+    layout(&mut runtime, serde_json::json!({"panel": "closed"}));
     assert!(diffs(&mut runtime).is_empty());
 }
 
@@ -1830,6 +1827,8 @@ impl HistoryPump {
 #[test]
 fn a_late_history_answer_does_not_bring_back_the_row_the_operator_left() {
     let (mut runtime, checkout_id, directory) = views_runtime("view-history-late");
+    // History reads while the side panel shows it.
+    layout(&mut runtime, serde_json::json!({"panel": "open"}));
     files(&directory, &["a.ts", "e.rs", "f.go"]);
     for arguments in [
         &["add", "."][..],
@@ -1951,13 +1950,13 @@ fn last_error_kind(runtime: &Runtime) -> Option<&str> {
 }
 
 /// A page opens in the Workspace of the pane that asked, in its area in
-/// use, and draws the View areas over the agents; the same address again shows that
+/// use, and opens the side panel; the same address again shows that
 /// page and loads it again rather than opening a second one. A request that
 /// names itself reads its answer in `status.browser_opens`.
 #[test]
 fn a_page_opens_in_the_workspace_of_the_pane_that_asked_and_once_per_address() {
     let (mut runtime, _, directory) = views_runtime("browser-open");
-    layout(&mut runtime, serde_json::json!({"mode": "agents"}));
+    layout(&mut runtime, serde_json::json!({"panel": "closed"}));
     let pane = with_pane(&mut runtime, &directory);
     assert!(browser_open(
         &mut runtime,
@@ -1999,10 +1998,7 @@ fn a_page_opens_in_the_workspace_of_the_pane_that_asked_and_once_per_address() {
     );
     assert!(page.load > 0);
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-    assert_eq!(
-        (view.mode, view.views_over_agents),
-        (crate::workspace_views::ViewMode::Agents, true)
-    );
+    assert_eq!(view.panel, crate::workspace_views::PanelState::Open);
 
     // The front Workspace, named by nothing, shows the page again.
     assert!(browser_open(

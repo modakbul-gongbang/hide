@@ -4,8 +4,8 @@
 //! A Workspace is one checkout on one device, keyed by the device id and the
 //! checkout path, because a Herdr workspace id is not stable across a Herdr
 //! restart and one checkout can hold tabs from several Herdr workspaces. The
-//! state is Hide's own presentation - which areas show, which tools are open,
-//! where the boundary sits, and the View area tree with its displays
+//! state is Hide's own presentation - whether and how the side panel shows,
+//! which tools are open, the panel's width, and the View area tree with its displays
 //! ([`crate::view_layout`]) - and never a terminal layout: Herdr keeps panes,
 //! splits and zoom.
 //!
@@ -15,7 +15,8 @@
 //! strip of View tabs per Workspace) migrates on load into one area and is
 //! written as schema 2 by the next save. A file this build cannot read, of
 //! another version or one whose migration fails, is moved aside, never
-//! overwritten, and the defaults load.
+//! overwritten, and the defaults load. An entry written before the side
+//! panel (issue 170) restarts into the panel state that shows the same things.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -31,90 +32,145 @@ pub const SCHEMA_VERSION: u32 = 2;
 /// first, so the file stays bounded however many checkouts come and go.
 pub const MAX_WORKSPACES: usize = 256;
 
-/// The Agent area's share of the width while both areas show. The bounds
-/// keep each area at a readable width on the narrowest supported window; the
-/// shell also enforces a pixel minimum while it draws.
-pub const MIN_AGENT_SHARE: f32 = 0.2;
-pub const MAX_AGENT_SHARE: f32 = 0.8;
-pub const DEFAULT_AGENT_SHARE: f32 = 0.5;
-
-/// The width of the View areas drawn over the agents, as a share of the Agent
-/// area's (issue 170). The bounds leave the panel and the agents to its left
-/// readable, like the boundary's; the shell also enforces a pixel minimum for
-/// both while it draws.
+/// The side panel's width while it is open, as a share of the Workspace
+/// body's (issue 170). The bounds leave the panel and the agents to its left
+/// readable; the shell also enforces a pixel minimum for both while it draws.
 pub const MIN_VIEWS_OVER_SHARE: f32 = 0.2;
 pub const MAX_VIEWS_OVER_SHARE: f32 = 0.8;
 pub const DEFAULT_VIEWS_OVER_SHARE: f32 = 0.6;
 
-/// Which working areas a Workspace shows. Changing it only changes space:
-/// no tab, document or pane is closed and no split is made (D-03). A new
-/// Workspace starts with its agents alone, since it has no View yet; a file
-/// opened into it draws the View areas over them ([`WorkspaceView::views_over_agents`],
-/// issue 170).
+/// How a Workspace's side panel shows (issue 170). The panel holds the View
+/// areas and the tools, docked to the right edge of the body over an Agent
+/// area that always keeps the body's width, so opening, closing, resizing
+/// and expanding it never resizes a terminal; only a pinned panel narrows the
+/// agents ([`WorkspaceView::pinned`]). Changing it closes no view, document
+/// or pane. A new Workspace starts with it closed, its agents alone; a file
+/// opened into it opens the panel.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ViewMode {
+pub enum PanelState {
     #[default]
+    Closed,
+    /// At its stored width, over the agents or docked beside them.
+    Open,
+    /// Over the whole body, the agents live underneath at their size.
+    Expanded,
+}
+
+impl PanelState {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "closed" => Some(Self::Closed),
+            "open" => Some(Self::Open),
+            "expanded" => Some(Self::Expanded),
+            _ => None,
+        }
+    }
+
+    pub fn is_shown(self) -> bool {
+        self != Self::Closed
+    }
+}
+
+/// The three layouts a Workspace stored before the side panel, read only to
+/// restart into the panel state that shows the same things.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+enum LegacyMode {
     Agents,
     Together,
     Views,
 }
 
-impl ViewMode {
-    pub fn parse(value: &str) -> Option<Self> {
-        match value {
-            "agents" => Some(Self::Agents),
-            "together" => Some(Self::Together),
-            "views" => Some(Self::Views),
-            _ => None,
-        }
-    }
-
-    pub fn shows_views(self) -> bool {
-        self != Self::Agents
-    }
-
-    pub fn shows_agents(self) -> bool {
-        self != Self::Views
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WorkspaceView {
     pub device_id: String,
     pub path: String,
-    #[serde(default)]
-    pub mode: ViewMode,
-    #[serde(default = "default_explorer")]
+    pub panel: PanelState,
+    /// Docked: the agents end at the panel's left edge, so pinning,
+    /// unpinning and resizing a pinned panel resize the terminals once. A
+    /// window too narrow for both floats a pinned panel without storing it.
+    pub pinned: bool,
     pub explorer: bool,
-    #[serde(default)]
     pub changes: bool,
-    #[serde(default = "default_agent_share")]
-    pub agent_share: f32,
-    /// Agents only with the View areas drawn over the Agent area, which keeps
-    /// its size underneath so no terminal resizes. A file opened from Agents
-    /// only raises it rather than changing the mode; it is only ever set in
-    /// Agents only and only while the View areas have something to show.
-    #[serde(default)]
-    pub views_over_agents: bool,
-    #[serde(default = "default_views_over_share")]
     pub views_over_share: f32,
-    #[serde(default)]
     pub last_used_unix_ms: u64,
-    #[serde(default)]
     pub layout: Layout,
+}
+
+/// A stored entry as any build since schema 2 wrote it: the side panel's
+/// fields, or the layout and boundary that came before them.
+#[derive(Deserialize)]
+struct StoredView {
+    device_id: String,
+    path: String,
+    #[serde(default)]
+    panel: Option<PanelState>,
+    #[serde(default)]
+    pinned: bool,
+    #[serde(default = "default_explorer")]
+    explorer: bool,
+    #[serde(default)]
+    changes: bool,
+    #[serde(default)]
+    views_over_share: Option<f32>,
+    #[serde(default)]
+    last_used_unix_ms: u64,
+    #[serde(default)]
+    layout: Layout,
+    #[serde(default)]
+    mode: Option<LegacyMode>,
+    #[serde(default)]
+    agent_share: Option<f32>,
+    #[serde(default)]
+    views_over_agents: bool,
+}
+
+impl StoredView {
+    fn into_view(self) -> WorkspaceView {
+        let (panel, pinned, share) = match self.panel {
+            Some(panel) => (panel, self.pinned, self.views_over_share),
+            None => {
+                let (panel, pinned, share) =
+                    legacy_panel(self.mode, self.agent_share, self.views_over_agents);
+                (panel, pinned, self.views_over_share.or(share))
+            }
+        };
+        WorkspaceView {
+            device_id: self.device_id,
+            path: self.path,
+            panel,
+            pinned,
+            explorer: self.explorer,
+            changes: self.changes,
+            views_over_share: share.unwrap_or(DEFAULT_VIEWS_OVER_SHARE),
+            last_used_unix_ms: self.last_used_unix_ms,
+            layout: self.layout,
+        }
+    }
+}
+
+/// The panel state an entry stored before the side panel restarts into:
+/// Agents only is a closed panel, or an open one when its View areas were
+/// drawn over the agents; Agents and Views is a pinned panel where the
+/// boundary stood, so the agents keep their width; Views only is expanded.
+fn legacy_panel(
+    mode: Option<LegacyMode>,
+    agent_share: Option<f32>,
+    over: bool,
+) -> (PanelState, bool, Option<f32>) {
+    match mode {
+        None | Some(LegacyMode::Agents) if over => (PanelState::Open, false, None),
+        None | Some(LegacyMode::Agents) => (PanelState::Closed, false, None),
+        Some(LegacyMode::Together) => {
+            (PanelState::Open, true, agent_share.map(|share| 1.0 - share))
+        }
+        Some(LegacyMode::Views) => (PanelState::Expanded, false, None),
+    }
 }
 
 fn default_explorer() -> bool {
     true
-}
-
-fn default_agent_share() -> f32 {
-    DEFAULT_AGENT_SHARE
-}
-
-fn default_views_over_share() -> f32 {
-    DEFAULT_VIEWS_OVER_SHARE
 }
 
 impl WorkspaceView {
@@ -122,11 +178,10 @@ impl WorkspaceView {
         Self {
             device_id: device_id.to_owned(),
             path: path.to_owned(),
-            mode: ViewMode::default(),
+            panel: PanelState::default(),
+            pinned: false,
             explorer: default_explorer(),
             changes: false,
-            agent_share: DEFAULT_AGENT_SHARE,
-            views_over_agents: false,
             views_over_share: DEFAULT_VIEWS_OVER_SHARE,
             last_used_unix_ms: 0,
             layout: Layout::default(),
@@ -137,18 +192,9 @@ impl WorkspaceView {
         self.device_id == device_id && self.path == path
     }
 
-    /// Whether the View areas are on screen: in a layout that shows them, or
-    /// drawn over the agents.
+    /// Whether the View areas are on screen: the panel that holds them shows.
     pub fn shows_views(&self) -> bool {
-        self.mode.shows_views() || self.views_over_agents
-    }
-}
-
-pub fn clamp_agent_share(value: f32) -> f32 {
-    if value.is_finite() {
-        value.clamp(MIN_AGENT_SHARE, MAX_AGENT_SHARE)
-    } else {
-        DEFAULT_AGENT_SHARE
+        self.panel.is_shown()
     }
 }
 
@@ -201,11 +247,16 @@ impl WorkspaceViews {
     }
 }
 
-#[derive(Deserialize, Serialize)]
-struct StoredWorkspaceViews {
+#[derive(Serialize)]
+struct StoredWorkspaceViews<'a> {
     schema_version: u32,
+    workspaces: &'a [WorkspaceView],
+}
+
+#[derive(Deserialize)]
+struct StoredV2 {
     #[serde(default)]
-    workspaces: Vec<WorkspaceView>,
+    workspaces: Vec<StoredView>,
 }
 
 /// Only the version, read before the body so each version is parsed as what
@@ -227,13 +278,13 @@ struct V1View {
     device_id: String,
     path: String,
     #[serde(default)]
-    mode: ViewMode,
+    mode: Option<LegacyMode>,
     #[serde(default = "default_explorer")]
     explorer: bool,
     #[serde(default)]
     changes: bool,
-    #[serde(default = "default_agent_share")]
-    agent_share: f32,
+    #[serde(default)]
+    agent_share: Option<f32>,
     #[serde(default)]
     tabs: Vec<V1Tab>,
     #[serde(default)]
@@ -274,15 +325,15 @@ impl V1View {
             area.displays = displays;
             area.active = active.or_else(|| area.displays.last().map(|display| display.id.clone()));
         }
+        let (panel, pinned, share) = legacy_panel(self.mode, self.agent_share, false);
         WorkspaceView {
             device_id: self.device_id,
             path: self.path,
-            mode: self.mode,
+            panel,
+            pinned,
             explorer: self.explorer,
             changes: self.changes,
-            agent_share: self.agent_share,
-            views_over_agents: false,
-            views_over_share: DEFAULT_VIEWS_OVER_SHARE,
+            views_over_share: share.unwrap_or(DEFAULT_VIEWS_OVER_SHARE),
             last_used_unix_ms: self.last_used_unix_ms,
             layout,
         }
@@ -329,8 +380,11 @@ pub fn load(path: &Path, now_unix_ms: u64) -> (WorkspaceViews, LoadOutcome) {
     };
     let reason = match serde_json::from_slice::<StoredVersion>(&bytes) {
         Ok(StoredVersion { schema_version: 2 }) => {
-            match serde_json::from_slice::<StoredWorkspaceViews>(&bytes) {
-                Ok(stored) => return settle(stored.workspaces, None),
+            match serde_json::from_slice::<StoredV2>(&bytes) {
+                Ok(stored) => {
+                    let views = stored.workspaces.into_iter().map(StoredView::into_view);
+                    return settle(views.collect(), None);
+                }
                 Err(error) => format!("the file is not valid: {error}"),
             }
         }
@@ -367,10 +421,7 @@ fn settle(
 ) -> (WorkspaceViews, LoadOutcome) {
     let mut repairs = Vec::new();
     for view in &mut workspaces {
-        view.agent_share = clamp_agent_share(view.agent_share);
         view.views_over_share = clamp_views_over_share(view.views_over_share);
-        // Only Agents only draws the View areas over the agents.
-        view.views_over_agents &= view.mode == ViewMode::Agents;
         for note in view.layout.repair() {
             repairs.push(format!("{} on {}: {note}", view.path, view.device_id));
         }
@@ -401,7 +452,7 @@ pub fn save(path: &Path, views: &WorkspaceViews) -> Result<(), String> {
         .map_err(|_| "Workspace view state directory could not be prepared".to_owned())?;
     let stored = StoredWorkspaceViews {
         schema_version: SCHEMA_VERSION,
-        workspaces: views.workspaces.clone(),
+        workspaces: &views.workspaces,
     };
     let bytes = serde_json::to_vec_pretty(&stored)
         .map_err(|_| "Workspace view state could not be encoded".to_owned())?;
@@ -455,9 +506,10 @@ mod tests {
         let path = root.join("workspace-views.json");
         let mut views = WorkspaceViews::default();
         let entry = views.entry("local", "/repo");
-        entry.mode = ViewMode::Views;
+        entry.panel = PanelState::Expanded;
+        entry.pinned = true;
         entry.changes = true;
-        entry.agent_share = 0.3;
+        entry.views_over_share = 0.3;
         let layout = &mut entry.layout;
         for (path, kind, committed, preview) in [
             ("/repo/a.md", DisplayKind::File, None, false),
@@ -550,13 +602,15 @@ mod tests {
         let view = &loaded.workspaces[0];
         assert_eq!(
             (
-                view.mode,
+                view.panel,
+                view.pinned,
                 view.explorer,
                 view.changes,
                 view.last_used_unix_ms
             ),
-            (ViewMode::Together, false, true, 7)
+            (PanelState::Open, true, false, true, 7)
         );
+        assert!((view.views_over_share - 0.6).abs() < 1e-6);
         assert_eq!(view.layout.area_count(), 1);
         let area = view.layout.active_area();
         let displays: Vec<_> = area
@@ -636,11 +690,72 @@ mod tests {
         assert!(views.get("local", "/w0").is_some());
     }
 
+    /// Issue 170: an entry stored with a layout from before the side panel
+    /// restarts into the panel state that shows the same things, and the
+    /// next save writes only the panel's fields.
+    #[test]
+    fn a_workspace_stored_with_a_layout_restarts_into_its_panel_state() {
+        let root = scratch("legacy-layouts");
+        let path = root.join("workspace-views.json");
+        let entry = |path: &str, extra: serde_json::Value| {
+            let mut entry = serde_json::json!({"device_id": "local", "path": path});
+            entry
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            entry
+        };
+        fs::write(
+            &path,
+            serde_json::json!({
+                "schema_version": 2,
+                "workspaces": [
+                    entry("/agents", serde_json::json!({"mode": "agents", "agent_share": 0.3})),
+                    entry("/over", serde_json::json!({"mode": "agents", "views_over_agents": true, "views_over_share": 0.45})),
+                    entry("/together", serde_json::json!({"mode": "together", "agent_share": 0.3})),
+                    entry("/views", serde_json::json!({"mode": "views"})),
+                    entry("/none", serde_json::json!({})),
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let (loaded, outcome) = load(&path, 1);
+
+        assert!(matches!(outcome, LoadOutcome::Loaded { .. }));
+        let states: Vec<_> = loaded
+            .workspaces
+            .iter()
+            .map(|view| {
+                (
+                    view.path.as_str(),
+                    view.panel,
+                    view.pinned,
+                    (view.views_over_share * 100.0).round() as u32,
+                )
+            })
+            .collect();
+        assert_eq!(
+            states,
+            vec![
+                ("/agents", PanelState::Closed, false, 60),
+                ("/over", PanelState::Open, false, 45),
+                ("/together", PanelState::Open, true, 70),
+                ("/views", PanelState::Expanded, false, 60),
+                ("/none", PanelState::Closed, false, 60),
+            ]
+        );
+        save(&path, &loaded).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(!written.contains("\"mode\""));
+        assert!(!written.contains("agent_share"));
+        assert_eq!(load(&path, 2).0, loaded);
+        let _ = fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn a_stored_share_outside_the_bounds_is_clamped() {
-        assert_eq!(clamp_agent_share(0.01), MIN_AGENT_SHARE);
-        assert_eq!(clamp_agent_share(f32::NAN), DEFAULT_AGENT_SHARE);
-        assert_eq!(clamp_agent_share(0.95), MAX_AGENT_SHARE);
         assert_eq!(clamp_views_over_share(0.01), MIN_VIEWS_OVER_SHARE);
         assert_eq!(clamp_views_over_share(f32::NAN), DEFAULT_VIEWS_OVER_SHARE);
         assert_eq!(clamp_views_over_share(0.95), MAX_VIEWS_OVER_SHARE);

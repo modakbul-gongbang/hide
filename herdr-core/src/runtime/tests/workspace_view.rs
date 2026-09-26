@@ -1,5 +1,5 @@
 use super::*;
-use crate::workspace_views::ViewMode;
+use crate::workspace_views::PanelState;
 
 // PRD S6: a shell with separate Agent and View areas keeps each Workspace's
 // document beside its terminals, its layout and tools, and brings them back
@@ -60,22 +60,13 @@ pub(super) fn layout(runtime: &mut Runtime, payload: serde_json::Value) {
     assert_eq!(runtime.snapshot.status.last_error, None);
 }
 
-fn mode(runtime: &Runtime) -> ViewMode {
-    runtime
+fn panel(runtime: &Runtime) -> (PanelState, bool) {
+    let view = runtime
         .snapshot
         .workspace_view
         .as_ref()
-        .expect("a front Workspace")
-        .mode
-}
-
-fn over(runtime: &Runtime) -> bool {
-    runtime
-        .snapshot
-        .workspace_view
-        .as_ref()
-        .expect("a front Workspace")
-        .views_over_agents
+        .expect("a front Workspace");
+    (view.panel, view.pinned)
 }
 
 pub(super) fn active_label(runtime: &Runtime) -> Option<String> {
@@ -131,25 +122,25 @@ fn a_terminal_tab_choice_keeps_the_workspace_document_only_with_separate_areas()
     }
 }
 
-/// D-08, B11, B12, issue 170: an explicit file open from Agents-only draws the
-/// View areas over the agents and an explicit agent choice from Views-only
-/// brings the Agent area back; a status update moves nothing.
+/// D-08, B11, B12, issue 170: an explicit file open opens a closed side
+/// panel, an agent chosen from elsewhere closes one that floats over the
+/// agents, and a status update moves nothing.
 #[test]
 fn explicit_opens_bring_the_hidden_area_back_and_status_changes_do_not() {
     let (runtime, checkout_id, directory) = strip_checkout("area-intent");
     let mut runtime = with_views(runtime, &views_path("area-intent"));
     with_tabs(&mut runtime, &directory);
     assert_eq!(
-        mode(&runtime),
-        ViewMode::Agents,
+        panel(&runtime),
+        (PanelState::Closed, false),
         "a new Workspace has no View to show yet"
     );
 
     open(&mut runtime, &checkout_id, &directory.join("notes.md"));
-    assert_eq!((mode(&runtime), over(&runtime)), (ViewMode::Agents, true));
+    assert_eq!(panel(&runtime), (PanelState::Open, false));
 
-    layout(&mut runtime, serde_json::json!({"mode": "views"}));
-    // B22: choosing Views alone makes no split.
+    layout(&mut runtime, serde_json::json!({"panel": "expanded"}));
+    // B22: expanding the panel makes no split.
     assert!(matches!(
         runtime
             .snapshot
@@ -168,28 +159,29 @@ fn explicit_opens_bring_the_hidden_area_back_and_status_changes_do_not() {
         "w-order:t2",
     )));
     assert_eq!(
-        mode(&runtime),
-        ViewMode::Views,
+        panel(&runtime),
+        (PanelState::Expanded, false),
         "a session update is not a request"
     );
     runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2"));
-    assert_eq!(mode(&runtime), ViewMode::Together);
+    assert_eq!(panel(&runtime), (PanelState::Closed, false));
 }
 
-/// Issue 170: the View areas a file opened from Agents only drew over the
-/// agents come down on an agent choice or an explicit Agents only and come
-/// back on request, closing no view and changing no layout; they are only
-/// ever up in Agents only, and the file keeps them.
+/// Issue 170: the side panel closes on an agent chosen from elsewhere and
+/// opens again on request, closing no view; a choice among the agents beside
+/// it leaves it up; a pinned panel sits beside the agents, so an agent choice
+/// only brings an expanded one back to its width; and the file keeps the
+/// panel, its pin and its width.
 #[test]
-fn views_over_the_agents_come_down_and_back_without_closing_a_view() {
+fn the_side_panel_closes_and_opens_without_closing_a_view() {
     let (runtime, checkout_id, directory) = strip_checkout("views-over");
     let state = views_path("views-over");
     let mut runtime = with_views(runtime, &state);
     with_tabs(&mut runtime, &directory);
     open(&mut runtime, &checkout_id, &directory.join("notes.md"));
-    assert_eq!((mode(&runtime), over(&runtime)), (ViewMode::Agents, true));
+    assert_eq!(panel(&runtime), (PanelState::Open, false));
 
-    // A session update is not a request: the View areas stay up.
+    // A session update is not a request: the panel stays up.
     let tabs = ["w-order:t1", "w-order:t2"];
     runtime.ingest_session(Ok(tab_order_payload(
         &directory.to_string_lossy(),
@@ -197,36 +189,55 @@ fn views_over_the_agents_come_down_and_back_without_closing_a_view() {
         &tabs,
         "w-order:t2",
     )));
-    assert!(over(&runtime));
-    // A tab chosen where it shows, beside the View areas, leaves them up.
+    assert_eq!(panel(&runtime).0, PanelState::Open);
+    // A tab chosen where it shows, beside the panel, leaves it up.
     let mut in_place: serde_json::Value =
         serde_json::from_slice(&focus_tab_event(&checkout_id, "w-order:t2")).unwrap();
     in_place["payload"]["in_place"] = serde_json::json!(true);
     runtime.dispatch_json(&serde_json::to_vec(&in_place).unwrap());
     assert_eq!(runtime.snapshot.status.last_error, None);
-    assert!(over(&runtime), "a choice among the visible agents");
-    // One chosen from elsewhere takes them down.
+    assert_eq!(
+        panel(&runtime).0,
+        PanelState::Open,
+        "a choice among the visible agents"
+    );
+    // One chosen from elsewhere closes it.
     runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2"));
     assert_eq!(runtime.snapshot.status.last_error, None);
-    assert_eq!((mode(&runtime), over(&runtime)), (ViewMode::Agents, false));
+    assert_eq!(panel(&runtime), (PanelState::Closed, false));
     assert_eq!(
         active_label(&runtime).as_deref(),
         Some("notes.md"),
-        "taking them down closes no view"
+        "closing the panel closes no view"
     );
 
     layout(
         &mut runtime,
-        serde_json::json!({"views_over_agents": true, "views_over_share": 0.45}),
+        serde_json::json!({"panel": "open", "pinned": true, "views_over_share": 0.45}),
     );
-    assert_eq!((mode(&runtime), over(&runtime)), (ViewMode::Agents, true));
+    assert_eq!(panel(&runtime), (PanelState::Open, true));
     let (saved, _) = crate::workspace_views::load(&state, 0);
     assert!(
         saved
             .workspaces
             .iter()
-            .any(|view| view.views_over_agents && view.views_over_share == 0.45),
-        "the file keeps them up at their width"
+            .any(|view| view.panel == PanelState::Open
+                && view.pinned
+                && view.views_over_share == 0.45),
+        "the file keeps the panel open, pinned, at its width"
+    );
+    runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2"));
+    assert_eq!(
+        panel(&runtime),
+        (PanelState::Open, true),
+        "a pinned panel covers no agent"
+    );
+    layout(&mut runtime, serde_json::json!({"panel": "expanded"}));
+    runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2"));
+    assert_eq!(
+        panel(&runtime),
+        (PanelState::Open, true),
+        "an expanded pinned panel goes back to its width"
     );
     layout(&mut runtime, serde_json::json!({"views_over_share": 3.0}));
     assert_eq!(
@@ -238,18 +249,59 @@ fn views_over_the_agents_come_down_and_back_without_closing_a_view() {
             .views_over_share,
         crate::workspace_views::MAX_VIEWS_OVER_SHARE
     );
-    layout(&mut runtime, serde_json::json!({"mode": "agents"}));
-    assert!(!over(&runtime), "choosing Agents only takes them down");
+
+    // Closing the last view leaves the panel where it is: it narrows to the
+    // Explorer, or says nothing is open.
+    layout(&mut runtime, serde_json::json!({"pinned": false}));
+    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+    let workspace = serde_json::json!({"device_id": view.device_id, "path": view.path});
+    let display = match &view.layout.root {
+        crate::model::ViewNodeSnapshot::Area(area) => area.active.clone(),
+        _ => None,
+    }
+    .expect("one display");
+    runtime.dispatch_json(&explorer_event(
+        "view_layout",
+        serde_json::json!({"workspace": workspace, "action": "close", "display_id": display}),
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+    assert_eq!(
+        (view.layout.display_count, view.panel),
+        (0, PanelState::Open)
+    );
+}
+
+/// Issue 170: a tool shown while the panel is closed opens the panel with
+/// it, a reveal too, and a payload that names the panel keeps its word.
+#[test]
+fn a_tool_shown_while_the_panel_is_closed_opens_the_panel() {
+    let (runtime, _checkout_id, directory) = strip_checkout("tool-opens");
+    let mut runtime = with_views(runtime, &views_path("tool-opens"));
+    layout(&mut runtime, serde_json::json!({"explorer": false}));
+    assert_eq!(panel(&runtime).0, PanelState::Closed);
+    assert!(!runtime.snapshot.ui_state.right_panel_visible);
+
+    layout(&mut runtime, serde_json::json!({"changes": true}));
+    assert_eq!(panel(&runtime).0, PanelState::Open);
+    assert!(runtime.snapshot.ui_state.right_panel_visible);
+
+    layout(&mut runtime, serde_json::json!({"panel": "closed"}));
+    assert!(
+        !runtime.snapshot.ui_state.right_panel_visible,
+        "a closed panel's tools read nothing"
+    );
+    layout(
+        &mut runtime,
+        serde_json::json!({"reveal": directory.join("notes.md").to_string_lossy()}),
+    );
+    assert_eq!(panel(&runtime).0, PanelState::Open);
 
     layout(
         &mut runtime,
-        serde_json::json!({"mode": "together", "views_over_agents": true}),
+        serde_json::json!({"panel": "closed", "explorer": true}),
     );
-    assert_eq!(
-        (mode(&runtime), over(&runtime)),
-        (ViewMode::Together, false),
-        "only Agents only draws them over the agents"
-    );
+    assert_eq!(panel(&runtime).0, PanelState::Closed);
 }
 
 /// D-05, A5: the tools are the Workspace's, and the one global panel every
@@ -288,7 +340,7 @@ fn workspace_tools_drive_the_panel_the_changes_reader_gates_on() {
 
     runtime.dispatch_json(&explorer_event(
         "workspace_view",
-        serde_json::json!({"mode": "sideways"}),
+        serde_json::json!({"panel": "sideways"}),
     ));
     assert_eq!(
         runtime
@@ -297,7 +349,7 @@ fn workspace_tools_drive_the_panel_the_changes_reader_gates_on() {
             .last_error
             .as_ref()
             .map(|error| error.kind.as_str()),
-        Some("workspace_view.unknown_mode")
+        Some("workspace_view.unknown_panel")
     );
 }
 
@@ -697,7 +749,7 @@ fn removing_a_device_forgets_its_workspace_views() {
             ..Default::default()
         });
     let store = runtime.workspace_views.as_mut().unwrap();
-    store.views.entry("studio", "/srv/app").mode = ViewMode::Views;
+    store.views.entry("studio", "/srv/app").panel = PanelState::Expanded;
     store.views.entry("local", &directory.to_string_lossy());
 
     assert!(runtime.dispatch_json(&explorer_event(

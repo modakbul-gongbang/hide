@@ -935,8 +935,8 @@ fn a_registration_answer_after_its_device_was_removed_is_dropped() {
 /// the device forward, and the Agent area comes back on the Workspace that
 /// holds the agent, not on the one the device showed before its Herdr moved.
 #[test]
-fn a_device_agent_opened_from_views_only_brings_its_own_workspace_to_together() {
-    use crate::workspace_views::ViewMode;
+fn a_device_agent_opened_over_an_expanded_panel_uncovers_its_own_workspace() {
+    use crate::workspace_views::PanelState;
     let t = tree();
     let mut runtime = runtime();
     runtime.snapshot.navigator.devices.push(DeviceSnapshot {
@@ -979,8 +979,8 @@ fn a_device_agent_opened_from_views_only_brings_its_own_workspace_to_together() 
     ));
     let views = tempfile::tempdir().unwrap();
     let mut store = WorkspaceViewStore::open(views.path().join("views.json"), Default::default()).0;
-    store.views.entry(TARGET, &t.main).mode = ViewMode::Views;
-    store.views.entry(TARGET, &t.linked).mode = ViewMode::Views;
+    store.views.entry(TARGET, &t.main).panel = PanelState::Expanded;
+    store.views.entry(TARGET, &t.linked).panel = PanelState::Expanded;
     runtime.workspace_views = Some(store);
 
     runtime.request_remote_control(RemoteControlPayload {
@@ -999,7 +999,7 @@ fn a_device_agent_opened_from_views_only_brings_its_own_workspace_to_together() 
         runtime.snapshot.navigator.focused_device_id.as_deref(),
         Some(TARGET)
     );
-    let mode = |runtime: &Runtime, path: &str| {
+    let panel = |runtime: &Runtime, path: &str| {
         runtime
             .workspace_views
             .as_ref()
@@ -1007,10 +1007,10 @@ fn a_device_agent_opened_from_views_only_brings_its_own_workspace_to_together() 
             .views
             .get(TARGET, path)
             .unwrap()
-            .mode
+            .panel
     };
-    assert_eq!(mode(&runtime, &t.linked), ViewMode::Together);
-    assert_eq!(mode(&runtime, &t.main), ViewMode::Views);
+    assert_eq!(panel(&runtime, &t.linked), PanelState::Closed);
+    assert_eq!(panel(&runtime, &t.main), PanelState::Expanded);
 
     // D-11: the choice is remembered only once the device's Herdr has moved
     // there, so a refusal on the device would remember nothing.
