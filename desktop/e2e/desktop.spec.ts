@@ -9,7 +9,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import "../../web/src/host";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
-import { detachedApp, DESKTOP_DIR, HIDE_CLI, hostLog, isolate, launch, screenshot, type Isolated } from "./fixture";
+import { detachedApp, DESKTOP_DIR, HIDE_CLI, hostLog, isolate, launch, relaunch, screenshot, type Isolated } from "./fixture";
 
 let herdr: HerdrFixture;
 let run: Isolated;
@@ -159,9 +159,7 @@ test("lifetime: a second launch focuses the first, closing the window keeps the 
   await app.close();
   app = null;
   expect(run.daemonPid()).toBe(pid);
-  ({ app } = await launch(run.env));
-  page = await app.firstWindow();
-  await shellShown(page);
+  app = await relaunch(run.env);
   expect(run.daemonPid()).toBe(pid);
   expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getBounds())).toEqual(bounds);
   // First launch, the reopened window (bounds written when the first closed), then the relaunch.
@@ -204,8 +202,7 @@ test("discovery: with hide on no PATH, the app finds it where it is installed an
   expect(JSON.parse(fs.readFileSync(remembered, "utf8"))).toEqual({ schema: 1, path: installed });
   await app.close();
 
-  ({ app } = await launch(env, { appDir }));
-  await shellShown(await app.firstWindow());
+  app = await relaunch(env, { appDir });
   expect(resolved().at(-1)).toMatchObject({ source: "remembered", path: installed, tried: [...before, installed].join(":") });
 });
 

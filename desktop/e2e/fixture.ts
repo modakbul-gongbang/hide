@@ -3,7 +3,7 @@
 // refused a launch unless HIDE_STATE_DIR, HOME, HERDR_SOCKET_PATH and its
 // own userData all sit under this run's temporary directory.
 
-import { _electron as electron, type ElectronApplication, type Page } from "@playwright/test";
+import { _electron as electron, expect, type ElectronApplication, type Page } from "@playwright/test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -55,7 +55,8 @@ export function isolate(herdr: HerdrFixture, label: string): Isolated {
   };
   const cleanup = () => {
     hide(["stop"]);
-    fs.rmSync(root, { recursive: true, force: true });
+    // The stopped daemon can still be removing its own files; rmSync retries ENOTEMPTY.
+    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   };
   return { root, env, hide, daemonPid, cleanup };
 }
@@ -82,6 +83,34 @@ export async function launch(
   const app = await electron.launch({ args: [appDir, ...switches], cwd: appDir, env });
   const page = await app.firstWindow();
   return { app, page };
+}
+
+/**
+ * A launch that attaches to a daemon already running and waits for the shell
+ * in the window, read through the main process. Such a launch leaves the
+ * status page for the daemon's origin within tens of milliseconds, and
+ * Playwright can lose that early renderer swap: its page stays on the status
+ * page, or no window event arrives at all, while the window shows the shell
+ * (checked by reading the window through the main process when Playwright's
+ * page did not). The main process sees the window as the operator does.
+ */
+export async function relaunch(env: Record<string, string>, { appDir = DESKTOP_DIR }: { appDir?: string } = {}): Promise<ElectronApplication> {
+  assertIsolated(env);
+  const app = await electron.launch({ args: [appDir], cwd: appDir, env });
+  await expect
+    .poll(
+      () =>
+        app.evaluate(async ({ BrowserWindow }) => {
+          const window = BrowserWindow.getAllWindows()[0];
+          if (!window || window.webContents.isLoading()) return false;
+          return window.webContents
+            .executeJavaScript("document.querySelector('[data-main-screen], [data-workspace-screen]') !== null")
+            .catch(() => false) as Promise<boolean>;
+        }),
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+  return app;
 }
 
 /**
