@@ -37,7 +37,7 @@ With stacked View areas each area keeps its own tab strip, and the top row holds
 With no view open and a tool shown, the panel is only as wide as the tool column, including after the last view closes; with no tool shown either, it says that no file or diff is open, with Show Explorer and Open file.
 Only views expand: an expanded panel with no view open is drawn at its width, so the agents stay in reach.
 
-Opening a file, a diff, or a page while the panel is closed opens it, with the active View area focused; revealing a file also shows the Explorer.
+Opening a file, a diff, or a page while the panel is closed opens it, with the active View area focused; revealing a file shows the Explorer, and opens a closed panel with the Explorer alone.
 Choosing an agent or a tab from the sidebar, the palette, or a tab cycle closes an unpinned panel and brings a pinned expanded panel back to its width, so the chosen agent is in sight; a pinned open panel stays beside the agents (in a window too narrow for both it closes too; see Narrow windows), and a choice made in the Agent area on screen beside the panel moves nothing.
 Closing the panel closes no view, document, or pane, and the keyboard goes back to the focused pane.
 Changing the panel's state only changes space, and expanding never makes a split; a split comes only from a split command or a drop on an edge.

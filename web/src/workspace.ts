@@ -140,9 +140,9 @@ export function panelNeed(tools: boolean, sizes: PanelSizes): number {
 /**
  * Whether a page reports `panel_covers` now (issue 170): only when what it
  * draws differs from what the core holds and from its own last report, so a
- * crossing is sent once, a report dropped by a reconnect is sent again once
- * the page forgets its last one, and two pages that disagree each send once
- * rather than undoing each other forever.
+ * crossing is sent once, a report the page forgot (another Workspace drawn
+ * since, or the connection lost) is sent again, and two pages that disagree
+ * each send once rather than undoing each other forever.
  */
 export function panelCoversToSend(covers: boolean, core: boolean, lastSent: boolean | null): boolean {
   return covers !== core && covers !== lastSent;

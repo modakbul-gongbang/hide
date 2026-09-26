@@ -372,6 +372,32 @@ fn a_tool_shown_while_the_panel_is_closed_opens_the_panel() {
         serde_json::json!({"panel": "closed", "explorer": true}),
     );
     assert_eq!(panel(&runtime).0, PanelState::Closed);
+
+    // A payload naming both tools opens it with both.
+    layout(
+        &mut runtime,
+        serde_json::json!({"explorer": true, "changes": true}),
+    );
+    assert_eq!(tools(&runtime), (true, true));
+
+    // `reveal_path` opens a closed panel with the Explorer alone too.
+    layout(&mut runtime, serde_json::json!({"panel": "closed"}));
+    let checkout_id = runtime
+        .snapshot
+        .navigator
+        .focused_checkout_id
+        .clone()
+        .unwrap();
+    runtime.dispatch_json(&explorer_event(
+        "reveal_path",
+        serde_json::json!({
+            "path": directory.join("notes.md"), "workspace_id": runtime.snapshot.navigator.focused_workspace_id,
+            "checkout_id": checkout_id, "is_directory": false,
+        }),
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(panel(&runtime).0, PanelState::Open);
+    assert_eq!(tools(&runtime), (true, false));
 }
 
 /// D-05, A5: the tools are the Workspace's, and the one global panel every

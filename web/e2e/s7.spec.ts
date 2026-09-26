@@ -1237,6 +1237,14 @@ test("a pinned panel over a narrow window uncovers the agent chosen from the sid
     expect(reports().length).toBe(before + 1);
     await screenshot(page, "s7-covers-narrow-pinned");
 
+    // Away to beta and back: the core forgot the fact when the front moved,
+    // so the page tells it again for the fixture.
+    await choose("beta");
+    await expect.poll(() => reports().at(-1)?.payload).toEqual({ workspace: { device_id: "local", path: betaRoot }, covers: true });
+    await choose("fixture");
+    await expect.poll(() => reports().at(-1)?.payload).toEqual({ workspace: { device_id: "local", path: stack.root }, covers: true });
+    const fixtureReports = reports().length;
+
     // An agent chosen from the sidebar is uncovered: the panel closes, still pinned.
     await page.locator('[data-sidebar-mode="agents"]').click();
     const agent = page.locator("[data-agent-open]").first();
@@ -1247,7 +1255,7 @@ test("a pinned panel over a narrow window uncovers the agent chosen from the sid
     await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toMatchObject({ panel: "closed", pinned: true });
     // The window did not change, so neither did the fact: closing sends nothing.
     await page.waitForTimeout(300);
-    expect(reports().length).toBe(before + 1);
+    expect(reports().length).toBe(fixtureReports);
 
     // Beta's panel is as it was, stored and drawn once the window is wide again.
     expect(storedWorkspace(stack.daemon, betaRoot)).toEqual(beta);

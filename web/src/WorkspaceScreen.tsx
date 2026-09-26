@@ -75,29 +75,25 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
   const coreCovers = view?.covered === true;
   const deviceId = view?.device_id ?? null;
   const viewPath = view?.path ?? null;
-  // A fresh snapshot (a reconnect) forgets the last report, so one the
-  // socket dropped is sent again.
-  const generation = useShellStore((s) => s.viewGeneration);
-  const lastSent = useRef<{ key: string; covers: boolean; generation: number } | null>(null);
-  const coreCoversNow = useRef(coreCovers);
-  coreCoversNow.current = coreCovers;
+  // The page's last report holds only while it draws the same Workspace
+  // over one live connection: the core forgets its value whenever the front
+  // moves, and a report sent while the socket was down never arrived. When
+  // this screen is not drawn (All projects, an Overview) nothing is sent: the
+  // core keeps what the page last saw until the front moves.
+  const live = useShellStore((s) => s.connection === "live");
+  const lastSent = useRef<{ key: string; covers: boolean } | null>(null);
   useEffect(() => {
+    if (!live) {
+      lastSent.current = null;
+      return;
+    }
     if (!measured || deviceId === null || viewPath === null) return;
     const key = `${deviceId}\u0000${viewPath}`;
-    const last = lastSent.current?.key === key && lastSent.current.generation === generation ? lastSent.current.covers : null;
-    if (!panelCoversToSend(covers, coreCovers, last)) return;
+    if (lastSent.current?.key !== key) lastSent.current = null;
+    if (!panelCoversToSend(covers, coreCovers, lastSent.current?.covers ?? null)) return;
     if (actions.reportPanelCovers({ device_id: deviceId, path: viewPath }, covers) === false) return;
-    lastSent.current = { key, covers, generation };
-  }, [actions, measured, deviceId, viewPath, covers, coreCovers, generation]);
-  // A Workspace this screen stops drawing covers nothing: leaving it, or
-  // this screen, says so, so a later agent choice there is not closed by a
-  // window it no longer draws in. The core ignores it once another is in front.
-  useEffect(() => {
-    if (deviceId === null || viewPath === null) return undefined;
-    return () => {
-      if (coreCoversNow.current) actions.reportPanelCovers({ device_id: deviceId, path: viewPath }, false);
-    };
-  }, [actions, deviceId, viewPath]);
+    lastSent.current = { key, covers };
+  }, [actions, live, measured, deviceId, viewPath, covers, coreCovers]);
   const toolless = view ? !view.explorer && !view.changes : true;
   useEffect(() => {
     if (toolless) useUiStore.getState().closeTools();

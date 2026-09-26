@@ -330,13 +330,19 @@ impl Runtime {
         // agents like one that floats.
         let covered = store.covered.as_ref() == Some(key);
         let entry = store.views.entry(&key.0, &key.1);
-        let before = (entry.panel, entry.explorer);
+        let before = (entry.panel, entry.explorer, entry.changes);
         match intent {
             AreaIntent::Views | AreaIntent::RevealInViews => {
-                if entry.panel == PanelState::Closed {
+                let opens = entry.panel == PanelState::Closed;
+                if opens {
                     entry.panel = PanelState::Open;
                 }
                 if intent == AreaIntent::RevealInViews {
+                    // A reveal opens a closed panel with the Explorer alone,
+                    // like any tool shown (issue 170).
+                    if opens {
+                        entry.changes = false;
+                    }
                     entry.explorer = true;
                 }
             }
@@ -350,7 +356,7 @@ impl Runtime {
                 };
             }
         }
-        if before != (entry.panel, entry.explorer) {
+        if before != (entry.panel, entry.explorer, entry.changes) {
             self.persist_workspace_views();
         }
     }

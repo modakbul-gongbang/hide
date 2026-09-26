@@ -90,7 +90,7 @@ describe("the side panel", () => {
     expect(panelCoversToSend(true, true, null)).toBe(false);
     // Sent and not echoed yet, or undone by another page: not sent again.
     expect(panelCoversToSend(true, false, true)).toBe(false);
-    // Forgotten after a reconnect: sent again.
+    // Forgotten after another Workspace or a reconnect: sent again.
     expect(panelCoversToSend(false, true, null)).toBe(true);
     expect(panelCoversToSend(false, true, true)).toBe(true);
   });
