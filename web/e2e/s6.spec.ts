@@ -89,15 +89,14 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     expect(last.get("workspace_view")).toEqual({ panel: "closed" });
 
     // Explorer and History open and close on their own (B10), and one pressed
-    // while the panel is closed opens the panel with it.
+    // while the panel is closed opens the panel with that tool alone, though
+    // the Workspace had the Explorer on (issue 170).
     await page.locator('[data-tool-toggle="changes"]').click();
     await expect(workspace).toHaveAttribute("data-panel", "open");
-    expect(last.get("workspace_view")).toEqual({ changes: true });
+    expect(last.get("workspace_view")).toEqual({ changes: true, explorer: false });
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
-    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
-    await page.locator('[data-tool-close="explorer"]').click();
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
-    await expect(page.locator('[data-tool="changes"]')).toBeVisible();
+    await expect(page.locator('[data-tool-toggle="explorer"]')).toHaveAttribute("aria-pressed", "false");
     // With no tool and no view the panel says nothing is open, and offers
     // the Explorer back.
     await page.locator('[data-tool-toggle="changes"]').click();

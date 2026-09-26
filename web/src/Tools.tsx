@@ -91,7 +91,7 @@ export function Tools({
       onKeyDown={overlay ? closeFromKeyboard : undefined}
       className={
         overlay
-          ? "absolute inset-y-0 right-0 z-20 flex w-[var(--size-panel-ideal)] max-w-full flex-col border-l border-border bg-card text-foreground shadow-lg outline-none"
+          ? "absolute inset-y-0 right-0 z-20 flex w-[var(--size-panel-ideal)] max-w-full flex-col border-l border-border bg-card text-foreground outline-none"
           : alone
             ? "flex h-full min-w-0 flex-1 flex-col bg-card text-foreground"
             : "flex h-full min-w-[var(--size-panel-min)] shrink-[1000] grow-0 basis-[var(--size-panel-ideal)] flex-col border-l border-border bg-card text-foreground"

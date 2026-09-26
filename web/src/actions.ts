@@ -277,7 +277,9 @@ export function createActions(dispatch: DispatchFn) {
     const view = workspaceViewOf(rest());
     if (!view) return diagnostic("workspace_view: no Workspace in front");
     askForTools(view);
-    if (view.panel === "closed" || !(tool === "explorer" ? view.explorer : view.changes)) setWorkspaceView(tool === "explorer" ? { explorer: true } : { changes: true });
+    // A closed panel opens with the pressed tool alone, whatever the other one was.
+    if (view.panel === "closed") setWorkspaceView(tool === "explorer" ? { explorer: true, changes: false } : { changes: true, explorer: false });
+    else if (!(tool === "explorer" ? view.explorer : view.changes)) setWorkspaceView(tool === "explorer" ? { explorer: true } : { changes: true });
   };
 
   const showExplorerPanel = () => showTool("explorer");
