@@ -5,6 +5,7 @@
 // has no session to show. Nothing here is counted that the snapshot does not
 // carry, and a device that cannot answer says so instead of showing zeros.
 
+import { folderCheckout } from "./projects";
 import { focusedRemoteDevice, frontCheckout, type AgentRow, type Device, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
 
 export type AgentGroup = "needs_you" | "done" | "working" | "seen";
@@ -111,10 +112,47 @@ export function allAgents(remote: RemoteStatus[] | undefined, devices: Device[] 
   const listed: ListedAgent[] = localAgents.map((agent) => ({ agent, device: null }));
   for (const status of remote ?? []) {
     if (status.state !== "connected") continue;
-    const device = devices?.find((row) => row.id === status.target_id)?.label ?? status.target_id;
+    const device = deviceLabel(devices, status.target_id);
     for (const agent of status.session?.agents ?? []) listed.push({ agent, device });
   }
   return listed;
+}
+
+function deviceLabel(devices: Device[] | undefined, targetId: string): string {
+  return devices?.find((row) => row.id === targetId)?.label ?? targetId;
+}
+
+/**
+ * Where each listed agent works, as the Agents list's context line names it
+ * (PRD sidebar-readability B5): `project › checkout`, or the project alone for
+ * a plain folder, which is one row in Projects. A pane is placed by the
+ * checkout that holds it, on its own device: this machine's projects for a
+ * local row, a connected device's Herdr workspaces for its rows. A pane no
+ * checkout holds has no place, and none is made up.
+ */
+export function agentPlaces(
+  localWorkspaces: Workspace[] | undefined,
+  remote: RemoteStatus[] | undefined,
+  devices: Device[] | undefined,
+): (device: string | null, paneId: string) => string | null {
+  const byDevice = new Map<string | null, Map<string, string>>([[null, checkoutPlaces(localWorkspaces ?? [])]]);
+  for (const status of remote ?? []) {
+    if (status.state !== "connected") continue;
+    byDevice.set(deviceLabel(devices, status.target_id), checkoutPlaces(status.session?.workspaces ?? []));
+  }
+  return (device, paneId) => byDevice.get(device)?.get(paneId) ?? null;
+}
+
+function checkoutPlaces(workspaces: Workspace[]): Map<string, string> {
+  const places = new Map<string, string>();
+  for (const workspace of workspaces) {
+    const folder = folderCheckout(workspace) !== null;
+    for (const checkout of workspace.checkouts) {
+      const place = folder ? workspace.label : `${workspace.label} › ${checkout.branch ?? checkout.label}`;
+      for (const tab of checkout.tabs) for (const pane of tab.panes) if (!places.has(pane.id)) places.set(pane.id, place);
+    }
+  }
+  return places;
 }
 
 /**

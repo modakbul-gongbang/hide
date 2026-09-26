@@ -51,7 +51,6 @@ export const AgentRowItem = memo(function AgentRowItem({
   const branch = branchChip(agent);
   const folded = agent.lineage_collapsed !== false;
   const hasChildren = childRows.length > 0;
-  const parts = badgeParts(agent.descendant_counts);
   const attention = agent.group === "needs_you" || agent.unread;
   const titleTone = agent.delegated && !attention ? "text-subtle-foreground" : attention || agent.emphasized ? "text-foreground" : "text-subtle-foreground";
   const label = rowAccessibleName(agent, device);
@@ -129,35 +128,69 @@ export const AgentRowItem = memo(function AgentRowItem({
         ) : null}
       </span>
       {descendants > 0 && folded ? (
-        <AgentChildrenPopover
-          parent={agent}
+        <DescendantBadge
+          agent={agent}
+          descendants={descendants}
           childRows={childRows}
           onOpenChild={onOpen}
           onUnfold={onToggleTree ? () => onToggleTree(agent.pane_id) : null}
           returnFocus={() => main.current?.focus()}
-          trigger={
-            <button
-              type="button"
-              aria-label={badgeLabel(agent.descendant_counts, descendants)}
-              aria-haspopup="dialog"
-              data-descendant-badge={descendants}
-              className="relative shrink-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:ring-1 data-[state=open]:ring-ring"
-            >
-              <Badge variant="secondary" className="gap-xs font-mono">
-                {parts.length > 0
-                  ? parts.map((part) => (
-                      <span key={part.state} className="inline-flex items-center gap-xxs" data-badge-part={part.state}>
-                        <StatusMark symbol={part.symbol} className={part.tone} />
-                        {part.count}
-                      </span>
-                    ))
-                  : `↳${descendants}`}
-              </Badge>
-            </button>
-          }
         />
       ) : null}
       <span className="pointer-events-none shrink-0 self-start pt-xxs text-micro text-muted-foreground">{agent.elapsed}</span>
     </li>
   );
 });
+
+/**
+ * A folded parent's badge (docs/status-model.md, The descendant badge): one
+ * mark and count per state over every live descendant, worst first, or `↳N`
+ * when all of them are merely ready. It is a button whose popover lists the
+ * direct children; every list of agents that folds draws this one.
+ */
+export function DescendantBadge({
+  agent,
+  descendants,
+  childRows,
+  onOpenChild,
+  onUnfold,
+  returnFocus,
+}: {
+  agent: AgentRow;
+  descendants: number;
+  childRows: AgentRow[];
+  onOpenChild: (paneId: string) => void;
+  onUnfold: (() => void) | null;
+  returnFocus: () => void;
+}) {
+  const parts = badgeParts(agent.descendant_counts);
+  return (
+    <AgentChildrenPopover
+      parent={agent}
+      childRows={childRows}
+      onOpenChild={onOpenChild}
+      onUnfold={onUnfold}
+      returnFocus={returnFocus}
+      trigger={
+        <button
+          type="button"
+          aria-label={badgeLabel(agent.descendant_counts, descendants)}
+          aria-haspopup="dialog"
+          data-descendant-badge={descendants}
+          className="relative shrink-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:ring-1 data-[state=open]:ring-ring"
+        >
+          <Badge variant="secondary" className="gap-xs font-mono">
+            {parts.length > 0
+              ? parts.map((part) => (
+                  <span key={part.state} className="inline-flex items-center gap-xxs" data-badge-part={part.state}>
+                    <StatusMark symbol={part.symbol} className={part.tone} />
+                    {part.count}
+                  </span>
+                ))
+              : `↳${descendants}`}
+          </Badge>
+        </button>
+      }
+    />
+  );
+}
