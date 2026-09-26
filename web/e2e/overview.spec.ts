@@ -1,14 +1,17 @@
 // The Project Overview board on an isolated pinned Herdr and hided (PRD
-// web-project-overview): a Git project with a primary checkout and three
-// worktrees at different stages, a folder project with agents, and a project
-// with no agent at all. It enters by the project name and by ⌘⇧H (B1), reads
-// the header facts (B2), the ad hoc strip and the Git columns with Merged
-// folded (B4, B5), a needs-you card raised in its own column (B7), opens a
-// checkout from a card header and a pane from an agent row (B8), switches to
-// the Agents board (B9), and draws the folder and empty states (B10). The
-// sidebar is the scope picker: All projects on top, the project row marked on
-// its Overview, and the view kept from one project to the next, Sessions
-// included. Light and Dark captures land in HIDE_E2E_SCREENSHOT_DIR (B13, B14).
+// web-project-overview, task-agents-views): a Git project with a primary
+// checkout and four worktrees at different stages whose issues a fake `gh`
+// answers, a folder project with agents, and a project with no agent at all.
+// It enters by the project name and by ⌘⇧H (B1), reads the header facts (B2),
+// the ad hoc strip and the five columns with the backlog and Done folded, a
+// task card headed by its issue and an untracked one by its branch, Start
+// agent on hover, a needs-you card raised in its own column, opens a checkout
+// from a card header and a pane from an agent row, switches to the Agents
+// board, the All projects boards with a project that has no source, and draws
+// the folder and empty states. The sidebar is the scope picker: All projects
+// on top, the project row marked on its Overview, and the view kept from one
+// project to the next, Sessions included. Light and Dark captures land in
+// HIDE_E2E_SCREENSHOT_DIR.
 
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -46,6 +49,34 @@ async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string | null
     execFileSync(herdr.bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `task=${task}`], { env: herdr.env, timeout: 30_000 });
   }
   return pane;
+}
+
+/**
+ * A `gh` that is logged in and answers for `acme/repo`: two open issues and
+ * no pull request, so the core reads them as the project's tasks the way it
+ * reads the real one's. Only the read-only calls the core makes are answered.
+ */
+function fakeGh(dir: string): string {
+  const bin = path.join(dir, "gh-bin");
+  fs.mkdirSync(bin, { recursive: true });
+  const issues = JSON.stringify([
+    { number: 2, title: "태스크 출처 어댑터", url: "https://github.com/acme/repo/issues/2", state: "OPEN", projectItems: [], updatedAt: "2026-09-26T00:00:00Z" },
+    { number: 3, title: "Graph 뷰", url: "https://github.com/acme/repo/issues/3", state: "OPEN", projectItems: [], updatedAt: "2026-09-25T00:00:00Z" },
+  ]);
+  fs.writeFileSync(
+    path.join(bin, "gh"),
+    `#!/bin/sh
+case "$1 $2" in
+  "auth status") exit 0 ;;
+  "pr list") echo '[]' ;;
+  "repo view") echo '{"nameWithOwner":"acme/repo"}' ;;
+  "issue list") echo '${issues}' ;;
+  *) echo "unsupported: $*" >&2; exit 1 ;;
+esac
+`,
+    { mode: 0o755 },
+  );
+  return bin;
 }
 
 async function open(page: Page, daemon: Daemon): Promise<void> {
@@ -92,6 +123,10 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     git(repo, ["worktree", "add", "-b", "prd/shipped", tree("shipped")]);
     git(tree("shipped"), ["commit", "--allow-empty", "-m", "shipped work"]);
     git(repo, ["merge", "--ff-only", "prd/shipped"]);
+    // A worktree for issue 2, named by the branch convention, with a commit
+    // of its own: a branch with none reads as merged once its base resolves.
+    git(repo, ["worktree", "add", "-b", "2-task-source", tree("linked")]);
+    git(tree("linked"), ["commit", "--allow-empty", "-m", "task source"]);
 
     const mainPane = await workspaceAt(herdr, repo, "최신 hide 서버 웹 실행");
     const workingPane = await workspaceAt(herdr, tree("working"), "웹 디자인 시스템 리셋 구현");
@@ -106,7 +141,7 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     fs.mkdirSync(quiet);
     await workspaceAt(herdr, quiet, null);
 
-    daemon = await startHided(herdr, "overview");
+    daemon = await startHided(herdr, "overview", undefined, { PATH: `${fakeGh(herdr.root)}:${process.env.PATH ?? ""}` });
     await open(page, daemon);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
 
@@ -124,11 +159,13 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await expect(page.locator("[data-all-projects]")).not.toHaveAttribute("aria-current", "page");
     await expect(page.locator('[data-project-list] [data-checkout][aria-current="true"]')).toHaveCount(0);
 
-    // Header facts (B2): three worktrees; no PR count, since GitHub never
-    // answered here; the size the Overview asked the core to measure; the
-    // merged worktree, which opens the Merged column.
-    await expect(page.locator('[data-stat="worktrees"]')).toHaveText(/3 worktrees/);
-    await expect(page.locator('[data-stat="open-prs"]')).toHaveCount(0);
+    // Header facts (B2): four worktrees; no open PR, as GitHub answered; the
+    // size the Overview asked the core to measure; the merged worktree,
+    // which opens the Done column.
+    // The worktree with no Herdr workspace can be listed after the ones Herdr
+    // reports; a slow runner showed three at five seconds.
+    await expect(page.locator('[data-stat="worktrees"]')).toHaveText(/4 worktrees/, { timeout: 20_000 });
+    await expect(page.locator('[data-stat="open-prs"]')).toHaveText("0 open PRs", { timeout: 20_000 });
     await expect(page.locator('[data-stat="disk"]')).toHaveText(/^\d+(\.\d)? (B|KB|MB|GB)$/, { timeout: 30_000 });
     await expect(page.locator('[data-stat="merged"]')).toHaveText("1 merged → 정리", { timeout: 20_000 });
 
@@ -137,23 +174,33 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await expect(adhoc.locator("[data-overview-card]")).toHaveCount(1);
     await expect(adhoc.locator(`[data-agent-open="${mainPane}"]`)).toBeVisible();
     const column = (id: string) => page.locator(`[data-overview-column="${id}"]`);
-    await expect(column("working").locator("[data-overview-card]")).toHaveCount(2, { timeout: 20_000 });
-    await expect(column("ready").locator("[data-overview-card]")).toHaveCount(0);
+    await expect(column("working").locator("[data-overview-card]")).toHaveCount(3, { timeout: 20_000 });
+    // The open issue no checkout works on is the backlog; the one a worktree
+    // is named for heads that worktree's card, its id opening the issue and
+    // its title the checkout (task-agents-views B1, B5).
+    await expect(column("backlog").locator("[data-overview-card]")).toHaveCount(1, { timeout: 20_000 });
+    await expect(column("backlog")).toContainText("Graph 뷰");
+    const linked = column("working").locator('[data-overview-card][data-task-key="github:acme/repo#2"]');
+    await expect(linked).toContainText("태스크 출처 어댑터");
+    await expect(linked.locator("[data-task-id]")).toHaveAttribute("href", "https://github.com/acme/repo/issues/2");
+    await expect(linked.locator("[data-no-task]")).toHaveCount(0);
     // The asking agent's card carries the halo and leads 작업 중 without leaving it (B7).
     const asking = column("working").locator("[data-overview-card]").first();
     await expect(asking).toHaveAttribute("data-needs-you", "true", { timeout: 20_000 });
     // Its row carries the question on a second line (B8).
     await expect(asking.locator(`[data-pane="${askingPane}"] [data-agent-line="request"]`)).toContainText("Done 그룹 회색 링을 바꿔도 될까요?");
     const working = column("working").locator("[data-overview-card]", { hasText: "prd/web-overview-with-a-long-branch-name" });
-    await expect(working.locator('[data-overview-delivery="working"]')).toContainText("변경 1 · ↑1 커밋");
-    // Merged starts folded and lists only its names until opened; the merged
-    // fact opens it.
-    await expect(column("merged")).toHaveAttribute("data-collapsed", "true");
-    await expect(column("merged").locator("[data-overview-collapsed-names]")).toContainText("prd/shipped", { timeout: 20_000 });
+    // An untracked checkout is titled by its branch and says it has no task (D-07).
+    await expect(working.locator('[data-fact="files"]')).toHaveText("1 files");
+    await expect(working.locator('[data-fact="ahead"]')).toHaveText("↑1");
+    await expect(working.locator("[data-no-task]")).toBeVisible();
+    // Done starts folded to one line per card until opened; the merged fact opens it.
+    await expect(column("done")).toHaveAttribute("data-collapsed", "true");
+    await expect(column("done").locator("[data-overview-collapsed-names]")).toContainText("prd/shipped", { timeout: 20_000 });
     await page.locator('[data-stat="merged"]').click();
-    await expect(column("merged")).toHaveAttribute("data-collapsed", "false");
-    await expect(column("merged").locator('[data-overview-delivery="merged"]')).toContainText("머지됨");
-    await column("merged").locator("[data-overview-column-toggle]").click();
+    await expect(column("done")).toHaveAttribute("data-collapsed", "false");
+    await expect(column("done").locator('[data-overview-card][data-stage="done"]')).toHaveCount(1);
+    await column("done").locator("[data-overview-column-toggle]").click();
 
     // A long branch stays inside its card (B12).
     const within = await working.evaluate((card) => {
@@ -167,11 +214,15 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
       await screenshot(page, `overview-tasks-${theme}`);
     }
 
-    // The Agents board: one card per lineage root in lifecycle columns (B9).
+    // The Agents board: a card per agent in lifecycle columns, each naming its
+    // checkout and its task, or that it has none (B11).
     await page.locator('[data-overview-tab="agents"]').click();
     await expect(overview).toHaveAttribute("data-overview-view", "agents");
     await expect(page.locator('[data-overview-columns="agents"] [data-overview-column]')).toHaveCount(3);
-    await expect(page.locator('[data-overview-column="active"]').locator(`[data-overview-root="${askingPane}"]`)).toBeVisible();
+    const askingCard = page.locator('[data-overview-column="active"]').locator(`[data-overview-root="${askingPane}"]`);
+    await expect(askingCard).toBeVisible();
+    await expect(askingCard).toContainText("prd/asking");
+    await expect(askingCard).toContainText("태스크 없음");
     for (const theme of ["dark", "light"] as const) {
       await chooseTheme(page, theme);
       await screenshot(page, `overview-agents-${theme}`);
@@ -197,15 +248,39 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await expect(repoRow).not.toHaveAttribute("aria-current", "page");
     await expect(page.locator('[data-main-stats] [data-stat="projects"]')).toHaveText("3 projects");
     await expect(page.locator('[data-main-stats] [data-stat="merged"]')).toHaveText("1 merged");
+    // All projects has no Sessions, so it opens on its first view, Tasks: every
+    // project's tasks on one board, and a project with agents and no task
+    // source gathered below it (D-01, B15).
+    const main = page.locator("[data-main-screen]");
+    await expect(main).toHaveAttribute("data-main-view", "tasks");
+    // The page's view is still Sessions, so the project opens on it again.
+    await repoRow.click();
+    await expect(overview).toHaveAttribute("data-overview-view", "sessions");
+    await allProjects.click();
+    await expect(main).toHaveAttribute("data-main-view", "tasks");
+    await expect(main.locator('[data-overview-column="backlog"] [data-overview-card]')).toHaveCount(1, { timeout: 20_000 });
+    await expect(main.locator("[data-unconnected-project]")).toHaveCount(1);
+    await expect(main.locator("[data-unconnected-project]")).toContainText("fixture · 태스크 출처 연결 안 됨");
+    for (const theme of ["dark", "light"] as const) {
+      await chooseTheme(page, theme);
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await screenshot(page, `all-projects-tasks-${theme}`);
+    }
+    // Its Agents view names each agent's project before its checkout.
+    await page.locator('[data-main-tab="agents"]').click();
+    await expect(main.locator(`[data-agent-card="${askingPane}"]`)).toContainText("repo · prd/asking");
+    for (const theme of ["dark", "light"] as const) {
+      await chooseTheme(page, theme);
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await screenshot(page, `all-projects-agents-${theme}`);
+    }
+    await page.locator('[data-main-tab="projects"]').click();
     for (const theme of ["dark", "light"] as const) {
       await chooseTheme(page, theme);
       // Settings hands focus back to the control that was clicked; the capture shows it at rest.
       await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
       await screenshot(page, `all-projects-${theme}`);
     }
-    await page.locator("[data-main-project]", { hasText: /^quiet/ }).click();
-    await expect(overview).toHaveAttribute("data-overview-view", "sessions");
-    await expect(page.locator("[data-sessions-screen]")).toBeVisible();
     await repoRow.click();
     await page.locator('[data-overview-tab="tasks"]').click();
 
@@ -231,20 +306,22 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     // A folder with agents shows only the ad hoc strip (B10). Its sidebar
     // row opens its checkout, so its Overview is reached from All projects.
     await page.locator("[data-go-main]").click();
+    await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: /^fixture/ }).click();
     await expect(overview).toHaveAttribute("data-overview-state", "adhoc");
     await expect(page.locator("[data-overview-adhoc] [data-agent-open]")).toHaveCount(2);
     await expect(page.locator("[data-overview-column]")).toHaveCount(0);
     await screenshot(page, "overview-folder-light");
 
-    // A project with no agent is the empty state with New agent; New agent
-    // on a folder opens its Workspace (B3, B10).
+    // A project with no task source and no agent is the empty state: one
+    // sentence and the way to connect a source (B14); New agent on a folder
+    // opens its Workspace.
     await page.locator("[data-go-main]").click();
     await page.locator("[data-main-project]", { hasText: /^quiet/ }).click();
     await expect(overview).toHaveAttribute("data-overview-state", "empty");
-    await expect(page.locator("[data-overview-empty]")).toBeVisible();
+    await expect(page.locator("[data-overview-empty] [data-connect-source]")).toBeVisible();
     await screenshot(page, "overview-empty-light");
-    await page.locator("[data-overview-empty-new-agent]").click();
+    await page.locator("[data-overview-new-agent]").click();
     await expect(workspace).toBeVisible();
 
     // New agent on a Git project opens the New worktree flow; Cancel keeps the Overview (B3).
@@ -267,7 +344,7 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     const restarting = daemon.restart();
     await expect(page.locator("[data-connection]")).toBeVisible({ timeout: 10_000 });
     await expect(overview).toHaveAttribute("data-overview-state", "board");
-    await expect(column("working").locator("[data-overview-card]")).toHaveCount(2);
+    await expect(column("working").locator("[data-overview-card]")).toHaveCount(3);
     await expect(overview.locator('[role="alert"]')).toHaveCount(0);
     daemon = await restarting;
   } finally {

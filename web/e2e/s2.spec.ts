@@ -88,6 +88,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     // A plain folder's sidebar row opens its checkout, so its Overview is
     // reached from All projects (S6 B1), and its Workspace row enters the Workspace (B2).
     await page.locator("[data-go-main]").click();
+    await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: /^fixture/ }).click();
     await expect(page.locator("[data-overview-screen]")).toBeVisible();
     await page.locator("[data-overview-workspace]").first().click();

@@ -95,6 +95,7 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     // The Overview's Sessions tab shows the Project's Sessions (B1); before
     // any agent has written a session here the list says so.
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
+    await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: "fixture" }).click();
     await expect(page.locator("[data-overview-screen]")).toBeVisible();
     await expect(page.locator("[data-overview-screen]")).not.toContainText(/memory/i);
@@ -255,6 +256,7 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await other.setViewportSize({ width: 1280, height: 800 });
     await open(other, daemon);
     await expect(other.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
+    await other.locator('[data-main-tab="projects"]').click();
     await other.locator("[data-main-project]", { hasText: "fixture" }).click();
     const [, second] = herdr.panes;
     await other.locator(`[data-overview-screen] [data-agent-open="${second}"]`).click();
@@ -276,6 +278,7 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     // This machine's sheet stays open for another path; the Project shows on All projects.
     await other.getByLabel("Close new workspace").first().click();
     await other.locator("[data-go-main]").first().click();
+    await other.locator('[data-main-tab="projects"]').click();
     await expect(other.locator("[data-main-project]", { hasText: "alpha" })).toBeVisible({ timeout: 20_000 });
     await other.locator("[data-main-project]", { hasText: "alpha" }).click();
     await other.locator('[data-overview-tab="sessions"]').click();

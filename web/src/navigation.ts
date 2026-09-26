@@ -5,6 +5,7 @@
 // has no session to show. Nothing here is counted that the snapshot does not
 // carry, and a device that cannot answer says so instead of showing zeros.
 
+import type { BoardProject } from "./projectBoard";
 import { focusedRemoteDevice, frontCheckout, type AgentRow, type Device, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
 
 export type AgentGroup = "needs_you" | "done" | "working" | "seen";
@@ -243,6 +244,23 @@ export function allProjectsCount(rest: SnapshotRest | null): number {
     count += session ? session.workspaces.length : registrations.filter((row) => row.device_id === device.id).length;
   }
   return count;
+}
+
+/**
+ * Every Project All projects' boards read, with the agents its device last
+ * reported and the device's name when it is not this machine: this
+ * machine's catalog, then each device's session. A device with no session
+ * has no catalog rows to draw, and its section says why on the Projects view.
+ */
+export function boardProjects(rest: SnapshotRest | null, localAgents: AgentRow[]): BoardProject[] {
+  const projects: BoardProject[] = (rest?.navigator?.workspaces ?? []).map((workspace) => ({ workspace, agents: localAgents, device: null }));
+  for (const status of rest?.status?.remote ?? []) {
+    const session = status.session;
+    if (!session) continue;
+    const device = rest?.navigator?.devices?.find((row) => row.id === status.target_id)?.label ?? status.target_id;
+    for (const workspace of session.workspaces) projects.push({ workspace, agents: session.agents, device });
+  }
+  return projects;
 }
 
 export type OverviewProject = {

@@ -1623,6 +1623,7 @@ impl Runtime {
             &self.snapshot.navigator.agents,
         );
         changed |= self.sync_issues();
+        changed |= self.sync_tasks();
         changed
     }
 
