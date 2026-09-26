@@ -4,7 +4,7 @@ This file routes and keeps the rules that hold everywhere; the reasons and the p
 Read [docs/README.md](docs/README.md) before choosing supporting documents: it says which are current contracts, who owns them in code and tests, and which are historical.
 Do not apply superseded architecture decisions, old milestone reports, or old PRD implementation paths to current code.
 Update the owning guide and its active references in the same change as the behavior; keep run evidence outside `docs/`.
-Before changing browser displays, read `docs/BROWSER_PANES.md` for the host entrypoint, installation ownership, and native display verification.
+Before changing browser displays, read `docs/BROWSER_DISPLAYS.md` for who owns a page, the `file:` address boundary, and native display verification.
 
 ## Repository Layout
 

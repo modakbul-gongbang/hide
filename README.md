@@ -72,7 +72,7 @@ It also bundles the pinned Herdr v0.9.1 runtime, so a separate Herdr install is 
 
 See [Install hide](docs/INSTALL.md) for prerequisites, release checksum verification, Gatekeeper steps, first-launch behavior, updates, and troubleshooting.
 
-See [Browser panes](docs/BROWSER_PANES.md) for the agent-facing open command, explicit profile selection, and browser-tab ownership rules.
+See [Browser displays](docs/BROWSER_DISPLAYS.md) for `hide browser open`, the pages the desktop app draws in View areas, and the `file:` address boundary.
 
 ## Runtime boundaries
 

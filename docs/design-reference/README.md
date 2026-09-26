@@ -13,7 +13,7 @@ Use them for density, grouping, layout, and interaction inspiration.
 
 The pictured feedback flow and usage meters are Orca observations, not a statement that Hide currently exposes those controls.
 Old interview decision numbers, proposed memory budgets, and proposed Herdr calls have been removed from this reference so they cannot override current scoped requirements.
-See [BROWSER_PANES.md](../BROWSER_PANES.md) for the browser behavior this repository actually implements.
+See [BROWSER_DISPLAYS.md](../BROWSER_DISPLAYS.md) for the browser behavior this repository actually implements.
 
 ## Provenance
 
