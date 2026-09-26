@@ -1199,6 +1199,9 @@ test("a pinned panel over a narrow window uncovers the agent chosen from the sid
       fs.mkdirSync(beta, { recursive: true });
       fs.writeFileSync(path.join(beta, "b1.txt"), "b1\n");
       herdr.run(["workspace", "create", "--cwd", beta, "--label", "beta", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]);
+      const gamma = path.join(path.dirname(checkout), "gamma");
+      fs.mkdirSync(gamma, { recursive: true });
+      herdr.run(["workspace", "create", "--cwd", gamma, "--label", "gamma", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]);
     },
   });
   try {
@@ -1237,12 +1240,17 @@ test("a pinned panel over a narrow window uncovers the agent chosen from the sid
     expect(reports().length).toBe(before + 1);
     await screenshot(page, "s7-covers-narrow-pinned");
 
-    // Away to beta and back: the core forgot the fact when the front moved,
-    // so the page tells it again for the fixture.
-    await choose("beta");
-    await expect.poll(() => reports().at(-1)?.payload).toEqual({ workspace: { device_id: "local", path: betaRoot }, covers: true });
+    // Away and back through a Workspace whose panel fits (gamma, no view), so
+    // nothing is reported on the way: the core forgot the fact when the front
+    // moved, and the page forgot its report with the Workspace it drew, so it
+    // tells the core again for the fixture.
+    await choose("gamma");
+    await expect(workspace).toHaveAttribute("data-panel", "closed");
+    await page.waitForTimeout(300);
+    expect(reports().length).toBe(before + 1);
     await choose("fixture");
-    await expect.poll(() => reports().at(-1)?.payload).toEqual({ workspace: { device_id: "local", path: stack.root }, covers: true });
+    await expect.poll(() => reports().length).toBe(before + 2);
+    expect(reports().at(-1)?.payload).toEqual({ workspace: { device_id: "local", path: stack.root }, covers: true });
     const fixtureReports = reports().length;
 
     // An agent chosen from the sidebar is uncovered: the panel closes, still pinned.
