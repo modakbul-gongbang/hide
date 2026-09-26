@@ -506,6 +506,6 @@ fn one_unsupported_runtime_does_not_disable_another_supported_runtime() {
     );
     assert_eq!(
         runtime.snapshot.status.agent_hooks.runtimes[1].headline,
-        "Installed (v4)"
+        "Installed (v5)"
     );
 }

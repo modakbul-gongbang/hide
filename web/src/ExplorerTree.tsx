@@ -2,7 +2,7 @@ import { useVirtualizer } from "@tanstack/react-virtual";
 import { RefreshCwIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
-import { browserOpenUnavailable, isHtmlFile } from "./browserViews";
+import { isHtmlFile } from "./browserViews";
 import { EntryPointMenu, type MenuEntry } from "./components/entry-menu";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
@@ -586,7 +586,7 @@ function ExplorerContextMenu({
     items.push({ id: "new-folder", label: "New Folder", unavailable: null });
   } else if (row) {
     items.push({ id: "open-beside", label: "Open to the side", unavailable: besideReason });
-    if (isHtmlFile(row.path)) items.push({ id: "open-browser", label: "Open in Browser", unavailable: browserOpenUnavailable(explorerContext(useShellStore.getState().rest).device) });
+    if (isHtmlFile(row.path)) items.push({ id: "open-browser", label: "Open in Browser", unavailable: null });
   }
   if (row) items.push({ id: "rename", label: "Rename", unavailable: null });
   if (row) items.push({ id: "trash", label: "Move to Trash", unavailable: null, separated: true, destructive: true });

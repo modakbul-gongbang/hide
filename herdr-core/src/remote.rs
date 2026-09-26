@@ -9,10 +9,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt;
 use std::io::{self, Read, Write};
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, Shutdown, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -30,8 +30,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use serde_json::json;
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tokio::net::TcpStream;
+use tokio::net::{TcpListener, TcpStream};
 use tokio::runtime::{Builder, Runtime};
+use tokio::sync::{Semaphore, oneshot};
 
 use crate::domain::{
     DomainEvent, DomainProjection, DomainSnapshot, EnvironmentContract, HostScope,
@@ -43,6 +44,27 @@ pub mod host;
 
 pub use crate::herdr_contract::HERDR_PROTOCOL_REVISION as REMOTE_PROTOCOL_REVISION;
 const SSH_OPERATION_TIMEOUT: Duration = Duration::from_secs(15);
+type ReverseForwardParts = (Handle<KnownHostHandler>, u16, Arc<Mutex<Option<String>>>);
+
+// Russh spawns its session task after receiving the server's SSH banner but
+// before returning a Handle. If the caller cancels during key exchange, its
+// connect future drops without aborting that task. Shutdown of this duplicate
+// socket closes the task's stream even when no Handle was returned.
+struct ConnectingSocket(Option<std::net::TcpStream>);
+
+impl ConnectingSocket {
+    fn release(&mut self) {
+        self.0.take();
+    }
+}
+
+impl Drop for ConnectingSocket {
+    fn drop(&mut self) {
+        if let Some(socket) = self.0.take() {
+            let _ = socket.shutdown(Shutdown::Both);
+        }
+    }
+}
 /// The prefixes a host-key refusal starts with, so a caller can tell a
 /// changed key from a missing one without parsing the rest of the sentence.
 pub const HOST_KEY_CHANGED: &str = "host key changed";
@@ -1063,6 +1085,11 @@ pub enum RemoteReadCommand {
     HerdrServerStatus {
         socket: Option<String>,
     },
+    WorkspacePane {
+        helper_path: String,
+        socket: String,
+        pane_id: String,
+    },
 }
 
 /// Where a non-login SSH exec finds `herdr` on the remote host: the
@@ -1075,6 +1102,7 @@ impl RemoteReadCommand {
         match self {
             Self::GitStatus { .. } => "remote-git-status",
             Self::HerdrServerStatus { .. } => "remote-herdr-status",
+            Self::WorkspacePane { .. } => "workspace-pane-inspect",
         }
     }
 
@@ -1082,11 +1110,40 @@ impl RemoteReadCommand {
         match self {
             Self::GitStatus { .. } => RemoteStage::Git,
             Self::HerdrServerStatus { .. } => RemoteStage::Herdr,
+            Self::WorkspacePane { .. } => RemoteStage::Herdr,
         }
     }
 
     fn command_line(&self) -> RemoteResult<String> {
         match self {
+            Self::WorkspacePane {
+                helper_path,
+                socket,
+                pane_id,
+            } => {
+                if !helper_path.starts_with('/')
+                    || helper_path.bytes().any(|byte| byte.is_ascii_control())
+                    || !valid_remote_socket_path(socket)
+                    || pane_id.is_empty()
+                    || pane_id.len() > 256
+                    || pane_id.bytes().any(|byte| byte.is_ascii_control())
+                {
+                    return Err(remote_error(
+                        self.operation_id(),
+                        pane_id,
+                        self.stage(),
+                        "invalid pane inspection path or id",
+                        false,
+                        true,
+                    ));
+                }
+                Ok(format!(
+                    "{} pane-inspect {} {}",
+                    shell_quote(helper_path),
+                    shell_quote(socket),
+                    shell_quote(pane_id)
+                ))
+            }
             Self::HerdrServerStatus { socket: None } => Ok(format!(
                 "PATH=\"{REMOTE_HERDR_PATH}\" herdr status server --json"
             )),
@@ -1589,6 +1646,46 @@ impl RusshRemoteClient {
         let socket = status.socket.clone();
         *lock_recover(&self.herdr_status) = Some(status);
         Ok(socket)
+    }
+
+    /// Rechecks a remote pane's Herdr terminal and OS process identity.
+    /// The helper's output is read over a fresh, host-key-checked SSH exec;
+    /// an earlier bootstrap response is never enough to authorize a command.
+    pub fn workspace_pane_identity(
+        &self,
+        helper_path: &str,
+        pane_id: &str,
+    ) -> RemoteResult<hide_host::workspace_bridge::PaneIdentity> {
+        let socket = self.herdr_socket_path()?;
+        let output = self.exec_read_only(RemoteReadCommand::WorkspacePane {
+            helper_path: helper_path.to_owned(),
+            socket,
+            pane_id: pane_id.to_owned(),
+        })?;
+        if output.exit_status != 0 {
+            return Err(remote_error(
+                "workspace-pane-inspect",
+                pane_id,
+                RemoteStage::Herdr,
+                format!(
+                    "remote pane inspection exited {}: {}",
+                    output.exit_status,
+                    output.stderr.trim()
+                ),
+                true,
+                false,
+            ));
+        }
+        serde_json::from_str(output.stdout.trim()).map_err(|error| {
+            remote_error(
+                "workspace-pane-inspect",
+                pane_id,
+                RemoteStage::Herdr,
+                format!("remote pane inspection returned invalid data: {error}"),
+                true,
+                false,
+            )
+        })
     }
 
     pub(crate) fn cached_herdr_version(&self) -> Option<String> {
@@ -2218,24 +2315,89 @@ impl RusshRemoteClient {
             keepalive_interval: Some(Duration::from_secs(5)),
             ..client::Config::default()
         };
-        let mut session = client::connect(
-            Arc::new(config),
-            (self.host.hostname.as_str(), self.host.port),
-            handler,
-        )
+        tokio::time::timeout(SSH_OPERATION_TIMEOUT, async {
+            let socket = TcpStream::connect((self.host.hostname.as_str(), self.host.port))
+                .await
+                .map_err(|error| {
+                    remote_error(
+                        "remote-connect",
+                        &self.host.host_id,
+                        RemoteStage::Ssh,
+                        error,
+                        true,
+                        false,
+                    )
+                })?;
+            if config.nodelay {
+                socket.set_nodelay(true).map_err(|error| {
+                    remote_error(
+                        "remote-connect",
+                        &self.host.host_id,
+                        RemoteStage::Ssh,
+                        error,
+                        true,
+                        false,
+                    )
+                })?;
+            }
+            let socket = socket.into_std().map_err(|error| {
+                remote_error(
+                    "remote-connect",
+                    &self.host.host_id,
+                    RemoteStage::Ssh,
+                    error,
+                    true,
+                    false,
+                )
+            })?;
+            let shutdown = socket.try_clone().map_err(|error| {
+                remote_error(
+                    "remote-connect",
+                    &self.host.host_id,
+                    RemoteStage::Ssh,
+                    error,
+                    true,
+                    false,
+                )
+            })?;
+            let mut connecting = ConnectingSocket(Some(shutdown));
+            let socket = TcpStream::from_std(socket).map_err(|error| {
+                remote_error(
+                    "remote-connect",
+                    &self.host.host_id,
+                    RemoteStage::Ssh,
+                    error,
+                    true,
+                    false,
+                )
+            })?;
+            let mut session = client::connect_stream(Arc::new(config), socket, handler)
+                .await
+                .map_err(|error| {
+                    remote_error(
+                        "remote-connect",
+                        &self.host.host_id,
+                        RemoteStage::Ssh,
+                        error,
+                        true,
+                        false,
+                    )
+                })?;
+            authenticate(&mut session, &self.host).await?;
+            connecting.release();
+            Ok(session)
+        })
         .await
-        .map_err(|error| {
+        .map_err(|_| {
             remote_error(
                 "remote-connect",
                 &self.host.host_id,
                 RemoteStage::Ssh,
-                error,
+                "SSH connection or authentication timed out",
                 true,
                 false,
             )
-        })?;
-        authenticate(&mut session, &self.host).await?;
-        Ok(session)
+        })?
     }
 
     pub fn start_reverse_browser_bridge(
@@ -2243,19 +2405,287 @@ impl RusshRemoteClient {
         spec: ReverseBrowserBridgeSpec,
     ) -> RemoteResult<RemoteTunnelHandle> {
         spec.validate()?;
+        let (session, remote_port, forward_error) =
+            self.open_reverse_loopback(spec.local_cdp, spec.remote_bind, "remote-browser-tunnel")?;
+        let descriptor = RemoteTunnelDescriptor {
+            tunnel_id: format!("tunnel:{}:{}", self.host.host_id, spec.browser_view_id),
+            host_id: self.host.host_id.clone(),
+            browser_view_id: spec.browser_view_id,
+            local_cdp: spec.local_cdp,
+            remote_bind: SocketAddr::new(spec.remote_bind.ip(), remote_port),
+            state: RemoteTunnelState::Ready,
+            owned: true,
+        };
+        Ok(RemoteTunnelHandle {
+            runtime: Arc::clone(&self.runtime),
+            session: Mutex::new(Some(session)),
+            descriptor,
+            forward_error,
+            closed: AtomicBool::new(false),
+        })
+    }
+
+    /// A daemon-owned return path from the SSH device to this daemon's
+    /// loopback listener. The remote port is assigned by sshd and is never
+    /// exposed beyond remote loopback.
+    pub fn start_reverse_workspace_forward(
+        &self,
+        local_port: u16,
+    ) -> RemoteResult<RemoteWorkspaceForward> {
+        if local_port == 0 {
+            return Err(remote_error(
+                "workspace-forward",
+                &self.host.host_id,
+                RemoteStage::Tunnel,
+                "local port is zero",
+                false,
+                true,
+            ));
+        }
+        let local = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), local_port);
+        let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+        let (session, remote_port, forward_error) =
+            self.open_reverse_loopback(local, remote, "workspace-forward")?;
+        Ok(RemoteWorkspaceForward {
+            runtime: Arc::clone(&self.runtime),
+            session: Mutex::new(Some(session)),
+            remote_port,
+            forward_error,
+            closed: AtomicBool::new(false),
+        })
+    }
+
+    /// A browser view on this Mac reaches a loopback server on the device.
+    /// One owner holds the listener; dropping it disconnects every channel.
+    pub fn start_local_workspace_forward(
+        &self,
+        remote: SocketAddr,
+        alternate: Option<SocketAddr>,
+        preserve_numeric_host: bool,
+        mut canceled: oneshot::Receiver<()>,
+    ) -> RemoteResult<RemoteLocalForward> {
+        if !remote.ip().is_loopback()
+            || remote.port() == 0
+            || alternate.is_some_and(|address| {
+                !address.ip().is_loopback() || address.port() != remote.port()
+            })
+        {
+            return Err(remote_error(
+                "workspace-browser-forward",
+                &self.host.host_id,
+                RemoteStage::Tunnel,
+                "remote endpoint must be loopback with a nonzero port",
+                false,
+                true,
+            ));
+        }
+        // Keep numeric loopback hosts unchanged for HTTPS certificate checks.
+        // A localhost URL can resolve to either family, so reserve both local
+        // addresses at the same port before publishing the route.
+        let local_ip = if preserve_numeric_host {
+            remote.ip()
+        } else if remote.is_ipv6() {
+            IpAddr::V6(Ipv6Addr::LOCALHOST)
+        } else {
+            IpAddr::V4(Ipv4Addr::LOCALHOST)
+        };
+        // A pending route must not reserve a local port before SSH connects:
+        // its View can close while the remote handshake is still waiting.
+        let session = Arc::new(self.runtime.block_on(async {
+            tokio::select! {
+                _ = &mut canceled => Err(remote_error(
+                    "workspace-browser-forward", &self.host.host_id, RemoteStage::Tunnel,
+                    "browser route was canceled", true, false,
+                )),
+                result = self.connect(KnownHostHandler::new(&self.host, None)) => result,
+            }
+        })?);
+        if !matches!(
+            canceled.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ) {
+            let _ = self.runtime.block_on(async {
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    session.disconnect(Disconnect::ByApplication, "browser route canceled", "en"),
+                )
+                .await
+            });
+            return Err(remote_error(
+                "workspace-browser-forward",
+                &self.host.host_id,
+                RemoteStage::Tunnel,
+                "browser route was canceled",
+                true,
+                false,
+            ));
+        }
+        let listeners = self.runtime.block_on(async {
+            for _ in 0..16 {
+                let primary = TcpListener::bind(SocketAddr::new(local_ip, 0)).await?;
+                let primary_addr = primary.local_addr()?;
+                if alternate.is_none() {
+                    return Ok((primary, None, primary_addr));
+                }
+                match TcpListener::bind(SocketAddr::new(
+                    IpAddr::V6(Ipv6Addr::LOCALHOST),
+                    primary_addr.port(),
+                ))
+                .await
+                {
+                    Ok(ipv6) => return Ok((primary, Some(ipv6), primary_addr)),
+                    Err(error) if error.kind() == io::ErrorKind::AddrInUse => continue,
+                    Err(error) => return Err(error),
+                }
+            }
+            Err(io::Error::new(
+                io::ErrorKind::AddrInUse,
+                "could not reserve both localhost address families",
+            ))
+        });
+        let (listener, ipv6_listener, local_addr) = listeners.map_err(|error| {
+            let _ = self.runtime.block_on(async {
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    session.disconnect(
+                        Disconnect::ByApplication,
+                        "browser forward bind failed",
+                        "en",
+                    ),
+                )
+                .await
+            });
+            remote_error(
+                "workspace-browser-forward",
+                &self.host.host_id,
+                RemoteStage::Tunnel,
+                error,
+                true,
+                false,
+            )
+        })?;
+        let port = local_addr.port();
+        let session_task = Arc::clone(&session);
+        let failure = Arc::new(Mutex::new(None));
+        let failure_task = Arc::clone(&failure);
+        let task = self.runtime.spawn(async move {
+            const MAX_CONNECTIONS: usize = 16;
+            let permits = Arc::new(Semaphore::new(MAX_CONNECTIONS));
+            let mut transfers = tokio::task::JoinSet::new();
+            loop {
+                let accepted = tokio::select! {
+                    accepted = listener.accept() => accepted,
+                    accepted = async {
+                        match &ipv6_listener {
+                            Some(listener) => listener.accept().await,
+                            None => std::future::pending().await,
+                        }
+                    } => accepted,
+                    completed = transfers.join_next(), if !transfers.is_empty() => {
+                        if let Some(Err(error)) = completed
+                            && let Ok(mut slot) = failure_task.lock() {
+                                *slot = Some(error.to_string());
+                            }
+                        continue;
+                    },
+                };
+                let (mut local, _) = match accepted {
+                    Ok(accepted) => accepted,
+                    Err(error) => {
+                        if let Ok(mut slot) = failure_task.lock() {
+                            *slot = Some(error.to_string());
+                        }
+                        break;
+                    }
+                };
+                let Ok(permit) = Arc::clone(&permits).try_acquire_owned() else {
+                    let _ = local.shutdown().await;
+                    continue;
+                };
+                let channel = tokio::time::timeout(SSH_OPERATION_TIMEOUT, async {
+                    let first = session_task
+                        .channel_open_direct_tcpip(
+                            remote.ip().to_string(),
+                            u32::from(remote.port()),
+                            local_ip.to_string(),
+                            u32::from(port),
+                        )
+                        .await;
+                    match (first, alternate) {
+                        (Err(_), Some(alternate)) => {
+                            session_task
+                                .channel_open_direct_tcpip(
+                                    alternate.ip().to_string(),
+                                    u32::from(alternate.port()),
+                                    local_ip.to_string(),
+                                    u32::from(port),
+                                )
+                                .await
+                        }
+                        (answer, _) => answer,
+                    }
+                })
+                .await
+                .map_err(|_| "SSH channel open timed out".to_owned())
+                .and_then(|answer| answer.map_err(|error| error.to_string()));
+                match channel {
+                    Ok(channel) => {
+                        transfers.spawn(async move {
+                            let _permit = permit;
+                            let mut stream = channel.into_stream();
+                            let _ = tokio::io::copy_bidirectional(&mut local, &mut stream).await;
+                        });
+                    }
+                    Err(error) => {
+                        if let Ok(mut slot) = failure_task.lock() {
+                            *slot = Some(error.to_string());
+                        }
+                        let _ = local.shutdown().await;
+                    }
+                }
+            }
+            transfers.abort_all();
+            let _ = session_task
+                .disconnect(Disconnect::ByApplication, "browser forward closed", "en")
+                .await;
+        });
+        Ok(RemoteLocalForward {
+            runtime: Arc::clone(&self.runtime),
+            local_addr,
+            session,
+            task: Mutex::new(Some(task)),
+            failure,
+        })
+    }
+
+    fn open_reverse_loopback(
+        &self,
+        local: SocketAddr,
+        remote: SocketAddr,
+        operation: &'static str,
+    ) -> RemoteResult<ReverseForwardParts> {
+        if !local.ip().is_loopback() || !remote.ip().is_loopback() || local.port() == 0 {
+            return Err(remote_error(
+                operation,
+                &self.host.host_id,
+                RemoteStage::Tunnel,
+                "reverse forward must use a local loopback target and remote loopback bind",
+                false,
+                true,
+            ));
+        }
         let forward_error = Arc::new(Mutex::new(None));
-        let handler = KnownHostHandler::new(&self.host, Some(spec.local_cdp))
+        let handler = KnownHostHandler::new(&self.host, Some(local))
             .with_forward_error(Arc::clone(&forward_error));
         let session = self.runtime.block_on(self.connect(handler))?;
-        let forward = self.runtime.block_on(session.tcpip_forward(
-            spec.remote_bind.ip().to_string(),
-            u32::from(spec.remote_bind.port()),
-        ));
+        let forward = self
+            .runtime
+            .block_on(session.tcpip_forward(remote.ip().to_string(), u32::from(remote.port())));
         let remote_port = match forward {
             Ok(port) if port <= u32::from(u16::MAX) => port,
             Ok(port) => {
                 let primary = remote_error(
-                    "remote-browser-tunnel",
+                    operation,
                     &self.host.host_id,
                     RemoteStage::Tunnel,
                     format!("remote forward port exceeds u16: {port}"),
@@ -2271,7 +2701,7 @@ impl RusshRemoteClient {
                     ))
                     .map_err(|error| {
                         remote_error(
-                            "remote-browser-tunnel",
+                            operation,
                             &self.host.host_id,
                             RemoteStage::Cleanup,
                             error,
@@ -2279,16 +2709,11 @@ impl RusshRemoteClient {
                             false,
                         )
                     });
-                return combine_cleanup(
-                    "remote-browser-tunnel",
-                    &self.host.host_id,
-                    Err(primary),
-                    cleanup,
-                );
+                return combine_cleanup(operation, &self.host.host_id, Err(primary), cleanup);
             }
             Err(error) => {
                 let primary = remote_error(
-                    "remote-browser-tunnel",
+                    operation,
                     &self.host.host_id,
                     RemoteStage::Tunnel,
                     error,
@@ -2312,30 +2737,124 @@ impl RusshRemoteClient {
                             false,
                         )
                     });
-                return combine_cleanup(
-                    "remote-browser-tunnel",
+                return combine_cleanup(operation, &self.host.host_id, Err(primary), cleanup);
+            }
+        };
+        Ok((session, remote_port as u16, forward_error))
+    }
+
+    /// Starts the already consented helper on one SSH exec channel. Only
+    /// this channel owns the helper process; closing it ends the bridge.
+    pub fn open_workspace_bridge(
+        &self,
+        helper_path: &str,
+    ) -> RemoteResult<RemoteWorkspaceBridgeProcess> {
+        if !helper_path.starts_with('/') || helper_path.bytes().any(|byte| byte.is_ascii_control())
+        {
+            return Err(remote_error(
+                "workspace-bridge",
+                &self.host.host_id,
+                RemoteStage::Ssh,
+                "invalid helper path",
+                false,
+                true,
+            ));
+        }
+        let session = self
+            .runtime
+            .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?;
+        let command = format!("{} workspace-bridge", shell_quote(helper_path));
+        let operation = self.runtime.block_on(async {
+            let channel = session.channel_open_session().await.map_err(|error| {
+                remote_error(
+                    "workspace-bridge",
+                    &self.host.host_id,
+                    RemoteStage::Ssh,
+                    error,
+                    true,
+                    false,
+                )
+            })?;
+            channel.exec(true, command).await.map_err(|error| {
+                remote_error(
+                    "workspace-bridge",
+                    &self.host.host_id,
+                    RemoteStage::Ssh,
+                    error,
+                    true,
+                    false,
+                )
+            })?;
+            let writer = Box::new(RemoteTerminalWriter {
+                runtime: Arc::clone(&self.runtime),
+                writer: Box::pin(channel.make_writer()),
+            }) as Box<dyn Write + Send>;
+            let reader = Box::new(RemoteTerminalReader {
+                runtime: Arc::clone(&self.runtime),
+                channel,
+                pending: Vec::new(),
+                pending_offset: 0,
+            }) as Box<dyn Read + Send>;
+            Ok::<_, RemoteError>((reader, writer))
+        });
+        match operation {
+            Ok((reader, writer)) => {
+                let connection = RemoteTerminalConnection {
+                    runtime: Arc::clone(&self.runtime),
+                    session: Some(session),
+                    target_id: self.host.host_id.clone(),
+                    pane_id: "workspace-bridge".to_owned(),
+                };
+                Ok(RemoteWorkspaceBridgeProcess {
+                    reader,
+                    writer,
+                    shutdown: Box::new(move || connection.shutdown()),
+                })
+            }
+            Err(primary) => {
+                let cleanup = self
+                    .runtime
+                    .block_on(session.disconnect(
+                        Disconnect::ByApplication,
+                        "workspace bridge open failed",
+                        "en",
+                    ))
+                    .map_err(|error| {
+                        remote_error(
+                            "workspace-bridge",
+                            &self.host.host_id,
+                            RemoteStage::Cleanup,
+                            error,
+                            true,
+                            false,
+                        )
+                    });
+                combine_cleanup(
+                    "workspace-bridge",
                     &self.host.host_id,
                     Err(primary),
                     cleanup,
-                );
+                )
             }
-        };
-        let descriptor = RemoteTunnelDescriptor {
-            tunnel_id: format!("tunnel:{}:{}", self.host.host_id, spec.browser_view_id),
-            host_id: self.host.host_id.clone(),
-            browser_view_id: spec.browser_view_id,
-            local_cdp: spec.local_cdp,
-            remote_bind: SocketAddr::new(spec.remote_bind.ip(), remote_port as u16),
-            state: RemoteTunnelState::Ready,
-            owned: true,
-        };
-        Ok(RemoteTunnelHandle {
-            runtime: Arc::clone(&self.runtime),
-            session: Mutex::new(Some(session)),
-            descriptor,
-            forward_error,
-            closed: AtomicBool::new(false),
-        })
+        }
+    }
+}
+
+pub struct RemoteWorkspaceBridgeProcess {
+    reader: Box<dyn Read + Send>,
+    writer: Box<dyn Write + Send>,
+    shutdown: Box<dyn FnOnce() + Send>,
+}
+
+pub type WorkspaceBridgeParts = (
+    Box<dyn Read + Send>,
+    Box<dyn Write + Send>,
+    Box<dyn FnOnce() + Send>,
+);
+
+impl RemoteWorkspaceBridgeProcess {
+    pub fn into_parts(self) -> WorkspaceBridgeParts {
+        (self.reader, self.writer, self.shutdown)
     }
 }
 
@@ -2734,6 +3253,7 @@ struct KnownHostHandler {
     known_hosts_file: PathBuf,
     local_forward: Option<SocketAddr>,
     forward_error: Option<Arc<Mutex<Option<String>>>>,
+    active_forwards: Arc<AtomicUsize>,
     /// Receives the SHA-256 fingerprint of a host key known_hosts accepted,
     /// the identity a device's helper consent is bound to.
     observed_key: Option<Arc<Mutex<Option<String>>>>,
@@ -2747,6 +3267,7 @@ impl KnownHostHandler {
             known_hosts_file: host.known_hosts_file.clone(),
             local_forward,
             forward_error: None,
+            active_forwards: Arc::new(AtomicUsize::new(0)),
             observed_key: None,
         }
     }
@@ -2822,22 +3343,36 @@ impl Handler for KnownHostHandler {
                 .await;
             return Ok(());
         };
-        reply.accept().await;
-        let result = async {
-            let mut remote = channel.into_stream();
-            let mut local = TcpStream::connect(local_forward).await?;
-            tokio::io::copy_bidirectional(&mut remote, &mut local).await?;
-            Ok::<(), anyhow::Error>(())
+        const MAX_FORWARD_CONNECTIONS: usize = 8;
+        if self
+            .active_forwards
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current < MAX_FORWARD_CONNECTIONS).then_some(current + 1)
+            })
+            .is_err()
+        {
+            reply.reject(ChannelOpenFailure::ResourceShortage).await;
+            return Ok(());
         }
-        .await;
-        if let Err(error) = result {
-            if let Some(forward_error) = self.forward_error.as_ref()
+        reply.accept().await;
+        let active = Arc::clone(&self.active_forwards);
+        let forward_error = self.forward_error.clone();
+        tokio::spawn(async move {
+            let result = async {
+                let mut remote = channel.into_stream();
+                let mut local = TcpStream::connect(local_forward).await?;
+                tokio::io::copy_bidirectional(&mut remote, &mut local).await?;
+                Ok::<(), anyhow::Error>(())
+            }
+            .await;
+            active.fetch_sub(1, Ordering::AcqRel);
+            if let Err(error) = result
+                && let Some(forward_error) = forward_error.as_ref()
                 && let Ok(mut slot) = forward_error.lock()
             {
                 *slot = Some(error.to_string());
             }
-            return Err(error);
-        }
+        });
         Ok(())
     }
 }
@@ -3205,6 +3740,150 @@ pub struct RemoteTunnelHandle {
     descriptor: RemoteTunnelDescriptor,
     forward_error: Arc<Mutex<Option<String>>>,
     closed: AtomicBool,
+}
+
+pub struct RemoteWorkspaceForward {
+    runtime: Arc<Runtime>,
+    session: Mutex<Option<Handle<KnownHostHandler>>>,
+    remote_port: u16,
+    forward_error: Arc<Mutex<Option<String>>>,
+    closed: AtomicBool,
+}
+
+pub struct RemoteLocalForward {
+    runtime: Arc<Runtime>,
+    local_addr: SocketAddr,
+    session: Arc<Handle<KnownHostHandler>>,
+    task: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    failure: Arc<Mutex<Option<String>>>,
+}
+
+impl RemoteLocalForward {
+    pub fn port(&self) -> u16 {
+        self.local_addr.port()
+    }
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+    pub fn failure(&self) -> Option<String> {
+        self.failure.lock().ok().and_then(|slot| slot.clone())
+    }
+    pub fn close(&self) {
+        let Some(task) = self.task.lock().ok().and_then(|mut task| task.take()) else {
+            return;
+        };
+        // The accept task can be awaiting SSH channel confirmation rather
+        // than the listener. Abort it and its owned transfer set immediately.
+        task.abort();
+        let session = Arc::clone(&self.session);
+        let local_addr = self.local_addr;
+        let cleanup = async move {
+            if tokio::time::timeout(Duration::from_secs(5), task)
+                .await
+                .is_err()
+            {
+                eprintln!(
+                    "{}",
+                    json!({"component":"remote","kind":"workspace_forward.task_close_timeout","local_addr":local_addr.to_string()})
+                );
+            }
+            if !matches!(
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    session.disconnect(Disconnect::ByApplication, "browser forward closed", "en")
+                )
+                .await,
+                Ok(Ok(()))
+            ) {
+                eprintln!(
+                    "{}",
+                    json!({"component":"remote","kind":"workspace_forward.session_close_failed","local_addr":local_addr.to_string()})
+                );
+            }
+        };
+        if tokio::runtime::Handle::try_current().is_ok() {
+            self.runtime.spawn(cleanup);
+        } else {
+            self.runtime.block_on(cleanup);
+        }
+    }
+}
+
+impl Drop for RemoteLocalForward {
+    fn drop(&mut self) {
+        self.close();
+    }
+}
+
+impl RemoteWorkspaceForward {
+    pub fn remote_port(&self) -> u16 {
+        self.remote_port
+    }
+
+    pub fn failure(&self) -> Option<String> {
+        self.forward_error
+            .lock()
+            .ok()
+            .and_then(|error| error.clone())
+    }
+
+    pub fn close(&self) -> RemoteResult<()> {
+        if self.closed.swap(true, Ordering::AcqRel) {
+            return Ok(());
+        }
+        let session = self
+            .session
+            .lock()
+            .map_err(|_| {
+                remote_error(
+                    "workspace-forward-close",
+                    "workspace",
+                    RemoteStage::Cleanup,
+                    "session lock poisoned",
+                    false,
+                    true,
+                )
+            })?
+            .take();
+        if let Some(session) = session {
+            let cancel = self.runtime.block_on(session.cancel_tcpip_forward(
+                Ipv4Addr::LOCALHOST.to_string(),
+                u32::from(self.remote_port),
+            ));
+            let disconnect = self.runtime.block_on(session.disconnect(
+                Disconnect::ByApplication,
+                "workspace forward closed",
+                "en",
+            ));
+            cancel.map_err(|error| {
+                remote_error(
+                    "workspace-forward-close",
+                    "workspace",
+                    RemoteStage::Cleanup,
+                    error,
+                    true,
+                    false,
+                )
+            })?;
+            disconnect.map_err(|error| {
+                remote_error(
+                    "workspace-forward-close",
+                    "workspace",
+                    RemoteStage::Cleanup,
+                    error,
+                    true,
+                    false,
+                )
+            })?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for RemoteWorkspaceForward {
+    fn drop(&mut self) {
+        let _ = self.close();
+    }
 }
 
 impl fmt::Debug for RemoteTunnelHandle {
@@ -3669,6 +4348,70 @@ mod tests {
             "/tmp/known_hosts",
         )
         .unwrap()
+    }
+
+    /// Russh starts a socket-owning task after the SSH banner but before it
+    /// returns a Handle. Canceling in that interval must still close the peer.
+    #[test]
+    fn repeated_post_banner_cancellation_closes_each_socket() {
+        let runtime = Builder::new_multi_thread()
+            .worker_threads(1)
+            .enable_all()
+            .build()
+            .unwrap();
+        let client = runtime.block_on(async {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let alias = SshAlias {
+                host_id: "ssh:kex-stall".to_owned(),
+                alias: "kex-stall".to_owned(),
+                hostname: "127.0.0.1".to_owned(),
+                user: "example".to_owned(),
+                port,
+                identity_file: None,
+                agent_socket: AgentSocket::Disabled,
+                known_hosts_file: PathBuf::from("/dev/null"),
+            };
+            let client = Arc::new(RusshRemoteClient::new(alias).unwrap());
+            for attempt in 0..6 {
+                let connecting = Arc::clone(&client);
+                let handler = KnownHostHandler::new(&client.host, None);
+                let task = tokio::spawn(async move { connecting.connect(handler).await });
+                let (mut socket, _) =
+                    tokio::time::timeout(Duration::from_secs(2), listener.accept())
+                        .await
+                        .expect("client connects to fake SSH peer")
+                        .unwrap();
+                let mut byte = [0; 1];
+                let mut banner_end = false;
+                for _ in 0..255 {
+                    socket.read_exact(&mut byte).await.unwrap();
+                    if byte[0] == b'\n' {
+                        banner_end = true;
+                        break;
+                    }
+                }
+                assert!(banner_end, "client sends an SSH identification");
+                socket.write_all(b"SSH-2.0-kex-stall\r\n").await.unwrap();
+                socket.read_exact(&mut byte).await.unwrap();
+                task.abort();
+                let _ = task.await;
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    loop {
+                        match socket.read(&mut byte).await {
+                            Ok(0) => break,
+                            Ok(_) => {}
+                            Err(error) if error.kind() == io::ErrorKind::ConnectionReset => break,
+                            Err(error) => panic!("unexpected peer read failure: {error}"),
+                        }
+                    }
+                })
+                .await
+                .unwrap_or_else(|_| panic!("cancellation {attempt} left its SSH socket open"));
+            }
+            client
+        });
+        drop(client);
     }
 
     /// A changed host key, an unknown one and a refused sign-in each need a

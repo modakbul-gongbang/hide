@@ -11,9 +11,9 @@ use axum::Router;
 use axum::body::Body;
 use axum::extract::State;
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
-use axum::http::{HeaderMap, StatusCode, Uri};
+use axum::http::{HeaderMap, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -24,6 +24,7 @@ use crate::boundary::{self, Boundary, Listing, Refusal};
 use crate::core::CoreHandle;
 use crate::index::{IndexAnswer, IndexService};
 use crate::opener::OpenHandler;
+use crate::pane_auth::Registry;
 use crate::state_file::{MAX_CLIENTS, SCHEMA_VERSION};
 use crate::watch::WatchService;
 
@@ -71,8 +72,14 @@ pub struct AppState {
     /// One bounded, daemon-owned path for OS file associations.
     pub opener: OpenHandler,
     pub token: Arc<String>,
+    pub pane_capabilities: Arc<Registry>,
+    pub browser_routes: Arc<crate::browser_routes::BrowserRoutes>,
+    pub herdr_socket: Option<PathBuf>,
     pub allowed_origins: Arc<HashSet<String>>,
     pub clients: Arc<AtomicUsize>,
+    /// Authenticated shell windows, distinct from CLI and non-rendering clients.
+    pub renderers: Arc<AtomicUsize>,
+    pub desktop_renderers: Arc<AtomicUsize>,
     /// Numbers connections so a stage can be released with its connection.
     pub connections: Arc<AtomicU64>,
     pub last_client_gone: Arc<Mutex<Instant>>,
@@ -93,6 +100,7 @@ pub struct AppState {
 struct Handshake {
     token: String,
     schema_version: u32,
+    client_kind: Option<String>,
     have_revision: Option<u64>,
     have_terminal_sequence: Option<u64>,
 }
@@ -129,10 +137,99 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(health))
         .route("/ws", get(ws_upgrade))
+        .route(
+            "/browser-route",
+            post(resolve_browser_route).delete(release_browser_route),
+        )
         .route("/", get(static_asset))
         .route("/assets/{*path}", get(static_asset))
         .fallback(|| async { StatusCode::NOT_FOUND })
         .with_state(state)
+}
+
+#[derive(Deserialize)]
+struct BrowserRouteRequest {
+    device_id: String,
+    checkout_path: String,
+    id: String,
+    load: u64,
+    owner_pid: i32,
+}
+
+fn browser_route_authorized(headers: &HeaderMap, state: &AppState) -> bool {
+    let offered = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .unwrap_or("");
+    token_matches(offered, &state.token)
+}
+
+fn browser_route_request_valid(request: &BrowserRouteRequest) -> bool {
+    !request.device_id.is_empty()
+        && request.device_id.len() <= 256
+        && request.checkout_path.starts_with('/')
+        && request.checkout_path.len() <= 8192
+        && !request.id.is_empty()
+        && request.id.len() <= 256
+        && request.owner_pid > 0
+}
+
+async fn resolve_browser_route(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<BrowserRouteRequest>,
+) -> Response {
+    if !browser_route_authorized(&headers, &state) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if !browser_route_request_valid(&request) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    match state
+        .browser_routes
+        .resolve(
+            request.device_id,
+            request.checkout_path,
+            request.id,
+            request.load,
+            request.owner_pid,
+        )
+        .await
+    {
+        Ok(route) => axum::Json(route).into_response(),
+        Err(reason) => {
+            eprintln!(
+                "{}",
+                json!({"component":"browser_routes","kind":"resolve.refused","reason":reason})
+            );
+            (StatusCode::CONFLICT, axum::Json(json!({"reason":reason}))).into_response()
+        }
+    }
+}
+
+async fn release_browser_route(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<BrowserRouteRequest>,
+) -> Response {
+    if !browser_route_authorized(&headers, &state) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if !browser_route_request_valid(&request) {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    state
+        .browser_routes
+        .release(
+            &request.device_id,
+            &request.checkout_path,
+            &request.id,
+            request.load,
+            request.owner_pid,
+        )
+        .await;
+    StatusCode::NO_CONTENT.into_response()
 }
 
 fn idle_remaining_secs(state: &AppState) -> Option<u64> {
@@ -261,12 +358,23 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
             return;
         }
     };
-    if !token_matches(&handshake.token, &state.token) {
-        refuse(&mut socket, CloseReason::InvalidToken, None).await;
-        return;
-    }
     if handshake.schema_version != SCHEMA_VERSION {
         refuse(&mut socket, CloseReason::SchemaMismatch, None).await;
+        return;
+    }
+    if !token_matches(&handshake.token, &state.token) {
+        if let Some(capability) = state.pane_capabilities.get(&handshake.token) {
+            scoped_client_loop(
+                socket,
+                state,
+                connection,
+                handshake.token,
+                capability.one_shot,
+            )
+            .await;
+        } else {
+            refuse(&mut socket, CloseReason::InvalidToken, None).await;
+        }
         return;
     }
     let previous = state.clients.fetch_add(1, Ordering::SeqCst);
@@ -274,6 +382,14 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
         state.clients.fetch_sub(1, Ordering::SeqCst);
         refuse(&mut socket, CloseReason::ClientLimit, Some(previous + 1)).await;
         return;
+    }
+    let renderer = matches!(handshake.client_kind.as_deref(), Some("web" | "desktop"));
+    let desktop = handshake.client_kind.as_deref() == Some("desktop");
+    if renderer {
+        state.renderers.fetch_add(1, Ordering::SeqCst);
+    }
+    if desktop {
+        state.desktop_renderers.fetch_add(1, Ordering::SeqCst);
     }
     // A reconnecting client resumes from the cursors it last applied, so the
     // first frame carries only what changed while it was away; a fresh client
@@ -300,14 +416,14 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
         .await
         .is_err()
     {
-        client_gone(&state, connection);
+        client_gone(&state, connection, renderer, desktop);
         return;
     }
     if send_snapshot(&mut socket, &state, &mut have_revision, &mut have_sequence)
         .await
         .is_err()
     {
-        client_gone(&state, connection);
+        client_gone(&state, connection, renderer, desktop);
         return;
     }
     loop {
@@ -427,7 +543,204 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
     for read in device_reads {
         read.task.abort();
     }
-    client_gone(&state, connection);
+    client_gone(&state, connection, renderer, desktop);
+}
+
+/// A pane capability can submit only Workspace commands. It never receives a
+/// snapshot, file bytes, or the shell's unrestricted dispatch channel.
+async fn scoped_client_loop(
+    mut socket: WebSocket,
+    state: AppState,
+    connection: u64,
+    token: String,
+    one_shot: bool,
+) {
+    enum ScopedRequest {
+        Query(herdr_core::workspace_control::Query),
+        Action(herdr_core::workspace_control::Action),
+    }
+    let previous = state.clients.fetch_add(1, Ordering::SeqCst);
+    if previous >= MAX_CLIENTS {
+        state.clients.fetch_sub(1, Ordering::SeqCst);
+        refuse(&mut socket, CloseReason::ClientLimit, Some(previous + 1)).await;
+        return;
+    }
+    let incoming = tokio::time::timeout(Duration::from_secs(10), socket.recv()).await;
+    let response = match incoming {
+        Ok(Some(Ok(Message::Text(text)))) if text.len() <= 16 * 1024 => {
+            match serde_json::from_str::<Value>(&text) {
+                Ok(value) => {
+                    let request_id = value["request_id"].as_str().unwrap_or("");
+                    let command = match value["type"].as_str() {
+                        Some("workspace_query") => match value["query"].as_str() {
+                            Some("info") => Some(ScopedRequest::Query(
+                                herdr_core::workspace_control::Query::Info,
+                            )),
+                            Some("view_list") => Some(ScopedRequest::Query(
+                                herdr_core::workspace_control::Query::ViewList,
+                            )),
+                            _ => None,
+                        },
+                        Some("workspace_action") => {
+                            serde_json::from_value::<herdr_core::workspace_control::Action>(
+                                value["command"].clone(),
+                            )
+                            .ok()
+                            .map(ScopedRequest::Action)
+                        }
+                        _ => None,
+                    };
+                    if command.is_none()
+                        || request_id.is_empty()
+                        || request_id.len() > 64
+                        || !request_id
+                            .bytes()
+                            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+                    {
+                        json!({"type":"workspace_result","ok":false,"reason":"invalid_request","next_action":"Check hide command arguments and retry"})
+                    } else {
+                        let request_id = request_id.to_owned();
+                        let Some(command) = command else {
+                            unreachable!("validated above")
+                        };
+                        let core = Arc::clone(&state.core);
+                        let registry = Arc::clone(&state.pane_capabilities);
+                        let renderers = Arc::clone(&state.renderers);
+                        let desktop_renderers = Arc::clone(&state.desktop_renderers);
+                        let herdr_socket = state.herdr_socket.clone();
+                        let query_token = token.clone();
+                        let command_request_id = request_id.clone();
+                        let outcome = tokio::task::spawn_blocking(move || {
+                            let cap = registry
+                                .validate(&query_token, herdr_socket.as_deref(), &core)
+                                .map_err(|reason| (reason, "Reconnect the pane and retry"))?;
+                            if renderers.load(Ordering::SeqCst) == 0 {
+                                return Err((
+                                    "renderer_unavailable",
+                                    "Open Hide's web or desktop shell and retry",
+                                ));
+                            }
+                            let result = match command {
+                                ScopedRequest::Query(query) => {
+                                    let mut result = core
+                                        .workspace_query(
+                                            &cap.context.device_id,
+                                            &cap.pane_id,
+                                            query,
+                                        )
+                                        .map_err(|refusal| (refusal.reason, refusal.next_action))?;
+                                    if result.context != cap.context {
+                                        return Err((
+                                            "pane_changed",
+                                            "Reconnect the pane and retry",
+                                        ));
+                                    }
+                                    if desktop_renderers.load(Ordering::SeqCst) == 0 {
+                                        result.capabilities.retain(|capability| !capability.starts_with("browser."));
+                                        if let Some(views) = &mut result.views {
+                                            for view in views {
+                                                if let Some(page) = &mut view.page {
+                                                    page.state = if page.state == "pending" { "unsupported" } else { "disconnected" };
+                                                    page.failure = None;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    serde_json::to_value(result).map_err(|_| {
+                                        ("result_encoding_failed", "Reconnect Hide and retry")
+                                    })?
+                                }
+                                ScopedRequest::Action(action) => {
+                                    if matches!(action, herdr_core::workspace_control::Action::OpenBrowser { .. }) && desktop_renderers.load(Ordering::SeqCst) == 0 {
+                                        return Err(("browser_unsupported", "Open the Hide desktop app and retry"));
+                                    }
+                                    let preparation = core
+                                        .workspace_prepare_action(
+                                            &cap.context.device_id,
+                                            &cap.pane_id,
+                                            &cap.context,
+                                            &command_request_id,
+                                            &action,
+                                        )
+                                        .map_err(|refusal| (refusal.reason, refusal.next_action))?;
+                                    let material = match preparation {
+                                        herdr_core::workspace_control::ActionPreparation::Cached(result) => {
+                                            let result = result.map_err(|refusal| (refusal.reason, refusal.next_action))?;
+                                            return serde_json::to_value(result).map_err(|_| {
+                                                ("result_encoding_failed", "Reconnect Hide and retry")
+                                            });
+                                        }
+                                        herdr_core::workspace_control::ActionPreparation::Ready => Ok(None),
+                                        herdr_core::workspace_control::ActionPreparation::Read(source) => {
+                                            source.read().map(Some)
+                                        }
+                                    };
+                                    let result = core
+                                        .workspace_action(
+                                            &cap.context.device_id,
+                                            &cap.pane_id,
+                                            &cap.context,
+                                            &command_request_id,
+                                            action,
+                                            material,
+                                        )
+                                        .map_err(|refusal| (refusal.reason, refusal.next_action))?;
+                                    if result.context != cap.context {
+                                        return Err((
+                                            "pane_changed",
+                                            "Reconnect the pane and retry",
+                                        ));
+                                    }
+                                    serde_json::to_value(result).map_err(|_| {
+                                        ("result_encoding_failed", "Reconnect Hide and retry")
+                                    })?
+                                }
+                            };
+                            Ok::<_, (&str, &str)>(result)
+                        })
+                        .await;
+                        match outcome {
+                            Ok(Ok(result)) => {
+                                json!({"type":"workspace_result","request_id":request_id,"ok":true,"result":result})
+                            }
+                            Ok(Err((reason, next_action))) => {
+                                json!({"type":"workspace_result","request_id":request_id,"ok":false,"reason":reason,"next_action":next_action})
+                            }
+                            Err(_) => {
+                                json!({"type":"workspace_result","request_id":request_id,"ok":false,"reason":"query_unavailable","next_action":"Retry after reconnecting Hide"})
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    json!({"type":"workspace_result","ok":false,"reason":"invalid_request","next_action":"Check the command arguments and retry"})
+                }
+            }
+        }
+        _ => {
+            json!({"type":"workspace_result","ok":false,"reason":"request_timeout","next_action":"Check Hide status and retry"})
+        }
+    };
+    if socket
+        .send(Message::Text(response.to_string().into()))
+        .await
+        .is_ok()
+    {
+        let claim = tokio::time::timeout(Duration::from_secs(2), socket.recv()).await;
+        if matches!(claim, Ok(Some(Ok(Message::Text(text)))) if text == r#"{"type":"workspace_claim"}"#)
+        {
+            let answer = match state.pane_capabilities.claim(&token) {
+                Ok(()) => json!({"type":"workspace_claimed"}),
+                Err(reason) => json!({"type":"workspace_claim_refused","reason":reason}),
+            };
+            let _ = socket.send(Message::Text(answer.to_string().into())).await;
+        }
+    }
+    let _ = socket.send(Message::Close(None)).await;
+    if one_shot {
+        state.pane_capabilities.revoke(&token);
+    }
+    client_gone(&state, connection, false, false);
 }
 
 /// How many device file reads one client runs at once. A viewer asks for one
@@ -1777,6 +2090,15 @@ fn browser_url(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Val
     if !crate::file_url::is_file_url(&raw) {
         return None;
     }
+    if event
+        .pointer("/payload/workspace/device_id")
+        .and_then(Value::as_str)
+        .is_some_and(|device| device != "local")
+    {
+        // The core and the consented device host own this remote path. This
+        // Mac's checkout boundary cannot resolve a path on that device.
+        return None;
+    }
     let Some((path, suffix)) = crate::file_url::file_path(&raw) else {
         return Some(refused(kind, &raw, Refusal::InvalidPath));
     };
@@ -1981,7 +2303,13 @@ async fn send_snapshot(
     Ok(())
 }
 
-fn client_gone(state: &AppState, connection: u64) {
+fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool) {
+    if renderer {
+        state.renderers.fetch_sub(1, Ordering::SeqCst);
+    }
+    if desktop {
+        state.desktop_renderers.fetch_sub(1, Ordering::SeqCst);
+    }
     state.attachments.release(connection);
     state.demand.release(connection, |observing| {
         dispatch_observation(state, connection, observing)
@@ -2060,7 +2388,7 @@ pub async fn bind(addr: SocketAddr) -> Result<tokio::net::TcpListener, String> {
         .map_err(|error| format!("bind {addr} failed: {error}"))
 }
 
-fn mime_for(path: &std::path::Path) -> &'static str {
+pub(crate) fn mime_for(path: &std::path::Path) -> &'static str {
     match path.extension().and_then(|ext| ext.to_str()) {
         Some("html") => "text/html; charset=utf-8",
         Some("js") => "text/javascript; charset=utf-8",

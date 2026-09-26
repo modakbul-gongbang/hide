@@ -20,6 +20,7 @@ Redirecting a release build with `CARGO_TARGET_DIR`, `--target-dir` or `--build-
 The cost of this layout is one full build cache per worktree, which is why a worktree is removed when its branch lands rather than kept around.
 
 A release `hided` carries `web/dist` inside the binary: `hided/build.rs` embeds every file under it when the profile is `release` and fails the build when `web/dist/index.html` is missing, so a release build is always `pnpm --dir web build` first, then `cargo build --release -p hided`.
+Both macOS bundle scripts perform that build before bundling the `hide` CLI beside `hide-agent-hooks`, so an installed SessionStart probe has a matching executable even without a separate CLI on `PATH`.
 A debug `hided` embeds nothing and reads `web/dist` from disk at run time (`HIDED_UI_DIR` overrides the lookup), so a rebuilt web shell shows up without a cargo rebuild.
 The web measurement (`MEASURE_SCENARIO=multi HIDE_MEASURE_RUN_DIR=agents/runs/<slug>/measure/<attempt> bash scripts/web-shell-measure/run.sh`, `docs/PERFORMANCE_TESTING.md`) needs that release `hided` at `target/release/hided` inside the worktree it measures; it is never redirected, for the same reason as the release archive.
 On 2026-09-09 one abandoned worktree held 5.3 GB, over half of the 10 GB across all eight.
@@ -49,6 +50,7 @@ A check script calls the same two scripts rather than cargo or swift directly, s
 | --- | --- | --- |
 | test | `bash scripts/verify-cargo.sh test` | `target/debug`; locked workspace tests |
 | lint | `bash scripts/verify-cargo.sh lint` | `cargo fmt --check` then `cargo clippy -D warnings` over every target |
+| cli | `bash scripts/verify-cargo.sh cli` | `target/debug/hide`, `target/debug/hided`, and `target/debug/hide-agent-hooks` for isolated CLI, daemon, and SessionStart checks |
 | build | `bash scripts/verify-swift.sh test` | `target/release/libherdr_core.a`, then `macos/.build`; the executable, resources and test targets compile and the tests execute |
 
 `verify-swift.sh` first invokes `verify-cargo.sh build`, so a Swift run never links a stale core.

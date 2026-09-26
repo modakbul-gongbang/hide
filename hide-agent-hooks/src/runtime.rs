@@ -21,7 +21,7 @@ pub const HELPER_BINARY_NAME: &str = "hide-agent-hooks";
 /// changes shape, so an older entry is reported as outdated and the operator
 /// is offered a reinstall rather than being silently left with a hook that
 /// reports nothing.
-pub const HOOK_VERSION: u32 = 4;
+pub const HOOK_VERSION: u32 = 5;
 
 /// The one sentence SessionStart adds to either agent runtime inside Hide.
 /// Both runtimes accept the same `hookSpecificOutput.additionalContext`
@@ -55,6 +55,16 @@ pub fn hook_stdout_with_context(
         }),
     };
     serde_json::to_string(&output).ok()
+}
+
+/// Add a live pane's Workspace instructions to the existing SessionStart
+/// envelope without changing the Memory receipt embedded in that context.
+pub fn append_session_context(output: &str, context: &str) -> Option<String> {
+    let mut value: serde_json::Value = serde_json::from_str(output).ok()?;
+    let existing = value["hookSpecificOutput"]["additionalContext"].as_str()?;
+    let combined = format!("{existing}\n\n{context}");
+    value["hookSpecificOutput"]["additionalContext"] = combined.into();
+    serde_json::to_string(&value).ok()
 }
 
 /// The token that says this pane's session is running Hide's hook at all.

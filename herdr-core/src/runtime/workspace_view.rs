@@ -14,7 +14,8 @@ use serde::Deserialize;
 
 use super::view_areas::Reconciled;
 use super::*;
-use crate::model::WorkspaceViewSnapshot;
+use crate::model::{BrowserViewInventoryRow, WorkspaceViewSnapshot};
+use crate::view_layout::DisplayKind;
 use crate::workspace_views::{self, PanelState, WorkspaceView, WorkspaceViews};
 
 /// A Workspace's identity: the device and the checkout path.
@@ -471,6 +472,26 @@ impl Runtime {
         }
         self.restore_front_when_ready();
         self.reconcile_view_displays();
+        if let Some(store) = self.workspace_views.as_ref()
+            && self.snapshot.browser_views_revision != Some(store.generation)
+        {
+            self.snapshot.browser_views = store
+                .views
+                .workspaces
+                .iter()
+                .flat_map(|view| {
+                    view.layout
+                        .displays()
+                        .filter(|display| display.kind == DisplayKind::Browser)
+                        .map(|display| BrowserViewInventoryRow {
+                            device_id: view.device_id.clone(),
+                            path: view.path.clone(),
+                            view_id: display.id.clone(),
+                        })
+                })
+                .collect();
+            self.snapshot.browser_views_revision = Some(store.generation);
+        }
         self.publish_workspace_view(front.as_ref());
     }
 

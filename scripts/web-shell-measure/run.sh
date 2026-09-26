@@ -15,6 +15,7 @@
 set -euo pipefail
 measure_dir="$(cd "$(dirname "$0")" && pwd)"
 source "$measure_dir/isolated-env.sh"
+trap 'rmdir "$MEASURE_SOCKET_DIR"' EXIT
 scenario="${MEASURE_SCENARIO:-single}"
 case "$scenario" in single|multi) ;; *) echo "MEASURE_SCENARIO must be single or multi" >&2; exit 2;; esac
 chrome_bin="${MEASURE_CHROME_BIN:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
@@ -27,15 +28,25 @@ note() { printf 'measure: %s\n' "$*"; }
 cleanup() {
   trap - EXIT INT TERM
   set +e
-  for pid in "${pids[@]:-}"; do [[ -n "$pid" ]] && kill "$pid" 2>/dev/null; done
+  kill_owned() {
+    local pid=$1
+    [[ -n "$pid" ]] || return 0
+    [[ "$(ps -p "$pid" -o ppid= | tr -d ' ')" == "$$" ]] && kill "$pid" 2>/dev/null
+  }
+  for pid in "${pids[@]:-}"; do kill_owned "$pid"; done
   if $server_started; then
-    "$HERDR_BIN_PATH" server stop >/dev/null 2>&1 || true
-    sleep 1
-    [[ -n "${server_pid:-}" ]] && kill "$server_pid" 2>/dev/null
+    kill_owned "${server_pid:-}"
+    [[ -n "${server_pid:-}" ]] && wait "$server_pid" 2>/dev/null
     rm -f "$HERDR_SOCKET_PATH" "${HERDR_SOCKET_PATH%.sock}-client.sock"
   fi
   for pid in "${pids[@]:-}"; do [[ -n "$pid" ]] && wait "$pid" 2>/dev/null; done
-  ps -axo pid,ppid,command > "$MEASURE_RUN_DIR/cleanup-processes.txt"
+  rmdir "$MEASURE_SOCKET_DIR"
+  {
+    for pid in "${pids[@]:-}" "${server_pid:-}"; do
+      [[ -n "$pid" ]] || continue
+      ps -p "$pid" -o pid=,ppid=,comm= || printf '%s exited\n' "$pid"
+    done
+  } > "$MEASURE_RUN_DIR/cleanup-processes.txt"
   python3 "$measure_dir/operator-counts.py" "$HERDR_BIN_PATH" "$MEASURE_OPERATOR_SOCKET" "$MEASURE_RUN_DIR/operator-after.json"
 }
 trap cleanup EXIT
@@ -58,7 +69,30 @@ wait_js() {
   local deadline=$((SECONDS+30))
   until [[ "$(node -e "
 import('$measure_dir/cdp.mjs').then(async ({connectPage}) => { const p = await connectPage('$MEASURE_CDP_PORT'); console.log(await p.evaluate(process.argv[1])); p.close(); }).catch(() => console.log('unready'))" "$1")" == true ]]; do
-    (( SECONDS < deadline )) || { echo "browser unready: $1" >&2; exit 1; }
+    if (( SECONDS >= deadline )); then
+      node --input-type=module - "$measure_dir/cdp.mjs" "$MEASURE_CDP_PORT" <<'JS' >&2
+const { connectPage } = await import(process.argv[2]);
+const page = await connectPage(process.argv[3]);
+try {
+  console.log(JSON.stringify(await page.evaluate(`({
+    screen: document.querySelector('main')?.getAttribute('aria-label'),
+    mainView: document.querySelector('[data-main-screen]')?.getAttribute('data-main-view'),
+    overviewState: document.querySelector('[data-overview-screen]')?.getAttribute('data-overview-state'),
+    projectRows: document.querySelectorAll('[data-main-project]').length,
+    workspaceRows: document.querySelectorAll('[data-overview-workspace]').length,
+    sidebarMode: document.querySelector('[data-sidebar]')?.getAttribute('data-sidebar'),
+    sidebarProjects: document.querySelectorAll('[data-project-row]').length,
+    sidebarCheckouts: document.querySelectorAll('[data-checkout]').length,
+    checkoutKinds: [...document.querySelectorAll('[data-checkout-kind]')].map((row) => row.getAttribute('data-checkout-kind')),
+    workspaceVisible: Boolean(document.querySelector('[data-workspace-screen]'))
+  })`)));
+} finally {
+  page.close();
+}
+JS
+      echo "browser unready: $1" >&2
+      exit 1
+    fi
     sleep 0.3
   done
 }
@@ -69,13 +103,6 @@ reset_fixture() {
   sleep 0.5
 }
 
-# Never adopt an unrelated server on the CDP port.
-python3 - "$MEASURE_CDP_PORT" <<'PY'
-import socket,sys
-with socket.socket() as s:
-    s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1)
-    s.bind(('127.0.0.1',int(sys.argv[1])))
-PY
 {
   echo "worktree_head=$(git -C "$MEASURE_WORKTREE" rev-parse HEAD)"
   echo "worktree_dirty=$(git -C "$MEASURE_WORKTREE" status --porcelain | wc -l | tr -d ' ')"
@@ -99,6 +126,11 @@ if [[ ! -d "$MEASURE_FIXTURE/.git" ]]; then
   git -C "$MEASURE_FIXTURE" add README
   git -C "$MEASURE_FIXTURE" -c commit.gpgsign=false -c user.email="measure@example.invalid" -c user.name="measure" commit --quiet -m "measure fixture"
 fi
+measure_checkout="$(cd "$MEASURE_RUN_DIR" && pwd)/checkout"
+if [[ ! -f "$measure_checkout/.git" ]]; then
+  git -C "$MEASURE_FIXTURE" worktree add --quiet -b measure-worktree "$measure_checkout"
+fi
+export MEASURE_FIXTURE="$measure_checkout"
 env HOME="$MEASURE_PRIVATE/home" "$HERDR_BIN_PATH" server >"$MEASURE_RUN_DIR/logs/herdr-server.log" 2>&1 &
 server_pid=$!
 server_started=true
@@ -146,13 +178,23 @@ hided_token="$(python3 -c "import json;print(json.load(open('$MEASURE_PRIVATE/hi
 wait_url "http://127.0.0.1:$hided_port/health"
 page_url="http://127.0.0.1:$hided_port/?probe=1#token=$hided_token"
 
-spawn_owned chrome "$chrome_bin" --user-data-dir="$MEASURE_RUN_DIR/chrome-profile" --remote-debugging-port="$MEASURE_CDP_PORT" --remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check --disable-sync --disable-background-networking --disable-component-update --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --window-size=1280,900 "$page_url"
+port_file="$MEASURE_RUN_DIR/chrome-profile/DevToolsActivePort"
+[[ ! -e "$port_file" ]] || { echo 'stale CDP port file; use a new run directory' >&2; exit 2; }
+spawn_owned chrome "$chrome_bin" --user-data-dir="$MEASURE_RUN_DIR/chrome-profile" --remote-debugging-port=0 --remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check --disable-sync --disable-background-networking --disable-component-update --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --window-size=1280,900 about:blank
 chrome_pid=$owned_pid
+deadline=$((SECONDS+20)); until [[ -s "$port_file" ]]; do
+  [[ "$(ps -p "$chrome_pid" -o ppid= | tr -d ' ')" == "$$" ]] || { echo 'owned Chrome exited before CDP became ready' >&2; exit 1; }
+  (( SECONDS < deadline )) || { echo 'owned Chrome CDP port did not appear' >&2; exit 1; }
+  sleep 0.1
+done
+export MEASURE_CDP_PORT="$(head -n 1 "$port_file")"
+[[ "$MEASURE_CDP_PORT" =~ ^[0-9]+$ ]] || { echo 'owned Chrome CDP port is invalid' >&2; exit 1; }
 wait_url "http://127.0.0.1:$MEASURE_CDP_PORT/json/list"
-# A first run opens on Main (PRD S6 D-11): choose the fixture's Project, then
-# its Workspace in the Overview, one click per poll until the Workspace shows.
-wait_js "(() => { if (document.querySelector('[data-workspace-screen]')) return true; const next = document.querySelector('[data-overview-workspace]') ?? document.querySelector('[data-main-project]:not([disabled])'); if (next) next.click(); return false; })()"
-wait_js 'Boolean(window.__hideProbe && window.__hideProbe.paneId())'
+printf '%s' "$page_url" | node "$measure_dir/navigate.mjs" "$MEASURE_CDP_PORT"
+# A first run opens on Main (PRD S6 D-11). Open the one fixture checkout
+# through the Projects sidebar, one click per poll until its Workspace shows.
+wait_js "(() => { if (document.querySelector('[data-workspace-screen]')) return true; const projects = document.querySelector('[data-sidebar-mode=\"projects\"]'); if (projects?.getAttribute('aria-pressed') !== 'true') { projects?.click(); return false; } const checkout = document.querySelector('[data-checkout-kind=\"branch\"]:not([disabled])'); if (checkout) { checkout.click(); return false; } document.querySelector('[data-project-toggle][aria-expanded=\"false\"]')?.click(); return false; })()"
+wait_js "window.__hideProbe?.paneId() === '$MEASURE_PANE_ID'"
 sleep 2
 if [[ "$scenario" == multi ]]; then
   # Show each extra tab once so the core attaches it, then return.

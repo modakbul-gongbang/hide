@@ -1,9 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { addressShown, addressUrl, browserDisplays, fileUrl, hostKey, isHtmlFile, parseWorkspaceKey, placements, stateReport, withoutClosed } from "./browserViews";
+import { addressShown, addressUrl, browserDisplays, fileUrl, hostKey, isHtmlFile, parseWorkspaceKey, placements, withoutClosed } from "./browserViews";
 import type { ViewLayoutSnapshot } from "./snapshot";
 import { workspaceKey } from "./viewLayout";
-
-const page = { url: "", title: "", loading: false, canGoBack: false, canGoForward: false, failure: null };
 
 describe("the address field", () => {
   it("keeps a scheme, opens a path as a file, and picks http only for a loopback host", () => {
@@ -29,18 +27,6 @@ describe("the address field", () => {
     // hided/src/file_url.rs spells the same path this way.
     expect(fileUrl("/a/100%/#x?.html")).toBe("file:///a/100%25/%23x%3F.html");
     expect(fileUrl("/a/{b}`c\"<d>")).toBe("file:///a/%7Bb%7D%60c%22%3Cd%3E");
-  });
-});
-
-describe("what the core records of a page", () => {
-  it("reports an address or title the core does not hold yet, once", () => {
-    const core = { url: "https://a.test/", title: "" };
-    expect(stateReport(core, { ...page, url: "https://a.test/" }, null)).toBeNull();
-    const moved = stateReport(core, { ...page, url: "https://a.test/next", title: "Next" }, null);
-    expect(moved).toEqual({ url: "https://a.test/next", title: "Next" });
-    expect(stateReport(core, { ...page, url: "https://a.test/next", title: "Next" }, moved)).toBeNull();
-    // A page that has said nothing yet leaves the core's address alone.
-    expect(stateReport(core, page, null)).toBeNull();
   });
 });
 

@@ -5,6 +5,9 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 use herdr_core::host_access::HostChannel;
+use herdr_core::workspace_control::{
+    Action, ActionMaterial, ActionPreparation, ActionResult, Context, Query, QueryResult, Refusal,
+};
 use herdr_core::{Core, CoreOptions};
 use tokio::sync::broadcast;
 
@@ -24,6 +27,39 @@ enum Command {
     DeviceChannel {
         device_id: String,
         reply: Sender<Result<Arc<dyn HostChannel>, String>>,
+    },
+    WorkspaceRemoteRoutes {
+        reply: Sender<Vec<herdr_core::WorkspaceRemoteRoute>>,
+    },
+    BrowserRouteSource {
+        device_id: String,
+        checkout_path: String,
+        view_id: String,
+        load: u64,
+        reply: Sender<Option<herdr_core::workspace_control::BrowserRouteSource>>,
+    },
+    WorkspaceQuery {
+        device_id: String,
+        pane_id: String,
+        query: Query,
+        reply: Sender<Result<QueryResult, Refusal>>,
+    },
+    WorkspaceAction {
+        device_id: String,
+        pane_id: String,
+        expected: Context,
+        request_id: String,
+        action: Action,
+        material: Box<Result<Option<ActionMaterial>, Refusal>>,
+        reply: Sender<Result<ActionResult, Refusal>>,
+    },
+    WorkspacePrepare {
+        device_id: String,
+        pane_id: String,
+        expected: Context,
+        request_id: String,
+        action: Action,
+        reply: Sender<Result<ActionPreparation, Refusal>>,
     },
     Snapshot {
         have_revision: u64,
@@ -93,6 +129,118 @@ impl CoreHandle {
             .map_err(|_| "core owner thread dropped device-channel reply".to_owned())?
     }
 
+    pub fn workspace_remote_routes(&self) -> Result<Vec<herdr_core::WorkspaceRemoteRoute>, String> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::WorkspaceRemoteRoutes { reply })
+            .map_err(|_| "core owner thread is gone".to_owned())?;
+        rx.recv()
+            .map_err(|_| "core owner thread dropped remote routes".to_owned())
+    }
+
+    pub fn browser_route_source(
+        &self,
+        device_id: &str,
+        checkout_path: &str,
+        view_id: &str,
+        load: u64,
+    ) -> Result<Option<herdr_core::workspace_control::BrowserRouteSource>, String> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::BrowserRouteSource {
+                device_id: device_id.to_owned(),
+                checkout_path: checkout_path.to_owned(),
+                view_id: view_id.to_owned(),
+                load,
+                reply,
+            })
+            .map_err(|_| "core owner thread is gone".to_owned())?;
+        rx.recv()
+            .map_err(|_| "core owner thread dropped browser route source".to_owned())
+    }
+
+    pub fn workspace_query(
+        &self,
+        device_id: &str,
+        pane_id: &str,
+        query: Query,
+    ) -> Result<QueryResult, Refusal> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::WorkspaceQuery {
+                device_id: device_id.to_owned(),
+                pane_id: pane_id.to_owned(),
+                query,
+                reply,
+            })
+            .map_err(|_| Refusal {
+                reason: "core_unavailable",
+                next_action: "Reconnect Hide and retry",
+            })?;
+        rx.recv().map_err(|_| Refusal {
+            reason: "core_unavailable",
+            next_action: "Reconnect Hide and retry",
+        })?
+    }
+
+    pub fn workspace_action(
+        &self,
+        device_id: &str,
+        pane_id: &str,
+        expected: &Context,
+        request_id: &str,
+        action: Action,
+        material: Result<Option<ActionMaterial>, Refusal>,
+    ) -> Result<ActionResult, Refusal> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::WorkspaceAction {
+                device_id: device_id.to_owned(),
+                pane_id: pane_id.to_owned(),
+                expected: expected.clone(),
+                request_id: request_id.to_owned(),
+                action,
+                material: Box::new(material),
+                reply,
+            })
+            .map_err(|_| Refusal {
+                reason: "core_unavailable",
+                next_action: "Reconnect Hide and retry",
+            })?;
+        rx.recv().map_err(|_| Refusal {
+            reason: "core_unavailable",
+            next_action: "Reconnect Hide and retry",
+        })?
+    }
+
+    pub fn workspace_prepare_action(
+        &self,
+        device_id: &str,
+        pane_id: &str,
+        expected: &Context,
+        request_id: &str,
+        action: &Action,
+    ) -> Result<ActionPreparation, Refusal> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::WorkspacePrepare {
+                device_id: device_id.to_owned(),
+                pane_id: pane_id.to_owned(),
+                expected: expected.clone(),
+                request_id: request_id.to_owned(),
+                action: action.clone(),
+                reply,
+            })
+            .map_err(|_| Refusal {
+                reason: "core_unavailable",
+                next_action: "Reconnect Hide and retry",
+            })?;
+        rx.recv().map_err(|_| Refusal {
+            reason: "core_unavailable",
+            next_action: "Reconnect Hide and retry",
+        })?
+    }
+
     pub fn snapshot(
         &self,
         have_revision: u64,
@@ -154,6 +302,65 @@ fn owner_loop(
             }
             Command::DeviceChannel { device_id, reply } => {
                 let _ = reply.send(core.device_channel(&device_id));
+            }
+            Command::WorkspaceRemoteRoutes { reply } => {
+                let _ = reply.send(core.workspace_remote_routes());
+            }
+            Command::BrowserRouteSource {
+                device_id,
+                checkout_path,
+                view_id,
+                load,
+                reply,
+            } => {
+                let _ = reply.send(core.browser_route_source(
+                    &device_id,
+                    &checkout_path,
+                    &view_id,
+                    load,
+                ));
+            }
+            Command::WorkspaceQuery {
+                device_id,
+                pane_id,
+                query,
+                reply,
+            } => {
+                let _ = reply.send(core.workspace_control_query(&device_id, &pane_id, query));
+            }
+            Command::WorkspaceAction {
+                device_id,
+                pane_id,
+                expected,
+                request_id,
+                action,
+                material,
+                reply,
+            } => {
+                let _ = reply.send(core.workspace_control_action(
+                    &device_id,
+                    &pane_id,
+                    &expected,
+                    &request_id,
+                    action,
+                    *material,
+                ));
+            }
+            Command::WorkspacePrepare {
+                device_id,
+                pane_id,
+                expected,
+                request_id,
+                action,
+                reply,
+            } => {
+                let _ = reply.send(core.workspace_control_prepare_action(
+                    &device_id,
+                    &pane_id,
+                    &expected,
+                    &request_id,
+                    &action,
+                ));
             }
             Command::Snapshot {
                 have_revision,

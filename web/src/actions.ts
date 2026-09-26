@@ -1336,11 +1336,11 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     /** What a page says (its address and title), recorded so the tab and a relaunch show it. */
-    reportBrowserState(workspace: ViewWorkspace, displayId: string, url: string, title: string) {
+    reportBrowserState(workspace: ViewWorkspace, displayId: string, url: string, title: string, load: number, loading: boolean, failure: string | null, present: boolean) {
       dispatch({
         schema_version: 2,
         kind: "browser_state",
-        payload: { workspace: { device_id: workspace.device_id, path: workspace.path }, display_id: displayId, url, title },
+        payload: { workspace: { device_id: workspace.device_id, path: workspace.path }, display_id: displayId, url, title, load, loading, failure, present },
       });
     },
 

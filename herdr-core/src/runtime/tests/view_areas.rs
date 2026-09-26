@@ -1,6 +1,7 @@
 use super::workspace_view::{active_label, layout, second_checkout, views_path, with_views};
 use super::*;
 use crate::model::{ViewDisplaySnapshot, ViewDisplayState, ViewLayoutSnapshot, ViewNodeSnapshot};
+use crate::workspace_control::Action;
 
 // PRD S7: a Workspace's View areas hold displays of documents; where an open
 // lands, what the operator's layout actions do, how a display follows its
@@ -952,6 +953,79 @@ fn closing_one_of_two_displays_keeps_the_document_and_its_draft() {
         serde_json::json!({"action": "close", "display_id": beside}),
     ));
     assert_eq!(runtime.snapshot.status.last_error, None);
+}
+
+/// A pane command has no Save or Don't Save permission. The second close
+/// must leave the draft and its remaining View in place.
+#[test]
+fn pane_close_preserves_a_dirty_last_view_after_closing_its_twin() {
+    let (mut runtime, checkout_id, directory) = views_runtime("pane-close-unsaved");
+    let path = directory.join("notes.md");
+    open(&mut runtime, &checkout_id, &path, false, false);
+    open(&mut runtime, &checkout_id, &path, false, true);
+    let tab_id = tab_of(&runtime, "notes.md");
+    draft(&mut runtime, &tab_id, "unsaved draft\n");
+    runtime.snapshot.status.herdr.state = "connected".to_owned();
+    let pane_id = "pane-cli";
+    let checkout = runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter_mut()
+        .flat_map(|workspace| &mut workspace.checkouts)
+        .find(|checkout| checkout.id == checkout_id)
+        .unwrap();
+    checkout.tabs.push(tab(
+        "workspace:order",
+        &checkout_id,
+        Some(pane(pane_id, &directory.to_string_lossy())),
+    ));
+    let first = display(&mut runtime, 0, "notes.md");
+    let second = display(&mut runtime, 1, "notes.md");
+    let expected = runtime
+        .workspace_control_query("local", pane_id, crate::workspace_control::Query::Info)
+        .unwrap()
+        .context;
+    let first_id = format!("{}-first", unix_milliseconds());
+    assert!(
+        runtime
+            .workspace_control_action(
+                "local",
+                pane_id,
+                &expected,
+                &first_id,
+                Action::Close { view_id: first },
+                Ok(None),
+            )
+            .unwrap()
+            .changed
+    );
+    let second_id = format!("{}-second", unix_milliseconds());
+    assert_eq!(
+        runtime
+            .workspace_control_action(
+                "local",
+                pane_id,
+                &expected,
+                &second_id,
+                Action::Close {
+                    view_id: second.clone()
+                },
+                Ok(None),
+            )
+            .unwrap_err()
+            .reason,
+        "unsaved_document"
+    );
+    assert_eq!(display(&mut runtime, 0, "notes.md"), second);
+    assert!(
+        runtime
+            .snapshot
+            .editor
+            .tabs
+            .iter()
+            .any(|tab| tab.id == tab_id && tab.dirty)
+    );
 }
 
 /// Contract 4.1, B5: a web frame that still shows a dirty document in two

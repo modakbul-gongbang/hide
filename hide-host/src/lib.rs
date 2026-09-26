@@ -17,11 +17,13 @@ pub mod git;
 pub mod index;
 pub mod list;
 pub mod mutate;
+pub mod pane_peer;
 pub mod protocol;
 pub mod register;
 pub mod root;
 pub mod save;
 pub mod serve;
+pub mod workspace_bridge;
 pub mod worktrees;
 
 pub use error::{ErrorCode, HostError, HostResult};

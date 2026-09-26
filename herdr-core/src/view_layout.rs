@@ -100,7 +100,7 @@ pub enum SplitAxis {
 
 /// A side of an area: where a split puts the new area, or which way a
 /// neighbour lies.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Edge {
     Left,

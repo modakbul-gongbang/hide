@@ -1,8 +1,8 @@
 // One CDP session to the product page (the tab whose URL carries probe=1).
-export async function connectPage(cdpPort) {
+export async function connectPage(cdpPort, requireProbe = true) {
   const targets = await fetch(`http://127.0.0.1:${cdpPort}/json/list`).then((r) => r.json());
-  const page = targets.find((t) => t.type === "page" && String(t.url).includes("probe=1"));
-  if (!page) throw new Error(`no probe page on CDP :${cdpPort}: ${targets.map((t) => t.url).join(", ")}`);
+  const page = targets.find((t) => t.type === "page" && (!requireProbe || String(t.url).includes("probe=1")));
+  if (!page) throw new Error(`no ${requireProbe ? "probe " : ""}page on CDP :${cdpPort} (${targets.length} targets)`);
   const ws = new WebSocket(page.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => {
     ws.addEventListener("open", resolve);

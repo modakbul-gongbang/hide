@@ -5,11 +5,11 @@
 import { spawn } from "node:child_process";
 import { connectPage } from "./cdp.mjs";
 
-const cdpPort = process.env.MEASURE_CDP_PORT ?? "9333";
+const cdpPort = process.env.MEASURE_CDP_PORT;
 const windowMs = Number(process.env.MEASURE_FRAME_WINDOW_MS ?? 120_000);
 const paneId = process.env.MEASURE_PANE_ID;
 const herdrBin = process.env.HERDR_BIN_PATH;
-if (!paneId || !herdrBin) throw new Error("MEASURE_PANE_ID and HERDR_BIN_PATH are required");
+if (!cdpPort || !paneId || !herdrBin) throw new Error("MEASURE_CDP_PORT, MEASURE_PANE_ID and HERDR_BIN_PATH are required");
 
 const page = await connectPage(cdpPort);
 const arrivalsBefore = await page.evaluate("window.__hideProbe.arrivals()");

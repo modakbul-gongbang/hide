@@ -18,6 +18,38 @@ fn main() -> ExitCode {
                 }
             }
         }
+        (Some("workspace-bridge"), None) => {
+            let input = BufReader::new(io::stdin());
+            match hide_host::workspace_bridge::serve(input, io::stdout()) {
+                Ok(()) => ExitCode::SUCCESS,
+                Err(error) => {
+                    eprintln!("hide-host-helper: {error}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
+        (Some("pane-inspect"), Some(socket)) => {
+            let Some(pane_id) = arguments.next() else {
+                eprintln!("usage: hide-host-helper pane-inspect <socket> <pane-id>");
+                return ExitCode::from(2);
+            };
+            if arguments.next().is_some() {
+                return ExitCode::from(2);
+            }
+            match hide_host::workspace_bridge::inspect(std::path::Path::new(&socket), &pane_id) {
+                Ok(identity) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string(&identity).expect("pane identity JSON")
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(reason) => {
+                    eprintln!("hide-host-helper: {reason}");
+                    ExitCode::FAILURE
+                }
+            }
+        }
         (Some("--version"), None) => {
             println!(
                 "hide-host-helper {} protocol {}",
@@ -27,7 +59,9 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         _ => {
-            eprintln!("usage: hide-host-helper serve");
+            eprintln!(
+                "usage: hide-host-helper serve|workspace-bridge|pane-inspect <socket> <pane-id>"
+            );
             ExitCode::from(2)
         }
     }

@@ -126,7 +126,7 @@ async function waitFor(predicate: () => boolean, what: string, ms = 10_000): Pro
   throw new Error(`timed out waiting for ${what}`);
 }
 
-export async function startHerdr(): Promise<HerdrFixture> {
+export async function startHerdr({ agents = true }: { agents?: boolean } = {}): Promise<HerdrFixture> {
   const bin = herdrBinary();
   const version = execFileSync(bin, ["--version"], { encoding: "utf8" }).trim().split(/\s+/)[1];
   const pinned = pinnedHerdrVersion();
@@ -206,17 +206,19 @@ export async function startHerdr(): Promise<HerdrFixture> {
     for (const pane of [first, second]) {
       await waitFor(() => paneText(env, bin, pane).includes("fixture %"), `a prompt in pane ${pane}`);
     }
-    herdr(env, bin, ["agent", "start", "one", "--kind", "claude", "--pane", first]);
-    herdr(env, bin, ["agent", "start", "two", "--kind", "claude", "--pane", second]);
-    // Distinct row labels; report-metadata prints nothing on success.
-    for (const [pane, task] of [
-      [first, "Agent one"],
-      [second, "Agent two"],
-    ]) {
-      execFileSync(bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `task=${task}`], {
-        env,
-        timeout: 30_000,
-      });
+    if (agents) {
+      herdr(env, bin, ["agent", "start", "one", "--kind", "claude", "--pane", first]);
+      herdr(env, bin, ["agent", "start", "two", "--kind", "claude", "--pane", second]);
+      // Distinct row labels; report-metadata prints nothing on success.
+      for (const [pane, task] of [
+        [first, "Agent one"],
+        [second, "Agent two"],
+      ]) {
+        execFileSync(bin, ["pane", "report-metadata", pane, "--source", "e2e", "--token", `task=${task}`], {
+          env,
+          timeout: 30_000,
+        });
+      }
     }
     return {
       bin,
