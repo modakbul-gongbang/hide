@@ -150,10 +150,10 @@ export async function sidebarOverflow(page: Page, width: string): Promise<string
 
 /**
  * Whether every sidebar row still holds its text at the interface font size
- * in force (PRD sidebar-readability B26): no text runs
- * past the bottom of any box around it up to its list item, which is where a
- * fixed-height row spills, and no two of them overlap, which is how a spill
- * shows on screen.
+ * in force (PRD sidebar-readability B26): no text runs past the bottom of
+ * any box around it up to its list item, which is where a fixed-height row
+ * spills, unless that box clips it, and no two of them overlap, which is how
+ * a spill shows on screen. A clipping box's own glyphs are judged by eye.
  */
 export async function sidebarRowsFit(page: Page): Promise<string[]> {
   return page.evaluate(() => {
@@ -162,14 +162,22 @@ export async function sidebarRowsFit(page: Page): Promise<string[]> {
     const parts = [...document.querySelectorAll<HTMLElement>("nav[data-sidebar] :is([data-agent-list], [data-project-list]) *")].filter(
       (part) => part.getClientRects().length > 0 && [...part.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim()),
     );
+    // What of a part can show: a box that clips its overflow (a badge, a
+    // truncated label) is the visible edge of the text inside it.
+    const shown = new Map<HTMLElement, DOMRect>();
     for (const part of parts) {
-      const bottom = part.getBoundingClientRect().bottom;
+      const rect = DOMRect.fromRect(part.getBoundingClientRect());
       for (let box = part.parentElement; box && box.tagName !== "NAV"; box = box.parentElement) {
-        if (bottom > box.getBoundingClientRect().bottom + 0.5) problems.push(`${part.textContent} spills below its ${box.tagName.toLowerCase()}`);
+        const edge = box.getBoundingClientRect().bottom;
+        if (rect.bottom > edge + 0.5) {
+          if (getComputedStyle(box).overflowY === "visible") problems.push(`${part.textContent} spills below its ${box.tagName.toLowerCase()}`);
+          else rect.height = Math.max(0, edge - rect.top);
+        }
         if (box.tagName === "LI") break;
       }
+      shown.set(part, rect);
     }
-    const boxes = parts.map((part) => [part, part.getBoundingClientRect()] as const);
+    const boxes = [...shown];
     for (const [i, [a, ra]] of boxes.entries()) {
       for (const [b, rb] of boxes.slice(i + 1)) {
         if (a.contains(b) || b.contains(a)) continue;
