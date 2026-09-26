@@ -7,7 +7,7 @@ import { Command, CommandDialog, CommandGroup, CommandInput, CommandItem, Comman
 import { Kbd } from "./components/ui/kbd";
 import { fileIcon } from "./fileIcons";
 import { filterEntries, groupEntries, searchEntries, type SearchEntry } from "./search";
-import { explorerContext } from "./snapshot";
+import { explorerContext, frontCheckout } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { drawnViews } from "./viewFocus";
@@ -176,7 +176,8 @@ function SearchPalette({ actions }: { actions: Actions }) {
   const [query, setQuery] = useState("");
   const workspaceOnScreen = useUiStore((s) => s.screen?.kind === "workspace");
   const placement = useUiStore((s) => s.toolsPlacement);
-  const entries = filterEntries(searchEntries(rest, workspaceOnScreen ? { drawn: drawnViews(), placement } : null), query);
+  const opening = useShellStore((s) => (s.editor?.opening ?? []).some((row) => row.checkout_id === frontCheckout(s.rest)?.id));
+  const entries = filterEntries(searchEntries(rest, workspaceOnScreen ? { drawn: drawnViews(), placement, opening } : null), query);
 
   const activate = (entry: SearchEntry | undefined) => {
     // A command that cannot run now stays in the list with its reason.

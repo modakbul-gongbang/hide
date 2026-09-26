@@ -78,8 +78,14 @@ describe("the View areas over the agents", () => {
   });
 
   it("offers them only in Agents only with a view open", () => {
-    expect(canShowViewsOverAgents(view("agents", false, 1))).toBe(true);
-    expect(canShowViewsOverAgents(view("agents", false, 0))).toBe(false);
-    expect(canShowViewsOverAgents(view("together", false, 1))).toBe(false);
+    expect(canShowViewsOverAgents(view("agents", false, 1), false)).toBe(true);
+    expect(canShowViewsOverAgents(view("agents", false, 0), false)).toBe(false);
+    expect(canShowViewsOverAgents(view("together", false, 1), false)).toBe(false);
+  });
+
+  it("offers the way back to the agents while the first file is still opening under them", () => {
+    const opening = view("agents", true, 0);
+    expect(viewsOverAgents(opening, true)).toBe(true);
+    expect(canShowViewsOverAgents(opening, true)).toBe(true);
   });
 });

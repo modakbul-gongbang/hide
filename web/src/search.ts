@@ -61,10 +61,11 @@ export function fuzzyScore(candidate: string, query: string): number | null {
 
 /**
  * The Workspace on screen as the page draws it: what it last drew of the
- * View areas (a split's room is judged on it), and where its tools stand
- * (a narrow window's closed overlay shows none of them, S7 B12).
+ * View areas (a split's room is judged on it), where its tools stand
+ * (a narrow window's closed overlay shows none of them, S7 B12), and whether
+ * a file of its checkout is opening into the View areas.
  */
-export type WorkspaceOnScreen = { drawn: { geometry: Geometry; sizes: LayoutSizes } | null; placement: ToolsPlacement };
+export type WorkspaceOnScreen = { drawn: { geometry: Geometry; sizes: LayoutSizes } | null; placement: ToolsPlacement; opening?: boolean };
 
 /**
  * The Workspace commands ⌘K offers while a Workspace is on screen: the three
@@ -78,7 +79,8 @@ export function workspaceCommands(rest: SnapshotRest | null, screen: WorkspaceOn
   const shown = shownTools(view, screen.placement);
   // Agents only is offered while the View areas are over the agents too,
   // since choosing it takes them down.
-  const over = canShowViewsOverAgents(view) && view.views_over_agents === true;
+  const offered = canShowViewsOverAgents(view, screen.opening ?? false);
+  const over = offered && view.views_over_agents === true;
   const entries: SearchEntry[] = LAYOUTS.filter((layout) => layout.mode !== view.mode || over).map((layout) => ({
     id: `command:layout:${layout.mode}`,
     title: `Layout: ${layout.label}`,
@@ -87,7 +89,7 @@ export function workspaceCommands(rest: SnapshotRest | null, screen: WorkspaceOn
     group: COMMANDS_GROUP,
     command: { layout: layout.mode },
   }));
-  if (canShowViewsOverAgents(view)) {
+  if (offered) {
     entries.push({
       id: "command:views-over-agents",
       title: over ? "Hide Views over agents" : "Show Views over agents",

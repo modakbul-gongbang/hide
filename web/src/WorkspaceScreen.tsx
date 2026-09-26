@@ -14,6 +14,7 @@ import { remoteView } from "./remote";
 import { canRetryDevice, deviceLine } from "./settings";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, type Checkout } from "./snapshot";
 import { useShellStore } from "./store";
+import { focusTerminal } from "./terminals";
 import { AgentTabBar } from "./TabBar";
 import { Tools } from "./Tools";
 import { useUiStore, type WorkingRegion } from "./ui";
@@ -74,7 +75,7 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
   const { explorer, changes } = shownTools(view, placement);
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={`Workspace ${checkout.branch ?? checkout.label}`} data-workspace-screen={checkout.id} data-layout={view.mode} data-views-over-agents={over}>
-      <WorkspaceToolbar checkout={checkout} mode={view.mode} over={canShowViewsOverAgents(view) ? over : null} explorer={explorer} changes={changes} singleRegion={narrow.singleRegion} actions={actions} />
+      <WorkspaceToolbar checkout={checkout} mode={view.mode} over={canShowViewsOverAgents(view, opening) ? over : null} explorer={explorer} changes={changes} singleRegion={narrow.singleRegion} actions={actions} />
       <div ref={setBody} className="relative flex min-h-0 flex-1" data-workspace-body={narrow.toolsOverlay ? "narrow" : "wide"}>
         <Areas checkout={checkout} mode={mode} over={over} share={view.agent_share} single={narrow.singleRegion} actions={actions} />
         <Tools explorer={explorer} changes={changes} overlay={narrow.toolsOverlay} actions={actions} />
@@ -309,6 +310,17 @@ function Areas({ checkout, mode, over, share, single, actions }: { checkout: Che
     return () => observer.disconnect();
   }, []);
   const minimum = useMemo(() => areaMinimum(), []);
+  // Covering the Agent area makes it inert, which takes the keyboard from its
+  // terminal; uncovering gives it back to the pane the core has focused, as a
+  // closing sheet does, so no focus is reported for it.
+  const wasOver = useRef(over);
+  useEffect(() => {
+    if (wasOver.current && !over) {
+      const paneId = useShellStore.getState().focusedPaneId;
+      if (paneId) focusTerminal(paneId);
+    }
+    wasOver.current = over;
+  }, [over]);
   const agents = mode !== "views" && (!single || region === "agents");
   const views = mode !== "agents" && (!single || region === "views");
   // The region the operator works in is the one a narrow Together keeps.

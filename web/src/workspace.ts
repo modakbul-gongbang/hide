@@ -58,9 +58,13 @@ export function viewsOverAgents(view: WorkspaceView, opening: boolean): boolean 
   return opening || !view.layout || view.layout.display_count > 0;
 }
 
-/** Whether Agents only has View areas to draw over the agents: the toolbar and the palette offer them only then. */
-export function canShowViewsOverAgents(view: WorkspaceView): boolean {
-  return view.mode === "agents" && (view.layout?.display_count ?? 0) > 0;
+/**
+ * Whether Agents only has View areas to draw over the agents, a display or a
+ * file of this checkout opening into them: the toolbar and the palette offer
+ * the toggle only then, and always while `viewsOverAgents` draws them.
+ */
+export function canShowViewsOverAgents(view: WorkspaceView, opening: boolean): boolean {
+  return view.mode === "agents" && (opening || (view.layout?.display_count ?? 0) > 0);
 }
 
 export function workspaceViewOf(rest: SnapshotRest | null): WorkspaceView | null {

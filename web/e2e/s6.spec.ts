@@ -115,6 +115,10 @@ test("Main, Overview and a Workspace with its layouts, tools and delegated child
     await expect(page.locator("[data-view-area]")).toHaveCount(0);
     await expect(agentArea).not.toHaveAttribute("inert", "");
     expect(last.get("workspace_view")).toEqual({ views_over_agents: false });
+    // Uncovered, the keyboard is back on the pane the core has focused.
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.closest("[data-pane-view]")?.getAttribute("data-pane-view") ?? null))
+      .toBe(parent);
     await screenshot(page, "s6-views-over-agents-down");
     await page.locator('[data-views-over-toggle="off"]').click();
     await expect(page.locator('[data-view-area] [data-tab-kind="file"]')).toHaveCount(2);
