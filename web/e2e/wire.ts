@@ -149,21 +149,33 @@ export async function sidebarOverflow(page: Page, width: string): Promise<string
 }
 
 /**
- * Whether every sidebar row still holds its text: no row's name, line, place
- * or time spills below the row or is cut vertically, and no row runs into the
- * next one (PRD sidebar-readability B26, at the interface font size in force).
+ * Whether every sidebar row still holds its text at the interface font size
+ * in force (PRD sidebar-readability B26): no text runs
+ * past the bottom of any box around it up to its list item, which is where a
+ * fixed-height row spills, and no two of them overlap, which is how a spill
+ * shows on screen.
  */
 export async function sidebarRowsFit(page: Page): Promise<string[]> {
   return page.evaluate(() => {
     const problems: string[] = [];
-    const rows = [...document.querySelectorAll<HTMLElement>("[data-agent-list] li[data-pane], [data-project-list] li[data-pane], [data-checkout]")];
-    for (const row of rows) {
-      const box = row.getBoundingClientRect();
-      for (const part of row.querySelectorAll<HTMLElement>("[data-agent-title], [data-agent-line], [data-agent-place], [data-agent-elapsed], [data-checkout-age]")) {
-        if (part.closest("li[data-pane]") !== row.closest("li[data-pane]")) continue;
-        const partBox = part.getBoundingClientRect();
-        if (partBox.bottom > box.bottom + 0.5) problems.push(`${part.textContent} spills below its row`);
-        if (part.scrollHeight > part.clientHeight + 1) problems.push(`${part.textContent} is cut vertically`);
+    // Every element in the lists that holds text itself: names, lines, places, times, chips.
+    const parts = [...document.querySelectorAll<HTMLElement>("nav[data-sidebar] :is([data-agent-list], [data-project-list]) *")].filter(
+      (part) => part.getClientRects().length > 0 && [...part.childNodes].some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim()),
+    );
+    for (const part of parts) {
+      const bottom = part.getBoundingClientRect().bottom;
+      for (let box = part.parentElement; box && box.tagName !== "NAV"; box = box.parentElement) {
+        if (bottom > box.getBoundingClientRect().bottom + 0.5) problems.push(`${part.textContent} spills below its ${box.tagName.toLowerCase()}`);
+        if (box.tagName === "LI") break;
+      }
+    }
+    const boxes = parts.map((part) => [part, part.getBoundingClientRect()] as const);
+    for (const [i, [a, ra]] of boxes.entries()) {
+      for (const [b, rb] of boxes.slice(i + 1)) {
+        if (a.contains(b) || b.contains(a)) continue;
+        const across = Math.min(ra.right, rb.right) - Math.max(ra.left, rb.left);
+        const down = Math.min(ra.bottom, rb.bottom) - Math.max(ra.top, rb.top);
+        if (across > 1 && down > 1) problems.push(`${a.textContent} overlaps ${b.textContent}`);
       }
     }
     return problems;

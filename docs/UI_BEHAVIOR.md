@@ -144,6 +144,7 @@ Its second line exists only when the row has something to say, and from the mome
 A quiet sentence is never drawn on the row; the row's tooltip carries it with the full title.
 In Agents a root row adds a fixed context line naming its project and checkout (`project › checkout`, the project alone for a plain folder), since the list does not otherwise say where the agent works; a row under a checkout in Projects has none, because the rows above it say it.
 Hover, keyboard focus, selection and an open badge list change a fill, a ring and a chevron's opacity only; they never add a line or change a row's height, so the row below never moves.
+A row's height is a minimum, not a cap: at a larger interface font a row grows to hold its lines rather than letting them run into the next row, and it still holds still under hover and focus at that size.
 No row draws a progress number or step the agent did not report.
 The Project Overview's agent rows keep their own density: a quiet sentence is revealed on the selected or hovered row over up to two lines, with the whole of it in the tooltip.
 Web owner: `web/src/agentRow.ts` (rules, reusable by any list of agents), `web/src/components/sidebar-agent-row.tsx` (the sidebar row), `web/src/components/agent-row.tsx` (the Overview row and the descendant badge both draw), `web/src/components/agent-children-popover.tsx`.

@@ -97,12 +97,12 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           onClick={() => onOpen(agent.pane_id)}
         />
       </Hint>
-      <span className="pointer-events-none flex h-(--size-control-sm) shrink-0 items-center gap-xs">
+      <span className="pointer-events-none flex min-h-(--size-control-sm) shrink-0 items-center gap-xs">
         <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.waiting_on_descendants ? "waiting" : agent.status_label} />
         <AgentMark kind={agent.agent_kind} />
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="flex h-(--size-control-sm) min-w-0 items-center gap-xs">
+        <span className="flex min-h-(--size-control-sm) min-w-0 items-center gap-xs">
           {/* The row button's name already reads all of this out. */}
           <span aria-hidden="true" className={cn("pointer-events-none min-w-0 flex-auto truncate", titleTone, (attention || selected) && "font-medium")} data-agent-title="true">
             {agent.identity_label}

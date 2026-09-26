@@ -311,7 +311,7 @@ function AllProjectsRow({ selected }: { selected: boolean }) {
         data-all-projects="true"
         aria-current={selected ? "page" : undefined}
         className={cn(
-          "flex h-(--size-control-regular) w-full items-center gap-sm rounded-sm pr-xs pl-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+          "flex min-h-(--size-control-regular) w-full items-center gap-sm rounded-sm pr-xs pl-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
           selected ? "bg-secondary" : "hover:bg-accent",
         )}
         onClick={() => useUiStore.getState().setScreen({ kind: "main" })}
@@ -407,7 +407,7 @@ function FoldRow({
     <button
       type="button"
       aria-expanded={expanded}
-      className="flex h-(--size-control-lg) w-full items-center gap-sm rounded-sm pr-xs text-left text-caption font-medium text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+      className="flex min-h-(--size-control-lg) w-full items-center gap-sm rounded-sm pr-xs text-left text-caption font-medium text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
       style={{ paddingLeft: level === "project" ? PROJECT_COLUMN : CHECKOUT_COLUMN }}
       onClick={onToggle}
       {...data}
@@ -495,7 +495,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
       >
         {(trigger) => (
           <div
-            className={cn("flex h-(--size-control-regular) w-full items-center gap-sm rounded-sm pr-xs", selected ? "bg-secondary" : "hover:bg-accent")}
+            className={cn("flex min-h-(--size-control-regular) w-full items-center gap-sm rounded-sm pr-xs", selected ? "bg-secondary" : "hover:bg-accent")}
             style={{ paddingLeft: PROJECT_COLUMN }}
           >
             <button
@@ -611,7 +611,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
           <div
             className={cn(
               "relative flex w-full flex-col justify-center gap-xxs rounded-sm pr-xs",
-              secondLine ? "h-(--size-checkout-row-detailed)" : "h-(--size-checkout-row)",
+              secondLine ? "min-h-(--size-checkout-row-detailed)" : "min-h-(--size-checkout-row)",
               focused ? "bg-secondary" : "hover:bg-accent",
               view.settled && "opacity-(--opacity-dimmed)",
             )}
@@ -699,7 +699,7 @@ const FolderRowView = memo(function FolderRowView({
           <div
             className={cn(
               "relative flex w-full flex-col justify-center gap-xxs rounded-sm pr-xs",
-              secondLine ? "h-(--size-checkout-row-detailed)" : "h-(--size-control-regular)",
+              secondLine ? "min-h-(--size-checkout-row-detailed)" : "min-h-(--size-control-regular)",
               focused ? "bg-secondary" : "hover:bg-accent",
             )}
             style={{ paddingLeft: PROJECT_COLUMN }}

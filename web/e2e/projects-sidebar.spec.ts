@@ -217,11 +217,12 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     await lineageToggle.click();
     await expect.poll(() => (sent.get("agent_tree_toggle") ?? 0) - (beforeFold.get("agent_tree_toggle") ?? 0)).toBe(1);
     expect(last.get("agent_tree_toggle")?.pane_id).toBe(mainPane);
-    expect([...sent].filter(([kind, count]) => count !== (beforeFold.get(kind) ?? 0)).map(([kind]) => kind)).toEqual(["agent_tree_toggle"]);
     const childUnderParent = primary.locator(`[data-checkout-agents-open] [data-pane="${rowsPane}"]`);
     await expect(childUnderParent).toHaveAttribute("data-depth", "1", { timeout: 15_000 });
     await expect(parentRow.locator("[data-descendant-badge]")).toHaveCount(0);
     await expect(feature.locator(`[data-checkout-agents-open] [data-pane="${rowsPane}"]`)).toHaveAttribute("data-depth", "0");
+    // Checked once the list has redrawn, so a frame sent behind the toggle has arrived too.
+    expect([...sent].filter(([kind, count]) => count !== (beforeFold.get(kind) ?? 0)).map(([kind]) => kind)).toEqual(["agent_tree_toggle"]);
     await screenshot(page, "projects-sidebar-lineage-open");
     // The same fold in Agents: the child is drawn under its parent there too.
     await page.locator('[data-sidebar-mode="agents"]').click();
