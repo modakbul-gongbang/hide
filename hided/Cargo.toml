@@ -20,7 +20,7 @@ tokio = { version = "=1.53.1", features = ["io-util", "macros", "net", "process"
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 hex = "=0.4.3"
-getrandom = "=0.2.16"
+getrandom = "=0.4.3"
 libc = "=0.2.189"
 tower-http = { version = "=0.6.8", features = ["fs"] }
 base64 = "=0.23.1"
