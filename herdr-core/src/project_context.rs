@@ -74,9 +74,14 @@ pub(crate) fn sort_projects(
             recent = recent.max(key);
             keys.insert(checkout.id.clone(), key);
         }
+        // The primary checkout leads its project whatever its activity: it is
+        // the one checkout that never folds, so the list starts at the same
+        // place every time. The rest follow by activity.
+        let project_path = project.path.clone();
         project.checkouts.sort_by(|left, right| {
-            keys[&right.id]
-                .cmp(&keys[&left.id])
+            is_primary(right, &project_path)
+                .cmp(&is_primary(left, &project_path))
+                .then_with(|| keys[&right.id].cmp(&keys[&left.id]))
                 .then_with(|| left.id.cmp(&right.id))
         });
         // The order's own reason, carried to the shell so the row can show it.
@@ -104,6 +109,11 @@ pub(crate) fn sort_projects(
                 || project.last_activity_unix_ms != last_activity_unix_ms
                 || project.checkouts.iter().map(|c| &c.id).ne(checkouts.iter())
         })
+}
+
+/// The checkout that is the project's own folder rather than a linked worktree.
+fn is_primary(checkout: &CheckoutSnapshot, project_path: &str) -> bool {
+    !checkout.is_worktree && checkout.path == project_path
 }
 
 fn checkout_has_live_exception(
@@ -181,8 +191,7 @@ pub(crate) fn refresh_inactive_groups(
             .checkouts
             .iter()
             .filter(|checkout| {
-                let is_primary = !checkout.is_worktree && checkout.path == workspace.path;
-                !is_primary
+                !is_primary(checkout, &workspace.path)
                     && checkout_is_inactive(checkout, &by_pane, focused_checkout_id, now_unix_ms)
             })
             .map(|checkout| checkout.id.clone())
@@ -471,6 +480,32 @@ mod tests {
         assert_eq!(ids(&projects), ["active", "quiet"]);
         assert_eq!(projects[0].last_activity_unix_ms, Some(5_000_000));
         assert_eq!(projects[1].last_activity_unix_ms, None);
+    }
+
+    /// The primary checkout leads its project even when a linked worktree
+    /// moved more recently; the linked ones keep their activity order, and
+    /// the project still carries the newest activity of any of them.
+    #[test]
+    fn primary_checkout_leads_its_project_whatever_its_activity() {
+        let mut herdr = project("herdr", "local", Some(1_000), &[]);
+        herdr.checkouts[0].path = herdr.path.clone();
+        herdr
+            .checkouts
+            .push(make_worktree_checkout("herdr", "older", Some(2_000)));
+        herdr
+            .checkouts
+            .push(make_worktree_checkout("herdr", "newer", Some(3_000)));
+        let mut projects = vec![herdr];
+
+        assert!(sort_projects(&mut projects, &[]));
+
+        let order: Vec<_> = projects[0]
+            .checkouts
+            .iter()
+            .map(|c| c.id.as_str())
+            .collect();
+        assert_eq!(order, ["herdr", "newer", "older"]);
+        assert_eq!(projects[0].last_activity_unix_ms, Some(3_000_000));
     }
 
     /// B2, B6, B9, B16. Git merge, settled PR, and the seven-day boundary

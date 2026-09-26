@@ -4,6 +4,7 @@ import { AgentMark } from "../AgentMark";
 import { badgeLabel, badgeParts, branchChip, lineShownAtRest, lineTone, markTone, rowAccessibleName, rowLine } from "../agentRow";
 import type { AgentRow } from "../snapshot";
 import { AgentChildrenPopover } from "./agent-children-popover";
+import { StatusMark } from "./status-mark";
 import { Badge } from "./ui/badge";
 import { Hint } from "./ui/tooltip";
 
@@ -95,13 +96,11 @@ export const AgentRowItem = memo(function AgentRowItem({
           ) : null}
         </span>
       ) : null}
-      <span
-        className={`pointer-events-none w-(--size-agent-mark) shrink-0 pt-xxs text-center font-mono text-caption ${markTone(agent)}`}
+      <StatusMark
+        symbol={agent.symbol}
+        className={`pointer-events-none mt-xxs ${markTone(agent)}`}
         data-agent-status-mark={agent.waiting_on_descendants ? "waiting" : agent.status_label}
-        aria-hidden="true"
-      >
-        {agent.symbol}
-      </span>
+      />
       <AgentMark kind={agent.agent_kind} className="pointer-events-none" />
       {/* The row button's name already reads all of this out. */}
       <span className="pointer-events-none flex min-w-0 flex-1 flex-col" aria-hidden="true">
@@ -148,7 +147,7 @@ export const AgentRowItem = memo(function AgentRowItem({
                 {parts.length > 0
                   ? parts.map((part) => (
                       <span key={part.state} className="inline-flex items-center gap-xxs" data-badge-part={part.state}>
-                        <span className={part.tone}>{part.symbol}</span>
+                        <StatusMark symbol={part.symbol} className={part.tone} />
                         {part.count}
                       </span>
                     ))

@@ -1192,6 +1192,10 @@
       "type": "number",
       "value": 12
     },
+    "--size-status-mark": {
+      "type": "number",
+      "value": 7
+    },
     "--size-badge-height": {
       "type": "number",
       "value": 16
@@ -1577,8 +1581,17 @@
                   "name": "두 번째 에이전트",
                   "width": 260,
                   "descendants": {
+                    "hideui:sWhWS": {
+                      "fill": "$--agent-working",
+                      "enabled": true
+                    },
+                    "hideui:i9p0pi": {
+                      "stroke": "$--muted-foreground",
+                      "enabled": false
+                    },
                     "hideui:PCeNa": {
-                      "fill": "$--agent-working"
+                      "fill": "$--warning",
+                      "enabled": false
                     },
                     "hideui:x0h40": {
                       "fill": "$--foreground",
@@ -1606,8 +1619,17 @@
                   "name": "Agent one",
                   "width": 260,
                   "descendants": {
+                    "hideui:sWhWS": {
+                      "fill": "$--agent-working",
+                      "enabled": false
+                    },
+                    "hideui:i9p0pi": {
+                      "stroke": "$--muted-foreground",
+                      "enabled": true
+                    },
                     "hideui:PCeNa": {
-                      "fill": "$--muted-foreground"
+                      "fill": "$--warning",
+                      "enabled": false
                     },
                     "hideui:x0h40": {
                       "fill": "$--foreground",
@@ -1944,8 +1966,17 @@
                   "name": "두 번째 에이전트",
                   "width": 260,
                   "descendants": {
+                    "hideui:sWhWS": {
+                      "fill": "$--agent-working",
+                      "enabled": true
+                    },
+                    "hideui:i9p0pi": {
+                      "stroke": "$--muted-foreground",
+                      "enabled": false
+                    },
                     "hideui:PCeNa": {
-                      "fill": "$--agent-working"
+                      "fill": "$--warning",
+                      "enabled": false
                     },
                     "hideui:x0h40": {
                       "fill": "$--foreground",
@@ -1973,8 +2004,17 @@
                   "name": "Agent one",
                   "width": 260,
                   "descendants": {
+                    "hideui:sWhWS": {
+                      "fill": "$--agent-working",
+                      "enabled": false
+                    },
+                    "hideui:i9p0pi": {
+                      "stroke": "$--muted-foreground",
+                      "enabled": true
+                    },
                     "hideui:PCeNa": {
-                      "fill": "$--muted-foreground"
+                      "fill": "$--warning",
+                      "enabled": false
                     },
                     "hideui:x0h40": {
                       "fill": "$--foreground",
@@ -2545,14 +2585,24 @@
                               "name": "Line",
                               "children": [
                                 {
-                                  "type": "text",
+                                  "type": "frame",
                                   "id": "ov-main-l-row0-mark",
-                                  "name": "●",
-                                  "content": "●",
-                                  "fill": "$--agent-working",
-                                  "fontFamily": "$--font-mono",
-                                  "fontSize": "$--text-body",
-                                  "fontWeight": "400"
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "ellipse",
+                                      "id": "ov-main-l-row0-mark-dot",
+                                      "name": "Dot",
+                                      "width": 7,
+                                      "height": 7,
+                                      "fill": "$--agent-working"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
                                 },
                                 {
                                   "type": "frame",
@@ -2737,14 +2787,26 @@
                                   "name": "Line",
                                   "children": [
                                     {
-                                      "type": "text",
+                                      "type": "frame",
                                       "id": "ov-c1-l-row0-mark",
-                                      "name": "○",
-                                      "content": "○",
-                                      "fill": "$--subtle-foreground",
-                                      "fontFamily": "$--font-mono",
-                                      "fontSize": "$--text-body",
-                                      "fontWeight": "400"
+                                      "name": "Status mark",
+                                      "children": [
+                                        {
+                                          "type": "ellipse",
+                                          "id": "ov-c1-l-row0-mark-ring",
+                                          "name": "Ring",
+                                          "width": 7,
+                                          "height": 7,
+                                          "stroke": "$--subtle-foreground",
+                                          "strokeWidth": 1,
+                                          "strokeAlignment": "inner"
+                                        }
+                                      ],
+                                      "width": 12,
+                                      "height": 12,
+                                      "layout": "horizontal",
+                                      "justifyContent": "center",
+                                      "alignItems": "center"
                                     },
                                     {
                                       "type": "frame",
@@ -2903,14 +2965,26 @@
                                   "name": "Line",
                                   "children": [
                                     {
-                                      "type": "text",
+                                      "type": "frame",
                                       "id": "ov-c2-l-row0-mark",
-                                      "name": "?",
-                                      "content": "?",
-                                      "fill": "$--warning",
-                                      "fontFamily": "$--font-mono",
-                                      "fontSize": "$--text-body",
-                                      "fontWeight": "400"
+                                      "name": "Status mark",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "ov-c2-l-row0-mark-glyph",
+                                          "name": "?",
+                                          "content": "?",
+                                          "fill": "$--warning",
+                                          "fontFamily": "$--font-mono",
+                                          "fontSize": "$--text-caption",
+                                          "fontWeight": "400"
+                                        }
+                                      ],
+                                      "width": 12,
+                                      "height": 12,
+                                      "layout": "horizontal",
+                                      "justifyContent": "center",
+                                      "alignItems": "center"
                                     },
                                     {
                                       "type": "frame",
@@ -3061,14 +3135,24 @@
                                   "name": "Line",
                                   "children": [
                                     {
-                                      "type": "text",
+                                      "type": "frame",
                                       "id": "ov-c3-l-row0-mark",
-                                      "name": "●",
-                                      "content": "●",
-                                      "fill": "$--agent-working",
-                                      "fontFamily": "$--font-mono",
-                                      "fontSize": "$--text-body",
-                                      "fontWeight": "400"
+                                      "name": "Status mark",
+                                      "children": [
+                                        {
+                                          "type": "ellipse",
+                                          "id": "ov-c3-l-row0-mark-dot",
+                                          "name": "Dot",
+                                          "width": 7,
+                                          "height": 7,
+                                          "fill": "$--agent-working"
+                                        }
+                                      ],
+                                      "width": 12,
+                                      "height": 12,
+                                      "layout": "horizontal",
+                                      "justifyContent": "center",
+                                      "alignItems": "center"
                                     },
                                     {
                                       "type": "frame",
@@ -3227,14 +3311,26 @@
                                   "name": "Line",
                                   "children": [
                                     {
-                                      "type": "text",
+                                      "type": "frame",
                                       "id": "ov-c4-l-row0-mark",
-                                      "name": "○",
-                                      "content": "○",
-                                      "fill": "$--subtle-foreground",
-                                      "fontFamily": "$--font-mono",
-                                      "fontSize": "$--text-body",
-                                      "fontWeight": "400"
+                                      "name": "Status mark",
+                                      "children": [
+                                        {
+                                          "type": "ellipse",
+                                          "id": "ov-c4-l-row0-mark-ring",
+                                          "name": "Ring",
+                                          "width": 7,
+                                          "height": 7,
+                                          "stroke": "$--subtle-foreground",
+                                          "strokeWidth": 1,
+                                          "strokeAlignment": "inner"
+                                        }
+                                      ],
+                                      "width": 12,
+                                      "height": 12,
+                                      "layout": "horizontal",
+                                      "justifyContent": "center",
+                                      "alignItems": "center"
                                     },
                                     {
                                       "type": "frame",
@@ -3639,14 +3735,24 @@
                               "name": "Line",
                               "children": [
                                 {
-                                  "type": "text",
+                                  "type": "frame",
                                   "id": "ov-main-d-row0-mark",
-                                  "name": "●",
-                                  "content": "●",
-                                  "fill": "$--agent-working",
-                                  "fontFamily": "$--font-mono",
-                                  "fontSize": "$--text-body",
-                                  "fontWeight": "400"
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "ellipse",
+                                      "id": "ov-main-d-row0-mark-dot",
+                                      "name": "Dot",
+                                      "width": 7,
+                                      "height": 7,
+                                      "fill": "$--agent-working"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
                                 },
                                 {
                                   "type": "frame",
@@ -3831,14 +3937,26 @@
                                   "name": "Line",
                                   "children": [
                                     {
-                                      "type": "text",
+                                      "type": "frame",
                                       "id": "ov-c1-d-row0-mark",
-                                      "name": "○",
-                                      "content": "○",
-                                      "fill": "$--subtle-foreground",
-                                      "fontFamily": "$--font-mono",
-                                      "fontSize": "$--text-body",
-                                      "fontWeight": "400"
+                                      "name": "Status mark",
+                                      "children": [
+                                        {
+                                          "type": "ellipse",
+                                          "id": "ov-c1-d-row0-mark-ring",
+                                          "name": "Ring",
+                                          "width": 7,
+                                          "height": 7,
+                                          "stroke": "$--subtle-foreground",
+                                          "strokeWidth": 1,
+                                          "strokeAlignment": "inner"
+                                        }
+                                      ],
+                                      "width": 12,
+                                      "height": 12,
+                                      "layout": "horizontal",
+                                      "justifyContent": "center",
+                                      "alignItems": "center"
                                     },
                                     {
                                       "type": "frame",
@@ -3997,14 +4115,26 @@
                                   "name": "Line",
                                   "children": [
                                     {
-                                      "type": "text",
+                                      "type": "frame",
                                       "id": "ov-c2-d-row0-mark",
-                                      "name": "?",
-                                      "content": "?",
-                                      "fill": "$--warning",
-                                      "fontFamily": "$--font-mono",
-                                      "fontSize": "$--text-body",
-                                      "fontWeight": "400"
+                                      "name": "Status mark",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "ov-c2-d-row0-mark-glyph",
+                                          "name": "?",
+                                          "content": "?",
+                                          "fill": "$--warning",
+                                          "fontFamily": "$--font-mono",
+                                          "fontSize": "$--text-caption",
+                                          "fontWeight": "400"
+                                        }
+                                      ],
+                                      "width": 12,
+                                      "height": 12,
+                                      "layout": "horizontal",
+                                      "justifyContent": "center",
+                                      "alignItems": "center"
                                     },
                                     {
                                       "type": "frame",
@@ -4155,14 +4285,24 @@
                                   "name": "Line",
                                   "children": [
                                     {
-                                      "type": "text",
+                                      "type": "frame",
                                       "id": "ov-c3-d-row0-mark",
-                                      "name": "●",
-                                      "content": "●",
-                                      "fill": "$--agent-working",
-                                      "fontFamily": "$--font-mono",
-                                      "fontSize": "$--text-body",
-                                      "fontWeight": "400"
+                                      "name": "Status mark",
+                                      "children": [
+                                        {
+                                          "type": "ellipse",
+                                          "id": "ov-c3-d-row0-mark-dot",
+                                          "name": "Dot",
+                                          "width": 7,
+                                          "height": 7,
+                                          "fill": "$--agent-working"
+                                        }
+                                      ],
+                                      "width": 12,
+                                      "height": 12,
+                                      "layout": "horizontal",
+                                      "justifyContent": "center",
+                                      "alignItems": "center"
                                     },
                                     {
                                       "type": "frame",
@@ -4321,14 +4461,26 @@
                                   "name": "Line",
                                   "children": [
                                     {
-                                      "type": "text",
+                                      "type": "frame",
                                       "id": "ov-c4-d-row0-mark",
-                                      "name": "○",
-                                      "content": "○",
-                                      "fill": "$--subtle-foreground",
-                                      "fontFamily": "$--font-mono",
-                                      "fontSize": "$--text-body",
-                                      "fontWeight": "400"
+                                      "name": "Status mark",
+                                      "children": [
+                                        {
+                                          "type": "ellipse",
+                                          "id": "ov-c4-d-row0-mark-ring",
+                                          "name": "Ring",
+                                          "width": 7,
+                                          "height": 7,
+                                          "stroke": "$--subtle-foreground",
+                                          "strokeWidth": 1,
+                                          "strokeAlignment": "inner"
+                                        }
+                                      ],
+                                      "width": 12,
+                                      "height": 12,
+                                      "layout": "horizontal",
+                                      "justifyContent": "center",
+                                      "alignItems": "center"
                                     },
                                     {
                                       "type": "frame",
@@ -4734,8 +4886,17 @@
                           "name": "Agent two",
                           "width": 260,
                           "descendants": {
+                            "hideui:sWhWS": {
+                              "fill": "$--agent-working",
+                              "enabled": true
+                            },
+                            "hideui:i9p0pi": {
+                              "stroke": "$--muted-foreground",
+                              "enabled": false
+                            },
                             "hideui:PCeNa": {
-                              "fill": "$--agent-working"
+                              "fill": "$--warning",
+                              "enabled": false
                             },
                             "hideui:x0h40": {
                               "fill": "$--foreground",
@@ -4763,8 +4924,17 @@
                           "name": "Agent one",
                           "width": 260,
                           "descendants": {
+                            "hideui:sWhWS": {
+                              "fill": "$--agent-working",
+                              "enabled": false
+                            },
+                            "hideui:i9p0pi": {
+                              "stroke": "$--muted-foreground",
+                              "enabled": true
+                            },
                             "hideui:PCeNa": {
-                              "fill": "$--muted-foreground"
+                              "fill": "$--warning",
+                              "enabled": false
                             },
                             "hideui:x0h40": {
                               "fill": "$--foreground",
@@ -5674,8 +5844,17 @@
                           "name": "Agent two",
                           "width": 260,
                           "descendants": {
+                            "hideui:sWhWS": {
+                              "fill": "$--agent-working",
+                              "enabled": true
+                            },
+                            "hideui:i9p0pi": {
+                              "stroke": "$--muted-foreground",
+                              "enabled": false
+                            },
                             "hideui:PCeNa": {
-                              "fill": "$--agent-working"
+                              "fill": "$--warning",
+                              "enabled": false
                             },
                             "hideui:x0h40": {
                               "fill": "$--foreground",
@@ -5703,8 +5882,17 @@
                           "name": "Agent one",
                           "width": 260,
                           "descendants": {
+                            "hideui:sWhWS": {
+                              "fill": "$--agent-working",
+                              "enabled": false
+                            },
+                            "hideui:i9p0pi": {
+                              "stroke": "$--muted-foreground",
+                              "enabled": true
+                            },
                             "hideui:PCeNa": {
-                              "fill": "$--muted-foreground"
+                              "fill": "$--warning",
+                              "enabled": false
                             },
                             "hideui:x0h40": {
                               "fill": "$--foreground",
@@ -8234,14 +8422,26 @@
                       "name": "Agent row",
                       "children": [
                         {
-                          "type": "text",
+                          "type": "frame",
                           "id": "pal-side-a0s-l",
-                          "name": "?",
-                          "content": "?",
-                          "fill": "$--warning",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
+                          "name": "Status mark",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pal-side-a0s-l-glyph",
+                              "name": "?",
+                              "content": "?",
+                              "fill": "$--warning",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "width": 12,
+                          "height": 12,
+                          "layout": "horizontal",
+                          "justifyContent": "center",
+                          "alignItems": "center"
                         },
                         {
                           "type": "frame",
@@ -9906,14 +10106,26 @@
                       "name": "Agent row",
                       "children": [
                         {
-                          "type": "text",
+                          "type": "frame",
                           "id": "pal-side-a0s-d",
-                          "name": "?",
-                          "content": "?",
-                          "fill": "$--warning",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
+                          "name": "Status mark",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "pal-side-a0s-d-glyph",
+                              "name": "?",
+                              "content": "?",
+                              "fill": "$--warning",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "width": 12,
+                          "height": 12,
+                          "layout": "horizontal",
+                          "justifyContent": "center",
+                          "alignItems": "center"
                         },
                         {
                           "type": "frame",
@@ -14173,7 +14385,7 @@
           "type": "text",
           "id": "screen-projects-sidebar-spec",
           "name": "sidebar.tsx, projects.ts: th",
-          "content": "sidebar.tsx, projects.ts: the Projects tab. A project row folds its checkouts from its chevron and opens the Overview from the rest of the row; a checkout row opens the checkout, and its trailing chevron, shown only when agents run there, opens their rows in place of line two. Line two is the agents (the representative’s mark and provider, +N) and the purpose. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.",
+          "content": "sidebar.tsx, projects.ts: the Projects tab. A project’s primary checkout comes first, then the rest by activity. A project row folds its checkouts from its chevron and opens the Overview from the rest of the row; a checkout row opens the checkout, and its trailing chevron, shown only when agents run there, opens their rows in place of line two. Line two is the agents (the representative’s mark and provider, +N) and the purpose. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -14322,7 +14534,16 @@
                           "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
-                          "fill": "$--muted-foreground"
+                          "fill": "$--agent-working",
+                          "enabled": false
+                        },
+                        "hideui:G3d9T": {
+                          "stroke": "$--muted-foreground",
+                          "enabled": true
+                        },
+                        "hideui:aFPLo": {
+                          "fill": "$--warning",
+                          "enabled": false
                         },
                         "hideui:N7YbJ": {
                           "fill": {
@@ -14429,87 +14650,6 @@
                       }
                     },
                     {
-                      "id": "psb-c1-l",
-                      "type": "ref",
-                      "ref": "hideui:DLP27",
-                      "name": "electron-shortcut-bindings",
-                      "width": 292,
-                      "height": 44,
-                      "padding": [
-                        0,
-                        4,
-                        0,
-                        16
-                      ],
-                      "descendants": {
-                        "hideui:VtSRn": {
-                          "fill": "$--pr-open",
-                          "icon": "git-pull-request"
-                        },
-                        "hideui:q91d7": {
-                          "fill": "$--foreground",
-                          "content": "electron-shortcut-bindings",
-                          "fontWeight": "500"
-                        },
-                        "hideui:TuosT": {
-                          "fill": "$--muted-foreground",
-                          "content": "2h",
-                          "enabled": true,
-                          "textGrowth": "fixed-width",
-                          "width": 24,
-                          "textAlign": "right"
-                        },
-                        "hideui:CgZj3": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": true,
-                          "icon": "chevron-right"
-                        },
-                        "hideui:J5xdha": {
-                          "fill": "$--agent-working"
-                        },
-                        "hideui:N7YbJ": {
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-claude.png",
-                            "mode": "fit"
-                          }
-                        },
-                        "hideui:fklVZ": {
-                          "fill": "$--background",
-                          "enabled": false
-                        },
-                        "hideui:ExMsH": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": false
-                        },
-                        "hideui:D37Vr": {
-                          "fill": "$--muted-foreground",
-                          "content": "Electron desktop host for the we…",
-                          "enabled": true
-                        },
-                        "hideui:QetL0": {
-                          "width": 272
-                        },
-                        "hideui:TS5x9": {
-                          "enabled": false
-                        },
-                        "hideui:IXwZI": {
-                          "width": 16
-                        },
-                        "hideui:o6XLUj": {
-                          "enabled": true,
-                          "width": 272
-                        },
-                        "hideui:yfur4": {
-                          "width": 20
-                        },
-                        "hideui:FtZyp": {
-                          "enabled": true
-                        }
-                      }
-                    },
-                    {
                       "id": "psb-c2-l",
                       "type": "ref",
                       "ref": "hideui:DLP27",
@@ -14547,7 +14687,16 @@
                           "icon": "chevron-down"
                         },
                         "hideui:J5xdha": {
-                          "fill": "$--agent-working"
+                          "fill": "$--agent-working",
+                          "enabled": true
+                        },
+                        "hideui:G3d9T": {
+                          "stroke": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:aFPLo": {
+                          "fill": "$--warning",
+                          "enabled": false
                         },
                         "hideui:N7YbJ": {
                           "fill": {
@@ -14597,14 +14746,24 @@
                       "name": "Agent row",
                       "children": [
                         {
-                          "type": "text",
+                          "type": "frame",
                           "id": "psb-a1-l-mark",
-                          "name": "●",
-                          "content": "●",
-                          "fill": "$--agent-working",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
+                          "name": "Status mark",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "psb-a1-l-mark-dot",
+                              "name": "Dot",
+                              "width": 7,
+                              "height": 7,
+                              "fill": "$--agent-working"
+                            }
+                          ],
+                          "width": 12,
+                          "height": 12,
+                          "layout": "horizontal",
+                          "justifyContent": "center",
+                          "alignItems": "center"
                         },
                         {
                           "type": "frame",
@@ -14667,14 +14826,26 @@
                       "name": "Agent row",
                       "children": [
                         {
-                          "type": "text",
+                          "type": "frame",
                           "id": "psb-a2-l-mark",
-                          "name": "○",
-                          "content": "○",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
+                          "name": "Status mark",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "psb-a2-l-mark-ring",
+                              "name": "Ring",
+                              "width": 7,
+                              "height": 7,
+                              "stroke": "$--muted-foreground",
+                              "strokeWidth": 1,
+                              "strokeAlignment": "inner"
+                            }
+                          ],
+                          "width": 12,
+                          "height": 12,
+                          "layout": "horizontal",
+                          "justifyContent": "center",
+                          "alignItems": "center"
                         },
                         {
                           "type": "frame",
@@ -14768,7 +14939,17 @@
                           "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
-                          "fill": "$--warning"
+                          "fill": "$--agent-working",
+                          "enabled": false
+                        },
+                        "hideui:G3d9T": {
+                          "stroke": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:aFPLo": {
+                          "fill": "$--warning",
+                          "enabled": true,
+                          "content": "?"
                         },
                         "hideui:N7YbJ": {
                           "fill": {
@@ -14849,7 +15030,17 @@
                           "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
-                          "fill": "$--success"
+                          "fill": "$--agent-working",
+                          "enabled": false
+                        },
+                        "hideui:G3d9T": {
+                          "stroke": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:aFPLo": {
+                          "fill": "$--success",
+                          "enabled": true,
+                          "content": "✓"
                         },
                         "hideui:N7YbJ": {
                           "fill": {
@@ -14870,6 +15061,96 @@
                         "hideui:D37Vr": {
                           "fill": "$--muted-foreground",
                           "content": "#154 ⌘K search palette UI",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 272
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "width": 16
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 272
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        },
+                        "hideui:FtZyp": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-c1-l",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "electron-shortcut-bindings",
+                      "width": 292,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        16
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--pr-open",
+                          "icon": "git-pull-request"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "electron-shortcut-bindings",
+                          "fontWeight": "500"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "content": "2h",
+                          "enabled": true,
+                          "textGrowth": "fixed-width",
+                          "width": 24,
+                          "textAlign": "right"
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": true,
+                          "icon": "chevron-right"
+                        },
+                        "hideui:J5xdha": {
+                          "fill": "$--agent-working",
+                          "enabled": true
+                        },
+                        "hideui:G3d9T": {
+                          "stroke": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:aFPLo": {
+                          "fill": "$--warning",
+                          "enabled": false
+                        },
+                        "hideui:N7YbJ": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "hideui:fklVZ": {
+                          "fill": "$--background",
+                          "enabled": false
+                        },
+                        "hideui:ExMsH": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": false
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "Electron desktop host for the we…",
                           "enabled": true
                         },
                         "hideui:QetL0": {
@@ -14931,6 +15212,12 @@
                         },
                         "hideui:J5xdha": {
                           "fill": "$--agent-working"
+                        },
+                        "hideui:G3d9T": {
+                          "stroke": "$--muted-foreground"
+                        },
+                        "hideui:aFPLo": {
+                          "fill": "$--warning"
                         },
                         "hideui:N7YbJ": {
                           "fill": "$--primary"
@@ -15006,6 +15293,12 @@
                         "hideui:J5xdha": {
                           "fill": "$--agent-working"
                         },
+                        "hideui:G3d9T": {
+                          "stroke": "$--muted-foreground"
+                        },
+                        "hideui:aFPLo": {
+                          "fill": "$--warning"
+                        },
                         "hideui:N7YbJ": {
                           "fill": "$--primary"
                         },
@@ -15078,6 +15371,12 @@
                         },
                         "hideui:J5xdha": {
                           "fill": "$--agent-working"
+                        },
+                        "hideui:G3d9T": {
+                          "stroke": "$--muted-foreground"
+                        },
+                        "hideui:aFPLo": {
+                          "fill": "$--warning"
                         },
                         "hideui:N7YbJ": {
                           "fill": "$--primary"
@@ -15464,7 +15763,16 @@
                           "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
-                          "fill": "$--muted-foreground"
+                          "fill": "$--agent-working",
+                          "enabled": false
+                        },
+                        "hideui:G3d9T": {
+                          "stroke": "$--muted-foreground",
+                          "enabled": true
+                        },
+                        "hideui:aFPLo": {
+                          "fill": "$--warning",
+                          "enabled": false
                         },
                         "hideui:N7YbJ": {
                           "fill": {
@@ -15571,87 +15879,6 @@
                       }
                     },
                     {
-                      "id": "psb-c1-d",
-                      "type": "ref",
-                      "ref": "hideui:DLP27",
-                      "name": "electron-shortcut-bindings",
-                      "width": 292,
-                      "height": 44,
-                      "padding": [
-                        0,
-                        4,
-                        0,
-                        16
-                      ],
-                      "descendants": {
-                        "hideui:VtSRn": {
-                          "fill": "$--pr-open",
-                          "icon": "git-pull-request"
-                        },
-                        "hideui:q91d7": {
-                          "fill": "$--foreground",
-                          "content": "electron-shortcut-bindings",
-                          "fontWeight": "500"
-                        },
-                        "hideui:TuosT": {
-                          "fill": "$--muted-foreground",
-                          "content": "2h",
-                          "enabled": true,
-                          "textGrowth": "fixed-width",
-                          "width": 24,
-                          "textAlign": "right"
-                        },
-                        "hideui:CgZj3": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": true,
-                          "icon": "chevron-right"
-                        },
-                        "hideui:J5xdha": {
-                          "fill": "$--agent-working"
-                        },
-                        "hideui:N7YbJ": {
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-claude.png",
-                            "mode": "fit"
-                          }
-                        },
-                        "hideui:fklVZ": {
-                          "fill": "$--background",
-                          "enabled": false
-                        },
-                        "hideui:ExMsH": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": false
-                        },
-                        "hideui:D37Vr": {
-                          "fill": "$--muted-foreground",
-                          "content": "Electron desktop host for the we…",
-                          "enabled": true
-                        },
-                        "hideui:QetL0": {
-                          "width": 272
-                        },
-                        "hideui:TS5x9": {
-                          "enabled": false
-                        },
-                        "hideui:IXwZI": {
-                          "width": 16
-                        },
-                        "hideui:o6XLUj": {
-                          "enabled": true,
-                          "width": 272
-                        },
-                        "hideui:yfur4": {
-                          "width": 20
-                        },
-                        "hideui:FtZyp": {
-                          "enabled": true
-                        }
-                      }
-                    },
-                    {
                       "id": "psb-c2-d",
                       "type": "ref",
                       "ref": "hideui:DLP27",
@@ -15689,7 +15916,16 @@
                           "icon": "chevron-down"
                         },
                         "hideui:J5xdha": {
-                          "fill": "$--agent-working"
+                          "fill": "$--agent-working",
+                          "enabled": true
+                        },
+                        "hideui:G3d9T": {
+                          "stroke": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:aFPLo": {
+                          "fill": "$--warning",
+                          "enabled": false
                         },
                         "hideui:N7YbJ": {
                           "fill": {
@@ -15739,14 +15975,24 @@
                       "name": "Agent row",
                       "children": [
                         {
-                          "type": "text",
+                          "type": "frame",
                           "id": "psb-a1-d-mark",
-                          "name": "●",
-                          "content": "●",
-                          "fill": "$--agent-working",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
+                          "name": "Status mark",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "psb-a1-d-mark-dot",
+                              "name": "Dot",
+                              "width": 7,
+                              "height": 7,
+                              "fill": "$--agent-working"
+                            }
+                          ],
+                          "width": 12,
+                          "height": 12,
+                          "layout": "horizontal",
+                          "justifyContent": "center",
+                          "alignItems": "center"
                         },
                         {
                           "type": "frame",
@@ -15809,14 +16055,26 @@
                       "name": "Agent row",
                       "children": [
                         {
-                          "type": "text",
+                          "type": "frame",
                           "id": "psb-a2-d-mark",
-                          "name": "○",
-                          "content": "○",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
+                          "name": "Status mark",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "psb-a2-d-mark-ring",
+                              "name": "Ring",
+                              "width": 7,
+                              "height": 7,
+                              "stroke": "$--muted-foreground",
+                              "strokeWidth": 1,
+                              "strokeAlignment": "inner"
+                            }
+                          ],
+                          "width": 12,
+                          "height": 12,
+                          "layout": "horizontal",
+                          "justifyContent": "center",
+                          "alignItems": "center"
                         },
                         {
                           "type": "frame",
@@ -15910,7 +16168,17 @@
                           "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
-                          "fill": "$--warning"
+                          "fill": "$--agent-working",
+                          "enabled": false
+                        },
+                        "hideui:G3d9T": {
+                          "stroke": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:aFPLo": {
+                          "fill": "$--warning",
+                          "enabled": true,
+                          "content": "?"
                         },
                         "hideui:N7YbJ": {
                           "fill": {
@@ -15991,7 +16259,17 @@
                           "icon": "chevron-right"
                         },
                         "hideui:J5xdha": {
-                          "fill": "$--success"
+                          "fill": "$--agent-working",
+                          "enabled": false
+                        },
+                        "hideui:G3d9T": {
+                          "stroke": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:aFPLo": {
+                          "fill": "$--success",
+                          "enabled": true,
+                          "content": "✓"
                         },
                         "hideui:N7YbJ": {
                           "fill": {
@@ -16012,6 +16290,96 @@
                         "hideui:D37Vr": {
                           "fill": "$--muted-foreground",
                           "content": "#154 ⌘K search palette UI",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 272
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "width": 16
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 272
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        },
+                        "hideui:FtZyp": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-c1-d",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "electron-shortcut-bindings",
+                      "width": 292,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        16
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--pr-open",
+                          "icon": "git-pull-request"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "electron-shortcut-bindings",
+                          "fontWeight": "500"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "content": "2h",
+                          "enabled": true,
+                          "textGrowth": "fixed-width",
+                          "width": 24,
+                          "textAlign": "right"
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": true,
+                          "icon": "chevron-right"
+                        },
+                        "hideui:J5xdha": {
+                          "fill": "$--agent-working",
+                          "enabled": true
+                        },
+                        "hideui:G3d9T": {
+                          "stroke": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:aFPLo": {
+                          "fill": "$--warning",
+                          "enabled": false
+                        },
+                        "hideui:N7YbJ": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "hideui:fklVZ": {
+                          "fill": "$--background",
+                          "enabled": false
+                        },
+                        "hideui:ExMsH": {
+                          "fill": "$--subtle-foreground",
+                          "enabled": false
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "Electron desktop host for the we…",
                           "enabled": true
                         },
                         "hideui:QetL0": {
@@ -16073,6 +16441,12 @@
                         },
                         "hideui:J5xdha": {
                           "fill": "$--agent-working"
+                        },
+                        "hideui:G3d9T": {
+                          "stroke": "$--muted-foreground"
+                        },
+                        "hideui:aFPLo": {
+                          "fill": "$--warning"
                         },
                         "hideui:N7YbJ": {
                           "fill": "$--primary"
@@ -16148,6 +16522,12 @@
                         "hideui:J5xdha": {
                           "fill": "$--agent-working"
                         },
+                        "hideui:G3d9T": {
+                          "stroke": "$--muted-foreground"
+                        },
+                        "hideui:aFPLo": {
+                          "fill": "$--warning"
+                        },
                         "hideui:N7YbJ": {
                           "fill": "$--primary"
                         },
@@ -16220,6 +16600,12 @@
                         },
                         "hideui:J5xdha": {
                           "fill": "$--agent-working"
+                        },
+                        "hideui:G3d9T": {
+                          "stroke": "$--muted-foreground"
+                        },
+                        "hideui:aFPLo": {
+                          "fill": "$--warning"
                         },
                         "hideui:N7YbJ": {
                           "fill": "$--primary"

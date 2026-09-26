@@ -26,6 +26,7 @@ import { Badge } from "./components/ui/badge";
 import { cn } from "./lib/utils";
 import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { AgentRowItem } from "./components/agent-row";
+import { StatusMark } from "./components/status-mark";
 import { WeeklyUsage } from "./components/weekly-usage";
 import { agentSections, allAgents, liveDescendantCounts, type ListedAgent } from "./navigation";
 import {
@@ -688,7 +689,7 @@ function CheckoutSummaryLine({ checkout, agentCount, agents }: { checkout: Check
     <span aria-hidden="true" className="pointer-events-none flex min-w-0 items-center gap-xs pl-(--size-checkout-metadata-inset) pr-md text-caption">
       {agentCount > 0 ? (
         <span className="flex shrink-0 items-center gap-xs" data-checkout-agents={agentCount}>
-          {representative ? <span className={cn("w-(--size-agent-mark) text-center font-mono", markTone(representative))}>{representative.symbol}</span> : null}
+          {representative ? <StatusMark symbol={representative.symbol} className={markTone(representative)} /> : null}
           <AgentMark kind={representative?.agent_kind} />
           {agentCount > 1 ? <span className="font-mono text-subtle-foreground">+{agentCount - 1}</span> : null}
         </span>

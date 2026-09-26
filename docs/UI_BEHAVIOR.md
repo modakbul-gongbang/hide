@@ -338,6 +338,7 @@ Clicking the lifecycle icon, or choosing `Open PR #N` from the checkout context 
 ### Project ordering and inactive folding
 
 Projects and their checkouts sort by the latest authoritative agent activity timestamp or Git commit timestamp, descending; missing activity sorts after known activity, and no UI interaction or local clock invents recency.
+Inside a project the primary checkout comes first whatever its activity, because it is the one checkout that never folds, and the rest follow in that activity order.
 Activity orders projects inside one device group and never across two.
 A project's merged, closed, or seven-day-inactive secondary checkouts move behind a trailing `Inactive N` disclosure, while its primary checkout and every checkout with live work, local changes, unpushed commits, or current focus remain visible.
 When every checkout in a project is inactive, the project itself moves behind the device's `Inactive projects N` disclosure.

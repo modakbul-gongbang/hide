@@ -7186,16 +7186,48 @@
           ],
           "children": [
             {
-              "type": "text",
-              "id": "PCeNa",
+              "type": "frame",
+              "id": "L87E9",
               "name": "Status mark",
-              "fill": "$--agent-working",
-              "textGrowth": "fixed-width",
               "width": 12,
-              "content": "●",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-body",
-              "fontWeight": "normal"
+              "height": 16,
+              "justifyContent": "center",
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "ellipse",
+                  "id": "sWhWS",
+                  "name": "Dot",
+                  "fill": "$--agent-working",
+                  "width": 7,
+                  "height": 7
+                },
+                {
+                  "type": "ellipse",
+                  "id": "i9p0pi",
+                  "name": "Ring",
+                  "enabled": false,
+                  "width": 7,
+                  "height": 7,
+                  "stroke": "$--muted-foreground",
+                  "strokeWidth": 1,
+                  "strokeAlignment": "inner"
+                },
+                {
+                  "type": "text",
+                  "id": "PCeNa",
+                  "name": "Glyph",
+                  "enabled": false,
+                  "fill": "$--warning",
+                  "textGrowth": "fixed-width",
+                  "width": 12,
+                  "content": "?",
+                  "textAlign": "center",
+                  "fontFamily": "$--font-mono",
+                  "fontSize": "$--text-caption",
+                  "fontWeight": "normal"
+                }
+              ]
             },
             {
               "type": "frame",
@@ -7312,8 +7344,7 @@
           "width": "fill_container",
           "fill": "$--color-selected-wash",
           "descendants": {
-            "PCeNa": {
-              "content": "●",
+            "sWhWS": {
               "fill": "$--agent-working"
             },
             "x0h40": {
@@ -7349,9 +7380,12 @@
           "width": "fill_container",
           "fill": "$--color-hover-wash",
           "descendants": {
-            "PCeNa": {
-              "content": "○",
-              "fill": "$--muted-foreground"
+            "sWhWS": {
+              "enabled": false
+            },
+            "i9p0pi": {
+              "enabled": true,
+              "stroke": "$--muted-foreground"
             },
             "x0h40": {
               "content": "기술 교육 콘텐츠 통합",
@@ -7387,7 +7421,11 @@
           "stroke": "$--foreground",
           "strokeWidth": "$--size-hairline",
           "descendants": {
+            "sWhWS": {
+              "enabled": false
+            },
             "PCeNa": {
+              "enabled": true,
               "content": "?",
               "fill": "$--warning"
             },
@@ -7423,7 +7461,11 @@
           "name": "Read question",
           "width": "fill_container",
           "descendants": {
+            "sWhWS": {
+              "enabled": false
+            },
             "PCeNa": {
+              "enabled": true,
               "content": "?",
               "fill": "$--warning"
             },
@@ -7459,7 +7501,11 @@
           "name": "Unread error",
           "width": "fill_container",
           "descendants": {
+            "sWhWS": {
+              "enabled": false
+            },
             "PCeNa": {
+              "enabled": true,
               "content": "×",
               "fill": "$--destructive"
             },
@@ -7495,9 +7541,12 @@
           "name": "Delegated completion",
           "width": "fill_container",
           "descendants": {
-            "PCeNa": {
-              "content": "○",
-              "fill": "$--muted-foreground"
+            "sWhWS": {
+              "enabled": false
+            },
+            "i9p0pi": {
+              "enabled": true,
+              "stroke": "$--muted-foreground"
             },
             "x0h40": {
               "content": "18편 구성 검토",
@@ -7531,7 +7580,11 @@
           "name": "Unknown activity",
           "width": "fill_container",
           "descendants": {
+            "sWhWS": {
+              "enabled": false
+            },
             "PCeNa": {
+              "enabled": true,
               "content": "~",
               "fill": "$--muted-foreground"
             },
@@ -7567,7 +7620,11 @@
           "name": "Disconnected",
           "width": "fill_container",
           "descendants": {
+            "sWhWS": {
+              "enabled": false
+            },
             "PCeNa": {
+              "enabled": true,
               "content": "⊘",
               "fill": "$--muted-foreground"
             },
@@ -7694,8 +7751,7 @@
                             "Lggd1": {
                               "enabled": true
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "●",
+                            "o2Df2F/sWhWS": {
                               "fill": "$--agent-working"
                             },
                             "o2Df2F/x0h40": {
@@ -7742,8 +7798,7 @@
                             "Lggd1": {
                               "enabled": true
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "●",
+                            "o2Df2F/sWhWS": {
                               "fill": "$--agent-working"
                             },
                             "o2Df2F/YYqJe": {
@@ -7798,9 +7853,12 @@
                             "Lggd1": {
                               "enabled": false
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "○",
-                              "fill": "$--muted-foreground"
+                            "o2Df2F/sWhWS": {
+                              "enabled": false
+                            },
+                            "o2Df2F/i9p0pi": {
+                              "enabled": true,
+                              "stroke": "$--muted-foreground"
                             },
                             "o2Df2F/x0h40": {
                               "content": "KoreanEnglishLineWrapVerification",
@@ -7846,8 +7904,7 @@
                             "Lggd1": {
                               "enabled": false
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "●",
+                            "o2Df2F/sWhWS": {
                               "fill": "$--agent-working"
                             },
                             "o2Df2F/x0h40": {
@@ -7894,9 +7951,12 @@
                             "Lggd1": {
                               "enabled": false
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "○",
-                              "fill": "$--muted-foreground"
+                            "o2Df2F/sWhWS": {
+                              "enabled": false
+                            },
+                            "o2Df2F/i9p0pi": {
+                              "enabled": true,
+                              "stroke": "$--muted-foreground"
                             },
                             "o2Df2F/x0h40": {
                               "content": "API 응답 검증",
@@ -7936,7 +7996,11 @@
                             "Lggd1": {
                               "enabled": false
                             },
+                            "o2Df2F/sWhWS": {
+                              "enabled": false
+                            },
                             "o2Df2F/PCeNa": {
+                              "enabled": true,
                               "content": "~",
                               "fill": "$--muted-foreground"
                             },
@@ -8139,8 +8203,7 @@
                             "Lggd1": {
                               "enabled": true
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "●",
+                            "o2Df2F/sWhWS": {
                               "fill": "$--agent-working"
                             },
                             "o2Df2F/x0h40": {
@@ -8187,8 +8250,7 @@
                             "Lggd1": {
                               "enabled": true
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "●",
+                            "o2Df2F/sWhWS": {
                               "fill": "$--agent-working"
                             },
                             "o2Df2F/YYqJe": {
@@ -8243,9 +8305,12 @@
                             "Lggd1": {
                               "enabled": false
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "○",
-                              "fill": "$--muted-foreground"
+                            "o2Df2F/sWhWS": {
+                              "enabled": false
+                            },
+                            "o2Df2F/i9p0pi": {
+                              "enabled": true,
+                              "stroke": "$--muted-foreground"
                             },
                             "o2Df2F/x0h40": {
                               "content": "KoreanEnglishLineWrapVerification",
@@ -8291,8 +8356,7 @@
                             "Lggd1": {
                               "enabled": false
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "●",
+                            "o2Df2F/sWhWS": {
                               "fill": "$--agent-working"
                             },
                             "o2Df2F/x0h40": {
@@ -8339,9 +8403,12 @@
                             "Lggd1": {
                               "enabled": false
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "○",
-                              "fill": "$--muted-foreground"
+                            "o2Df2F/sWhWS": {
+                              "enabled": false
+                            },
+                            "o2Df2F/i9p0pi": {
+                              "enabled": true,
+                              "stroke": "$--muted-foreground"
                             },
                             "o2Df2F/x0h40": {
                               "content": "API 응답 검증",
@@ -8381,7 +8448,11 @@
                             "Lggd1": {
                               "enabled": false
                             },
+                            "o2Df2F/sWhWS": {
+                              "enabled": false
+                            },
                             "o2Df2F/PCeNa": {
+                              "enabled": true,
                               "content": "~",
                               "fill": "$--muted-foreground"
                             },
@@ -8584,8 +8655,7 @@
                             "Lggd1": {
                               "enabled": true
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "●",
+                            "o2Df2F/sWhWS": {
                               "fill": "$--agent-working"
                             },
                             "o2Df2F/x0h40": {
@@ -8632,8 +8702,7 @@
                             "Lggd1": {
                               "enabled": true
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "●",
+                            "o2Df2F/sWhWS": {
                               "fill": "$--agent-working"
                             },
                             "o2Df2F/YYqJe": {
@@ -8688,9 +8757,12 @@
                             "Lggd1": {
                               "enabled": false
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "○",
-                              "fill": "$--muted-foreground"
+                            "o2Df2F/sWhWS": {
+                              "enabled": false
+                            },
+                            "o2Df2F/i9p0pi": {
+                              "enabled": true,
+                              "stroke": "$--muted-foreground"
                             },
                             "o2Df2F/x0h40": {
                               "content": "KoreanEnglishLineWrapVerification",
@@ -8736,8 +8808,7 @@
                             "Lggd1": {
                               "enabled": false
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "●",
+                            "o2Df2F/sWhWS": {
                               "fill": "$--agent-working"
                             },
                             "o2Df2F/x0h40": {
@@ -8784,9 +8855,12 @@
                             "Lggd1": {
                               "enabled": false
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "○",
-                              "fill": "$--muted-foreground"
+                            "o2Df2F/sWhWS": {
+                              "enabled": false
+                            },
+                            "o2Df2F/i9p0pi": {
+                              "enabled": true,
+                              "stroke": "$--muted-foreground"
                             },
                             "o2Df2F/x0h40": {
                               "content": "API 응답 검증",
@@ -8826,7 +8900,11 @@
                             "Lggd1": {
                               "enabled": false
                             },
+                            "o2Df2F/sWhWS": {
+                              "enabled": false
+                            },
                             "o2Df2F/PCeNa": {
+                              "enabled": true,
                               "content": "~",
                               "fill": "$--muted-foreground"
                             },
@@ -9029,8 +9107,7 @@
                             "Lggd1": {
                               "enabled": true
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "●",
+                            "o2Df2F/sWhWS": {
                               "fill": "$--agent-working"
                             },
                             "o2Df2F/x0h40": {
@@ -9077,8 +9154,7 @@
                             "Lggd1": {
                               "enabled": true
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "●",
+                            "o2Df2F/sWhWS": {
                               "fill": "$--agent-working"
                             },
                             "o2Df2F/YYqJe": {
@@ -9133,9 +9209,12 @@
                             "Lggd1": {
                               "enabled": false
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "○",
-                              "fill": "$--muted-foreground"
+                            "o2Df2F/sWhWS": {
+                              "enabled": false
+                            },
+                            "o2Df2F/i9p0pi": {
+                              "enabled": true,
+                              "stroke": "$--muted-foreground"
                             },
                             "o2Df2F/x0h40": {
                               "content": "KoreanEnglishLineWrapVerification",
@@ -9181,8 +9260,7 @@
                             "Lggd1": {
                               "enabled": false
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "●",
+                            "o2Df2F/sWhWS": {
                               "fill": "$--agent-working"
                             },
                             "o2Df2F/x0h40": {
@@ -9229,9 +9307,12 @@
                             "Lggd1": {
                               "enabled": false
                             },
-                            "o2Df2F/PCeNa": {
-                              "content": "○",
-                              "fill": "$--muted-foreground"
+                            "o2Df2F/sWhWS": {
+                              "enabled": false
+                            },
+                            "o2Df2F/i9p0pi": {
+                              "enabled": true,
+                              "stroke": "$--muted-foreground"
                             },
                             "o2Df2F/x0h40": {
                               "content": "API 응답 검증",
@@ -9271,7 +9352,11 @@
                             "Lggd1": {
                               "enabled": false
                             },
+                            "o2Df2F/sWhWS": {
+                              "enabled": false
+                            },
                             "o2Df2F/PCeNa": {
+                              "enabled": true,
                               "content": "~",
                               "fill": "$--muted-foreground"
                             },
@@ -10371,7 +10456,11 @@
           "name": "Search result · expanded",
           "width": "fill_container",
           "descendants": {
+            "sWhWS": {
+              "enabled": false
+            },
             "PCeNa": {
+              "enabled": true,
               "content": "?",
               "fill": "$--warning"
             },
@@ -10411,8 +10500,7 @@
           "name": "Recent Panels · compact",
           "width": "fill_container",
           "descendants": {
-            "PCeNa": {
-              "content": "●",
+            "sWhWS": {
               "fill": "$--agent-working"
             },
             "x0h40": {
@@ -10686,7 +10774,11 @@
             "Lggd1": {
               "enabled": false
             },
+            "o2Df2F/sWhWS": {
+              "enabled": false
+            },
             "o2Df2F/PCeNa": {
+              "enabled": true,
               "content": "✓",
               "fill": "$--success"
             },
@@ -11598,7 +11690,7 @@
             "M2zJMH": {
               "fill": "$--card"
             },
-            "PIKFA/PCeNa": {
+            "PIKFA/L87E9": {
               "enabled": false
             },
             "PIKFA/YYqJe": {
@@ -11636,7 +11728,7 @@
             "M2zJMH": {
               "fill": "$--card"
             },
-            "PIKFA/PCeNa": {
+            "PIKFA/L87E9": {
               "enabled": false
             },
             "PIKFA/YYqJe": {
@@ -11674,7 +11766,7 @@
             "M2zJMH": {
               "fill": "$--card"
             },
-            "PIKFA/PCeNa": {
+            "PIKFA/L87E9": {
               "enabled": false
             },
             "PIKFA/YYqJe": {
@@ -11712,7 +11804,7 @@
             "M2zJMH": {
               "fill": "$--card"
             },
-            "PIKFA/PCeNa": {
+            "PIKFA/L87E9": {
               "enabled": false
             },
             "PIKFA/YYqJe": {
@@ -11746,7 +11838,11 @@
           "name": "Detected but uninstrumented",
           "width": 740,
           "descendants": {
+            "PIKFA/sWhWS": {
+              "enabled": false
+            },
             "PIKFA/PCeNa": {
+              "enabled": true,
               "content": "~",
               "fill": "$--subtle-foreground"
             },
@@ -11781,7 +11877,11 @@
           "name": "Disconnected retained agent",
           "width": 740,
           "descendants": {
+            "PIKFA/sWhWS": {
+              "enabled": false
+            },
             "PIKFA/PCeNa": {
+              "enabled": true,
               "content": "⊘",
               "fill": "$--subtle-foreground"
             },
@@ -13545,12 +13645,48 @@
                       "alignItems": "center",
                       "children": [
                         {
-                          "type": "ellipse",
-                          "id": "J5xdha",
+                          "type": "frame",
+                          "id": "WVA8I",
                           "name": "Status mark",
-                          "fill": "$--agent-working",
-                          "width": 6,
-                          "height": 6
+                          "width": 12,
+                          "height": 12,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "J5xdha",
+                              "name": "Dot",
+                              "fill": "$--agent-working",
+                              "width": 7,
+                              "height": 7
+                            },
+                            {
+                              "type": "ellipse",
+                              "id": "G3d9T",
+                              "name": "Ring",
+                              "enabled": false,
+                              "width": 7,
+                              "height": 7,
+                              "stroke": "$--muted-foreground",
+                              "strokeWidth": 1,
+                              "strokeAlignment": "inner"
+                            },
+                            {
+                              "type": "text",
+                              "id": "aFPLo",
+                              "name": "Glyph",
+                              "enabled": false,
+                              "fill": "$--warning",
+                              "textGrowth": "fixed-width",
+                              "width": 12,
+                              "content": "?",
+                              "textAlign": "center",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "normal"
+                            }
+                          ]
                         },
                         {
                           "type": "frame",
@@ -30983,6 +31119,10 @@
     "--size-usage-popover": {
       "type": "number",
       "value": 250
+    },
+    "--size-status-mark": {
+      "type": "number",
+      "value": 7
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4",
