@@ -740,25 +740,26 @@ function screenPaneHeader(id, {label, status, width}) {
 
 // The side panel's own icon button: a pressed one sits on --secondary with a
 // --foreground glyph, the rest stay --subtle-foreground (WorkspaceScreen.tsx).
-function sidePanelButton(id, glyph, {pressed = false} = {}) {
-  return themedXref(id, 'Nyvom', glyph, pressed ? {fill: '$--secondary'} : {}, {ZIZFR: {icon: glyph, fill: pressed ? '$--foreground' : '$--subtle-foreground'}});
+function sidePanelButton(id, glyph, {pressed = false, size} = {}) {
+  return themedXref(id, 'Nyvom', glyph, {...(pressed ? {fill: '$--secondary'} : {}), ...(size ? {width: size, height: size} : {})}, {ZIZFR: {icon: glyph, fill: pressed ? '$--foreground' : '$--subtle-foreground'}});
 }
 
-// Component / Side panel toggle, composed from the flat icon button: the
-// open-view count rides on it as a --primary badge while the panel is closed.
-function sidePanelToggle(id, {count, pressed}) {
+// The panel toggle as the toolbar carries it while the panel is closed: the
+// open-view count rides on it as a --primary badge (Component / Side panel toggle).
+function sidePanelToggle(id, count) {
   return frame(id, 'Side panel toggle', {layout: 'none', width: 24, height: 24}, [
-    {...sidePanelButton(`${id}-button`, 'panel-right', {pressed}), x: 0, y: 0},
-    ...(count ? [frame(`${id}-badge`, 'Open views badge', {x: 12, y: -2, width: 14, height: 14, fill: '$--primary', cornerRadius: '$--radius-lg', layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [
+    {...sidePanelButton(`${id}-button`, 'panel-right'), x: 0, y: 0},
+    frame(`${id}-badge`, 'Open views badge', {x: 12, y: -2, width: 14, height: 14, fill: '$--primary', cornerRadius: '$--radius-lg', layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [
       text(`${id}-count`, String(count), {size: '$--text-micro', weight: '600', fill: '$--primary-foreground'}),
-    ])] : []),
+    ]),
   ]);
 }
 
 function buildWorkspace(tokens) {
-  const SIDEBAR_W = num(tokens, '--size-sidebar-ideal'), BODY_W = 900, BODY_H = 440;
-  const STRIP = num(tokens, '--size-tab-strip'), GAP = num(tokens, '--spacing-sm'), TOOLS_W = num(tokens, '--size-panel-min');
+  const SIDEBAR_W = num(tokens, '--size-sidebar-ideal'), MAIN_W = 900, MAIN_H = 460;
+  const ROW = num(tokens, '--size-tab-strip'), GAP = num(tokens, '--spacing-sm'), TOOLS_W = num(tokens, '--size-panel-min');
   const HAIR = '$--size-hairline', PANEL_W = GAP + 300 + TOOLS_W;
+  const rule = {stroke: '$--border', strokeWidth: {bottom: HAIR}, strokeAlignment: 'inner'};
   const TERMINAL = [
     ['fixture % echo capture-demo 한글 확인', '$--foreground'],
     ['capture-demo 한글 확인', '$--subtle-foreground'],
@@ -768,40 +769,64 @@ function buildWorkspace(tokens) {
     ['fixture % ', '$--foreground'],
   ];
 
-  // Column 1 of the body: the agents, full width; the panel never resizes them.
-  function agents(key) {
-    const tabs = frame(`ws-agtabs-${key}`, 'Tab bar', {width: 'fill_container', height: STRIP, layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
-      screenPanelTab(`ws-agtab1-${key}`, 'square-terminal', 'Tab 1', true),
-      screenIconButton(`ws-agtabclose-${key}`, 'x', {size: 20}),
-      screenIconButton(`ws-agtabadd-${key}`, 'plus', {size: 20}),
+  // The toolbar spans only the agent column: the path back, and the panel
+  // toggle only while the panel is closed. No Explorer or History toggles.
+  function toolbar(key, count) {
+    return frame(`ws-topbar-${key}`, 'Toolbar', {width: 'fill_container', height: ROW, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, '$--spacing-sm'], ...rule}, [
+      frame(`ws-crumb-${key}`, 'Breadcrumb', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+        text(`ws-c1-${key}`, 'Main', {fill: '$--muted-foreground'}),
+        text(`ws-c2-${key}`, '/', {fill: '$--muted-foreground'}),
+        text(`ws-c3-${key}`, 'demo', {fill: '$--muted-foreground'}),
+        text(`ws-c4-${key}`, '/', {fill: '$--muted-foreground'}),
+        text(`ws-c5-${key}`, 'demo', {weight: '600'}),
+      ]),
+      ...(count ? [sidePanelToggle(`ws-paneltoggle-${key}`, count)] : []),
     ]);
-    // The xterm viewport takes --background in either theme (commit 7052afa).
-    const terminal = frame(`ws-terminal-${key}`, 'Terminal', {width: 'fill_container', height: 'fill_container', fill: '$--background', padding: '$--spacing-sm', layout: 'vertical', gap: '$--spacing-xxs'},
-      TERMINAL.map(([line, fill], index) => text(`ws-term${index}-${key}`, line, {fill, mono: true, size: '$--text-caption'})));
-    return [tabs, screenPaneHeader(`ws-panehdr-${key}`, {label: 'w2:p1', status: 'Working', width: 'fill_container'}), terminal];
   }
 
-  // Component / Side panel (S2, issue 170), from flat refs and local tokens:
-  // the --spacing-sm gap in --background on the left, then the --card card
-  // with a --radius-lg top-left corner and a --border hairline, no shadow.
-  function sidePanel(key, height) {
+  // The agent column: the toolbar, the agents' tab strip, the pane, the terminal.
+  // The panel never resizes it while it floats over it.
+  function agentColumn(key, count) {
+    return frame(`ws-agents-${key}`, 'Agent column', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0, fill: '$--background', clip: true}, [
+      toolbar(key, count),
+      frame(`ws-agtabs-${key}`, 'Tab bar', {width: 'fill_container', height: ROW, layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
+        screenPanelTab(`ws-agtab1-${key}`, 'square-terminal', 'Tab 1', true),
+        screenIconButton(`ws-agtabclose-${key}`, 'x', {size: 20}),
+        screenIconButton(`ws-agtabadd-${key}`, 'plus', {size: 20}),
+      ]),
+      screenPaneHeader(`ws-panehdr-${key}`, {label: 'w2:p1', status: 'Working', width: 'fill_container'}),
+      // The xterm viewport takes --background in either theme (commit 7052afa).
+      frame(`ws-terminal-${key}`, 'Terminal', {width: 'fill_container', height: 'fill_container', fill: '$--background', padding: '$--spacing-sm', layout: 'vertical', gap: '$--spacing-xxs'},
+        TERMINAL.map(([line, fill], index) => text(`ws-term${index}-${key}`, line, {fill, mono: true, size: '$--text-caption'}))),
+    ]);
+  }
+
+  // Component / Side panel (issue 170, "Side panel hierarchy, revised"), from
+  // flat refs and local tokens: full height beside the agent column's toolbar,
+  // the --spacing-sm gap on its left, the --card card with a --radius-lg
+  // top-left corner and a --border hairline, no shadow.
+  function sidePanel(key) {
     const tab = (id, title, glyph, fill, active) => themedXref(id, 'view-tab', title, {
       fill: '$--card', ...(active ? {stroke: '$--primary', strokeWidth: {bottom: '$--size-tab-indicator'}, strokeAlignment: 'inner'} : {}),
     }, {'view-tab-mark': {icon: glyph, fill}, 'view-tab-title': {content: title, fill: active ? '$--foreground' : '$--subtle-foreground'}, 'view-tab-close': {enabled: active}});
-    const strip = frame(`ws-sp-strip-${key}`, 'Tab strip', {width: 'fill_container', height: STRIP, layout: 'horizontal', alignItems: 'center', stroke: '$--border', strokeWidth: {bottom: HAIR}, strokeAlignment: 'inner'}, [
-      frame(`ws-sp-tabs-${key}`, 'View tabs', {width: 'fill_container', height: STRIP, layout: 'horizontal', clip: true}, [
+    // Row 1, at the toolbar row's height: the area's tabs and its New tab, then
+    // the tool-column toggle, Expand, Pin and the panel toggle.
+    const row1 = frame(`ws-sp-row1-${key}`, 'Row 1', {width: 'fill_container', height: ROW, layout: 'horizontal', alignItems: 'center', ...rule}, [
+      frame(`ws-sp-tabs-${key}`, 'Area tabs', {width: 'fill_container', height: ROW, layout: 'horizontal', alignItems: 'center', clip: true}, [
         tab(`ws-sp-tab1-${key}`, '한글 노트.md', 'file-text', '$--file-blue', true),
         tab(`ws-sp-tab2-${key}`, 'pen-screens.mjs', 'file-code', '$--file-orange', false),
-        frame(`ws-sp-viewactions-${key}`, 'View actions', {width: num(tokens, '--size-tab-overflow-control'), height: STRIP, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [
+        sidePanelButton(`ws-sp-new-${key}`, 'plus', {size: 20}),
+        frame(`ws-sp-tabsgap-${key}`, 'Spacer', {width: 'fill_container', height: 1}, []),
+        frame(`ws-sp-viewactions-${key}`, 'View actions', {width: num(tokens, '--size-tab-overflow-control'), height: ROW, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'}, [
           icon(`ws-sp-viewactions-i-${key}`, 'ellipsis', {size: num(tokens, '--size-icon'), fill: '$--subtle-foreground'}),
         ]),
       ]),
-      frame(`ws-sp-actions-${key}`, 'Side panel actions', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', padding: [0, '$--spacing-xs']}, [
-        sidePanelButton(`ws-sp-new-${key}`, 'plus'), sidePanelButton(`ws-sp-pin-${key}`, 'pin'),
-        sidePanelButton(`ws-sp-expand-${key}`, 'maximize-2'), sidePanelButton(`ws-sp-hide-${key}`, 'panel-right-close'),
+      frame(`ws-sp-actions-${key}`, 'Side panel actions', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', padding: [0, '$--spacing-sm', 0, '$--spacing-xs']}, [
+        sidePanelButton(`ws-sp-tools-${key}`, 'panel-right-dashed', {pressed: true}), sidePanelButton(`ws-sp-expand-${key}`, 'maximize-2'),
+        sidePanelButton(`ws-sp-pin-${key}`, 'pin'), sidePanelButton(`ws-sp-hide-${key}`, 'panel-right', {pressed: true}),
       ]),
     ]);
-    const docHeader = frame(`ws-dochdr-${key}`, 'Document header', {width: 'fill_container', height: STRIP, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, '$--spacing-sm'], stroke: '$--border', strokeWidth: {bottom: HAIR}, strokeAlignment: 'inner'}, [
+    const docHeader = frame(`ws-dochdr-${key}`, 'Document header', {width: 'fill_container', height: ROW, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, '$--spacing-sm'], ...rule}, [
       text(`ws-docpath-${key}`, 'docs/한글 노트.md', {mono: true, size: '$--text-caption', fill: '$--muted-foreground'}),
       frame(`ws-doclinks-${key}`, 'Links', {layout: 'horizontal', gap: '$--spacing-md'}, [
         text(`ws-docwrap-${key}`, 'Wrap', {size: '$--text-caption', fill: '$--subtle-foreground'}),
@@ -817,16 +842,19 @@ function buildWorkspace(tokens) {
       frame(`ws-editor-${key}`, 'Editor body', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: '$--spacing-xxs', padding: '$--spacing-sm', clip: true},
         ['# 한글 노트', '', '작업 공간의 사이드 패널은 에이전트 위에 뜹니다.', 'Pin 하면 에이전트 옆에 고정됩니다.'].map((code, index) => line(index + 1, code))),
     ]);
+    // Row 2 over the tool column: the Explorer and History icon tabs, the active one marked.
+    const toolTab = (id, glyph, name, active) => frame(id, name, {width: ROW, height: ROW, layout: 'horizontal', justifyContent: 'center', alignItems: 'center', ...(active ? {stroke: '$--primary', strokeWidth: {bottom: '$--size-tab-indicator'}, strokeAlignment: 'inner'} : {})}, [
+      icon(`${id}-i`, glyph, {size: num(tokens, '--size-icon'), fill: active ? '$--foreground' : '$--subtle-foreground'}),
+    ]);
     const row = (id, name, glyph, fill, {folder = false, status = '', indent = 0} = {}) => frame(`${id}-indent`, 'Tree indent', {width: 'fill_container', layout: 'horizontal', padding: [0, 0, 0, indent]}, [
       themedXref(id, 'mSu8p', name, {width: 'fill_container'}, {
         vEOYq: folder ? {icon: 'chevron-down', fill: '$--subtle-foreground'} : {fill: []},
         LWCQZ: {icon: glyph, fill}, kj232: {content: name}, ZzvYJ: {content: status, fill: '$--warning'},
       }),
     ]);
-    const tools = frame(`ws-sp-tools-${key}`, 'Tool column', {width: TOOLS_W, height: 'fill_container', layout: 'vertical', gap: 0, stroke: '$--border', strokeWidth: {left: HAIR}, strokeAlignment: 'inner'}, [
-      frame(`ws-exphdr-row-${key}`, 'Explorer title row', {width: 'fill_container', height: STRIP, layout: 'horizontal', alignItems: 'center', padding: [0, '$--spacing-xs', 0, '$--spacing-md']}, [
-        text(`ws-exphdr-${key}`, 'EXPLORER', {size: '$--text-caption', fill: '$--muted-foreground', weight: '600', width: 'fill_container'}),
-        screenIconButton(`ws-expclose-${key}`, 'x', {size: 20}),
+    const tools = frame(`ws-sp-tools-col-${key}`, 'Tool column', {width: TOOLS_W, height: 'fill_container', layout: 'vertical', gap: 0, stroke: '$--border', strokeWidth: {left: HAIR}, strokeAlignment: 'inner'}, [
+      frame(`ws-sp-tooltabs-${key}`, 'Row 2: tool tabs', {width: 'fill_container', height: ROW, layout: 'horizontal', alignItems: 'center', padding: [0, 0, 0, '$--spacing-xxs'], ...rule}, [
+        toolTab(`ws-sp-explorer-${key}`, 'folder', 'Explorer', true), toolTab(`ws-sp-history-${key}`, 'git-branch', 'History', false),
       ]),
       frame(`ws-exproot-${key}`, 'Root', {width: 'fill_container', height: num(tokens, '--size-pane-header'), layout: 'horizontal', alignItems: 'center', padding: [0, '$--spacing-xs', 0, '$--spacing-sm']}, [
         text(`ws-exproott-${key}`, 'demo', {size: '$--text-caption', weight: '600', fill: '$--subtle-foreground', width: 'fill_container'}),
@@ -838,43 +866,29 @@ function buildWorkspace(tokens) {
       row(`ws-file4-${key}`, 'pen-screens.mjs', 'file-code', '$--file-orange', {status: 'A', indent: '$--spacing-md'}),
       row(`ws-file5-${key}`, 'README.md', 'file-text', '$--file-blue'),
     ]);
-    return frame(`ws-sidepanel-${key}`, 'Side panel', {layoutPosition: 'absolute', x: BODY_W - PANEL_W, y: 0, width: PANEL_W, height, layout: 'horizontal', gap: 0, fill: '$--background'}, [
+    return frame(`ws-sidepanel-${key}`, 'Side panel', {x: MAIN_W - PANEL_W, y: 0, width: PANEL_W, height: MAIN_H, layout: 'horizontal', gap: 0, fill: '$--background'}, [
       frame(`ws-sp-grip-${key}`, 'Resize grip (the gap)', {width: GAP, height: 'fill_container'}, []),
       frame(`ws-sp-card-${key}`, 'Card', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: 0, clip: true, fill: '$--card', cornerRadius: ['$--radius-lg', 0, 0, 0], stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
-        strip, frame(`ws-sp-body-${key}`, 'Body', {width: 'fill_container', height: 'fill_container', layout: 'horizontal', gap: 0}, [views, tools]),
+        row1, frame(`ws-sp-body-${key}`, 'Body', {width: 'fill_container', height: 'fill_container', layout: 'horizontal', gap: 0}, [views, tools]),
       ]),
     ]);
   }
 
-  // One composition: the sidebar, then the toolbar over the Workspace body.
-  // The toolbar keeps one panel toggle (pressed while the panel shows, the
-  // open-view count as a badge while it is closed) beside the tool toggles.
+  // One composition: the sidebar, then the Workspace. Open, the panel runs its
+  // full height over the agent column; closed, the toolbar carries the panel
+  // toggle with the open-view count.
   function workspace(key, open) {
     const sidebar = screenSidebar(tokens, 'ws-sidebar', key, [
       {title: 'Agent two', status: 'Working'},
       {title: 'Agent one', status: 'Seen', symbol: '○', statusColor: '$--muted-foreground'},
     ]);
-    const crumb = frame(`ws-crumb-${key}`, 'Breadcrumb', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-      text(`ws-c1-${key}`, 'Main', {fill: '$--muted-foreground'}),
-      text(`ws-c2-${key}`, '/', {fill: '$--muted-foreground'}),
-      text(`ws-c3-${key}`, 'demo', {fill: '$--muted-foreground'}),
-      text(`ws-c4-${key}`, '/', {fill: '$--muted-foreground'}),
-      text(`ws-c5-${key}`, 'demo', {weight: '600'}),
-    ]);
-    const toolbar = frame(`ws-tools-${key}`, 'Tools', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
-      sidePanelToggle(`ws-paneltoggle-${key}`, open ? {pressed: true} : {count: 2}),
-      sidePanelButton(`ws-tool-explorer-${key}`, 'folder', {pressed: open}), sidePanelButton(`ws-tool-history-${key}`, 'git-branch'),
-    ]);
-    const topBar = frame(`ws-topbar-${key}`, 'Top bar', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', width: BODY_W}, [crumb, toolbar]);
-    const body = frame(`ws-body-${key}`, 'Workspace body', {width: BODY_W, height: BODY_H, layout: 'vertical', gap: 0, fill: '$--background', clip: true}, [
-      ...agents(key), ...(open ? [sidePanel(key, BODY_H)] : []),
-    ]);
-    return frame(`ws-wrap-${key}`, open ? 'Side panel open' : 'Side panel closed, two views open', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
-      sidebar, frame(`ws-main-${key}`, 'Workspace', {layout: 'vertical', gap: '$--spacing-md', width: BODY_W}, [topBar, body]),
-    ]);
+    const main = open
+      ? frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'none', clip: true}, [{...agentColumn(key, 0), x: 0, y: 0}, sidePanel(key)])
+      : frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0}, [agentColumn(key, 2)]);
+    return frame(`ws-wrap-${key}`, open ? 'Side panel open' : 'Side panel closed, two views open', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [sidebar, main]);
   }
   const build = suffix => [workspace(`${suffix}o`, true), workspace(`${suffix}c`, false)];
-  return screenSheet('screen-workspace', 'Screen / Workspace', 'web/src/WorkspaceScreen.tsx, TabBar.tsx, ViewAreas.tsx, Tools.tsx: the Workspace with its side panel (Component / Side panel, issue 170) open over the agents, then closed with two views still open. No layout switch: the toolbar keeps one panel toggle, which carries the open-view count while the panel is closed. A Korean file name verifies B11 wrapping.', build, build);
+  return screenSheet('screen-workspace', 'Screen / Workspace', 'web/src/WorkspaceScreen.tsx, TabBar.tsx, ViewAreas.tsx, Tools.tsx: the Workspace with its side panel (Component / Side panel, issue 170) open at full height over the agent column, then closed with two views still open. The toolbar spans only the agent column and holds no tool toggles; row 1 of the panel holds the area tabs and their New tab, then the tool-column toggle, Expand, Pin and the panel toggle, which the toolbar carries with the open-view count while the panel is closed; row 2 holds the document header and the Explorer and History tool tabs. A Korean file name verifies B11 wrapping.', build, build);
 }
 
 // -- Screen / Project Sessions --------------------------------------------------
