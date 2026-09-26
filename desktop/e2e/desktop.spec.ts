@@ -183,7 +183,8 @@ test("failure: a missing CLI shows its reason and Retry attaches once it exists"
 });
 
 test("discovery: with hide on no PATH, the app finds it where it is installed and remembers it for the next launch", async () => {
-  // An app opened from Finder: launchd's bare PATH, no override, no worktree build beside it.
+  // launchd's bare PATH, no override, no worktree build beside it. Playwright runs the app
+  // unpackaged, so the login-shell step is skipped here; cli.test.ts covers its place in the order.
   const bare = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
   const env: Record<string, string> = { ...run.env, PATH: bare.join(":") };
   delete env.HIDE_CLI_PATH;
