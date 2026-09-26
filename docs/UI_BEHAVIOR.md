@@ -132,7 +132,8 @@ The Agents explorer groups every current agent, this machine's and each connecte
 Each group lists its root rows; a delegated row is drawn only beneath its parent, indented one step per level and muted, while the operator has that parent unfolded.
 A group's heading counts every agent it speaks for, its roots and all their live descendants whether folded or not, so each agent is counted once, under its root's heading.
 Descendants start folded; the parent's chevron folds and unfolds them, and the choice is the core's `expanded_agent_pane_ids`, so it survives a restart and is the same fold wherever the parent is drawn, in Agents or under its checkout in Projects.
-The chevron is at the row's right end and exists only on a row with children, so a leaf row has no lineage slot: folded, it is always shown; unfolded, it shows under the pointer, while focus is inside the row, and always on an input with no hover, in a slot kept at rest so nothing beside it moves.
+The chevron is at the row's right end and exists only on a row with children: folded, it is always shown; unfolded, it shows under the pointer, while focus is inside the row, and always on an input with no hover, in a slot kept at rest so nothing beside it moves.
+A leaf row keeps the same slot empty, so every agent row's time ends on one column and every chevron stands on one.
 A folded parent with live descendants carries a badge after its title: one mark and count per state (error, approval, question, working, done), summed over every live descendant, or `↳N` when all of them are merely ready.
 The badge is a button: a click, Enter or Space opens a list of the direct children with their status mark, name, status word, branch when it differs, and elapsed time; the arrow keys move the highlight, Enter or the highlighted row's arrow opens that child's pane, the last item unfolds the children in the list, and Escape closes it and returns focus to the parent row.
 The list has no Stop action, drops a child the moment it leaves the projection, and closes when no child is left.
@@ -328,9 +329,10 @@ Two checkouts of one repository share a project cycle.
 Each checkout row shows a kind glyph, selected in priority order: the pull-request lifecycle icon when current GitHub data has a pull request, then branch, home for the primary checkout, commit for detached HEAD, or folder for a plain folder.
 Open, draft, merged, and closed pull requests keep their own lifecycle shapes and colors, stale GitHub data mutes only the icon, an unavailable GitHub lookup falls back to the branch glyph, and a missing folder colors its branch glyph as danger and omits the age.
 Workspaces with nested agent rows toggle disclosure across the whole row; workspaces without nested agent rows open on click (the Swift shell).
-In the web shell every row reads on the left and acts on the right: the glyph, the name and the time read at fixed columns, and the fold and the `⋯` menu sit in two slots at the row's right end that are kept at rest, so nothing moves when a control shows.
-A folded chevron is always shown; an unfolded one and the `⋯` show under the pointer, while focus is inside the row, while its menu is open, and always on an input with no hover.
-A web checkout row always opens its checkout: its chevron, drawn only while agents run there, opens and closes their rows, and its last-commit age stays beside the `⋯` whatever the pointer does.
+In the web shell every row reads on the left and ends the same way on the right: its time, then a fold slot kept at rest, so nothing moves when a control shows and the times of project, checkout and agent rows end on one column while their chevrons stand on another.
+A folded chevron is always shown; an unfolded one shows under the pointer, while focus is inside the row, while its menu is open, and always on an input with no hover.
+Nothing on a row stands for its menu: a right-click, or the menu key or ⇧F10 on the focused row, opens it.
+A web checkout row always opens its checkout: its chevron, drawn only while agents run there, opens and closes their rows, and its last-commit age stays in place whatever the pointer does and while the menu is open.
 An opened checkout and its agent rows share one small group fill; no card border nests inside another.
 A web checkout's agent rows start closed, so its second line names them, and the checkouts the operator opens are kept in the core's ui state across launches; the Swift shell keeps its own disclosure until it is removed.
 A web project row folds its checkouts from its chevron on the right, and the rest of the row opens the project's Overview; both folds are this machine's, so a selected SSH device's tree is drawn with nothing folded.
@@ -350,7 +352,7 @@ A row whose descendants are folded, and every raised row, wears a descendant bad
 ### Purpose, pinning, and PR chrome
 
 A checkout's one-line purpose is set from the checkout row's or Overview header's `Set purpose…` context item, with a character count and a warning near the limit; saving an empty purpose clears it, and display falls back through branch description, representative agent title, and pull-request title in that order.
-A registered project can be pinned from its row menu or right-click menu; pinned projects are drawn once under a `Pinned N` section between the raised groups and the activity-ordered project list, in the tree's own order (device first, then latest activity), and only while at least one project is pinned.
+A registered project can be pinned from its row's right-click menu; pinned projects are drawn once under a `Pinned N` section between the raised groups and the activity-ordered project list, in the tree's own order (device first, then latest activity), and only while at least one project is pinned.
 The pin lives on the project's registration and survives a relaunch; removing the registration takes the pin with it.
 A pinned project is exempt from its device's inactive fold whatever its activity; its own stale worktrees still fold behind their own `Inactive N` row.
 PR lifecycle color is a semantic-color exception to otherwise neutral chrome: Open, Merged, Closed, and Draft each keep a fixed color shared between the sidebar glyph, the Overview popover header, and the state badge, including during hover and selection; review decisions and CI keep their own separate status meanings.

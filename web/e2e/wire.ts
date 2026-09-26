@@ -125,6 +125,27 @@ export async function keyboardFocus(page: Page, control: Locator): Promise<void>
 }
 
 /**
+ * Where the rows of the list on screen end (PRD sidebar-readability D-3): the
+ * distinct right edges of the times (an agent's elapsed, a checkout's age, a
+ * project's activity) and the distinct centres of the fold chevrons, shown or
+ * waiting for the pointer. One of each means every row ends on the same grid.
+ */
+export async function sidebarColumns(page: Page): Promise<{ times: number[]; chevrons: number[] }> {
+  return page.evaluate(() => {
+    const list = "nav[data-sidebar] :is([data-agent-list], [data-project-list])";
+    const boxes = (parts: string) =>
+      Array.from(document.querySelectorAll(`${list} :is(${parts})`))
+        .filter((part) => part.getClientRects().length > 0)
+        .map((part) => part.getBoundingClientRect());
+    const distinct = (values: number[]) => [...new Set(values.map((value) => Math.round(value)))].sort((a, b) => a - b);
+    return {
+      times: distinct(boxes("[data-agent-elapsed], [data-checkout-age], [data-project-activity]").map((box) => box.right)),
+      chevrons: distinct(boxes("[data-agent-tree-toggle], [data-checkout-toggle], [data-project-toggle]").map((box) => box.left + box.width / 2)),
+    };
+  });
+}
+
+/**
  * The sidebar at a given width, and whether anything in it overflows
  * sideways: the list scrolling horizontally, or a row's time or control
  * running past the row's right edge (PRD sidebar-readability B25).

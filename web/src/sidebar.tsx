@@ -16,7 +16,7 @@ import {
 import { memo, useMemo, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
-import { RowMenu } from "./components/entry-menu";
+import { EntryContextMenu } from "./components/entry-menu";
 import { SearchField } from "./components/search-field";
 import { Hint } from "./components/ui/tooltip";
 import { DevicePicker } from "./DevicePicker";
@@ -26,7 +26,7 @@ import { AgentMark } from "./AgentMark";
 import { Badge } from "./components/ui/badge";
 import { cn } from "./lib/utils";
 import { checkoutAgentRows, type BoardRow } from "./projectBoard";
-import { SidebarAgentRow } from "./components/sidebar-agent-row";
+import { FoldLane, SidebarAgentRow } from "./components/sidebar-agent-row";
 import { StatusMark } from "./components/status-mark";
 import { WeeklyUsage } from "./components/weekly-usage";
 import { agentPlaces, agentSections, allAgents, allProjectsCount, liveDescendantCounts, type ListedAgent } from "./navigation";
@@ -318,11 +318,12 @@ function AllProjectsRow({ selected }: { selected: boolean }) {
       >
         <LayoutGridIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
         <span className="min-w-0 flex-1 truncate text-title font-semibold text-foreground">All projects</span>
-        <span className="shrink-0 text-body text-muted-foreground">
-          {count} {count === 1 ? "project" : "projects"}
-        </span>
-        <Lane width="chevron" />
-        <Lane width="slot" />
+        <RowEnd>
+          <span className="text-body text-muted-foreground">
+            {count} {count === 1 ? "project" : "projects"}
+          </span>
+          <FoldLane />
+        </RowEnd>
       </button>
     </li>
   );
@@ -366,8 +367,11 @@ const ProjectRowView = memo(function ProjectRowView({ row, context }: { row: Pro
 
 // The Projects columns (PRD sidebar-readability D-2): a project's glyph at the
 // row's inset, a checkout's glyph one lineage step in, and an opened
-// checkout's agent marks on the checkout name's column. Every control is on
-// the right, in the same two slots on every row: the fold, then the `⋯`.
+// checkout's agent marks on the checkout name's column. Every row ends the
+// same way, agent rows included: its time, then its fold slot, so the times
+// and the chevrons stand in one column each. A row's menu opens on a
+// right-click, or the menu key or ⇧F10 on the focused row; nothing on the
+// row stands for it.
 /** Where a project's glyph starts. */
 const PROJECT_COLUMN = "var(--spacing-sm)";
 /** Where a project's name, and a plain folder's agent marks, start. */
@@ -378,14 +382,19 @@ const CHECKOUT_COLUMN = "calc(var(--spacing-sm) + var(--size-lineage-indent))";
 const CHECKOUT_NAME_COLUMN = "calc(var(--spacing-sm) + var(--size-lineage-indent) + var(--size-checkout-icon) + var(--spacing-sm))";
 
 /**
- * A row control that waits for the pointer, inside a row `RowMenu` wraps: its
- * slot is always kept, and it shows under the pointer, with focus inside
- * the row, while the row's menu is open, and always on an input with no hover
- * (PRD sidebar-readability D-3, B2, B3). `REVEALED_CONTROL` in
+ * A row control that waits for the pointer, inside a row `EntryContextMenu`
+ * wraps: its slot is always kept, and it shows under the pointer, with focus
+ * inside the row, while the row's menu is open, and always on an input with no
+ * hover (PRD sidebar-readability D-3, B2, B3). `REVEALED_CONTROL` in
  * sidebar-agent-row.tsx is the same rule for an agent row, which has no menu.
  */
 const ROW_REVEALED =
-  "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-has-[[data-menu-open]]:opacity-100 group-data-[state=open]:opacity-100 focus-visible:opacity-100 hoverless:opacity-100";
+  "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-data-[state=open]:opacity-100 focus-visible:opacity-100 hoverless:opacity-100";
+
+/** A row's time and fold slot, a step apart as on an agent row, so every row's time ends on one column. */
+function RowEnd({ children }: { children: ReactNode }) {
+  return <span className="flex shrink-0 items-center gap-xs">{children}</span>;
+}
 
 /** One disclosure for both inactive folds, the project level's and the checkout level's; its chevron stands in the fold slot. */
 function FoldRow({
@@ -418,14 +427,8 @@ function FoldRow({
       <span className="flex w-(--size-lineage-chevron) shrink-0 justify-center text-muted-foreground">
         <Chevron aria-hidden="true" className="size-(--size-icon-sm)" />
       </span>
-      <Lane width="slot" />
     </button>
   );
-}
-
-/** A slot for a row control that is not there, so every row's time and controls line up. */
-function Lane({ width }: { width: "chevron" | "slot" }) {
-  return <span aria-hidden="true" className={cn("shrink-0", width === "chevron" ? "w-(--size-lineage-chevron)" : "w-(--size-icon-button-toolbar)")} />;
 }
 
 /** The fold on a project or checkout row: a folded one is always shown, an open one waits for the pointer (D-3). */
@@ -446,11 +449,6 @@ function FoldToggle({ open, label, onToggle, ...data }: { open: boolean; label: 
       <Chevron aria-hidden="true" className="size-(--size-icon-sm)" />
     </button>
   );
-}
-
-/** The `⋯` slot every project and checkout row keeps at its end. */
-function MenuSlot({ trigger }: { trigger: ReactNode }) {
-  return <span className="pointer-events-auto relative flex h-(--size-icon-button-toolbar) w-(--size-icon-button-toolbar) shrink-0">{trigger}</span>;
 }
 
 function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; level: "root" | "child"; context: ListContext }) {
@@ -487,44 +485,42 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
   );
   return (
     <li data-project={workspace.id} className={inset}>
-      <RowMenu
+      <EntryContextMenu
         label={`${workspace.label} actions`}
-        items={projectMenu(workspace)}
+        items={() => projectMenu(workspace)}
         onSelect={(item) => runProjectItem(actions, workspace, item)}
+        className="group flex items-stretch"
         data-project-menu={workspace.id}
       >
-        {(trigger) => (
-          <div
-            className={cn("flex min-h-(--size-control-regular) w-full items-center gap-sm rounded-sm pr-xs", selected ? "bg-secondary" : "hover:bg-accent")}
-            style={{ paddingLeft: PROJECT_COLUMN }}
+        <div
+          className={cn("flex min-h-(--size-control-regular) w-full items-center gap-xs rounded-sm pr-xs", selected ? "bg-secondary" : "hover:bg-accent")}
+          style={{ paddingLeft: PROJECT_COLUMN }}
+        >
+          <button
+            type="button"
+            data-project-row={workspace.id}
+            aria-current={selected ? "page" : undefined}
+            className="flex min-w-0 flex-1 self-stretch items-center gap-sm rounded-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+            onClick={() => useUiStore.getState().setScreen({ kind: "overview", projectId: workspace.id })}
           >
-            <button
-              type="button"
-              data-project-row={workspace.id}
-              aria-current={selected ? "page" : undefined}
-              className="flex min-w-0 flex-1 self-stretch items-center gap-sm rounded-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-              onClick={() => useUiStore.getState().setScreen({ kind: "overview", projectId: workspace.id })}
-            >
-              <ProjectIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
-              <span className="min-w-0 flex-1 truncate text-title font-semibold text-foreground">{workspace.label}</span>
-              <span className="shrink-0 text-caption text-muted-foreground" data-project-activity="true">
-                {activityLabel(workspace, agents, Date.now())}
-              </span>
-            </button>
-            {disclosure ? (
-              <FoldToggle
-                open={expanded}
-                label={expanded ? `Fold ${workspace.label}` : `Unfold ${workspace.label}`}
-                onToggle={() => actions.toggleProjectCheckouts(workspace)}
-                data-project-toggle={workspace.id}
-              />
-            ) : (
-              <Lane width="chevron" />
-            )}
-            <MenuSlot trigger={trigger} />
-          </div>
-        )}
-      </RowMenu>
+            <ProjectIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
+            <span className="min-w-0 flex-1 truncate text-title font-semibold text-foreground">{workspace.label}</span>
+            <span className="shrink-0 text-caption text-muted-foreground" data-project-activity="true">
+              {activityLabel(workspace, agents, Date.now())}
+            </span>
+          </button>
+          {disclosure ? (
+            <FoldToggle
+              open={expanded}
+              label={expanded ? `Fold ${workspace.label}` : `Unfold ${workspace.label}`}
+              onToggle={() => actions.toggleProjectCheckouts(workspace)}
+              data-project-toggle={workspace.id}
+            />
+          ) : (
+            <FoldLane />
+          )}
+        </div>
+      </EntryContextMenu>
       {expanded ? (
         <ul>
           {active.map(checkoutRow)}
@@ -574,9 +570,9 @@ function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: Che
 }
 
 /**
- * A checkout: the row opens it. On its right, in fixed slots, are the
- * last-commit age (always, where one is known), the chevron that opens its
- * agent rows (there only while agents run in it) and the `⋯` menu. Closed,
+ * A checkout: the row opens it, and a right-click opens its menu. On its
+ * right are the last-commit age (always, where one is known) and the fold
+ * slot, whose chevron opens its agent rows while agents run in it. Closed,
  * line two names its agents (the representative's mark and provider, +N for
  * the rest) and the purpose; opened, its rows and it share a small group fill.
  */
@@ -601,40 +597,41 @@ const CheckoutRowView = memo(function CheckoutRowView({
   const KindIcon = KIND_ICON[view.kind];
   return (
     <li data-checkout-row={checkout.id} data-checkout-open={open ? "true" : undefined} className={cn(open && "rounded-sm bg-muted")}>
-      <RowMenu
+      <EntryContextMenu
         label={`${name} actions`}
-        items={checkoutMenu(checkout, purposeProblem)}
+        items={() => checkoutMenu(checkout, purposeProblem)}
         onSelect={(item) => runCheckoutItem(workspace, checkout, item)}
+        className="group flex items-stretch"
         data-checkout-menu={checkout.id}
       >
-        {(trigger) => (
-          <div
-            className={cn(
-              "relative flex w-full flex-col justify-center gap-xxs rounded-sm pr-xs",
-              secondLine ? "min-h-(--size-checkout-row-detailed)" : "min-h-(--size-checkout-row)",
-              focused ? "bg-secondary" : "hover:bg-accent",
-              view.settled && "opacity-(--opacity-dimmed)",
-            )}
-            style={{ paddingLeft: CHECKOUT_COLUMN }}
-          >
-            <CheckoutOpenButton
-              workspace={workspace}
-              checkout={checkout}
-              view={view}
-              focused={focused}
-              label={[name, view.age, purpose].filter(Boolean).join(", ")}
-              actions={actions}
-            />
-            {/* The row button covers the whole row; a control drawn over it is positioned, so it stacks above. */}
-            <span className="pointer-events-none flex min-w-0 items-center gap-sm">
-              <KindIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />
-              <span aria-hidden="true" className={cn("min-w-0 truncate text-subhead text-foreground", focused ? "font-semibold" : "font-medium")}>
-                {name}
-              </span>
-              <CheckoutBadge checkout={checkout} />
-              <span className="flex-1" />
+        <div
+          className={cn(
+            "relative flex w-full flex-col justify-center gap-xxs rounded-sm pr-xs",
+            secondLine ? "min-h-(--size-checkout-row-detailed)" : "min-h-(--size-checkout-row)",
+            focused ? "bg-secondary" : "hover:bg-accent",
+            view.settled && "opacity-(--opacity-dimmed)",
+          )}
+          style={{ paddingLeft: CHECKOUT_COLUMN }}
+        >
+          <CheckoutOpenButton
+            workspace={workspace}
+            checkout={checkout}
+            view={view}
+            focused={focused}
+            label={[name, view.age, purpose].filter(Boolean).join(", ")}
+            actions={actions}
+          />
+          {/* The row button covers the whole row; a control drawn over it is positioned, so it stacks above. */}
+          <span className="pointer-events-none flex min-w-0 items-center gap-sm">
+            <KindIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />
+            <span aria-hidden="true" className={cn("min-w-0 truncate text-subhead text-foreground", focused ? "font-semibold" : "font-medium")}>
+              {name}
+            </span>
+            <CheckoutBadge checkout={checkout} />
+            <span className="flex-1" />
+            <RowEnd>
               {view.age ? (
-                <span aria-hidden="true" data-checkout-age={view.age} className="shrink-0 font-mono text-caption text-muted-foreground">
+                <span aria-hidden="true" data-checkout-age={view.age} className="font-mono text-caption text-muted-foreground">
                   {view.age}
                 </span>
               ) : null}
@@ -646,14 +643,13 @@ const CheckoutRowView = memo(function CheckoutRowView({
                   data-checkout-toggle={checkout.id}
                 />
               ) : (
-                <Lane width="chevron" />
+                <FoldLane />
               )}
-              <MenuSlot trigger={trigger} />
-            </span>
-            {secondLine ? <CheckoutSummaryLine checkout={checkout} agentCount={view.agentCount} agents={context.agents} /> : null}
-          </div>
-        )}
-      </RowMenu>
+            </RowEnd>
+          </span>
+          {secondLine ? <CheckoutSummaryLine checkout={checkout} agentCount={view.agentCount} agents={context.agents} /> : null}
+        </div>
+      </EntryContextMenu>
       {open ? <OpenAgentRows checkoutId={checkout.id} agentRows={agentRows} inset={CHECKOUT_NAME_COLUMN} context={context} /> : null}
     </li>
   );
@@ -664,8 +660,8 @@ const CheckoutRowView = memo(function CheckoutRowView({
  * one row. Line one is the project's name and activity, line two the
  * checkout's agents and purpose; the row opens the checkout and is marked
  * while that checkout is the Workspace in front or the project's Overview is,
- * and its menu is the project's followed by the checkout's. It keeps the
- * checkout row's right slots, and its Overview is reached from All projects.
+ * and its menu is the project's followed by the checkout's. It ends as a
+ * checkout row does, and its Overview is reached from All projects.
  */
 const FolderRowView = memo(function FolderRowView({
   workspace,
@@ -689,38 +685,39 @@ const FolderRowView = memo(function FolderRowView({
   const { foldable, open, purpose, secondLine } = checkoutDisclosure(checkout, agentRows, view, context);
   return (
     <li data-project={workspace.id} data-checkout-open={open ? "true" : undefined} className={cn(inset, open && "rounded-sm bg-muted")}>
-      <RowMenu
+      <EntryContextMenu
         label={`${workspace.label} actions`}
-        items={folderMenu(workspace, checkout, purposeProblem)}
+        items={() => folderMenu(workspace, checkout, purposeProblem)}
         onSelect={(item) => (item === "set_purpose" || item === "delete_worktree" ? runCheckoutItem(workspace, checkout, item) : runProjectItem(actions, workspace, item))}
+        className="group flex items-stretch"
         data-project-menu={workspace.id}
       >
-        {(trigger) => (
-          <div
-            className={cn(
-              "relative flex w-full flex-col justify-center gap-xxs rounded-sm pr-xs",
-              secondLine ? "min-h-(--size-checkout-row-detailed)" : "min-h-(--size-control-regular)",
-              focused ? "bg-secondary" : "hover:bg-accent",
-            )}
-            style={{ paddingLeft: PROJECT_COLUMN }}
-          >
-            <CheckoutOpenButton
-              workspace={workspace}
-              checkout={checkout}
-              view={view}
-              focused={focused}
-              label={[workspace.label, activity, purpose].filter(Boolean).join(", ")}
-              actions={actions}
-            />
-            <span className="pointer-events-none flex min-w-0 items-center gap-sm">
-              <FolderIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />
-              <span aria-hidden="true" className="min-w-0 truncate text-title font-semibold text-foreground">
-                {workspace.label}
-              </span>
-              <CheckoutBadge checkout={checkout} />
-              <span className="flex-1" />
+        <div
+          className={cn(
+            "relative flex w-full flex-col justify-center gap-xxs rounded-sm pr-xs",
+            secondLine ? "min-h-(--size-checkout-row-detailed)" : "min-h-(--size-control-regular)",
+            focused ? "bg-secondary" : "hover:bg-accent",
+          )}
+          style={{ paddingLeft: PROJECT_COLUMN }}
+        >
+          <CheckoutOpenButton
+            workspace={workspace}
+            checkout={checkout}
+            view={view}
+            focused={focused}
+            label={[workspace.label, activity, purpose].filter(Boolean).join(", ")}
+            actions={actions}
+          />
+          <span className="pointer-events-none flex min-w-0 items-center gap-sm">
+            <FolderIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />
+            <span aria-hidden="true" className="min-w-0 truncate text-title font-semibold text-foreground">
+              {workspace.label}
+            </span>
+            <CheckoutBadge checkout={checkout} />
+            <span className="flex-1" />
+            <RowEnd>
               {/* The activity stands where a checkout's age does. */}
-              <span aria-hidden="true" className="shrink-0 text-caption text-muted-foreground" data-project-activity="true">
+              <span aria-hidden="true" className="text-caption text-muted-foreground" data-project-activity="true">
                 {activity}
               </span>
               {foldable ? (
@@ -731,14 +728,13 @@ const FolderRowView = memo(function FolderRowView({
                   data-checkout-toggle={checkout.id}
                 />
               ) : (
-                <Lane width="chevron" />
+                <FoldLane />
               )}
-              <MenuSlot trigger={trigger} />
-            </span>
-            {secondLine ? <CheckoutSummaryLine checkout={checkout} agentCount={view.agentCount} agents={context.agents} /> : null}
-          </div>
-        )}
-      </RowMenu>
+            </RowEnd>
+          </span>
+          {secondLine ? <CheckoutSummaryLine checkout={checkout} agentCount={view.agentCount} agents={context.agents} /> : null}
+        </div>
+      </EntryContextMenu>
       {open ? <OpenAgentRows checkoutId={checkout.id} agentRows={agentRows} inset={PROJECT_NAME_COLUMN} context={context} /> : null}
     </li>
   );

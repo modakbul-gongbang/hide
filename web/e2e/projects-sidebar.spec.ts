@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sidebarOverflow, sidebarRowsFit } from "./wire";
+import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sidebarColumns, sidebarOverflow, sidebarRowsFit } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -120,44 +120,47 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     await expect(feature.locator("[data-purpose]")).toHaveText("Projects 탭 행 다시 그리기");
     await screenshot(page, "projects-sidebar-closed");
 
-    // sidebar-readability B2, B4, B7: the controls sit on the right in slots
+    // sidebar-readability B2, B4, B7: the fold sits on the right in a slot
     // kept at rest. A folded chevron is always shown, an unfolded one waits for
-    // the pointer; the age stays beside the menu; and hover, keyboard focus,
-    // an open menu or a selection move neither the name, the age, the row's
-    // height nor the row after it.
+    // the pointer; nothing on the row stands for its menu, which a right-click
+    // or ⇧F10 opens; the age stays while it is open; and hover, keyboard
+    // focus, an open menu or a selection move neither the name, the age, the
+    // row's height nor the row after it.
     const primaryRow = primary.locator("[data-checkout]").locator("xpath=..");
     const primaryParts = [primary.getByText("main", { exact: true }), primary.locator("[data-checkout-age]")];
     const primaryToggle = primary.locator("[data-checkout-toggle]");
-    const primaryMenu = primary.locator("button[data-checkout-menu]");
+    const primaryMenu = page.getByRole("menu", { name: "main actions" });
     const beforeLooking = new Map(sent);
     await rest(page);
     const atRest = await rowGeometry(primaryRow, feature, primaryParts);
     expect(await projectButtonFills(page)).toBe(true);
     await expect(primaryToggle).toHaveCSS("opacity", "1");
-    await expect(primaryMenu).toHaveCSS("opacity", "0");
     await expect(projectToggle).toHaveCSS("opacity", "0");
+    await expect(page.locator("[data-project-list]").getByRole("button", { name: /actions$/ })).toHaveCount(0);
     const activity = project.locator("[data-project-activity]");
     expect((await projectToggle.boundingBox())!.x).toBeGreaterThan((await activity.boundingBox())!.x);
     await project.locator("[data-project-row]").hover();
     await expect(projectToggle).toHaveCSS("opacity", "1");
     await primaryRow.hover();
-    await expect(primaryMenu).toHaveCSS("opacity", "1");
     expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(atRest);
     await rest(page);
     await keyboardFocus(page, primary.locator("[data-checkout]"));
-    await expect(primaryMenu).toHaveCSS("opacity", "1");
     expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(atRest);
+    await page.keyboard.press("Shift+F10");
+    await expect(primaryMenu).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(primaryMenu).toHaveCount(0);
     await rest(page);
-    await primaryMenu.click();
-    await expect(page.getByRole("menu", { name: "main actions" })).toBeVisible();
+    await primaryRow.click({ button: "right" });
+    await expect(primaryMenu).toBeVisible();
     await expect(primary.locator("[data-checkout-age]")).toHaveCSS("opacity", "1");
     expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(atRest);
     await screenshot(page, "projects-sidebar-menu-open");
     await page.keyboard.press("Escape");
-    await expect(page.getByRole("menu", { name: "main actions" })).toHaveCount(0);
+    await expect(primaryMenu).toHaveCount(0);
     // An unfolded chevron stays shown while its row's menu is open, with the
     // pointer and focus gone from the row.
-    await project.locator("button[data-project-menu]").click();
+    await project.locator("[data-project-row]").click({ button: "right" });
     const projectMenu = page.getByRole("menu", { name: /actions$/ });
     await expect(projectMenu).toBeVisible();
     await page.mouse.move(900, 600);
@@ -233,9 +236,13 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     // Checked once the list has redrawn, so a frame sent behind the toggle has arrived too.
     expect([...sent].filter(([kind, count]) => count !== (beforeFold.get(kind) ?? 0)).map(([kind]) => kind)).toEqual(["agent_tree_toggle"]);
     await screenshot(page, "projects-sidebar-lineage-open");
+    // D-3: project, checkout, folder and agent rows, parents and the rest, end
+    // their times on one column and centre their chevrons on another.
+    expect(await sidebarColumns(page)).toEqual({ times: [expect.any(Number)], chevrons: [expect.any(Number)] });
     // The same fold in Agents: the child is drawn under its parent there too.
     await page.locator('[data-sidebar-mode="agents"]').click();
     await expect(page.locator(`[data-agent-list] [data-pane="${rowsPane}"]`)).toHaveAttribute("data-depth", "1");
+    expect(await sidebarColumns(page)).toEqual({ times: [expect.any(Number)], chevrons: [expect.any(Number)] });
     await expect(page.locator(`[data-agent-list] [data-pane="${mainPane}"] [data-agent-place]`)).toHaveText("repo › main");
     await page.locator('[data-sidebar-mode="projects"]').click();
 
@@ -343,7 +350,6 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     await rest(page);
     await expect(projectToggle).toHaveAttribute("aria-expanded", "true");
     await expect(projectToggle).toHaveCSS("opacity", "1");
-    await expect(primaryMenu).toHaveCSS("opacity", "1");
     await expect(lineageToggle).toHaveCSS("opacity", "1");
     await cdp.send("Emulation.setTouchEmulationEnabled", { enabled: false });
 

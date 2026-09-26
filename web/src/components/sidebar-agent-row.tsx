@@ -15,10 +15,19 @@ import { Hint } from "./ui/tooltip";
  * under the pointer, while focus is anywhere inside the row, and always on
  * an input with no hover (PRD sidebar-readability D-3, B2, B3). An agent row
  * has no menu of its own; the Projects rows' `ROW_REVEALED` in sidebar.tsx
- * adds the menu-open case for rows that have one.
+ * adds the case of an open right-click menu for rows that have one.
  */
 export const REVEALED_CONTROL =
   "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:opacity-100 hoverless:opacity-100";
+
+/**
+ * The fold slot of a sidebar row with nothing to fold. Every row, agent,
+ * checkout or project, ends in its time and then this slot, so the times and
+ * the chevrons of the whole list stand in one column each (D-3).
+ */
+export function FoldLane() {
+  return <span aria-hidden="true" className="w-(--size-lineage-chevron) shrink-0" />;
+}
 
 /**
  * One agent in the sidebar, in Agents and under a checkout in Projects (PRD
@@ -26,7 +35,7 @@ export const REVEALED_CONTROL =
  * the provider mark, the stable task name, a branch chip when a delegated
  * row's checkout differs from its parent's, the device chip, the descendant
  * badge while folded, the elapsed time, and the lineage chevron on a row that
- * has children. A request or news takes one line of its own from the moment it
+ * has children, whose slot every other row keeps empty. A request or news takes one line of its own from the moment it
  * exists; a quiet sentence is only in the tooltip. `place` is the Agents
  * list's context line; Projects passes none because the rows above say it,
  * and for the same reason a Projects root drawn in its own checkout carries
@@ -147,7 +156,9 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
             >
               <Chevron aria-hidden="true" className="size-(--size-icon-sm)" />
             </button>
-          ) : null}
+          ) : (
+            <FoldLane />
+          )}
         </span>
         {line ? (
           <span aria-hidden="true" data-agent-line={line.mode} className={cn("pointer-events-none truncate text-caption", lineTone(line, agent.demand))}>
