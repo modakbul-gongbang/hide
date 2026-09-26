@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addressShown, addressUrl, browserDisplays, fileUrl, isHtmlFile, parseWorkspaceKey, placements, stateReport } from "./browserViews";
+import { addressShown, addressUrl, browserDisplays, fileUrl, hostKey, isHtmlFile, parseWorkspaceKey, placements, stateReport, withoutClosed } from "./browserViews";
 import type { ViewLayoutSnapshot } from "./snapshot";
 import { workspaceKey } from "./viewLayout";
 
@@ -76,6 +76,14 @@ describe("placing pages", () => {
     const workspace = { device_id: "local", path: "/Users/example/project" };
     expect(parseWorkspaceKey(workspaceKey(workspace))).toEqual(workspace);
     expect(parseWorkspaceKey("no separator")).toBeNull();
+  });
+
+  it("forgets what a closed display's page said, and nothing of another Workspace", () => {
+    const front = workspaceKey({ device_id: "local", path: "/Users/example/a" });
+    const other = workspaceKey({ device_id: "local", path: "/Users/example/b" });
+    const entries = { [hostKey(front, "d1")]: 1, [hostKey(front, "d2")]: 2, [hostKey(other, "d2")]: 3 };
+    expect(withoutClosed(entries, front, new Set(["d1"]))).toEqual({ [hostKey(front, "d1")]: 1, [hostKey(other, "d2")]: 3 });
+    expect(withoutClosed(entries, front, new Set(["d1", "d2"]))).toBe(entries);
   });
 });
 

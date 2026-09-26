@@ -127,6 +127,20 @@ export function hostKey(workspace: string, id: string): string {
   return `${workspace}\u0001${id}`;
 }
 
+/**
+ * `entries` without the keys of `workspace`'s displays it no longer holds,
+ * or `entries` itself when none has gone. A closed display's page is closed
+ * by the host on the same sync, so what it said is dropped with it.
+ */
+export function withoutClosed<T>(entries: Readonly<Record<string, T>>, workspace: string, ids: ReadonlySet<string>): Readonly<Record<string, T>> {
+  const prefix = hostKey(workspace, "");
+  const gone = Object.keys(entries).filter((key) => key.startsWith(prefix) && !ids.has(key.slice(prefix.length)));
+  if (gone.length === 0) return entries;
+  const kept = { ...entries };
+  for (const key of gone) delete kept[key];
+  return kept;
+}
+
 // --- the sync loop -------------------------------------------------------------
 
 /** Where a shell layer is drawn; a tooltip is only read and stays under a page. */
@@ -166,6 +180,13 @@ class BrowserSyncLoop {
     if (front?.workspace !== this.front?.workspace) {
       this.freezes.clear();
       useBrowserStore.setState({ stills: {} });
+    }
+    if (front) {
+      const ids = new Set(front.rows.map((row) => row.id));
+      useBrowserStore.setState((current) => {
+        const pages = withoutClosed(current.pages, front.workspace, ids);
+        return pages === current.pages ? current : { pages };
+      });
     }
     this.front = front;
     this.schedule();

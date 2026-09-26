@@ -216,6 +216,12 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   await expect(tab(page, "Page A")).toBeVisible();
   pageA = await viewOf(`${origin}/a.html`);
 
+  // A page's new window is another browser display of the Workspace, not a window.
+  await inPage(`${origin}/a.html`, `void window.open(${JSON.stringify(`${origin}/c.html`)}, "_blank")`);
+  await expect(tab(page, "Page C")).toBeVisible({ timeout: 20_000 });
+  expect((await views()).filter((view) => view.url === `${origin}/c.html`)).toHaveLength(1);
+  expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
+
   // A page that cannot load says so in its area, with Reload.
   expect(openFromCli("http://127.0.0.1:1/")).toMatchObject({ status: 0, ok: true });
   await expect(page.locator('[data-area-empty="browser-failed"]')).toBeVisible({ timeout: 20_000 });

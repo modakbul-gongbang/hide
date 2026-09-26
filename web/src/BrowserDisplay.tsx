@@ -2,7 +2,7 @@ import { ArrowLeftIcon, ArrowRightIcon, RotateCwIcon, XIcon } from "lucide-react
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AreaEmpty } from "./AreaEmpty";
-import { addressShown, addressUrl, hostKey, notePageState, parseWorkspaceKey, registerBrowserSlot, stateReport, syncBrowserFront, useBrowserStore } from "./browserViews";
+import { addressShown, addressUrl, hostKey, notePageState, parseWorkspaceKey, registerBrowserSlot, stateReport, syncBrowserFront, useBrowserStore, withoutClosed } from "./browserViews";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Hint } from "./components/ui/tooltip";
@@ -146,22 +146,25 @@ export function BrowserHost({ actions }: { actions: Actions }) {
   const latest = useRef(actions);
   latest.current = actions;
   // The last report per page still waiting for the core's echo, so it is not sent twice.
-  const sent = useRef(new Map<string, { url: string; title: string }>());
+  const sent = useRef<Readonly<Record<string, { url: string; title: string }>>>({});
   const record = () => {
     const current = workspaceViewOf(useShellStore.getState().rest);
     if (!current?.layout) return;
     const workspace = { device_id: current.device_id, path: current.path };
     const key = workspaceKey(workspace);
     const pages = useBrowserStore.getState().pages;
+    const shown = new Set<string>();
     for (const area of areasOf(current.layout.root)) {
       for (const display of area.displays) {
+        if (display.kind === "browser") shown.add(display.id);
         const page = display.kind === "browser" ? pages[hostKey(key, display.id)] : undefined;
-        const next = page ? stateReport(display, page, sent.current.get(hostKey(key, display.id)) ?? null) : null;
+        const next = page ? stateReport(display, page, sent.current[hostKey(key, display.id)] ?? null) : null;
         if (!next) continue;
-        sent.current.set(hostKey(key, display.id), next);
+        sent.current = { ...sent.current, [hostKey(key, display.id)]: next };
         latest.current.reportBrowserState(workspace, display.id, next.url, next.title);
       }
     }
+    sent.current = withoutClosed(sent.current, key, shown);
   };
   // A page of a Workspace that was not in front reports once it is.
   useEffect(record, [front, layout]);

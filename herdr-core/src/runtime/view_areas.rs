@@ -1234,6 +1234,13 @@ impl Runtime {
             .and_then(|layout| layout.display(&display_id))
             .filter(|display| display.kind == DisplayKind::Browser)
         else {
+            // A page's last report can land after its display closed.
+            crate::diagnostic!(serde_json::json!({
+                "component": "view_areas",
+                "kind": "browser.state_stale",
+                "device": key.0,
+                "display": display_id,
+            }));
             return false;
         };
         if display.url.as_deref() == Some(url.as_str()) && display.title == title {
