@@ -1,5 +1,8 @@
-//! A SessionStart capability probe through the same pane-scoped CLI the agent
-//! will use. The hook never reads bearer bytes or trusts a pane ID on its own.
+//! A SessionStart capability probe through the same scoped CLI the agent will
+//! use. The hook never reads bearer bytes or trusts a pane ID on its own, and
+//! it needs no pane id at all: the daemon binds a caller in a pane to that
+//! pane and any other local caller to the registered checkout holding its cwd,
+//! so the guidance names the checkout the daemon answered with.
 
 use std::ffi::OsString;
 use std::io::Read;
@@ -88,6 +91,7 @@ fn format_context(program: &OsString, reference: &Path, answer: &Value) -> Optio
     let identity = result.get("context")?;
     identity.get("device_id")?.as_str()?;
     identity.get("workspace_id")?.as_str()?;
+    let checkout_path = identity.get("checkout_path")?.as_str()?;
     let capabilities = result.get("capabilities")?.as_array()?;
     let has = |name: &str| capabilities.iter().any(|item| item.as_str() == Some(name));
     if !has("workspace.info") {
@@ -127,7 +131,7 @@ fn format_context(program: &OsString, reference: &Path, answer: &Value) -> Optio
         shell_quote(&program.to_string_lossy()),
     );
     Some(format!(
-        "Hide Workspace control is available for this connected pane. Commands affect only this pane's Workspace; there is no Workspace override. Prefix each command with `{command_prefix}`. Available commands: {}. Run `{} workspace info` to refresh capabilities and `{} --help` for syntax. Omit `--reveal` to leave the current screen and keyboard focus unchanged. A failed command returns a reason and next action; recheck before retrying a timed-out action.",
+        "Hide Workspace control is available for this session's checkout `{checkout_path}`. Commands affect only that checkout's Workspace; there is no Workspace override. Prefix each command with `{command_prefix}`. Available commands: {}. Run `{} workspace info` to refresh capabilities and `{} --help` for syntax. Omit `--reveal` to leave the current screen and keyboard focus unchanged. A failed command returns a reason and next action; recheck before retrying a timed-out action.",
         commands.join(", "),
         command_prefix,
         shell_quote(&program.to_string_lossy()),
@@ -136,4 +140,46 @@ fn format_context(program: &OsString, reference: &Path, answer: &Value) -> Optio
 
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn guidance_names_the_checkout_the_daemon_bound_the_caller_to() {
+        let answer = json!({
+            "ok": true,
+            "result": {
+                "context": {
+                    "device_id": "local",
+                    "workspace_id": "workspace:1",
+                    "checkout_id": "workspace:1:checkout:2",
+                    "checkout_path": "/srv/project"
+                },
+                "capabilities": ["workspace.info", "browser.open", "view.close"]
+            }
+        });
+        let context = format_context(
+            &OsString::from("/opt/hide/hide"),
+            Path::new("/srv/state/pane-capabilities/ref.json"),
+            &answer,
+        )
+        .unwrap();
+        assert!(context.starts_with(
+            "Hide Workspace control is available for this session's checkout `/srv/project`."
+        ));
+        assert!(context.contains("HIDE_CAP_REF='/srv/state/pane-capabilities/ref.json' '/opt/hide/hide'"));
+        assert!(context.contains("browser open <url-or-path> [--reveal] [--wait], view close <view-id>"));
+        assert!(!context.contains("file open"));
+    }
+
+    #[test]
+    fn an_answer_without_a_checkout_or_workspace_info_yields_no_guidance() {
+        let no_checkout = json!({"ok": true, "result": {"context": {"device_id": "local", "workspace_id": "w"}, "capabilities": ["workspace.info"]}});
+        assert!(format_context(&OsString::from("hide"), Path::new("/r"), &no_checkout).is_none());
+        let no_info = json!({"ok": true, "result": {"context": {"device_id": "local", "workspace_id": "w", "checkout_path": "/srv/p"}, "capabilities": ["view.list"]}});
+        assert!(format_context(&OsString::from("hide"), Path::new("/r"), &no_info).is_none());
+    }
 }
