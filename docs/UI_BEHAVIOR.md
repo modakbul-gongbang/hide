@@ -212,7 +212,8 @@ Its second line exists only when the row has something to say, and from the mome
 A quiet sentence is never drawn on the row; the row's tooltip carries it with the full title.
 In Agents a root row adds a fixed context line naming its project and checkout (`project › checkout`, the project alone for a plain folder), since the list does not otherwise say where the agent works; a row under a checkout in Projects has none, because the rows above it say it.
 Hover, keyboard focus, selection and an open badge list change a fill, a ring and a chevron's opacity only; they never add a line or change a row's height, so the row below never moves.
-A row's height is a minimum, not a cap: at a larger interface font a row grows to hold its lines rather than letting them run into the next row, and it still holds still under hover and focus at that size.
+A sidebar agent row is 28 high, or 44 with its second line: line one is 20 and line two 16, and the title is 12/400 in every state, a change brightening it rather than thickening it.
+A row's height is a minimum, not a cap: a row grows to hold its lines rather than letting them run into the next row, and it still holds still under hover and focus.
 No row draws a progress number or step the agent did not report.
 The Project Overview's agent rows keep their own density: a quiet sentence is revealed on the selected or hovered row over up to two lines, with the whole of it in the tooltip.
 Web owner: `web/src/agentRow.ts` (rules, reusable by any list of agents), `web/src/components/sidebar-agent-row.tsx` (the sidebar row), `web/src/components/agent-row.tsx` (the Overview row and the descendant badge both draw), `web/src/components/agent-children-popover.tsx`.
@@ -413,6 +414,17 @@ The text that results is ordinary Markdown, with nothing hidden or special in it
 
 Core owner: `herdr-core/src/sidebar.rs`, `herdr-core/src/project_context.rs`, `herdr-core/src/worktrees.rs`, `herdr-core/src/disk.rs`, `herdr-core/src/worktree_cleanup.rs`, `herdr-core/src/runtime/projects.rs`. Web owner: `web/src/sidebar.tsx`, `web/src/projects.ts`.
 
+### Sidebar type, rows and width
+
+The sidebar sets its words on three sizes: a project name 13/600, a checkout name, an agent title and a count 12/400, and a second line and a time 11; a section header is 10/500 in sentence case (`Projects · Recent activity · 5`).
+A project row, All projects and a one-line plain folder are 36 high, a checkout row 32 or 48 with its second line, an agent row 28 or 44.
+A checkout name mutes its prefix up to and including the first slash (`prd/`), so the part that tells checkouts apart reads first; a name with no slash, or one that starts or ends with it, has no prefix.
+The checkout whose Workspace is in front turns its name 500 and nothing else about the row.
+The sidebar keeps these sizes at every Appearance font size, because its rows are scanned, not read; the font size scales the rest of the interface.
+The sidebar's right edge sets its width: under the pointer it shows a line and a column cursor, a drag moves the sidebar over the center between 220 and 440 and stops at either bound, and the release stores the width in the core's ui state, where it survives a reload and a relaunch; the center and its terminals take the new width once, on the release, never on each pointer move.
+A double-click on the edge returns the width to 292, and a press that does not move changes nothing.
+A width outside the bounds is refused into the diagnostic log: a sent one leaves the width as it was, and a stored one opens the sidebar at 292.
+
 ### Sidebar hierarchy
 
 The sidebar hierarchy is Project > Workspace > Agents; a Workspace corresponds to one checkout path, including a plain folder.
@@ -448,8 +460,8 @@ A plain folder, a project that is not a Git repository and holds one checkout, i
 Its first line is the project's folder glyph, name and status badge, set in the checkout row's columns, and the badge stays while its agent rows are open, as a project's does; its second line and trailing chevron are the checkout's, and a plain folder has no commit age.
 It has no project fold of its own and keeps the checkout row's right slots; the row opens the checkout and is marked while that checkout's Workspace or the project's Overview is in front, its menu lists the project's items and then the checkout's, and its Overview is reached from All projects, the palette or the Workspace toolbar.
 While a checkout's agent rows are closed, its status badge ends line one; opening them takes the badge away, since their own marks now speak, and changes nothing else on the row.
-A checkout's second line is its purpose, with the last-commit age ending it on the time column; it is kept wherever agents run even before a purpose is known, because an agent's title becomes the purpose once it is and the row must not grow then.
-A checkout with neither a purpose nor agents, or one whose Git facts have not been read yet, is one line, with its age on that line.
+A checkout's second line is its purpose, with the last-commit age ending it on the time column, and it is drawn only while the checkout has a purpose, so a checkout with agents and no purpose yet is one line.
+A checkout without a purpose, or one whose Git facts have not been read yet, is one line, with its age on that line.
 Workspace disclosure persists across launches and hides only the nested agent rows, preserving selection, running panes, and raised attention rows.
 An agent row's title is its identity label at both densities: the rolling task, or the workspace label when no task exists; a Herdr agent name remains a control identifier and never becomes display copy.
 A row whose descendants are folded, and every raised row, wears a descendant badge counting live descendants by state before the elapsed time; opening the fold removes the badge because the opened rows carry their own marks.

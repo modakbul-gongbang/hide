@@ -364,7 +364,8 @@ async function review(root, args) {
   const themes = list(options.theme, conditions.themes);
   const widths = list(options.width, conditions.widths, Number);
   const contents = list(options.content, conditions.contents);
-  const scales = list(options.scale, conditions.scales, Number);
+  // A target whose screen does not follow the interface scale lists no scales and is measured at 1.
+  const scales = list(options.scale, conditions.scales ?? [1], Number);
   const states = list(options.state, Object.keys(target.states));
   for (const theme of themes) if (!['light', 'dark'].includes(theme)) throw new UsageError(`Unknown theme ${theme}`);
   for (const width of widths) if (!(width > 0)) throw new UsageError(`Bad width ${width}`);
