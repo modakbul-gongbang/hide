@@ -301,6 +301,8 @@ Each checkout-bound issuance and refusal is one `pane_auth` record in the diagno
 Direct CLI calls own one-shot credentials and release them after their request, while repeated agent session starts in the same attested pane, or from the same checkout, reuse one reference until its pane ends or the eight-hour limit expires.
 Once a Workspace action result has reached the CLI, a lost credential-claim acknowledgement cannot turn that result into a claim that the action was not applied; the claim failure is logged and a later command rechecks its capability.
 The registry has a 64-reference cap, the bootstrap path has an eight-worker cap, and daemon shutdown revokes every reference.
+The five-second sweep also drops a checkout-bound reference whose checkout no longer resolves on its device, with a `sweep`-stage `pane_auth` record, so an unregistered project stops counting against the cap before its eight hours end.
+A command whose answer no longer matches its credential is refused by the credential's own binding: `pane_changed` for a pane, `checkout_not_registered` for a checkout, each with the next step that binding can take.
 The shell handshake marks actual web and desktop renderer connections with `client_kind`; Workspace commands refuse when only the daemon or another CLI client is connected.
 Checkout-scoped `hide view select`, `split`, `move`, and `close` resolve the live device and checkout in the core, then apply one existing View layout transition without using the front Workspace as an authorization shortcut.
 They leave keyboard pane focus alone; a last View holding an unsaved document refuses close, while a second View of the same document may close by itself.
