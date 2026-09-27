@@ -1,8 +1,8 @@
 // Which host runs the shell: a browser tab, or the desktop app
 // (`desktop/`), whose preload exposes `window.hideHost` and nothing else.
 // The bridge carries the app menu's commands in, the operator's macOS pane
-// chords out, so the menu shows and answers the chords the page runs, and
-// places the pages of browser displays (issue 155); the shell never reaches
+// chords out, so the menu shows and answers the chords the page runs, a
+// folder to show in Finder, and places the pages of browser displays (issue 155); the shell never reaches
 // the host any other way (desktop PRD B11).
 
 export type HostKind = "browser" | "electron";
@@ -70,6 +70,8 @@ export type HostBridge = {
   onCommand(listener: (id: string) => void): () => void;
   /** Hands the host the stored macOS pane chords (`ui_state.shortcut_bindings`) it builds the menu from. */
   reportBindings(bindings: Record<string, string>): void;
+  /** Shows a folder of this Mac in Finder; Finder selects it and opens nothing. */
+  revealPath(path: string): void;
   browser: BrowserBridge;
 };
 

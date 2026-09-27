@@ -7,7 +7,7 @@
 import { DropdownMenu as MenuPrimitive } from "radix-ui";
 import { Fragment, useState, type ReactNode } from "react";
 import { cn } from "../lib/utils";
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "./ui/context-menu";
+import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuTrigger } from "./ui/context-menu";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
 import { useEscapeLayer, useReturnFocus } from "./ui/layer";
 import { menuContent } from "./ui/menu-styles";
@@ -22,6 +22,8 @@ export type MenuEntry<Id extends string = string> = {
   separated?: boolean;
   /** An action that removes or discards something, drawn in the destructive color. */
   destructive?: boolean;
+  /** The chord that does the same, drawn at the item's end; "" or absent draws none. */
+  shortcut?: string;
 };
 
 type Parts = { Item: typeof DropdownMenuItem | typeof ContextMenuItem; Separator: typeof DropdownMenuSeparator | typeof ContextMenuSeparator };
@@ -33,8 +35,11 @@ function EntryItems<Id extends string>({ items, onSelect, parts }: { items: Menu
       {items.map((item) => (
         <Fragment key={item.id}>
           {item.separated ? <Separator /> : null}
-          <Item disabled={item.unavailable !== null} variant={item.destructive ? "destructive" : "default"} data-menu-item={item.id} className="flex-col items-start gap-none" onSelect={() => onSelect(item.id)}>
-            <span>{item.label}</span>
+          <Item disabled={item.unavailable !== null} variant={item.destructive ? "destructive" : "default"} data-menu-item={item.id} className="flex-col items-stretch gap-none" onSelect={() => onSelect(item.id)}>
+            <span className="flex items-center gap-sm">
+              <span>{item.label}</span>
+              {item.shortcut ? <ContextMenuShortcut data-menu-shortcut={item.shortcut}>{item.shortcut}</ContextMenuShortcut> : null}
+            </span>
             {item.unavailable ? <span className="text-caption text-muted-foreground">{item.unavailable}</span> : null}
           </Item>
         </Fragment>
@@ -48,7 +53,8 @@ function EntryItems<Id extends string>({ items, onSelect, parts }: { items: Menu
  * key or ⇧F10 under the target. `items` is read when the menu opens, so a
  * target whose state changed while it was closed offers what it can do now.
  * The `data-*` hooks name both the target and its menu, which opens in a
- * portal outside the target.
+ * portal outside the target. `asChild` makes the one child element the
+ * target itself (a list row) instead of wrapping it.
  */
 export function EntryContextMenu<Id extends string>({
   label,
@@ -57,6 +63,7 @@ export function EntryContextMenu<Id extends string>({
   children,
   className,
   onCloseAutoFocus,
+  asChild = false,
   ...data
 }: {
   label: string;
@@ -65,11 +72,12 @@ export function EntryContextMenu<Id extends string>({
   children: ReactNode;
   className?: string;
   onCloseAutoFocus?: (event: Event) => void;
+  asChild?: boolean;
 } & Record<`data-${string}`, string>) {
   const [entries, setEntries] = useState<MenuEntry<Id>[]>([]);
   return (
     <ContextMenu onOpenChange={(open) => setEntries(open ? items() : [])}>
-      <ContextMenuTrigger className={cn("relative", className)} {...data}>
+      <ContextMenuTrigger asChild={asChild} className={cn("relative", className)} {...data}>
         {children}
       </ContextMenuTrigger>
       {entries.length ? (

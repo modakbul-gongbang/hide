@@ -1,12 +1,12 @@
 // The renderer's whole view of the host (B11): which host this is, the app
 // menu's commands in, the stored macOS pane chords out for the menu to show,
-// and the pages of browser displays (issue 155). No Node API, no other
-// channel. Browser pages load in their own session with no preload, so none
+// a folder to show in Finder, and the pages of browser displays (issue 155).
+// No Node API, no other channel. Browser pages load in their own session with no preload, so none
 // of this reaches them.
 
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from "electron";
 import type { BrowserCommand, BrowserHostEvent, BrowserSync } from "../../../web/src/host";
-import { BINDINGS_CHANNEL, BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL, COMMAND_CHANNEL } from "../channel";
+import { BINDINGS_CHANNEL, BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL, COMMAND_CHANNEL, REVEAL_CHANNEL } from "../channel";
 
 contextBridge.exposeInMainWorld("hideHost", {
   kind: "electron",
@@ -21,6 +21,9 @@ contextBridge.exposeInMainWorld("hideHost", {
   },
   reportBindings(bindings: Record<string, string>): void {
     ipcRenderer.send(BINDINGS_CHANNEL, bindings);
+  },
+  revealPath(path: string): void {
+    ipcRenderer.send(REVEAL_CHANNEL, path);
   },
   browser: {
     sync(state: BrowserSync): void {

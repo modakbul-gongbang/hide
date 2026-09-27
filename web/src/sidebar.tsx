@@ -12,9 +12,9 @@ import { NewWorkspace } from "./NewWorkspace";
 import { badgeWords, unfoldedRows } from "./agentRow";
 import { Badge } from "./components/ui/badge";
 import { cn } from "./lib/utils";
-import { numberOf, numberedAgents } from "./numbering";
+import { agentNumber, numberOf, numberedAgents } from "./numbering";
 import { checkoutAgentRows, type BoardRow } from "./projectBoard";
-import { FoldLane, SidebarAgentRow } from "./components/sidebar-agent-row";
+import { FoldLane, SidebarAgentRow, type AgentRowMenu } from "./components/sidebar-agent-row";
 import { StatusBadge } from "./components/status-badge";
 import { WeeklyUsage } from "./components/weekly-usage";
 import { agentPlaces, agentSections, allAgents, allLineageWorkspaces, allProjectsCount, type ListedAgent } from "./navigation";
@@ -38,7 +38,7 @@ import {
 import { hostKind } from "./host";
 import { displayCommand, hostRegistry } from "./shortcuts";
 import { contextWorkspaces, deviceCatalogLine, remoteContext, remoteView } from "./remote";
-import { checkoutMenu, folderMenu, projectMenu, remotePurposeProblem, type MenuItem } from "./workspaceManage";
+import { agentMenu, checkoutMenu, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
 import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
@@ -257,6 +257,7 @@ function AgentList({ actions }: { actions: Actions }) {
   // shows, so the memoized rows are untouched by an unrevealed hold.
   const numbered = useUiStore((s) => s.hint === "agents");
   const numbers = useMemo(() => (numbered ? numberedAgents(tree.sections.flatMap((section) => section.rows)) : null), [numbered, tree]);
+  const menu = useAgentRowMenu(actions);
   // Before the first snapshot nothing is known, so an empty list would be a claim.
   if (!loaded) return <ListLoading />;
   if (tree.sections.length === 0) {
@@ -285,6 +286,7 @@ function AgentList({ actions }: { actions: Actions }) {
                 inset="var(--spacing-xs)"
                 foldedLineage={tree.presentation(row.agent)}
                 number={numbers ? numberOf(numbers, row.agent.pane_id) : null}
+                menu={menu}
               />
             ))}
           </ul>
@@ -389,6 +391,7 @@ function ProjectList({ actions }: { actions: Actions }) {
   const catalogText = useShellStore((s) => catalogLineOf(s.rest)?.text ?? null);
   const catalogLine = catalogState && catalogText ? { state: catalogState, text: catalogText } : null;
   const rows = projectRows(workspaces, groups);
+  const agentRowMenu = useAgentRowMenu(actions);
   const presentations = useMemo(() => new Map(agents.map((agent) => [agent.pane_id, foldedLineage(agent, agents, lineageWorkspaces)])), [agents, lineageWorkspaces]);
   // The folds are this machine's choices, like the inactive groups, so a
   // selected SSH device's tree is drawn open with every checkout's line two.
@@ -402,6 +405,7 @@ function ProjectList({ actions }: { actions: Actions }) {
     openCheckouts,
     disclosure: !remote,
     actions,
+    agentRowMenu,
   };
   if (!loaded) return <ListLoading />;
   return (
@@ -444,6 +448,7 @@ type ListContext = {
   /** False over a selected SSH device, whose tree is drawn with nothing folded. */
   disclosure: boolean;
   actions: Actions;
+  agentRowMenu: AgentRowMenu;
 };
 
 /** The top row: every project on every device, the scope All projects shows. */
@@ -633,7 +638,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
     <li data-project={workspace.id} className={inset}>
       <EntryContextMenu
         label={`${workspace.label} actions`}
-        items={() => projectMenu(workspace)}
+        items={() => projectMenu(workspace, menuHost())}
         onSelect={(item) => runProjectItem(actions, workspace, item)}
         className="group flex items-stretch"
         data-project-menu={workspace.id}
@@ -766,7 +771,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
     <li data-checkout-row={checkout.id} data-checkout-open={open ? "true" : undefined} className={cn(open && "rounded-sm bg-muted py-xs")}>
       <EntryContextMenu
         label={`${name} actions`}
-        items={() => checkoutMenu(checkout, purposeProblem)}
+        items={() => checkoutMenu(workspace, checkout, menuHost(), purposeProblem)}
         onSelect={(item) => runCheckoutItem(actions, workspace, checkout, item)}
         className="group flex items-stretch"
         data-checkout-menu={checkout.id}
@@ -852,8 +857,8 @@ const FolderRowView = memo(function FolderRowView({
     <li data-project={workspace.id} data-checkout-open={open ? "true" : undefined} className={cn(inset, open && "rounded-sm bg-muted py-xs")}>
       <EntryContextMenu
         label={`${workspace.label} actions`}
-        items={() => folderMenu(workspace, checkout, purposeProblem)}
-        onSelect={(item) => (item === "set_purpose" || item === "delete_worktree" || item === "open_pull_request" ? runCheckoutItem(actions, workspace, checkout, item) : runProjectItem(actions, workspace, item))}
+        items={() => folderMenu(workspace, checkout, menuHost(), purposeProblem)}
+        onSelect={(item) => (CHECKOUT_ITEMS.has(item) ? runCheckoutItem(actions, workspace, checkout, item) : runProjectItem(actions, workspace, item))}
         className="group flex items-stretch"
         data-project-menu={workspace.id}
       >
@@ -1077,6 +1082,7 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
             inset={inset}
             branchShown={row.depth > 0}
             foldedLineage={presentation}
+            menu={context.agentRowMenu}
           />
         );
       })}
@@ -1087,17 +1093,89 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
 /** A tree drawn with nothing folded lists no folded children. */
 const NO_AGENT_ROWS: AgentRow[] = [];
 
+/** What a row's menu reads from the host when it opens: Finder, and the new-tab chord the registry binds here. */
+function menuHost(): MenuHost {
+  const host = hostKind();
+  return { finder: host === "electron", newTabChord: displayCommand("new_tab", host, hostRegistry(useShellStore.getState().rest?.ui_state, host).registry) };
+}
+
+/** The ids a plain folder's row routes to its checkout rather than its project. */
+const CHECKOUT_ITEMS = new Set<MenuItem["id"]>(["open_checkout", "new_tab_here", "open_pull_request", "set_purpose", "set_primary", "copy_branch", "delete_worktree"]);
+
 function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["id"]) {
-  if (item === "pin" || item === "unpin") return actions.setPinned(workspace.id, item === "pin");
-  if (item === "new_worktree") useUiStore.getState().setWorkspaceDialog({ kind: "new_worktree", workspaceId: workspace.id });
-  if (item === "remove_project") useUiStore.getState().setWorkspaceDialog({ kind: "remove_project", workspaceId: workspace.id });
+  switch (item) {
+    case "open_overview":
+      return useUiStore.getState().setScreen({ kind: "overview", projectId: workspace.id });
+    case "new_worktree":
+      return useUiStore.getState().setWorkspaceDialog({ kind: "new_worktree", workspaceId: workspace.id });
+    case "new_tab_primary": {
+      const primary = primaryCheckout(workspace);
+      return primary ? actions.newTabIn(workspace.device_id, primary) : undefined;
+    }
+    case "reveal_finder":
+      return actions.revealInFinder(workspace.path);
+    case "copy_path":
+      return actions.copyText(workspace.path, "path");
+    case "pin":
+    case "unpin":
+      return actions.setPinned(workspace.id, item === "pin");
+    case "remove_project":
+      return useUiStore.getState().setWorkspaceDialog({ kind: "remove_project", workspaceId: workspace.id });
+  }
 }
 
 function runCheckoutItem(actions: Actions, workspace: Workspace, checkout: Checkout, item: MenuItem["id"]) {
-  if (item === "open_pull_request") {
-    const pr = shownPullRequest(checkout);
-    if (pr) actions.openPullRequest(pr.url, workspace.device_id, false);
+  switch (item) {
+    case "open_checkout":
+      return actions.openWorkspace(workspace.device_id, checkout.workspace_id, checkout.id);
+    case "new_tab_here":
+      return actions.newTabIn(workspace.device_id, checkout);
+    case "open_pull_request": {
+      const pr = shownPullRequest(checkout);
+      return pr ? actions.openPullRequest(pr.url, workspace.device_id, false) : undefined;
+    }
+    case "set_purpose":
+      return useUiStore.getState().setWorkspaceDialog({ kind: "purpose", workspaceId: workspace.id, checkoutId: checkout.id });
+    case "set_primary":
+      return actions.setPrimaryCheckout(workspace.id, checkout.id);
+    case "copy_branch":
+      return checkout.branch ? actions.copyText(checkout.branch, "branch name") : undefined;
+    case "copy_path":
+      return actions.copyText(checkout.path, "path");
+    case "reveal_finder":
+      return actions.revealInFinder(checkout.path);
+    case "delete_worktree":
+      return useUiStore.getState().setWorkspaceDialog({ kind: "delete_worktree", workspaceId: workspace.id, checkoutId: checkout.id });
   }
-  if (item === "set_purpose") useUiStore.getState().setWorkspaceDialog({ kind: "purpose", workspaceId: workspace.id, checkoutId: checkout.id });
-  if (item === "delete_worktree") useUiStore.getState().setWorkspaceDialog({ kind: "delete_worktree", workspaceId: workspace.id, checkoutId: checkout.id });
+}
+
+/**
+ * One agent row menu for a whole list: Show carries the ⌥n that selects the
+ * same row in the Agents list, read when the menu opens.
+ */
+function useAgentRowMenu(actions: Actions): AgentRowMenu {
+  return useMemo(
+    () => ({
+      items: (agent) => {
+        const state = useShellStore.getState();
+        const number = agentNumber(state, agent.pane_id);
+        const host = hostKind();
+        const chord = number === null ? "" : displayCommand(`select_agent_${number}`, host, hostRegistry(state.rest?.ui_state, host).registry);
+        return agentMenu(agent, chord);
+      },
+      onSelect: (agent, item) => {
+        switch (item) {
+          case "show_agent":
+            return actions.openAgent(agent.pane_id);
+          case "copy_title":
+            return actions.copyText(agent.identity_label, "title");
+          case "copy_session_id":
+            return agent.session_id ? actions.copyText(agent.session_id, "session id") : undefined;
+          case "close_tab":
+            return actions.closeTabOfPane(agent.pane_id);
+        }
+      },
+    }),
+    [actions],
+  );
 }

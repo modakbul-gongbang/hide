@@ -4,7 +4,7 @@
 
 import type { FocusCheckoutPayload, UiStateUsageHints } from "./generated/hided-ws";
 import type { ThemeChoice } from "./theme";
-import type { HostKind } from "./host";
+import { hostBridge, type HostKind } from "./host";
 import {
   closeWithSaveOutcome,
   deleteBuffer,
@@ -937,8 +937,67 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "focus_pane", payload: { pane_id: paneId, origin: "operator", focus_device: forward } });
     },
 
+    /**
+     * Pins or unpins a project. A row Herdr shows without a registration is
+     * registered with its device and root by the same event (PRD
+     * sidebar-context-menus D-14), so pinning it is one action.
+     */
     setPinned(workspaceId: string, pinned: boolean) {
       dispatch({ schema_version: 2, kind: "workspace_pin_set", payload: { workspace_id: workspaceId, pinned } });
+    },
+
+    /**
+     * A new tab in one checkout, brought to the front (PRD sidebar-context-menus
+     * D-08): the core focuses the checkout and asks Herdr for the tab in the
+     * same event. A device's checkout gets its tab on that device's Herdr.
+     */
+    newTabIn(deviceId: string, checkout: Checkout) {
+      beginOpening({ checkoutId: checkout.id, deviceId, path: checkout.path, workspaceId: checkout.workspace_id });
+      if (deviceId !== "local") {
+        const host = remoteHost("New tab");
+        if (!host) return ui().setOpening(null);
+        if (host.targetId !== deviceId) return diagnostic(`create_tab: ${checkout.id} is not on the device in front`);
+        sendRemote(deviceId, { action: "create_tab", workspace_id: checkout.workspace_id, checkout_id: checkout.id, cwd: checkout.path, label: checkout.next_tab_label });
+        return;
+      }
+      dispatch({ schema_version: 2, kind: "create_tab", payload: { workspace_id: checkout.workspace_id, checkout_id: checkout.id, label: checkout.next_tab_label } });
+    },
+
+    /** Makes a checkout its project's default: the home glyph and the first place move to it (D-03). */
+    setPrimaryCheckout(workspaceId: string, checkoutId: string) {
+      dispatch({ schema_version: 2, kind: "set_primary_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId } });
+    },
+
+    /**
+     * Closes the tab that holds a pane, wherever that tab is, through the tab
+     * close confirmation (D-06): an agent row's tab need not be the one on
+     * screen, nor on this machine.
+     */
+    closeTabOfPane(paneId: string) {
+      const targetId = remoteTargetOfPane(rest(), paneId);
+      const status = targetId ? rest()?.status?.remote?.find((row) => row.target_id === targetId) : null;
+      const workspaces = targetId ? status?.session?.workspaces : rest()?.navigator?.workspaces;
+      const tab = workspaces?.flatMap((row) => row.checkouts).flatMap((row) => row.tabs).find((row) => row.panes.some((pane) => pane.id === paneId));
+      if (!tab?.id) return diagnostic(`close_tab: no tab holds ${paneId}`);
+      if (targetId && status?.state !== "connected") {
+        const label = rest()?.navigator?.devices?.find((row) => row.id === targetId)?.label ?? targetId;
+        ui().setNotice({ text: `${label} is not connected. Close tab was not sent.`, refreshable: false });
+        return;
+      }
+      requestClose("tab", tab.id, tab.panes, targetId, targetId ? (status?.session?.agents ?? []) : useShellStore.getState().agents);
+    },
+
+    /** Puts text on the clipboard; a refused write is the log's, not a notice (design principle 13). */
+    copyText(text: string, what: string) {
+      if (!navigator.clipboard) return diagnostic(`copy ${what}: the clipboard is unavailable`);
+      navigator.clipboard.writeText(text).catch((error: unknown) => diagnostic(`copy ${what}: ${String(error)}`));
+    },
+
+    /** Shows a folder in Finder through the desktop app; a browser tab has no such item (D-07). */
+    revealInFinder(path: string) {
+      const bridge = hostBridge();
+      if (!bridge) return diagnostic("reveal in Finder: this host has no Finder");
+      bridge.revealPath(path);
     },
 
     createWorktree(request: { deviceId: string; repositoryRoot: string; branch: string; baseBranch: string | null; agentKind: string | null; purpose: string | null }) {

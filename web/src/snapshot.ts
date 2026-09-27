@@ -44,6 +44,8 @@ export type AgentRow = {
   lineage_worktree_badge?: string | null;
   /** Present only while Hide holds this agent asleep (PRD agent-sleep); absent when awake. */
   sleep?: AgentSleep;
+  /** The conversation id Herdr recorded for this agent; absent when it recorded none. */
+  session_id?: string | null;
 };
 
 /** A sleeping agent's state (`AgentSleepSnapshot`): the row and the pane draw it. */

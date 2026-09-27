@@ -1,11 +1,12 @@
-// The pure rules behind the project and checkout menus: which management
-// actions a row offers, the purpose field's limits, and what the worktree
-// dialogs read out of a task or removal the core reports. The core re-checks
-// every one of these; they decide what the screen offers, not what is allowed.
+// The pure rules behind the sidebar's row menus: which actions a project,
+// checkout or agent row offers and why one is disabled, the purpose field's
+// limits, and what the worktree dialogs read out of a task or removal the
+// core reports. The core re-checks every one of these; they decide what the
+// screen offers, not what is allowed.
 
 import { shownPullRequest } from "./projects";
 import { supportsRemotePurpose } from "./remote";
-import type { Checkout, RemoteStatus, TaskOperation, Workspace, WorktreeRemoval } from "./snapshot";
+import type { AgentRow, Checkout, RemoteStatus, TaskOperation, Workspace, WorktreeRemoval } from "./snapshot";
 
 /** The native purpose field's limits (`PurposeInputPresentation`). */
 export const PURPOSE_RECOMMENDED = 40;
@@ -57,12 +58,39 @@ export function branchProblem(name: string): string | null {
 }
 
 export type MenuItem = {
-  id: "pin" | "unpin" | "new_worktree" | "remove_project" | "open_pull_request" | "set_purpose" | "delete_worktree";
+  id:
+    | "open_overview"
+    | "new_worktree"
+    | "new_tab_primary"
+    | "reveal_finder"
+    | "copy_path"
+    | "pin"
+    | "unpin"
+    | "remove_project"
+    | "open_checkout"
+    | "new_tab_here"
+    | "open_pull_request"
+    | "set_purpose"
+    | "set_primary"
+    | "copy_branch"
+    | "delete_worktree";
   label: string;
   /** Why the action is not offered here; the item is drawn disabled with this as its hint. */
   unavailable: string | null;
-  /** Drawn after a separator: where a folder row's menu turns from the project to its checkout. */
+  /** Drawn after a separator: where a menu turns to another group of actions. */
   separated?: boolean;
+  /** The chord that does the same, drawn at the item's end. */
+  shortcut?: string;
+  /** An action that removes something from disk, drawn in the destructive color. */
+  destructive?: boolean;
+};
+
+/** What a row's menu reads from where the shell runs, so the rules stay pure. */
+export type MenuHost = {
+  /** The desktop app can show a folder in Finder; a browser tab cannot, so it offers no such item. */
+  finder: boolean;
+  /** The new-tab chord on this host, or "" where it has none. */
+  newTabChord: string;
 };
 
 /** The device a receipt names; the daemon's own machine when it names none. */
@@ -70,26 +98,58 @@ function receiptDevice(deviceId: string | null | undefined): string {
   return deviceId ?? "local";
 }
 
-/** The project row's menu on any device: Pin/Unpin and Remove project for a registered project, and New worktree for a Git project. */
-export function projectMenu(workspace: Workspace): MenuItem[] {
-  const items: MenuItem[] = [];
-  if (workspace.registered) {
-    items.push({
-      id: workspace.pinned ? "unpin" : "pin",
-      label: workspace.pinned ? "Unpin" : "Pin",
-      unavailable: null,
-    });
-  }
-  items.push({
-    id: "new_worktree",
-    label: "New worktree…",
-    unavailable: workspace.is_git === false ? "This project is not a Git repository." : null,
-  });
-  if (workspace.registered) items.push({ id: "remove_project", label: "Remove project…", unavailable: null });
-  return items;
+const ON_ANOTHER_DEVICE = "Not available for a checkout on another device.";
+const FINDER_HERE_ONLY = "Only for folders on this Mac.";
+
+function onDevice(workspace: Workspace): boolean {
+  return workspace.device_id !== "local";
 }
 
-/** What removing a project's registration does, spelled out before it is confirmed (D-10). */
+/**
+ * The checkout "New tab in main" opens a tab in: the one the home glyph
+ * marks, or a folder project's own checkout, which has no primary.
+ */
+export function primaryCheckout(workspace: Workspace): Checkout | null {
+  return workspace.checkouts.find((checkout) => checkout.is_primary === true) ?? (workspace.is_git ? null : (workspace.checkouts[0] ?? null));
+}
+
+function revealItem(workspace: Workspace, host: MenuHost, separated: boolean): MenuItem[] {
+  if (!host.finder) return [];
+  return [{ id: "reveal_finder", label: "Reveal in Finder", unavailable: onDevice(workspace) ? FINDER_HERE_ONLY : null, ...(separated ? { separated } : {}) }];
+}
+
+/**
+ * The project row's menu on any device, registered or not (PRD
+ * sidebar-context-menus D-02, D-14): open the project, start work in it, find
+ * its folder, then keep or drop it. A row Herdr shows without a registration
+ * offers the same Pin and Remove: Pin registers it with its device and root
+ * and pins it in the same event, and Remove closes its panes, after which the
+ * row leaves with Herdr's workspace because there is no registration to keep it.
+ */
+export function projectMenu(workspace: Workspace, host: MenuHost): MenuItem[] {
+  const primary = primaryCheckout(workspace);
+  const reveal = revealItem(workspace, host, true);
+  return [
+    { id: "open_overview", label: "Open Overview", unavailable: null },
+    { id: "new_worktree", label: "New worktree…", unavailable: workspace.is_git === false ? "This project is not a Git repository." : null },
+    {
+      id: "new_tab_primary",
+      label: "New tab in main",
+      unavailable: !primary ? "This project has no default checkout to open a tab in." : primary.exists ? null : "The default checkout's folder is missing.",
+      shortcut: host.newTabChord,
+    },
+    ...reveal,
+    { id: "copy_path", label: "Copy path", unavailable: null, ...(reveal.length ? {} : { separated: true }) },
+    { id: workspace.pinned ? "unpin" : "pin", label: workspace.pinned ? "Unpin" : "Pin", unavailable: null, separated: true },
+    { id: "remove_project", label: "Remove project…", unavailable: null },
+  ];
+}
+
+/**
+ * What removing a project does, spelled out before it is confirmed (D-10): a
+ * registered project loses its registration, and a row Herdr shows without
+ * one loses its panes, which takes the row with them (PRD sidebar-context-menus D-14).
+ */
 export function projectRemovalConsequences(workspace: Workspace): string[] {
   const panes = workspace.removal?.pane_count ?? 0;
   const running = workspace.removal?.running_agent_count ?? 0;
@@ -98,14 +158,24 @@ export function projectRemovalConsequences(workspace: Workspace): string[] {
     const stopping = running > 0 ? `, stopping ${running === 1 ? "1 running agent" : `${running} running agents`}` : "";
     lines.push(`${panes === 1 ? "1 pane in this project closes" : `${panes} panes in this project close`} first${stopping}.`);
   }
-  lines.push("Only the registration is removed: the folder, its repository and its worktrees stay on disk.");
+  lines.push(
+    workspace.registered
+      ? "Only the registration is removed: the folder, its repository and its worktrees stay on disk."
+      : "Hide keeps no registration for this project, so its row leaves once Herdr closes the workspace. The folder, its repository and its worktrees stay on disk.",
+  );
   return lines;
 }
 
-/** A plain folder's one row (`folderCheckout`): the project's items, then its checkout's. */
-export function folderMenu(workspace: Workspace, checkout: Checkout, purposeProblem: string | null = null): MenuItem[] {
-  const [first, ...rest] = checkoutMenu(checkout, purposeProblem);
-  return first ? [...projectMenu(workspace), { ...first, separated: true }, ...rest] : projectMenu(workspace);
+/**
+ * A plain folder's one row (`folderCheckout`): the project's items, then its
+ * checkout's that the project's do not already cover. The folder is the
+ * checkout, so its new tab, path and Finder items are the project's, and it
+ * has no other checkout to make the default.
+ */
+export function folderMenu(workspace: Workspace, checkout: Checkout, host: MenuHost, purposeProblem: string | null = null): MenuItem[] {
+  const own = new Set<MenuItem["id"]>(["open_checkout", "open_pull_request", "set_purpose"]);
+  const [first, ...rest] = checkoutMenu(workspace, checkout, host, purposeProblem).filter((item) => own.has(item.id));
+  return first ? [...projectMenu(workspace, host), { ...first, separated: true }, ...rest.map((item) => ({ ...item, separated: false }))] : projectMenu(workspace, host);
 }
 
 /**
@@ -121,24 +191,75 @@ export function remotePurposeProblem(workspace: Workspace, remote: RemoteStatus[
 }
 
 /**
- * The checkout row's menu: its pull request to open while GitHub knows one
- * (PRD checkout-pr-glyph-card D-07), purpose for any checkout its host can
- * store it for, deletion for a linked worktree on any device.
+ * Why a checkout cannot become its project's default (`set_primary_checkout`
+ * refuses the same cases): the choice is stored on this machine's
+ * registration of a Git project, for a checkout whose folder exists.
  */
-export function checkoutMenu(checkout: Checkout, purposeProblem: string | null = null): MenuItem[] {
-  const items: MenuItem[] = [];
+function primaryProblem(workspace: Workspace, checkout: Checkout): string | null {
+  if (onDevice(workspace)) return ON_ANOTHER_DEVICE;
+  if (workspace.is_git === false) return "A plain folder has only this checkout.";
+  if (checkout.is_primary) return "Already the default checkout.";
+  if (!workspace.registered) return "Pin the project first to keep a default checkout.";
+  if (!checkout.exists) return "The folder is missing.";
+  return null;
+}
+
+/**
+ * The checkout row's menu (PRD sidebar-context-menus D-03, D-07, D-09): open
+ * it or a tab in it, its pull request while GitHub knows one (PRD
+ * checkout-pr-glyph-card D-07), then what describes it, then deleting a
+ * linked worktree. Choices stored on this machine and Finder are this Mac's
+ * only, so a device's checkout lists them disabled.
+ */
+export function checkoutMenu(workspace: Workspace, checkout: Checkout, host: MenuHost, purposeProblem: string | null = null): MenuItem[] {
   const pr = shownPullRequest(checkout);
+  const items: MenuItem[] = [
+    { id: "open_checkout", label: "Open", unavailable: null },
+    { id: "new_tab_here", label: "New tab here", unavailable: checkout.exists ? null : "The folder is missing.", shortcut: host.newTabChord },
+  ];
   if (pr) items.push({ id: "open_pull_request", label: `Open pull request #${pr.number}`, unavailable: null });
-  items.push({ id: "set_purpose", label: "Set purpose…", unavailable: purposeProblem });
+  items.push(
+    { id: "set_purpose", label: "Set purpose…", unavailable: purposeProblem, separated: true },
+    { id: "set_primary", label: "Set as default checkout", unavailable: primaryProblem(workspace, checkout) },
+    { id: "copy_branch", label: "Copy branch name", unavailable: checkout.branch ? null : "Detached HEAD has no branch name." },
+    { id: "copy_path", label: "Copy path", unavailable: null },
+    ...revealItem(workspace, host, false),
+  );
   if (checkout.is_worktree) {
     const gate = checkout.worktree?.deletion_gate;
     items.push({
       id: "delete_worktree",
       label: "Delete worktree…",
-      unavailable: !checkout.worktree ? "The worktree row has not been read yet." : (gate?.blocked_reason ?? null),
+      unavailable: onDevice(workspace) ? ON_ANOTHER_DEVICE : !checkout.worktree ? "The worktree row has not been read yet." : (gate?.blocked_reason ?? null),
+      separated: true,
+      destructive: true,
     });
   }
   return items;
+}
+
+export type AgentMenuItem = {
+  id: "show_agent" | "copy_title" | "copy_session_id" | "close_tab";
+  label: string;
+  unavailable: string | null;
+  separated?: boolean;
+  shortcut?: string;
+};
+
+/**
+ * An agent row's menu (PRD sidebar-context-menus D-04, D-06): go to its pane,
+ * copy what names it, close the tab it is in through the tab close
+ * confirmation. `showChord` is the ⌥n that selects the same row, or "" when
+ * it holds no number on this host. Herdr 0.9.1 can neither mark a pane seen
+ * nor stop an agent, so neither is offered (D-05).
+ */
+export function agentMenu(agent: AgentRow, showChord: string): AgentMenuItem[] {
+  return [
+    { id: "show_agent", label: "Show", unavailable: null, shortcut: showChord },
+    { id: "copy_title", label: "Copy title", unavailable: null, separated: true },
+    { id: "copy_session_id", label: "Copy session id", unavailable: agent.session_id ? null : "Herdr has reported no session id for this agent." },
+    { id: "close_tab", label: "Close tab…", unavailable: null, separated: true },
+  ];
 }
 
 /** The deletion consequences the confirmation spells out, from the core's row and gate. */
