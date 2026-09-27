@@ -77,8 +77,10 @@ fn run_hook(arguments: &[String]) {
     } else {
         runtime.and_then(|runtime| hook_stdout(runtime, event))
     };
+    // The probe is not gated on a pane id: hided binds a caller outside any
+    // pane (a Codex shared daemon, a plain terminal) to the registered
+    // checkout holding its cwd, and refuses everything else itself.
     if event == HookEvent::SessionStart
-        && std::env::var("HERDR_PANE_ID").is_ok_and(|pane| !pane.is_empty())
         && let Some(context) = workspace_context::live_context()
     {
         output = output.map(|value| {
