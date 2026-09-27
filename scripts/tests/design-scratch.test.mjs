@@ -14,7 +14,12 @@ const fs = require('node:fs');
 const {spawn} = require('node:child_process');
 const args = process.argv.slice(2);
 const mode = fs.existsSync('.pen-mode') ? fs.readFileSync('.pen-mode', 'utf8') : '';
-if (args[0] === 'version') { console.log(mode === 'old' ? 'pen 0.3.7' : 'pen 0.3.8'); process.exit(); }
+if (args[0] === 'version') {
+  // pen 0.3.8 boxes an update notice around its answer on every command.
+  if (mode === 'banner') console.log('\\u001b[33m  ╭──────╮\\u001b[39m\\n\\u001b[33m  │\\u001b[39m  Update available 0.3.8 → 0.3.9  \\u001b[33m│\\u001b[39m\\n  ╰──────╯\\n');
+  console.log(mode === 'old' ? 'pen 0.3.7' : 'pen 0.3.8');
+  process.exit();
+}
 const output = args[args.indexOf('--out') + 1];
 const library = args[args.indexOf('--library') + 1];
 if (args.includes('--prompt') || args.includes('--app') || !library) process.exit(9);
@@ -42,7 +47,7 @@ function fixture(t) {
   fs.mkdirSync(path.join(root, 'scripts'));
   fs.mkdirSync(path.join(root, 'design'));
   fs.mkdirSync(path.join(directory, 'bin'));
-  for (const name of ['design-scratch.mjs', 'pen-tokens.mjs', 'gen-tokens.mjs']) fs.copyFileSync(path.join(repository, 'scripts', name), path.join(root, 'scripts', name));
+  for (const name of ['design-scratch.mjs', 'pen-cli.mjs', 'pen-tokens.mjs', 'gen-tokens.mjs']) fs.copyFileSync(path.join(repository, 'scripts', name), path.join(root, 'scripts', name));
   fs.writeFileSync(path.join(root, '.gitignore'), '/agents/\n.pen-*\n');
   fs.writeFileSync(path.join(root, 'design/hide-ui.lib.pen'), 'fixture library A');
   fs.writeFileSync(path.join(directory, 'bin/pen'), fakePen, {mode: 0o755});
@@ -126,6 +131,14 @@ test('unignored targets and unsupported CLI versions fail before creation', t =>
   mode(f, 'old');
   assert.match(run(f).stderr, /Expected pen 0.3.8/);
   assert.equal(fs.existsSync(path.join(f.root, 'agents')), false);
+});
+
+test('an update notice around the version answer is not a different version', t => {
+  const f = fixture(t);
+  mode(f, 'banner');
+  const result = run(f);
+  assert.equal(result.status, 0, result.stderr);
+  assert.ok(fs.existsSync(scratch(f.root)));
 });
 
 test('failed or empty imports leave no published or partial scratch', t => {
