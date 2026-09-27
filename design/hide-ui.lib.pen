@@ -30056,21 +30056,68 @@
                           "name": "View areas",
                           "children": [
                             {
+                              "type": "frame",
                               "id": "side-panel-doc-header",
-                              "type": "ref",
-                              "ref": "hxdu7",
                               "name": "Document header",
-                              "fill": "$--card",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "side-panel-doc-path",
+                                  "name": "herdr-core/src/runtime/works",
+                                  "content": "herdr-core/src/runtime/workspace_view.rs",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "side-panel-doc-live",
+                                  "name": "Live",
+                                  "content": "Live",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500",
+                                  "enabled": false
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "side-panel-doc-wrap",
+                                  "name": "Wrap",
+                                  "content": "Wrap",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "side-panel-doc-find",
+                                  "name": "Find",
+                                  "content": "Find",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": 32,
+                              "layout": "horizontal",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "padding": [
+                                0,
+                                "$--spacing-md"
+                              ],
                               "stroke": "$--border",
                               "strokeWidth": {
                                 "bottom": "$--size-hairline"
                               },
-                              "strokeAlignment": "inner",
-                              "descendants": {
-                                "PzQD9": {
-                                  "content": "runtime / workspace_view.rs"
-                                }
-                              }
+                              "strokeAlignment": "inner"
                             },
                             {
                               "type": "frame",
@@ -30303,7 +30350,7 @@
                                   "fill": "$--subtle-foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-caption",
-                                  "fontWeight": "600",
+                                  "fontWeight": "400",
                                   "textGrowth": "fixed-width",
                                   "width": "fill_container"
                                 },
@@ -30323,15 +30370,21 @@
                                 }
                               ],
                               "width": "fill_container",
-                              "height": 28,
+                              "height": 32,
                               "layout": "horizontal",
+                              "gap": "$--spacing-xs",
                               "alignItems": "center",
                               "padding": [
                                 0,
-                                "$--spacing-xs",
+                                "$--spacing-sm",
                                 0,
-                                "$--spacing-sm"
-                              ]
+                                "$--spacing-md"
+                              ],
+                              "stroke": "$--border",
+                              "strokeWidth": {
+                                "bottom": "$--size-hairline"
+                              },
+                              "strokeAlignment": "inner"
                             },
                             {
                               "type": "frame",

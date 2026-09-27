@@ -772,7 +772,7 @@ function buildWorkspace(tokens) {
   // The toolbar spans only the agent column: the path back, and the panel
   // toggle only while the panel is closed. No Explorer or History toggles.
   function toolbar(key, count) {
-    return frame(`ws-topbar-${key}`, 'Toolbar', {width: 'fill_container', height: ROW, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, '$--spacing-sm'], ...rule}, [
+    return frame(`ws-topbar-${key}`, 'Toolbar', {width: 'fill_container', height: ROW, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, '$--spacing-sm'], fill: '$--sidebar', ...rule}, [
       frame(`ws-crumb-${key}`, 'Breadcrumb', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
         text(`ws-c1-${key}`, 'Main', {fill: '$--muted-foreground'}),
         text(`ws-c2-${key}`, '/', {fill: '$--muted-foreground'}),
@@ -826,11 +826,13 @@ function buildWorkspace(tokens) {
         sidePanelButton(`ws-sp-pin-${key}`, 'pin'), sidePanelButton(`ws-sp-hide-${key}`, 'panel-right', {pressed: true}),
       ]),
     ]);
-    const docHeader = frame(`ws-dochdr-${key}`, 'Document header', {width: 'fill_container', height: ROW, layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', padding: [0, '$--spacing-sm'], ...rule}, [
-      text(`ws-docpath-${key}`, 'docs/한글 노트.md', {mono: true, size: '$--text-caption', fill: '$--muted-foreground'}),
+    // The web document header (Editor.tsx): the path, then Live (Markdown), Wrap and Find as ghost buttons.
+    const docHeader = frame(`ws-dochdr-${key}`, 'Document header', {width: 'fill_container', height: ROW, layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-md'], ...rule}, [
+      text(`ws-docpath-${key}`, 'docs/한글 노트.md', {size: '$--text-caption', fill: '$--subtle-foreground', width: 'fill_container'}),
       frame(`ws-doclinks-${key}`, 'Links', {layout: 'horizontal', gap: '$--spacing-md'}, [
-        text(`ws-docwrap-${key}`, 'Wrap', {size: '$--text-caption', fill: '$--subtle-foreground'}),
-        text(`ws-docfind-${key}`, 'Find', {size: '$--text-caption', fill: '$--subtle-foreground'}),
+        text(`ws-doclive-${key}`, 'Live', {weight: '500', fill: '$--foreground'}),
+        text(`ws-docwrap-${key}`, 'Wrap', {weight: '500', fill: '$--muted-foreground'}),
+        text(`ws-docfind-${key}`, 'Find', {weight: '500', fill: '$--muted-foreground'}),
       ]),
     ]);
     const line = (index, code) => frame(`ws-line${index}-${key}`, 'Line', {layout: 'horizontal', gap: '$--spacing-sm'}, [
@@ -856,8 +858,9 @@ function buildWorkspace(tokens) {
       frame(`ws-sp-tooltabs-${key}`, 'Row 2: tool tabs', {width: 'fill_container', height: ROW, layout: 'horizontal', alignItems: 'center', padding: [0, 0, 0, '$--spacing-xxs'], ...rule}, [
         toolTab(`ws-sp-explorer-${key}`, 'folder', 'Explorer', true), toolTab(`ws-sp-history-${key}`, 'git-branch', 'History', false),
       ]),
-      frame(`ws-exproot-${key}`, 'Root', {width: 'fill_container', height: num(tokens, '--size-pane-header'), layout: 'horizontal', alignItems: 'center', padding: [0, '$--spacing-xs', 0, '$--spacing-sm']}, [
-        text(`ws-exproott-${key}`, 'demo', {size: '$--text-caption', weight: '600', fill: '$--subtle-foreground', width: 'fill_container'}),
+      // The Explorer's root row (ExplorerTree.tsx), as tall as a tab strip.
+      frame(`ws-exproot-${key}`, 'Root', {width: 'fill_container', height: ROW, layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: [0, '$--spacing-sm', 0, '$--spacing-md'], ...rule}, [
+        text(`ws-exproott-${key}`, 'demo', {size: '$--text-caption', fill: '$--subtle-foreground', width: 'fill_container'}),
         screenIconButton(`ws-exprefresh-${key}`, 'refresh-cw', {size: 20}),
       ]),
       row(`ws-file1-${key}`, 'docs', 'folder-open', '$--subtle-foreground', {folder: true, status: '●'}),

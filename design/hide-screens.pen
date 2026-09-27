@@ -14855,6 +14855,7 @@
                             0,
                             "$--spacing-sm"
                           ],
+                          "fill": "$--sidebar",
                           "stroke": "$--border",
                           "strokeWidth": {
                             "bottom": "$--size-hairline"
@@ -15335,10 +15336,12 @@
                                           "id": "ws-docpath-lo",
                                           "name": "docs/한글 노트.md",
                                           "content": "docs/한글 노트.md",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-mono",
+                                          "fill": "$--subtle-foreground",
+                                          "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
+                                          "fontWeight": "400",
+                                          "textGrowth": "fixed-width",
+                                          "width": "fill_container"
                                         },
                                         {
                                           "type": "frame",
@@ -15347,23 +15350,33 @@
                                           "children": [
                                             {
                                               "type": "text",
+                                              "id": "ws-doclive-lo",
+                                              "name": "Live",
+                                              "content": "Live",
+                                              "fill": "$--foreground",
+                                              "fontFamily": "$--font-ui",
+                                              "fontSize": "$--text-body",
+                                              "fontWeight": "500"
+                                            },
+                                            {
+                                              "type": "text",
                                               "id": "ws-docwrap-lo",
                                               "name": "Wrap",
                                               "content": "Wrap",
-                                              "fill": "$--subtle-foreground",
+                                              "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
+                                              "fontSize": "$--text-body",
+                                              "fontWeight": "500"
                                             },
                                             {
                                               "type": "text",
                                               "id": "ws-docfind-lo",
                                               "name": "Find",
                                               "content": "Find",
-                                              "fill": "$--subtle-foreground",
+                                              "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
+                                              "fontSize": "$--text-body",
+                                              "fontWeight": "500"
                                             }
                                           ],
                                           "layout": "horizontal",
@@ -15373,11 +15386,11 @@
                                       "width": "fill_container",
                                       "height": 32,
                                       "layout": "horizontal",
-                                      "justifyContent": "space_between",
+                                      "gap": "$--spacing-sm",
                                       "alignItems": "center",
                                       "padding": [
                                         0,
-                                        "$--spacing-sm"
+                                        "$--spacing-md"
                                       ],
                                       "stroke": "$--border",
                                       "strokeWidth": {
@@ -15611,7 +15624,7 @@
                                           "fill": "$--subtle-foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
-                                          "fontWeight": "600",
+                                          "fontWeight": "400",
                                           "textGrowth": "fixed-width",
                                           "width": "fill_container"
                                         },
@@ -15631,15 +15644,21 @@
                                         }
                                       ],
                                       "width": "fill_container",
-                                      "height": 28,
+                                      "height": 32,
                                       "layout": "horizontal",
+                                      "gap": "$--spacing-xs",
                                       "alignItems": "center",
                                       "padding": [
                                         0,
-                                        "$--spacing-xs",
+                                        "$--spacing-sm",
                                         0,
-                                        "$--spacing-sm"
-                                      ]
+                                        "$--spacing-md"
+                                      ],
+                                      "stroke": "$--border",
+                                      "strokeWidth": {
+                                        "bottom": "$--size-hairline"
+                                      },
+                                      "strokeAlignment": "inner"
                                     },
                                     {
                                       "type": "frame",
@@ -16284,6 +16303,7 @@
                             0,
                             "$--spacing-sm"
                           ],
+                          "fill": "$--sidebar",
                           "stroke": "$--border",
                           "strokeWidth": {
                             "bottom": "$--size-hairline"
@@ -16893,6 +16913,7 @@
                             0,
                             "$--spacing-sm"
                           ],
+                          "fill": "$--sidebar",
                           "stroke": "$--border",
                           "strokeWidth": {
                             "bottom": "$--size-hairline"
@@ -17373,10 +17394,12 @@
                                           "id": "ws-docpath-do",
                                           "name": "docs/한글 노트.md",
                                           "content": "docs/한글 노트.md",
-                                          "fill": "$--muted-foreground",
-                                          "fontFamily": "$--font-mono",
+                                          "fill": "$--subtle-foreground",
+                                          "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
-                                          "fontWeight": "400"
+                                          "fontWeight": "400",
+                                          "textGrowth": "fixed-width",
+                                          "width": "fill_container"
                                         },
                                         {
                                           "type": "frame",
@@ -17385,23 +17408,33 @@
                                           "children": [
                                             {
                                               "type": "text",
+                                              "id": "ws-doclive-do",
+                                              "name": "Live",
+                                              "content": "Live",
+                                              "fill": "$--foreground",
+                                              "fontFamily": "$--font-ui",
+                                              "fontSize": "$--text-body",
+                                              "fontWeight": "500"
+                                            },
+                                            {
+                                              "type": "text",
                                               "id": "ws-docwrap-do",
                                               "name": "Wrap",
                                               "content": "Wrap",
-                                              "fill": "$--subtle-foreground",
+                                              "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
+                                              "fontSize": "$--text-body",
+                                              "fontWeight": "500"
                                             },
                                             {
                                               "type": "text",
                                               "id": "ws-docfind-do",
                                               "name": "Find",
                                               "content": "Find",
-                                              "fill": "$--subtle-foreground",
+                                              "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-ui",
-                                              "fontSize": "$--text-caption",
-                                              "fontWeight": "400"
+                                              "fontSize": "$--text-body",
+                                              "fontWeight": "500"
                                             }
                                           ],
                                           "layout": "horizontal",
@@ -17411,11 +17444,11 @@
                                       "width": "fill_container",
                                       "height": 32,
                                       "layout": "horizontal",
-                                      "justifyContent": "space_between",
+                                      "gap": "$--spacing-sm",
                                       "alignItems": "center",
                                       "padding": [
                                         0,
-                                        "$--spacing-sm"
+                                        "$--spacing-md"
                                       ],
                                       "stroke": "$--border",
                                       "strokeWidth": {
@@ -17649,7 +17682,7 @@
                                           "fill": "$--subtle-foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
-                                          "fontWeight": "600",
+                                          "fontWeight": "400",
                                           "textGrowth": "fixed-width",
                                           "width": "fill_container"
                                         },
@@ -17669,15 +17702,21 @@
                                         }
                                       ],
                                       "width": "fill_container",
-                                      "height": 28,
+                                      "height": 32,
                                       "layout": "horizontal",
+                                      "gap": "$--spacing-xs",
                                       "alignItems": "center",
                                       "padding": [
                                         0,
-                                        "$--spacing-xs",
+                                        "$--spacing-sm",
                                         0,
-                                        "$--spacing-sm"
-                                      ]
+                                        "$--spacing-md"
+                                      ],
+                                      "stroke": "$--border",
+                                      "strokeWidth": {
+                                        "bottom": "$--size-hairline"
+                                      },
+                                      "strokeAlignment": "inner"
                                     },
                                     {
                                       "type": "frame",
@@ -18322,6 +18361,7 @@
                             0,
                             "$--spacing-sm"
                           ],
+                          "fill": "$--sidebar",
                           "stroke": "$--border",
                           "strokeWidth": {
                             "bottom": "$--size-hairline"
