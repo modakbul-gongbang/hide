@@ -41,7 +41,7 @@ export function viewLayoutPayload(workspace: ViewWorkspace, action: { action: st
  * log's alone, since the screen already shows another Workspace.
  */
 export function viewRefusal(error: { kind: string; message: string } | null | undefined): string | null {
-  if (!error || !error.kind.startsWith("view_layout.") || error.kind === "view_layout.stale_workspace") return null;
+  if (!error || (!error.kind.startsWith("view_layout.") && error.kind !== "agent_layout.display_limit") || error.kind === "view_layout.stale_workspace") return null;
   return error.message;
 }
 

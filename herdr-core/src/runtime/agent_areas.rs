@@ -67,6 +67,100 @@ impl Runtime {
         )
     }
 
+    /// Count external effects that can still add a tab, together with placed
+    /// items. The existing worker/close/reopen owners release these claims.
+    pub(super) fn admit_agent_tab(&mut self, path: &str) -> bool {
+        let key = (workspace::LOCAL_DEVICE_ID.to_owned(), path.to_owned());
+        let Some(store) = self.workspace_views.as_mut() else {
+            return true;
+        };
+        store.views.entry(&key.0, &key.1);
+        let layout = self.agent_layout_of(&key).expect("entry exists");
+        let placed = layout.tree.display_count();
+        let store = self.workspace_views.as_ref().expect("layout exists");
+        let creating = store.agent_admissions.get(&key).map_or(0, Vec::len);
+        let arriving = store
+            .agent_placements
+            .iter()
+            .filter(|(id, (scope, _, _, _))| scope == &key && layout.tree.display(id).is_none())
+            .count();
+        let closing = self
+            .close_operations
+            .values()
+            .filter(|operation| {
+                operation.request.context.replacement_shell
+                    && operation.request.context.checkout_path == path
+                    && matches!(operation.phase.as_str(), "preparing" | "transmitting")
+            })
+            .count();
+        let reopening = self
+            .reopen_in_flight
+            .as_deref()
+            .and_then(|id| self.recent_closed.iter().find(|item| item.key() == id))
+            .is_some_and(|item| match item {
+                ClosedItem::Tab { context, .. } => context.checkout_path == path,
+                ClosedItem::Pane { context, .. } => {
+                    context.checkout_path == path
+                        && !self
+                            .herdr_workspace_tab_order
+                            .values()
+                            .any(|tabs| tabs.contains(&context.tab_id))
+                }
+                ClosedItem::File { .. } => false,
+            });
+        if placed + creating + arriving + closing + usize::from(reopening) < Tab::LIMITS.items {
+            return true;
+        }
+        self.set_error(
+            "agent_layout.display_limit",
+            "64 Agent tabs are placed or opening. Close a tab to make room.",
+            false,
+        );
+        false
+    }
+
+    pub(super) fn agent_can_show_created(&self, path: &str, id: &str) -> bool {
+        self.agent_layout_of(&(workspace::LOCAL_DEVICE_ID.to_owned(), path.to_owned()))
+            .is_none_or(|layout| {
+                layout.tree.display(id).is_some() || layout.tree.display_count() < Tab::LIMITS.items
+            })
+    }
+
+    pub(super) fn agent_tab_waiting(&self, tab_id: &str) -> bool {
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|w| w.device_id == workspace::LOCAL_DEVICE_ID)
+            .flat_map(|w| &w.checkouts)
+            .any(|checkout| {
+                checkout
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.id.as_deref() == Some(tab_id) && !tab.delegated)
+                    && self
+                        .agent_layout_of(&(
+                            workspace::LOCAL_DEVICE_ID.to_owned(),
+                            checkout.path.clone(),
+                        ))
+                        .is_some_and(|layout| layout.tree.display(tab_id).is_none())
+            })
+    }
+
+    pub(super) fn finish_agent_admission(&mut self, path: &str) {
+        let key = (workspace::LOCAL_DEVICE_ID.to_owned(), path.to_owned());
+        if let Some(store) = self.workspace_views.as_mut()
+            && let Some(pending) = store.agent_admissions.get_mut(&key)
+        {
+            if !pending.is_empty() {
+                pending.remove(0);
+            }
+            if pending.is_empty() {
+                store.agent_admissions.remove(&key);
+            }
+        }
+    }
+
     pub(super) fn apply_agent_layout(&mut self, payload: AgentLayoutPayload) -> bool {
         let key = (payload.workspace.device_id, payload.workspace.path);
         if !self.area_workspace_is_current(&key, "agent") {
@@ -246,6 +340,7 @@ impl Runtime {
         layout: &Layout,
     ) -> crate::model::AgentLayoutSnapshot {
         crate::model::AgentLayoutSnapshot {
+            waiting: layout.waiting,
             root: layout.tree.root.clone(),
             active_area: layout.tree.active_area.clone(),
             canvases: layout.canvases.clone(),

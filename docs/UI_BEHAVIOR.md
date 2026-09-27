@@ -77,6 +77,12 @@ An explicit local `--reveal` brings that Workspace and the opened View forward, 
 
 ### Agent areas
 
+At most 64 normal Agent tabs are placed, in up to six areas and three split levels.
+New tab, Reopen that needs a tab, and protected replacement close count pending admissions and refuse before any external effect when full; the existing one-line notice asks the operator to close a tab.
+External tabs beyond the cap remain in Herdr topology, with their waiting count in that same notice, and enter the active area in authoritative order when a slot opens.
+A waiting tab cannot take Hide's keyboard or active-tab selection.
+This boundary is an Observer-approved, user-vetoable implementation assumption from the Agent groups contract.
+
 The Agent column has its own area tree, separate from the side panel's View tree.
 Each area has a tab bar, a New tab button and the active tab's live pane canvas; dividers separate areas.
 Only the active area's selected tab carries the accent; clicking a tab or pane activates its area and sends the keyboard to that pane.

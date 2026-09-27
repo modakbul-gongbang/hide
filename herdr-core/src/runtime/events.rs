@@ -1494,6 +1494,9 @@ impl Runtime {
                     );
                     return true;
                 }
+                if !self.admit_agent_tab(&cwd) {
+                    return true;
+                }
                 let label = payload.label.trim();
                 if label.is_empty() {
                     self.set_error("tab.invalid_label", "Tab label cannot be empty", false);
@@ -1515,6 +1518,14 @@ impl Runtime {
                 self.sync_changes_root_path();
                 self.yield_surface_to_terminal();
                 self.persist_current_ui_state();
+                if let Some(store) = self.workspace_views.as_mut() {
+                    store
+                        .agent_admissions
+                        .entry(key)
+                        .or_default()
+                        .push(Instant::now());
+                }
+                let admission_path = cwd.clone();
                 let action = match session_workspace_id {
                     Some(session_workspace_id) => RemoteControlAction::CreateTab {
                         workspace_id: session_workspace_id,
@@ -1533,6 +1544,7 @@ impl Runtime {
                     format!("Creating {}", action.kind()),
                 );
                 if let Err(message) = live::spawn_local_control(context, action) {
+                    self.finish_agent_admission(&admission_path);
                     self.set_error("tab.create_worker_failed", message, true);
                 }
                 true
@@ -1579,6 +1591,14 @@ impl Runtime {
                 changed
             }
             Event::FocusTab(payload) => {
+                if self.agent_tab_waiting(&payload.tab_id) {
+                    self.set_error(
+                        "agent_layout.display_limit",
+                        "This Agent tab is waiting. Close a tab to make room.",
+                        false,
+                    );
+                    return true;
+                }
                 let Some(workspace_snapshot) = self
                     .snapshot
                     .navigator

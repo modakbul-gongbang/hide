@@ -1041,6 +1041,17 @@ impl Runtime {
                 })
                 .collect::<HashSet<_>>();
             store.agent_live.retain(|key| keys.contains(key));
+            store.agent_admissions.retain(|key, pending| {
+                pending.retain(|started| {
+                    let current = started.elapsed() < std::time::Duration::from_secs(30);
+                    if !current {
+                        agent_layout_errors
+                            .push(format!("Agent create admission expired for {}", key.1));
+                    }
+                    current
+                });
+                keys.contains(key) && !pending.is_empty()
+            });
             store.agent_placements.retain(|id, (_, _, _, started)| {
                 let current = started.elapsed() < std::time::Duration::from_secs(30);
                 if !current {
@@ -1055,6 +1066,7 @@ impl Runtime {
             for checkout in workspace.checkouts.iter_mut() {
                 let key = (workspace.device_id.clone(), checkout.path.clone());
                 let mut restored_agent_tab = None;
+                let mut placed_tabs: Option<HashSet<String>> = None;
                 if workspace.device_id == workspace::LOCAL_DEVICE_ID
                     && let Some(store) = self.workspace_views.as_mut()
                 {
@@ -1071,11 +1083,24 @@ impl Runtime {
                             agent_layout_errors.push(format!("{}: {error:?}", checkout.id))
                         }
                     }
+                    placed_tabs = Some(
+                        layout
+                            .tree
+                            .displays()
+                            .map(|tab| tab.id.clone())
+                            .chain(
+                                topology
+                                    .iter()
+                                    .filter(|(_, delegated)| *delegated)
+                                    .map(|(id, _)| id.clone()),
+                            )
+                            .collect(),
+                    );
                     let placements = store
                         .agent_placements
                         .iter()
                         .filter(|(id, (scope, _, _, _))| {
-                            scope == &key && topology.iter().any(|(tab, _)| tab == *id)
+                            scope == &key && layout.tree.display(id).is_some()
                         })
                         .map(|(id, (_, area, index, _))| (id.clone(), area.clone(), *index))
                         .collect::<Vec<_>>();
@@ -1092,18 +1117,21 @@ impl Runtime {
                             index,
                             layout.tree.next_stamp(unix_milliseconds()),
                         ) {
-                            Ok(changed) => agent_layout_changed |= changed,
+                            Ok(changed) => {
+                                agent_layout_changed |= changed;
+                                store.agent_placements.remove(&id);
+                            }
                             Err(error) => {
                                 agent_layout_errors.push(format!("Created tab {id}: {error:?}"))
                             }
                         }
-                        store.agent_placements.remove(&id);
                     }
                     if first
-                        || self
-                            .visible_tab_ids
-                            .get(&checkout.id)
-                            .is_some_and(|id| !topology.iter().any(|(tab, _)| tab == id))
+                        || self.visible_tab_ids.get(&checkout.id).is_some_and(|id| {
+                            placed_tabs
+                                .as_ref()
+                                .is_some_and(|placed| !placed.contains(id))
+                        })
                     {
                         restored_agent_tab = layout.active().map(str::to_owned);
                     }
@@ -1113,7 +1141,23 @@ impl Runtime {
                         .tabs
                         .iter()
                         .any(|tab| tab.id.as_deref() == Some(tab_id))
+                        && placed_tabs
+                            .as_ref()
+                            .is_none_or(|placed| placed.contains(tab_id))
                 };
+                if herdr_focus_moved
+                    && herdr.focused_tab_id.as_ref().is_some_and(|id| {
+                        placed_tabs
+                            .as_ref()
+                            .is_some_and(|placed| !placed.contains(id))
+                            && checkout.tabs.iter().any(|tab| tab.id.as_ref() == Some(id))
+                    })
+                {
+                    agent_layout_errors.push(format!(
+                        "Ignored Herdr focus on waiting Agent tab in {}",
+                        checkout.id
+                    ));
+                }
                 let hide_tab = restored_agent_tab.clone().or_else(|| {
                     self.visible_tab_ids
                         .get(&checkout.id)
@@ -1168,13 +1212,17 @@ impl Runtime {
                         .iter()
                         .find(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
                         .and_then(|tab| tab.id.clone())
+                        .filter(|id| has_tab(id))
                 });
                 // A pending tab Herdr has not listed yet (one just created)
                 // keeps its claim on the checkout instead of being replaced
                 // by whichever tab is drawn while it arrives.
-                let pending_tab_unlisted = pending_tab
-                    .as_deref()
-                    .is_some_and(|tab_id| !has_tab(tab_id));
+                let pending_tab_unlisted = pending_tab.as_deref().is_some_and(|tab_id| {
+                    !checkout
+                        .tabs
+                        .iter()
+                        .any(|tab| tab.id.as_deref() == Some(tab_id))
+                });
                 let visible = match (hide_tab, herdr_tab) {
                     (Some(hide_tab), Some(herdr_tab)) if hide_tab == herdr_tab => Some(hide_tab),
                     (Some(hide_tab), Some(herdr_tab)) => {
@@ -1222,6 +1270,24 @@ impl Runtime {
                 };
                 match visible {
                     Some(tab_id) => {
+                        let selected_waiting = selected_pane_id.as_deref().is_some_and(|pane| {
+                            checkout.tabs.iter().any(|tab| {
+                                tab.panes.iter().any(|p| p.id == pane)
+                                    && tab.id.as_deref().is_some_and(|id| !has_tab(id))
+                            })
+                        });
+                        if selected_waiting
+                            && self.snapshot.navigator.focused_checkout_id.as_deref()
+                                == Some(&checkout.id)
+                        {
+                            follow_pane = checkout
+                                .tabs
+                                .iter()
+                                .find(|tab| tab.id.as_deref() == Some(&tab_id))
+                                .and_then(|tab| tab.panes.first())
+                                .map(|pane| pane.id.clone());
+                            confirmed_pending = true;
+                        }
                         if !pending_tab_unlisted {
                             self.visible_tab_ids
                                 .insert(checkout.id.clone(), tab_id.clone());
@@ -2248,6 +2314,26 @@ impl Runtime {
         origin: PaneFocusOrigin,
         request_id: Option<String>,
     ) {
+        if self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|w| &w.checkouts)
+            .flat_map(|c| &c.tabs)
+            .any(|tab| {
+                tab.panes.iter().any(|pane| pane.id == pane_id)
+                    && tab.id.as_ref().is_some_and(|id| self.agent_tab_waiting(id))
+            })
+        {
+            self.set_error(
+                "agent_layout.display_limit",
+                "This Agent tab is waiting. Close a tab to make room.",
+                false,
+            );
+            return;
+        }
+
         let request_id = request_id.filter(|value| !value.trim().is_empty());
         if let Some(request_id) = request_id.as_deref() {
             if self
@@ -3528,6 +3614,11 @@ impl Runtime {
         elapsed_ms: u128,
     ) -> bool {
         let action_kind = action.kind();
+        match &action {
+            RemoteControlAction::CreateTab { cwd, .. }
+            | RemoteControlAction::CreateWorkspace { cwd, .. } => self.finish_agent_admission(cwd),
+            _ => {}
+        }
         if let RemoteControlAction::RenameTab { request_id, .. } = &action {
             return self.ingest_tab_rename_result(
                 request_id,
@@ -3597,11 +3688,21 @@ impl Runtime {
                         }
                     }
                 }
-                if matches!(
-                    action,
-                    RemoteControlAction::CreateTab { .. }
-                        | RemoteControlAction::CreateWorkspace { .. }
-                ) && let Some(pane_id) = created_pane_id.as_ref()
+                let can_show_created = match (&action, created_tab_id.as_deref()) {
+                    (
+                        RemoteControlAction::CreateTab { cwd, .. }
+                        | RemoteControlAction::CreateWorkspace { cwd, .. },
+                        Some(id),
+                    ) => self.agent_can_show_created(cwd, id),
+                    _ => true,
+                };
+                if can_show_created
+                    && matches!(
+                        action,
+                        RemoteControlAction::CreateTab { .. }
+                            | RemoteControlAction::CreateWorkspace { .. }
+                    )
+                    && let Some(pane_id) = created_pane_id.as_ref()
                 {
                     // tab.create returns the authoritative root pane before
                     // the ordered event projection catches up. Preserve that

@@ -92,6 +92,11 @@ impl Runtime {
         {
             return false;
         }
+        if operation.stage != "close_request"
+            && !self.admit_agent_tab(&operation.request.context.checkout_path)
+        {
+            return true;
+        }
         if let Some(message) = self.close_precondition_failure(&operation) {
             self.cancel_close_before_effect(key, message);
             return true;

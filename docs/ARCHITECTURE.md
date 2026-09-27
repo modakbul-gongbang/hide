@@ -416,6 +416,10 @@ Hiding the final tool column also closes the panel, so the panel content is view
 An entry stored before the panel, with S6's `mode` (and `agent_share`, `views_over_agents`) instead of `panel`, is read into the nearest state (`legacy_panel`): `agents` as closed, or open when its View areas floated over the agents; `together` as pinned open at `1 - agent_share`; `views` as expanded; the next save writes only the new keys, and the schema stays 2 because the change adds keys.
 
 The same schema-2 entry adds a defaulted `agent_layout` key for local Agent areas.
+Agent admission counts the shared 64-item limit together with pending creates, placements, reopen and replacement-close effects.
+An authoritative excess tab remains in checkout topology and contributes to the snapshot waiting count; reconciliation admits it when a slot opens without selecting an unplaced tab.
+Hide refuses a new external effect at capacity, including a protected replacement close, and uses the existing capacity notice surface.
+
 `split_tree.rs::SplitTree<I: AreaItem>` owns structural repair, ordered membership, focus, move, split, collapse, resize and limits; `view_layout.rs` wraps it with document/preview/browser rules, and `agent_layout.rs` wraps it with stable Herdr tab references and delegated canvas selection.
 The shared web `AreaTree` consumes View and Agent adapters over `areaLayout`, `areaDrag` and column-scoped drawn frames, so gestures, geometry, dividers and narrow presentation have one implementation.
 `AgentTab` renders the same status/provider/name/Rename unit in every area, and `PaneCanvas` receives its explicit tab.

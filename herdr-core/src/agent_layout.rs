@@ -43,6 +43,8 @@ pub struct Layout {
     /// A delegated tab occupies a canvas without acquiring a strip slot.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub canvases: BTreeMap<String, String>,
+    #[serde(skip)]
+    pub waiting: usize,
 }
 impl Layout {
     pub fn repair(&mut self) -> Vec<String> {
@@ -90,16 +92,24 @@ impl Layout {
             self.tree.area(area).is_some()
                 && tabs.iter().any(|(id, delegated)| id == tab && *delegated)
         });
+        self.waiting = 0;
         for (id, delegated) in tabs {
             if !delegated && self.tree.display(id).is_none() {
+                if self.tree.displays().count() >= Tab::LIMITS.items {
+                    self.waiting += 1;
+                    continue;
+                }
                 let area = self.tree.active_area.clone();
-                self.tree.append(
+                if let Err(error) = self.tree.append(
                     &area,
                     Tab {
                         id: id.clone(),
                         focused: 0,
                     },
-                )?;
+                ) {
+                    *self = before;
+                    return Err(error);
+                }
             }
         }
         Ok(*self != before)

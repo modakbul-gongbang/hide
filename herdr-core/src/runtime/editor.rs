@@ -1185,6 +1185,11 @@ impl Runtime {
             }]);
             return true;
         };
+        context.replacement_shell &=
+            matches!(target, live::CloseCaptureTarget::Tab { .. }) || tab.panes.len() == 1;
+        if context.replacement_shell && !self.admit_agent_tab(&context.checkout_path) {
+            return true;
+        }
         let Some(live_context) = self.live.as_ref().cloned() else {
             self.set_reopen_notices(vec![live::ReopenNotice {
                 pane_id: matches!(&target, live::CloseCaptureTarget::Pane { .. })
@@ -1193,8 +1198,6 @@ impl Runtime {
             }]);
             return true;
         };
-        context.replacement_shell &=
-            matches!(target, live::CloseCaptureTarget::Tab { .. }) || tab.panes.len() == 1;
         let request = live::CloseCaptureRequest {
             key: self.next_recent_closed_key(),
             connection_generation: self.live_generation,
@@ -1607,7 +1610,12 @@ impl Runtime {
             Err(hide_herdr_client::ApiError::Remote { code, message }) => {
                 if let Some(operation) = self.close_operations.get_mut(&request.key) {
                     operation.phase = "refused".to_owned();
-                    operation.stage = "close_request".to_owned();
+                    operation.stage = if code == "replacement_failed" {
+                        "replacement"
+                    } else {
+                        "close_request"
+                    }
+                    .to_owned();
                     operation.message = Some(if !operation.request.context.replacement_shell {
                         "The item was not closed. Check its current state before closing it again."
                     } else if code == "replacement_failed" {
@@ -2215,6 +2223,17 @@ impl Runtime {
         {
             return true;
         }
+        if !tab_exists && self.reopen_device() == workspace::LOCAL_DEVICE_ID {
+            let path = match &item {
+                ClosedItem::Pane { context, .. } | ClosedItem::Tab { context, .. } => {
+                    Some(context.checkout_path.clone())
+                }
+                ClosedItem::File { .. } => None,
+            };
+            if path.is_some_and(|path| !self.admit_agent_tab(&path)) {
+                return true;
+            }
+        }
         let key = item.key().to_owned();
         self.reopen_in_flight = Some(key.clone());
         self.set_reopen_notices(vec![live::ReopenNotice {
@@ -2371,7 +2390,14 @@ impl Runtime {
                 if outcome.consumed {
                     self.consume_recent_closed(key);
                 }
-                if let Some(pane_id) = outcome.focused_pane_id {
+                let can_show = match (&request.item, outcome.tab_id.as_deref()) {
+                    (
+                        ClosedItem::Pane { context, .. } | ClosedItem::Tab { context, .. },
+                        Some(id),
+                    ) => self.agent_can_show_created(&context.checkout_path, id),
+                    _ => true,
+                };
+                if can_show && let Some(pane_id) = outcome.focused_pane_id {
                     self.snapshot.terminal.pane_id = Some(pane_id.clone());
                     self.snapshot.focused.surface = Surface::Terminal;
                     self.snapshot.focused.pane_id = Some(pane_id.clone());

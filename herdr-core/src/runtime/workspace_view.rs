@@ -35,6 +35,7 @@ pub(super) struct WorkspaceViewStore {
     /// the tree the file carried until it is shown.
     pub(super) live: HashSet<WorkspaceKey>,
     pub(super) agent_live: HashSet<WorkspaceKey>,
+    pub(super) agent_admissions: BTreeMap<WorkspaceKey, Vec<Instant>>,
     pub(super) agent_placements: BTreeMap<String, (WorkspaceKey, String, Option<usize>, Instant)>,
     /// The Workspace the last sync saw in front.
     pub(super) front: Option<WorkspaceKey>,
@@ -221,6 +222,7 @@ impl WorkspaceViewStore {
                 views,
                 live: HashSet::new(),
                 agent_live: HashSet::new(),
+                agent_admissions: BTreeMap::new(),
                 agent_placements: BTreeMap::new(),
                 front: None,
                 covered: None,

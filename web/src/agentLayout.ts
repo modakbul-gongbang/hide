@@ -2,7 +2,7 @@ import { activeDisplay, adjacentInOrder, locateDisplay, neighbourArea, resizeTar
 import type { MenuEntry } from "./components/entry-menu";
 
 export type AgentItem = { id: string };
-export type AgentLayout = AreaLayout<AgentItem> & { canvases: Record<string, string> };
+export type AgentLayout = AreaLayout<AgentItem> & { waiting?: number; canvases: Record<string, string> };
 export const AGENT_WORDS = { item: "tab", area: "Agent area", plural: "Agent areas" };
 export const REMOTE_GROUP_REASON = "Agent groups are available in local Workspaces only.";
 const EDGES: Edge[] = ["right", "left", "up", "down"];
@@ -35,4 +35,9 @@ export function agentCommands(frame: AgentFrame): MenuEntry<AgentCommand>[] {
     entries.push({ id: grow ? "grow" : "shrink", label: `${grow ? "Grow" : "Shrink"} Agent area`, unavailable: "reason" in target ? target.reason : null });
   }
   return entries;
+}
+
+/** Shared one-line capacity notice; authoritative tabs remain available upstream. */
+export function agentCapacityNotice(waiting: number): string {
+  return `${waiting} Agent ${waiting === 1 ? "tab is" : "tabs are"} waiting. Close a tab to make room.`;
 }

@@ -198,3 +198,209 @@ fn external_focused_new_tab_preserves_canvas_then_existing_tab_focus_is_followed
         Some("w-order:t4")
     );
 }
+
+#[test]
+fn authoritative_overflow_waits_without_hidden_focus_and_admits_when_a_slot_opens() {
+    let (mut runtime, checkout) = setup();
+    let ids = (1..=65)
+        .map(|n| format!("w-order:t{n}"))
+        .collect::<Vec<_>>();
+    let tabs = ids.iter().map(String::as_str).collect::<Vec<_>>();
+    runtime.ingest_session(Ok(tab_order_payload(
+        "/agent-groups",
+        &tabs,
+        &tabs,
+        "w-order:t65",
+    )));
+    runtime.sync_workspace_view();
+    assert_eq!(layout(&runtime).tree.display_count(), 64);
+    assert_eq!(layout(&runtime).waiting, 1);
+    assert_eq!(
+        runtime
+            .snapshot
+            .workspace_view
+            .as_ref()
+            .unwrap()
+            .agent_layout
+            .waiting,
+        1
+    );
+    assert_eq!(ordered_tab_ids(&runtime, &checkout).len(), 65);
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout).as_deref(),
+        Some("w-order:t1")
+    );
+    assert_eq!(
+        runtime.snapshot.terminal.pane_id.as_deref(),
+        Some("w-order:t1:p")
+    );
+    runtime.dispatch_json(&focus_tab_event(&checkout, "w-order:t65"));
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout).as_deref(),
+        Some("w-order:t1")
+    );
+    runtime.focus_pane("w-order:t65:p".into(), PaneFocusOrigin::Operator, None);
+    assert_eq!(
+        runtime.snapshot.terminal.pane_id.as_deref(),
+        Some("w-order:t1:p")
+    );
+    let workspace = runtime
+        .snapshot
+        .navigator
+        .focused_workspace_id
+        .clone()
+        .unwrap();
+    runtime.apply(Event::CreateTab(CreateTabPayload {
+        workspace_id: workspace,
+        checkout_id: Some(checkout.clone()),
+        label: "Tab".into(),
+        area_id: None,
+    }));
+    // There is no live control worker in this fixture. Admission must fail
+    // before even trying to obtain one or changing the current selection.
+    assert_eq!(
+        runtime.snapshot.status.last_error.as_ref().unwrap().kind,
+        "agent_layout.display_limit"
+    );
+    assert!(
+        runtime
+            .workspace_views
+            .as_ref()
+            .unwrap()
+            .agent_admissions
+            .is_empty()
+    );
+    let remaining = tabs
+        .iter()
+        .copied()
+        .filter(|id| *id != "w-order:t2")
+        .collect::<Vec<_>>();
+    runtime.ingest_session(Ok(tab_order_payload(
+        "/agent-groups",
+        &remaining,
+        &remaining,
+        "w-order:t65",
+    )));
+    runtime.sync_workspace_view();
+    let arranged = layout(&runtime);
+    assert_eq!(arranged.waiting, 0);
+    assert_eq!(arranged.tree.display_count(), 64);
+    assert_eq!(
+        arranged.tree.active_area().displays.last().unwrap().id,
+        "w-order:t65"
+    );
+    assert_eq!(arranged.active(), Some("w-order:t1"));
+    let mut restored: crate::agent_layout::Layout =
+        serde_json::from_value(serde_json::to_value(&arranged).unwrap()).unwrap();
+    restored.repair();
+    assert!(restored.tree.display("w-order:t65").is_some());
+}
+
+#[test]
+fn pending_agent_admissions_are_counted_before_the_next_effect() {
+    let (mut runtime, _) = setup();
+    let ids = (1..=63)
+        .map(|n| format!("w-order:t{n}"))
+        .collect::<Vec<_>>();
+    let tabs = ids.iter().map(String::as_str).collect::<Vec<_>>();
+    ingest(&mut runtime, &tabs);
+    assert!(runtime.admit_agent_tab("/agent-groups"));
+    runtime
+        .workspace_views
+        .as_mut()
+        .unwrap()
+        .agent_admissions
+        .insert(
+            ("local".into(), "/agent-groups".into()),
+            vec![Instant::now()],
+        );
+    assert!(!runtime.admit_agent_tab("/agent-groups"));
+    runtime.finish_agent_admission("/agent-groups");
+    assert!(runtime.admit_agent_tab("/agent-groups"));
+}
+
+#[test]
+fn protected_close_and_reopen_at_capacity_refuse_before_any_worker_or_selection_change() {
+    let (mut runtime, _) = setup();
+    let ids = (1..=64)
+        .map(|n| format!("w-order:t{n}"))
+        .collect::<Vec<_>>();
+    let tabs = ids.iter().map(String::as_str).collect::<Vec<_>>();
+    ingest(&mut runtime, &tabs);
+    let primary = crate::domain::WorktreeProjection {
+        repo_key: "repo".into(),
+        repo_name: "repo".into(),
+        repo_root: "/agent-groups".into(),
+        checkout_path: "/agent-groups".into(),
+        is_linked_worktree: false,
+    };
+    runtime
+        .herdr_worktrees
+        .insert("w-order".into(), primary.clone());
+    runtime.herdr_worktrees.insert(
+        "linked".into(),
+        crate::domain::WorktreeProjection {
+            is_linked_worktree: true,
+            ..primary
+        },
+    );
+    // The other checkout tabs may belong to other Herdr workspaces. Its
+    // protected primary workspace has only the target remaining.
+    runtime
+        .herdr_workspace_tab_order
+        .insert("w-order".into(), vec!["w-order:t1".into()]);
+    let tab = runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter()
+        .flat_map(|w| &w.checkouts)
+        .flat_map(|c| &c.tabs)
+        .find(|tab| tab.id.as_deref() == Some("w-order:t1"))
+        .unwrap()
+        .clone();
+    let before = runtime.snapshot.terminal.pane_id.clone();
+    let context = runtime.close_context(&tab).unwrap();
+    assert!(context.replacement_shell);
+    runtime.start_close_capture(
+        live::CloseCaptureTarget::Tab {
+            tab_id: "w-order:t1".into(),
+        },
+        tab.clone(),
+    );
+    assert!(runtime.close_operations.is_empty());
+    assert!(runtime.panes_closing.is_empty());
+    assert_eq!(
+        runtime.snapshot.status.last_error.as_ref().unwrap().kind,
+        "agent_layout.display_limit"
+    );
+    assert_eq!(runtime.snapshot.terminal.pane_id, before);
+    runtime.push_recent_closed(ClosedItem::Tab {
+        key: "capacity-reopen".into(),
+        context,
+        layout: crate::recent_closed::ClosedLayout {
+            workspace_id: "w-order".into(),
+            tab_id: "retired".into(),
+            zoomed: false,
+            focused_pane_id: "retired:p".into(),
+            root: crate::recent_closed::ClosedLayoutNode::Pane {
+                pane_id: Some("retired:p".into()),
+                label: None,
+                cwd: Some("/agent-groups".into()),
+                command: None,
+                env: BTreeMap::new(),
+            },
+        },
+        panes: runtime.closed_panes(&tab),
+    });
+    runtime.reopen_closed();
+    assert!(runtime.reopen_in_flight.is_none());
+    assert_eq!(
+        runtime.recent_closed.back().unwrap().key(),
+        "capacity-reopen"
+    );
+    assert_eq!(
+        runtime.snapshot.status.last_error.as_ref().unwrap().kind,
+        "agent_layout.display_limit"
+    );
+}
