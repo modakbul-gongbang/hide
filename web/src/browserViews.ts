@@ -6,8 +6,8 @@
 //
 // Everything that moves a page goes through one sync: the front Workspace's
 // browser displays, each with the rect its slot occupies now or null. A
-// shell overlay (the palette, a menu, a dialog, a popover, a tab drag) that
-// meets a page's rect cannot draw over a native view, so the page is
+// shell overlay (the palette, a menu, a dialog, a popover, the Recent Panels
+// or Recent Projects list, a tab drag) that meets a page's rect cannot draw over a native view, so the page is
 // captured, its still is drawn in its place, and the page is hidden until
 // the overlay is gone.
 
@@ -196,7 +196,8 @@ class BrowserSyncLoop {
   private watch(): void {
     if (this.watching) return;
     this.watching = true;
-    // Radix layers mount as children of the body; a tab drag marks the root.
+    // Radix layers and the Recent cycle mount as children of the body; a tab
+    // drag marks the root.
     new MutationObserver(() => this.schedule()).observe(document.body, { childList: true });
     new MutationObserver(() => this.schedule()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-view-drag"] });
     window.addEventListener("resize", () => this.schedule());
