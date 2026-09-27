@@ -3,7 +3,7 @@
 This document maps the retained Agent workflow components in `design/hide-ui.lib.pen` to their code owners and behavioral contracts.
 Product screens and historical candidates are not library content.
 The former Final, R2, R3, handoff candidates, and the Overview family-only comparison are historical and must not be reconstructed.
-It is the native shell's contract; the web shell's Workspace, whose chips show every direct child and whose Agents explorer has no My Work scope, follows [UI_BEHAVIOR.md: Web Workspace](../docs/UI_BEHAVIOR.md#web-workspace).
+It is the authoritative lineage/ownership contract; the web shell's Workspace, whose chips show every direct child and whose Agents explorer has no My Work scope, follows [UI_BEHAVIOR.md: Web Workspace](../docs/UI_BEHAVIOR.md#web-workspace).
 
 ## Product decisions
 
@@ -12,8 +12,8 @@ It is the native shell's contract; the web shell's Workspace, whose chips show e
 - Both scopes preserve Needs You, Done, Working, and Seen instead of replacing status groups with a relationship tree.
 - Selecting an Overview row changes inspection only.
 - The row's Open control is the only action that shows its pane and changes read state.
-- The pane header distinguishes the pane shown by Hide from the terminal that owns the native keyboard responder.
-- Explorer decorates its existing native file tree from the normalized Changes projection and does not own another Git reader.
+- The pane header distinguishes the pane shown by Hide from the terminal that owns keyboard focus.
+- Explorer decorates its existing file tree from the normalized Changes projection and does not own another Git reader.
 - Provider artwork, agent identity, status, ownership, instrumentation, and lineage come from the same canonical projection on every surface.
 
 `My Work` is intentionally session-local.
@@ -42,15 +42,15 @@ Their adopted reusable content lives in the library; product compositions are re
 
 | Master | Code owner | Contract |
 | --- | --- | --- |
-| Agent identity `HXWFK` | `AgentRow.swift`, `AgentRowPresentation`, `AgentNavigatorRow` | One provider artwork, title, canonical state, ownership, and instrumentation identity across live lists, search, relationship, and Overview. |
-| Tree row `n1zn1O`, lineage segment `N6BTh4` | `LineageGuideView.swift`, `SidebarGrouping.swift`, `HideUI.swift` | Disclosure and selection remain separate, and 18pt lineage columns remain aligned through multiline rows. |
-| Workspace row `pPtY6` | `HideUI.swift`, `CheckoutCardPresentation.swift` | Workspace membership and agent delegation stay distinct, and expanding a Workspace changes no pane, tab, or read state. |
-| Focused pane `ZvLjg`, icon header `Z3BnL` | `ShellView.swift`, `PaneLineageHeader.swift` | The 28pt identity row, optional 24pt child row, shown wash, responder outline, zoom, and overflow use existing typed intents. |
-| Named child chip within the pane-header sheet | `PaneChildRow`, `PaneLineagePresentation` | One direct child is named and remaining direct children fold into an honest `+N`. |
-| Browser chrome `KUcQU`, address toolbar `eMlZD`, document toolbar `hxdu7` | `web/src/BrowserDisplay.tsx` (browser), `EditorViewerOverlay.swift` (document) | Browser, file, and diff surfaces keep their own controls and never inherit agent-only actions. |
-| Agent identity `HXWFK` in the Direct children sheet | `PaneRelationshipSheet`, `CorePaneChildren`, `CoreLineageStep` | Row selection inspects, Open navigates, and unavailable lineage stays explicit. |
-| Relationship action `p7Vim` | `ShellModel.swift`, `PaneLineageHeader.swift`, `HideUI.swift`, `CoreBridge.swift`, `runtime.rs` | One request ID carries Ready, Pending, Target unavailable, and Open failed outcomes across the sheet, Return control, direct child chip, and retained canvas. |
-| Explorer Git row `mSu8p`, panel `Wo6qx` | `WorkspaceOutlineView.swift`, `WorkspaceOutlinePresentation.swift`, `changes.rs` | A fixed status slot renders M, A, U, R, conflict, folder-changed, and clean states without changing file-tree interaction. |
+| Agent identity `HXWFK` | `web/src/agentRow.ts`, `web/src/components/sidebar-agent-row.tsx`, `web/src/components/agent-row.tsx` | One provider artwork, title, canonical state, ownership, and instrumentation identity across live lists, search, relationship, and Overview. |
+| Tree row `n1zn1O`, lineage segment `N6BTh4` | `herdr-core/src/sidebar.rs`, `web/src/sidebar.tsx`, `web/src/lineage.ts` | Disclosure and selection remain separate, and lineage columns remain aligned through multiline rows. |
+| Workspace row `pPtY6` | `herdr-core/src/sidebar.rs`, `web/src/sidebar.tsx`, `web/src/projects.ts` | Workspace membership and agent delegation stay distinct, and expanding a Workspace changes no pane, tab, or read state. |
+| Focused pane `ZvLjg`, icon header `Z3BnL` | `web/src/PaneView.tsx`, `web/src/PaneRelations.tsx` | The identity row, optional child row, shown wash, focus outline, zoom, and overflow use existing typed intents. |
+| Named child chip within the pane-header sheet | `web/src/PaneRelations.tsx` (`ChildChipRow`) | One direct child is named and remaining direct children fold into an honest `+N`. |
+| Browser chrome `KUcQU`, address toolbar `eMlZD`, document toolbar `hxdu7` | `web/src/BrowserDisplay.tsx` (browser), `web/src/Editor.tsx`, `web/src/viewers/FileViewer.tsx` (document) | Browser, file, and diff surfaces keep their own controls and never inherit agent-only actions. |
+| Agent identity `HXWFK` in the Direct children sheet | `web/src/PaneRelations.tsx`, `herdr-core/src/runtime.rs` | Row selection inspects, Open navigates, and unavailable lineage stays explicit. |
+| Relationship action `p7Vim` | `web/src/PaneRelations.tsx`, `web/src/lineage.ts`, `herdr-core/src/runtime.rs` | One request ID carries Ready, Pending, Target unavailable, and Open failed outcomes across the sheet, Return control, direct child chip, and retained canvas. |
+| Explorer Git row `mSu8p`, panel `Wo6qx` | `web/src/ExplorerTree.tsx`, `web/src/explorer.ts`, `herdr-core/src/changes.rs` | A fixed status slot renders M, A, U, R, conflict, folder-changed, and clean states without changing file-tree interaction. |
 
 ## Agents scope and lineage
 
@@ -84,7 +84,7 @@ The relationship action sheet `ZEwQt` and its state references are retained in t
 The sidebar's inactive checkout/project states reuse the adopted row masters and retain the existing Project row as a maintained component.
 
 The header wash marks the pane currently shown by Hide.
-The outer primary hairline marks the actual terminal responder.
+The outer primary hairline marks the terminal that owns keyboard focus.
 Moving keyboard focus into Overview retains the shown wash and removes the terminal outline.
 Unread weight is not reused to mean parent, child, delegated, or selected.
 
@@ -95,7 +95,7 @@ At narrow widths the parent name falls back to its icon before current identity 
 
 ## Explorer Git decorations
 
-The native outline keeps 22pt Seti rows and reserves one 12pt Git slot at the trailing edge.
+The Explorer's file tree uses Seti rows and reserves one trailing Git status slot.
 The filename truncates before that slot and the row's file open, disclosure, rename, drag, keyboard, and context-menu owners remain unchanged.
 The badge is informative and intercepts no click.
 The tooltip and accessibility label contain the full relative path and status name.
@@ -125,8 +125,8 @@ Git loading or failure appears above the file tree and never erases usable file 
 ## Verification contract
 
 Static acceptance runs `node scripts/gen-pen.mjs`, `node scripts/check-pen.mjs`, and `node scripts/check-design-contract.mjs`.
-Code acceptance runs both required Rust commands and both required Swift commands from the implementation worktree.
-Native acceptance uses exactly one identified candidate Hide app and one isolated Herdr server.
+Code acceptance runs the required Rust and web commands from the implementation worktree (`bash scripts/verify-cargo.sh test`, `bash scripts/verify-web.sh`).
+Manual acceptance in the desktop app uses exactly one identified candidate Hide app and one isolated Herdr server.
 Screenshots must prove My Work and All, task inspection versus Open, shown versus responder focus, narrow header behavior, and Explorer rename/conflict/folder decorations.
 Idle and driven observations must record their load and must not turn one bounded run into a universal performance claim.
 
