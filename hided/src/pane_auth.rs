@@ -1,5 +1,15 @@
-//! Bootstrap of short-lived pane credentials. This local socket does only
-//! kernel peer attestation and credential issuance; commands use `/ws`.
+//! Bootstrap of short-lived Workspace credentials. This local socket does
+//! only kernel peer attestation and credential issuance; commands use `/ws`.
+//!
+//! A caller is bound one of two ways. A process descending from the shell
+//! Herdr runs for the named pane gets a pane-bound capability that records
+//! the pane's terminal identity and shell birth and dies with the pane. A
+//! local process that is not such a descendant (a Codex tool shell run by
+//! the shared `codex app-server` daemon, whose parent is launchd) is bound
+//! instead to the registered, connected checkout that contains its working
+//! directory, read from the kernel for the peer pid and never from the
+//! request; that capability is rechecked only for registration and device
+//! connection. Both hold the same Workspace commands for the same checkout.
 
 use std::collections::HashMap;
 use std::fs::{self, OpenOptions};
@@ -14,7 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use herdr_core::remote::RusshRemoteClient;
-use herdr_core::workspace_control::{Context, Query};
+use herdr_core::workspace_control::{Context, Query, checkout_caller_id};
 use hide_herdr_client::{UnixSocketConnector, request_with_connector};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -32,13 +42,24 @@ const MAX_PARENT_HOPS: usize = 32;
 const MAX_BOOTSTRAPS: usize = 8;
 const BOOTSTRAP_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How a capability was bound to its caller, and what its validation rechecks.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Binding {
+    Pane {
+        terminal_id: String,
+        shell_pid: i32,
+        shell_started: u64,
+    },
+    Checkout,
+}
+
 #[derive(Clone)]
 pub struct Capability {
+    /// The caller id the core resolves: a pane id, or the encoded checkout
+    /// caller (`workspace_control::Caller`) for a checkout-bound capability.
     pub pane_id: String,
     pub context: Context,
-    terminal_id: String,
-    shell_pid: i32,
-    shell_started: u64,
+    binding: Binding,
     pub one_shot: bool,
     holder: Option<(i32, u64)>,
     created: Instant,
@@ -74,11 +95,31 @@ fn entry_alive(entry: &Capability) -> bool {
     if let Some(remote) = &entry.remote {
         return remote.alive.load(Ordering::Acquire);
     }
+    let shell_alive = match &entry.binding {
+        Binding::Pane {
+            shell_pid,
+            shell_started,
+            ..
+        } => process_start(*shell_pid) == Some(*shell_started),
+        Binding::Checkout => true,
+    };
     entry.path.is_file()
-        && process_start(entry.shell_pid) == Some(entry.shell_started)
+        && shell_alive
         && entry
             .holder
             .is_none_or(|(pid, born)| process_start(pid) == Some(born))
+}
+
+/// A persistent bootstrap from the same caller reuses its live capability. A
+/// pane caller is the same pane with the same shell; a checkout caller is any
+/// caller bound to the same checkout, whatever nonce its bootstrap carried.
+fn same_caller(entry: &Capability, attestation: &Attestation) -> bool {
+    entry.context == attestation.context
+        && entry.binding == attestation.binding
+        && match attestation.binding {
+            Binding::Pane { .. } => entry.pane_id == attestation.pane_id,
+            Binding::Checkout => true,
+        }
 }
 
 fn remove_local_reference(entry: &Capability) {
@@ -155,13 +196,7 @@ impl Registry {
         });
         if holder.is_none()
             && let Some(existing) = entries.values().find(|entry| {
-                !entry.one_shot
-                    && entry.remote.is_none()
-                    && entry.pane_id == attestation.pane_id
-                    && entry.context == attestation.context
-                    && entry.terminal_id == attestation.terminal_id
-                    && entry.shell_pid == attestation.shell_pid
-                    && entry.shell_started == attestation.shell_started
+                !entry.one_shot && entry.remote.is_none() && same_caller(entry, attestation)
             })
         {
             return Ok((existing.path.clone(), false));
@@ -195,9 +230,7 @@ impl Registry {
             Capability {
                 pane_id: attestation.pane_id.clone(),
                 context: attestation.context.clone(),
-                terminal_id: attestation.terminal_id.clone(),
-                shell_pid: attestation.shell_pid,
-                shell_started: attestation.shell_started,
+                binding: attestation.binding.clone(),
                 one_shot: holder.is_some(),
                 holder,
                 created: Instant::now(),
@@ -228,11 +261,7 @@ impl Registry {
         if !grant.one_shot
             && let Some((token, _)) = entries.iter().find(|(_, entry)| {
                 !entry.one_shot
-                    && entry.pane_id == attestation.pane_id
-                    && entry.context == attestation.context
-                    && entry.terminal_id == attestation.terminal_id
-                    && entry.shell_pid == attestation.shell_pid
-                    && entry.shell_started == attestation.shell_started
+                    && same_caller(entry, attestation)
                     && entry
                         .remote
                         .as_ref()
@@ -250,9 +279,7 @@ impl Registry {
             Capability {
                 pane_id: attestation.pane_id.clone(),
                 context: attestation.context.clone(),
-                terminal_id: attestation.terminal_id.clone(),
-                shell_pid: attestation.shell_pid,
-                shell_started: attestation.shell_started,
+                binding: attestation.binding.clone(),
                 one_shot: grant.one_shot,
                 holder: None,
                 created: Instant::now(),
@@ -322,6 +349,26 @@ impl Registry {
         core: &CoreHandle,
     ) -> Result<Capability, &'static str> {
         let cap = self.get(token).ok_or("credential_expired")?;
+        if cap.binding == Binding::Checkout {
+            // Only registration and connection are rechecked: the checkout
+            // must still resolve, on the same device, to the same context.
+            let outcome =
+                match core.workspace_query(&cap.context.device_id, &cap.pane_id, Query::Info) {
+                    Ok(actual) if actual.context == cap.context => return Ok(cap),
+                    Ok(_) => "checkout_not_registered",
+                    Err(refusal) => refusal.reason,
+                };
+            self.revoke(token);
+            note_checkout_capability(
+                "checkout_capability.refused",
+                "validate",
+                None,
+                Some(&cap.context),
+                Some(outcome),
+                None,
+            );
+            return Err(outcome);
+        }
         let actual = if let Some(remote) = &cap.remote {
             let identity = remote
                 .client
@@ -334,19 +381,17 @@ impl Registry {
             Attestation {
                 pane_id: cap.pane_id.clone(),
                 context,
-                terminal_id: identity.terminal_id,
-                shell_pid: identity.shell_pid,
-                shell_started: identity.shell_started,
+                binding: Binding::Pane {
+                    terminal_id: identity.terminal_id,
+                    shell_pid: identity.shell_pid,
+                    shell_started: identity.shell_started,
+                },
             }
         } else {
             let socket = herdr_socket.ok_or("pane_unavailable")?;
             inspect_pane(&cap.pane_id, socket, core).inspect_err(|_| self.revoke(token))?
         };
-        if actual.context != cap.context
-            || actual.terminal_id != cap.terminal_id
-            || actual.shell_pid != cap.shell_pid
-            || actual.shell_started != cap.shell_started
-        {
+        if actual.context != cap.context || actual.binding != cap.binding {
             self.revoke(token);
             return Err("pane_changed");
         }
@@ -394,9 +439,12 @@ impl Drop for Registry {
 }
 
 /// A bootstrap request has no authority until the kernel peer PID is shown
-/// to be a descendant of the shell Herdr owns for this pane.
+/// to be a descendant of the shell Herdr owns for this pane, or, failing
+/// that, to have its working directory inside a registered checkout. The
+/// pane id may be absent for a caller that has none.
 #[derive(Deserialize)]
 pub struct BootstrapRequest {
+    #[serde(default)]
     pub pane_id: String,
     pub nonce: String,
     #[serde(default)]
@@ -407,9 +455,57 @@ pub struct BootstrapRequest {
 pub struct Attestation {
     pane_id: String,
     context: Context,
-    terminal_id: String,
-    shell_pid: i32,
-    shell_started: u64,
+    binding: Binding,
+}
+
+/// Binds a local caller that is not a pane descendant to the registered,
+/// connected checkout holding its working directory. The directory comes
+/// from the kernel for the peer pid; the request supplies nothing but the
+/// nonce, which becomes the capability's key in the core's caller id.
+pub fn attest_checkout(
+    peer: i32,
+    nonce: &str,
+    core: &CoreHandle,
+) -> Result<Attestation, &'static str> {
+    if nonce.len() != 32 || !nonce.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("invalid_nonce");
+    }
+    let cwd = process_cwd(peer).ok_or("caller_unavailable")?;
+    let canonical = fs::canonicalize(cwd).map_err(|_| "caller_unavailable")?;
+    let path = canonical.to_str().ok_or("caller_unavailable")?;
+    let caller_id = checkout_caller_id(nonce, path);
+    let context = core
+        .workspace_query("local", &caller_id, Query::Info)
+        .map_err(|refusal| refusal.reason)?
+        .context;
+    Ok(Attestation {
+        pane_id: caller_id,
+        context,
+        binding: Binding::Checkout,
+    })
+}
+
+/// One record per checkout-bound issuance or refusal, in the core's Logs
+/// file. It names the device, checkout and peer pid, never the caller's
+/// path, pane id, or reference bytes.
+fn note_checkout_capability(
+    kind: &str,
+    stage: &str,
+    peer: Option<i32>,
+    context: Option<&Context>,
+    reason: Option<&str>,
+    pane_reason: Option<&str>,
+) {
+    herdr_core::diagnostic!(json!({
+        "component": "pane_auth",
+        "kind": kind,
+        "stage": stage,
+        "peer_pid": peer,
+        "device_id": context.map(|context| context.device_id.as_str()),
+        "checkout_id": context.map(|context| context.checkout_id.as_str()),
+        "reason": reason,
+        "pane_reason": pane_reason,
+    }));
 }
 
 pub fn attest_remote(
@@ -429,9 +525,11 @@ pub fn attest_remote(
     Ok(Attestation {
         pane_id,
         context,
-        terminal_id: identity.terminal_id.clone(),
-        shell_pid: identity.shell_pid,
-        shell_started: identity.shell_started,
+        binding: Binding::Pane {
+            terminal_id: identity.terminal_id.clone(),
+            shell_pid: identity.shell_pid,
+            shell_started: identity.shell_started,
+        },
     })
 }
 
@@ -442,7 +540,10 @@ pub fn attest_local(
     core: &CoreHandle,
 ) -> Result<Attestation, &'static str> {
     let attestation = inspect_pane(pane_id, herdr_socket, core)?;
-    if !descends_from(peer, attestation.shell_pid) {
+    let Binding::Pane { shell_pid, .. } = &attestation.binding else {
+        return Err("pane_unavailable");
+    };
+    if !descends_from(peer, *shell_pid) {
         return Err("caller_not_in_pane");
     }
     Ok(attestation)
@@ -489,9 +590,11 @@ fn inspect_pane(
     Ok(Attestation {
         pane_id: pane_id.to_owned(),
         context: context.context,
-        terminal_id,
-        shell_pid,
-        shell_started,
+        binding: Binding::Pane {
+            terminal_id,
+            shell_pid,
+            shell_started,
+        },
     })
 }
 
@@ -565,6 +668,44 @@ fn parent_pid(pid: i32) -> Option<i32> {
         )
     };
     (written as usize == std::mem::size_of::<libc::proc_bsdinfo>()).then_some(info.pbi_ppid as i32)
+}
+
+/// The peer's current directory as the kernel reports it, or `None` when the
+/// process is gone or refuses inspection.
+#[cfg(target_os = "macos")]
+fn process_cwd(pid: i32) -> Option<PathBuf> {
+    let mut info: libc::proc_vnodepathinfo = unsafe { std::mem::zeroed() };
+    let size = std::mem::size_of::<libc::proc_vnodepathinfo>();
+    // SAFETY: the buffer is valid for its declared size and only read after
+    // `proc_pidinfo` confirms it filled the complete structure.
+    let written = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDVNODEPATHINFO,
+            0,
+            (&mut info as *mut libc::proc_vnodepathinfo).cast(),
+            size as i32,
+        )
+    };
+    if written as usize != size {
+        return None;
+    }
+    // libc declares the MAXPATHLEN buffer as 32 rows of 32 for old compilers;
+    // the path is the NUL-terminated prefix of the flattened bytes.
+    let bytes: Vec<u8> = info
+        .pvi_cdir
+        .vip_path
+        .iter()
+        .flatten()
+        .map(|&byte| byte as u8)
+        .take_while(|&byte| byte != 0)
+        .collect();
+    (!bytes.is_empty()).then(|| PathBuf::from(std::ffi::OsString::from_vec(bytes)))
+}
+
+#[cfg(target_os = "linux")]
+fn process_cwd(pid: i32) -> Option<PathBuf> {
+    fs::read_link(format!("/proc/{pid}/cwd")).ok()
 }
 
 #[cfg(target_os = "macos")]
@@ -712,14 +853,52 @@ pub async fn serve(
                     serde_json::from_str::<BootstrapRequest>(&line).map_err(|_| "invalid_request")
                 })
                 .and_then(|request| {
-                    let socket = herdr_socket.as_deref().ok_or("pane_unavailable")?;
-                    let attestation = attest_local(peer, &request.pane_id, socket, &core)?;
+                    let pane = if request.pane_id.is_empty() {
+                        Err("pane_not_connected")
+                    } else {
+                        let socket = herdr_socket.as_deref().ok_or("pane_unavailable")?;
+                        attest_local(peer, &request.pane_id, socket, &core)
+                    };
+                    // The pane path is unchanged; a caller it cannot place is
+                    // bound to the checkout holding its cwd, or refused with
+                    // that lookup's reason.
+                    let (attestation, pane_reason) = match pane {
+                        Ok(attestation) => (attestation, None),
+                        Err(pane_reason) => {
+                            let attestation = attest_checkout(peer, &request.nonce, &core)
+                                .inspect_err(|reason| {
+                                    note_checkout_capability(
+                                        "checkout_capability.refused",
+                                        "bootstrap",
+                                        Some(peer),
+                                        None,
+                                        Some(reason),
+                                        Some(pane_reason),
+                                    );
+                                })?;
+                            (attestation, Some(pane_reason))
+                        }
+                    };
                     let holder = if request.one_shot {
                         Some((peer, process_start(peer).ok_or("caller_unavailable")?))
                     } else {
                         None
                     };
-                    registry.issue(&attestation, &request.nonce, port, holder)
+                    let issued = registry.issue(&attestation, &request.nonce, port, holder);
+                    if let Some(pane_reason) = pane_reason {
+                        note_checkout_capability(
+                            match issued {
+                                Ok(_) => "checkout_capability.issued",
+                                Err(_) => "checkout_capability.refused",
+                            },
+                            "bootstrap",
+                            Some(peer),
+                            Some(&attestation.context),
+                            issued.as_ref().err().copied(),
+                            Some(pane_reason),
+                        );
+                    }
+                    issued
                 });
             let answer = match &result {
                 Ok((path, _)) => json!({"ok": true, "reference": path}),
@@ -803,9 +982,11 @@ mod tests {
                 checkout_id: "checkout".to_owned(),
                 checkout_path: "/checkout".to_owned(),
             },
-            terminal_id: "terminal".to_owned(),
-            shell_pid: pid,
-            shell_started: process_start(pid).unwrap(),
+            binding: Binding::Pane {
+                terminal_id: "terminal".to_owned(),
+                shell_pid: pid,
+                shell_started: process_start(pid).unwrap(),
+            },
         };
         let nonce = "0123456789abcdef0123456789abcdef";
         let path = registry.issue(&attestation, nonce, 12345, None).unwrap().0;
@@ -839,9 +1020,11 @@ mod tests {
                 checkout_id: "checkout".to_owned(),
                 checkout_path: "/checkout".to_owned(),
             },
-            terminal_id: "terminal".to_owned(),
-            shell_pid: pid,
-            shell_started: process_start(pid).unwrap(),
+            binding: Binding::Pane {
+                terminal_id: "terminal".to_owned(),
+                shell_pid: pid,
+                shell_started: process_start(pid).unwrap(),
+            },
         };
         for attempt in 0..(MAX_CAPABILITIES * 2) {
             let nonce = format!("{attempt:032x}");
@@ -879,9 +1062,11 @@ mod tests {
                 checkout_id: "checkout".to_owned(),
                 checkout_path: "/checkout".to_owned(),
             },
-            terminal_id: "terminal".to_owned(),
-            shell_pid: pid,
-            shell_started: process_start(pid).unwrap(),
+            binding: Binding::Pane {
+                terminal_id: "terminal".to_owned(),
+                shell_pid: pid,
+                shell_started: process_start(pid).unwrap(),
+            },
         };
         let (path, created) = registry
             .issue(&attestation, &format!("{:032x}", 0), 12345, None)
@@ -907,5 +1092,81 @@ mod tests {
         assert!(created);
         assert_ne!(one_shot, path);
         assert_eq!(registry.entries.lock().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn process_cwd_reads_the_callers_working_directory() {
+        let expected = std::env::current_dir().unwrap().canonicalize().unwrap();
+        let cwd = process_cwd(std::process::id() as i32).unwrap();
+        assert_eq!(cwd.canonicalize().unwrap(), expected);
+        assert!(process_cwd(i32::MAX).is_none());
+    }
+
+    fn checkout_attestation(nonce: &str, checkout: &str) -> Attestation {
+        Attestation {
+            pane_id: checkout_caller_id(nonce, checkout),
+            context: Context {
+                device_id: "local".to_owned(),
+                workspace_id: "workspace".to_owned(),
+                checkout_id: format!("checkout{checkout}"),
+                checkout_path: checkout.to_owned(),
+            },
+            binding: Binding::Checkout,
+        }
+    }
+
+    #[test]
+    fn checkout_bound_bootstraps_reuse_one_persistent_capability_across_nonces() {
+        let directory = tempfile::tempdir().unwrap();
+        let registry = Registry::new(directory.path()).unwrap();
+        let first = format!("{:032x}", 1);
+        let (path, created) = registry
+            .issue(
+                &checkout_attestation(&first, "/checkout"),
+                &first,
+                12345,
+                None,
+            )
+            .unwrap();
+        assert!(created);
+        let reference: Reference = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        // Alive without any pane shell behind it.
+        let capability = registry.get(&reference.token).unwrap();
+        assert_eq!(capability.pane_id, checkout_caller_id(&first, "/checkout"));
+        assert_eq!(capability.context.checkout_path, "/checkout");
+        registry.claim(&reference.token).unwrap();
+
+        let second = format!("{:032x}", 2);
+        let (again, created) = registry
+            .issue(
+                &checkout_attestation(&second, "/checkout"),
+                &second,
+                12345,
+                None,
+            )
+            .unwrap();
+        assert_eq!(again, path);
+        assert!(!created);
+
+        let other = format!("{:032x}", 3);
+        let (elsewhere, created) = registry
+            .issue(&checkout_attestation(&other, "/other"), &other, 12345, None)
+            .unwrap();
+        assert!(created);
+        assert_ne!(elsewhere, path);
+
+        let pid = std::process::id() as i32;
+        let fourth = format!("{:032x}", 4);
+        let (one_shot, created) = registry
+            .issue(
+                &checkout_attestation(&fourth, "/checkout"),
+                &fourth,
+                12345,
+                Some((pid, process_start(pid).unwrap())),
+            )
+            .unwrap();
+        assert!(created);
+        assert_ne!(one_shot, path);
+        assert_eq!(registry.entries.lock().unwrap().len(), 3);
     }
 }
