@@ -686,7 +686,9 @@ impl Runtime {
                     phase: operation.phase.clone(),
                     checking: self.close_status_checks_in_flight.contains(key),
                     message: operation.message.clone(),
-                    retryable: operation.retryable,
+                    retryable: operation.retryable
+                        && (!matches!(operation.phase.as_str(), "failed" | "refused")
+                            || operation.request.context.replacement_shell),
                 },
             )
             .collect();
@@ -1606,10 +1608,14 @@ impl Runtime {
                 if let Some(operation) = self.close_operations.get_mut(&request.key) {
                     operation.phase = "refused".to_owned();
                     operation.stage = "close_request".to_owned();
-                    operation.message = Some(if code == "replacement_failed" {
+                    operation.message = Some(if !operation.request.context.replacement_shell {
+                        "The item was not closed. Check its current state before closing it again."
+                    } else if code == "replacement_failed" {
                         "The replacement shell could not be prepared. Nothing was closed. Retry when the connection is ready."
-                    } else { "The item was not closed. The replacement shell remains available; retry the close." }.to_owned());
-                    operation.retryable = true;
+                    } else {
+                        "The item was not closed. The replacement shell remains available; retry the close."
+                    }.to_owned());
+                    operation.retryable = operation.request.context.replacement_shell;
                     operation.deadline_at_unix_ms = None;
                 }
                 let operation = self.close_operations.get(&request.key).cloned();
@@ -1622,7 +1628,7 @@ impl Runtime {
                         .then_some(close_target_id(&request.target).to_owned()),
                     message: operation
                         .and_then(|operation| operation.message)
-                        .unwrap_or_else(|| format!("The item was not closed: {code}: {message}")),
+                        .unwrap_or_else(|| "The item was not closed. Check its current state before closing it again.".to_owned()),
                 }]);
                 self.push_diagnostic(
                     "recent_closed.close_failed",

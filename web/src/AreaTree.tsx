@@ -118,7 +118,8 @@ function AreaTree({ layout, adapter, trailing = null, children }: { layout: Area
   const focus = (displayId: string) => {
     const located = locateDisplay(layout.root, displayId);
     if (!located) return;
-    if (layout.active_area === located.area.id && located.area.active === displayId) return;
+    const shownId = adapter.shown ? adapter.shown(located.area)?.id : located.area.active;
+    if (layout.active_area === located.area.id && shownId === displayId) return;
     if (claimed.current?.displayId === displayId && claimed.current.layout === layout) return;
     claimed.current = { displayId, layout };
     adapter.focus(displayId);
@@ -145,7 +146,7 @@ function AreaTree({ layout, adapter, trailing = null, children }: { layout: Area
     }, 0);
   };
   const resolve = (displayId: string) => (client: Point): DropTarget => {
-    if (!body) return { kind: "none", reason: null };
+    if (!body || !body.contains(document.elementFromPoint(client.x, client.y))) return { kind: "none", reason: `Drop inside the ${column === "agent" ? "Agent" : "View"} column.` };
     const origin = body.getBoundingClientRect();
     const target = dropTarget({
       layout: layoutRef.current,

@@ -198,7 +198,7 @@ function DiffPalette({ actions }: { actions: Actions }) {
 function SearchPalette({ actions }: { actions: Actions }) {
   const rest = useShellStore((s) => s.rest);
   const [query, setQuery] = useState("");
-  const [fromAgent] = useState(() => keyboardOwner().kind === "pane");
+  const [fromAgent] = useState(() => ["pane", "agent"].includes(keyboardOwner().kind));
   const workspaceOnScreen = useUiStore((s) => s.screen?.kind === "workspace");
   const placement = useUiStore((s) => s.toolsPlacement);
   const entries = filterEntries(searchEntries(rest, workspaceOnScreen ? { drawn: drawnViews(), placement, agent: fromAgent ? areaFrame("agent") : null } : null), query);

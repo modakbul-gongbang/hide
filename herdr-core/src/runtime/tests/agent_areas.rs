@@ -160,3 +160,41 @@ fn replacement_predicate_requires_primary_provenance_a_linked_sibling_and_its_la
     runtime.herdr_worktrees.remove("linked");
     assert!(!runtime.primary_needs_shell("w-order", "w-order:t1"));
 }
+
+#[test]
+fn external_focused_new_tab_preserves_canvas_then_existing_tab_focus_is_followed() {
+    let (mut runtime, checkout) = setup();
+    let before_pane = runtime.snapshot.terminal.pane_id.clone();
+    let tabs = ["w-order:t1", "w-order:t2", "w-order:t3", "w-order:t4"];
+    runtime.ingest_session(Ok(tab_order_payload(
+        "/agent-groups",
+        &tabs,
+        &tabs,
+        "w-order:t4",
+    )));
+    assert_eq!(layout(&runtime).active(), Some("w-order:t1"));
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout).as_deref(),
+        Some("w-order:t1")
+    );
+    assert_eq!(runtime.snapshot.terminal.pane_id, before_pane);
+    assert_eq!(layout(&runtime).tree.displays().count(), 4);
+    runtime.ingest_session(Ok(tab_order_payload(
+        "/agent-groups",
+        &tabs,
+        &tabs,
+        "w-order:t2",
+    )));
+    runtime.ingest_session(Ok(tab_order_payload(
+        "/agent-groups",
+        &tabs,
+        &tabs,
+        "w-order:t4",
+    )));
+    runtime.sync_workspace_view();
+    assert_eq!(layout(&runtime).active(), Some("w-order:t4"));
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout).as_deref(),
+        Some("w-order:t4")
+    );
+}

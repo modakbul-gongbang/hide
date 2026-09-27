@@ -1584,6 +1584,9 @@ fn rejected_close_removes_only_its_reserved_item() {
         runtime.snapshot().recent_closed.top_label.as_deref(),
         Some("second.rs")
     );
+    let notice = &runtime.snapshot().recent_closed.notices[0].message;
+    assert!(notice.contains("not closed"));
+    assert!(!notice.contains("replacement"));
 }
 
 #[test]

@@ -135,6 +135,16 @@ test("Agent pointer drags split live canvases, reorder, move, cancel, resize, co
       await drag(page, tab(page, third!), { x: destination.x + 5, y: destination.y + destination.height / 2 });
       await expect(areas(page)).toHaveCount(1);
     }
+    await page.locator('[data-panel-toggle="off"]').click();
+    const panel = page.locator("[data-side-panel]");
+    await expect(panel).toBeVisible();
+    const floating = await box(panel);
+    const beforePanelDrop = await shape(page);
+    await drag(page, tab(page, first!), { x: floating.x + floating.width / 2, y: floating.y + floating.height / 2 }, async () => {
+      await expect(page.locator("[data-agent-drop]")).toHaveCount(0);
+      await expect(page.locator("html")).toHaveAttribute("data-agent-drag", "forbidden");
+    });
+    expect(await shape(page)).toEqual(beforePanelDrop);
   } finally { daemon?.stop(); herdr.stop(); }
 });
 
@@ -181,5 +191,33 @@ test("New tab and Reopen use the requested area and Rename works in either bar",
     await expect(left.locator('[role="tab"]')).toHaveCount(3);
     await expect(areas(page)).toHaveCount(1);
     await screenshot(page, "agent-groups-reopen-placement");
+  } finally { daemon?.stop(); herdr.stop(); }
+});
+
+test("Delegated canvas returns to its normal tab and Agent controls keep palette commands", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    const [parent, child] = herdr.panes;
+    daemon = await startHided(herdr, "agent-delegated-return");
+    const sent = countSent(page);
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await enterWorkspace(page, "fixture");
+    execFileSync(herdr.bin, ["pane", "report-metadata", child, "--source", "e2e-lineage", "--token", `parent_pane=${parent}`], { env: herdr.env, timeout: 30_000 });
+    const chip = page.locator(`[data-child-chip="${child}"]`).first();
+    await expect(chip).toBeVisible({ timeout: 20_000 });
+    await chip.click();
+    await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveAttribute("data-focused", "true");
+    const before = sent.get("agent_layout.focus") ?? 0;
+    await tab(page, herdr.tab).click();
+    await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true");
+    await expect(tab(page, herdr.tab)).toHaveAttribute("aria-selected", "true");
+    expect(sent.get("agent_layout.focus")).toBe(before + 1);
+    await tab(page, herdr.tab).focus();
+    await page.keyboard.press("Meta+k");
+    await expect(page.locator('[data-palette-row="command:agent:split_right"]')).toBeVisible();
+    await page.keyboard.press("Escape");
+    await screenshot(page, "agent-groups-delegated-return");
   } finally { daemon?.stop(); herdr.stop(); }
 });

@@ -12,6 +12,7 @@ export type KeyboardOwner =
   | { kind: "view"; workspace: string; areaId: string }
   | { kind: "pane"; workspace: string; paneId: string }
   | { kind: "tool"; workspace: string }
+  | { kind: "agent"; workspace: string }
   | { kind: "none" };
 
 let owner: KeyboardOwner = { kind: "none" };
@@ -41,6 +42,7 @@ export function installKeyboardOwner(): () => void {
     owner = tool ? { kind: "tool", workspace }
       : areaId ? { kind: "view", workspace, areaId }
       : paneId ? { kind: "pane", workspace, paneId }
+      : target.closest("[data-agent-areas]") ? { kind: "agent", workspace }
       : { kind: "none" };
   };
   // Native browser pages are outside the renderer DOM. Their host reports
@@ -79,6 +81,7 @@ export function closeShortcutPolicy(input: {
   const { owner, workspace, displayId, paneIds } = input;
   if (owner.kind === "none") return { kind: "nothing", reason: "no keyboard owner" };
   if (owner.workspace !== workspace) return { kind: "nothing", reason: "keyboard owner is outside the front Workspace" };
+  if (owner.kind === "agent") return { kind: "nothing", reason: "the Agent controls own the keyboard" };
   if (owner.kind === "tool") return { kind: "nothing", reason: "the tool column owns the keyboard" };
   if (owner.kind === "view") return displayId
     ? { kind: "view", id: displayId }

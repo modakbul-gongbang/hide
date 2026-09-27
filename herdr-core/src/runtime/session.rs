@@ -1124,7 +1124,25 @@ impl Runtime {
                     .focused_tab_id
                     .as_deref()
                     .filter(|tab_id| {
-                        restored_agent_tab.is_none() && herdr_focus_moved && has_tab(tab_id)
+                        restored_agent_tab.is_none()
+                            && herdr_focus_moved
+                            && has_tab(tab_id)
+                            // A newly observed external tab joins the strip without
+                            // stealing the canvas. A later focus of that known tab
+                            // is still an action to follow; Hide creates carry a claim.
+                            && (workspace.device_id != workspace::LOCAL_DEVICE_ID
+                                || self.workspace_views.is_none()
+                                || self.pending_tab_focus.as_ref().is_some_and(|pending| {
+                                    pending.target_id == *tab_id
+                                })
+                                || self.snapshot.navigator.workspaces.iter().any(|previous| {
+                                    previous.checkouts.iter().any(|previous| {
+                                        previous.id == checkout.id
+                                            && previous.tabs.iter().any(|tab| {
+                                                tab.id.as_deref() == Some(*tab_id)
+                                            })
+                                    })
+                                }))
                     })
                     .map(str::to_owned);
                 let pending_tab = self
