@@ -38,6 +38,8 @@ The startup wrapper replaces itself with the watcher, making Herdr its normal pa
 The watcher exits when that parent disappears and does not respawn itself.
 Killing it therefore stops label updates until an explicit restart or the next normal Herdr startup.
 A bare `nohup` launch is not a restart procedure: when its launching shell exits, the parent-death guard ends the watcher.
+A live handoff runs the startup hook again on the new server while the old server's watcher is still exiting; the new watcher waits up to 15 seconds for the lock, which covers the old watcher's host check and provider shutdown.
+To restart without a server restart, open a pane in the live Herdr with the plugin directory as its cwd and run `exec /bin/sh scripts/start-watcher.sh` in it: the pane's process is a child of the server, so the watcher gets the same parent the startup hook gives it and exits with that server.
 
 Before replacement, resolve the exact watcher executable, its parent, and any separate service registration that could respawn an old installation.
 Back up the plugin registry, managed hook entries and state, then use the official plugin installer with an explicit revision and compare both registry `resolved_commit` and the installed checkout HEAD.
