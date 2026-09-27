@@ -46,6 +46,19 @@ test("native tab composition and Korean inline naming", async () => {
       fs.mkdirSync(dir, { recursive: true });
       execFileSync("/usr/sbin/screencapture", ["-x", "-o", "-l", candidate.source.split(":")[1]!, path.join(dir, "tab-names-native.png")]);
       fs.writeFileSync(path.join(dir, "tab-names-native.json"), JSON.stringify({ ...candidate, build: "worktree desktop/dist", isolated: true, occludedPainting: true }));
+      for (const theme of ["light", "dark"] as const) {
+        await page.keyboard.press("Alt+Comma");
+        await expect(page.locator('[data-settings="true"]')).toBeVisible();
+        await page.locator('[data-settings-tab="appearance"]').click();
+        await page.locator(`[data-theme-option="${theme}"]`).click();
+        await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
+        await page.keyboard.press("Escape");
+        await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
+        await expect(tab).toContainText("검토할 탭 이름");
+        // Let the existing theme transitions finish before the native capture.
+        await page.waitForTimeout(400);
+        execFileSync("/usr/sbin/screencapture", ["-x", "-o", "-l", candidate.source.split(":")[1]!, path.join(dir, `tab-names-native-${theme}.png`)]);
+      }
     }
   } finally {
     await app?.close();
