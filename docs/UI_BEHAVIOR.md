@@ -397,6 +397,7 @@ Each checkout row shows a kind glyph: home for the stored primary checkout, othe
 The primary choice belongs to the registered project and survives restart; a registration without a choice defaults to its root checkout.
 Changing it moves the home glyph and first position together without moving focus; a vanished choice stays stored and is marked again when that checkout returns.
 There is no setting menu for this choice yet; remote projects are read-only for this action.
+Remote catalogs still derive home from Git-root facts and do not yet display the primary checkout stored by the remote core.
 Open, draft, merged, and closed pull requests keep their own lifecycle shapes and colors, stale GitHub data mutes only the icon, an unavailable GitHub lookup falls back to the branch glyph, and a missing folder colors its branch glyph as danger and omits the age.
 In the web shell every row reads on the left and ends the same way on the right: its time or its status badge, then a fold slot kept at rest, so nothing moves when a control shows and the times and badges of project, checkout and agent rows end on one column while their chevrons stand on another.
 A folded chevron is always shown; an unfolded one shows under the pointer, while focus is inside the row, while its menu is open, and always on an input with no hover.
