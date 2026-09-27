@@ -1713,7 +1713,7 @@ impl Runtime {
         result: Result<TerminalSession, String>,
         elapsed_ms: u128,
         worker_runtime: Weak<Mutex<Runtime>>,
-        notifier: crate::ffi::ChangeNotifier,
+        notifier: crate::handle::ChangeNotifier,
     ) -> bool {
         if self.terminal_session_generations.get(pane_id) != Some(&generation) {
             return false;

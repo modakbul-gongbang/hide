@@ -22,7 +22,7 @@ use std::time::Duration;
 use hide_host::git::{ChangedFile, Changes, DiffTarget, FileStatus};
 use hide_host::protocol::Call;
 
-use crate::ffi::ChangeNotifier;
+use crate::handle::ChangeNotifier;
 use crate::files::DocumentRoot;
 use crate::host_access::{HostCallError, HostChannel, call_as};
 use crate::model::{

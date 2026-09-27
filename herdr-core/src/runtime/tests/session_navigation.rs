@@ -611,7 +611,7 @@ fn pane_focus_request_moves_to_the_checkout_that_owns_the_target() {
         socket_path: socket_path.clone().into(),
         herdr_bin: None,
         runtime: std::sync::Weak::new(),
-        notifier: crate::ffi::ChangeNotifier::noop(),
+        notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::UnixSocketConnector::new(&socket_path)),
     });
     let payload = |focused_workspace_id: &str, focused_pane_id: &str| {
@@ -1664,7 +1664,7 @@ fn tab_strip_reorder_asks_herdr_and_lands_only_once_herdr_reports_the_order() {
         socket_path: herdr.socket_path().to_path_buf(),
         herdr_bin: None,
         runtime: std::sync::Weak::new(),
-        notifier: crate::ffi::ChangeNotifier::noop(),
+        notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
     });
 
@@ -1744,7 +1744,7 @@ fn tab_strip_reorder_indexes_a_move_in_the_whole_workspace_not_one_checkout() {
         socket_path: herdr.socket_path().to_path_buf(),
         herdr_bin: None,
         runtime: std::sync::Weak::new(),
-        notifier: crate::ffi::ChangeNotifier::noop(),
+        notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
     });
 
@@ -1874,7 +1874,7 @@ fn tab_strip_reorder_a_refused_drag_can_simply_be_dragged_again() {
         socket_path: herdr.socket_path().to_path_buf(),
         herdr_bin: None,
         runtime: std::sync::Weak::new(),
-        notifier: crate::ffi::ChangeNotifier::noop(),
+        notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
     });
 
@@ -2009,24 +2009,18 @@ fn tab_label_turns_a_herdr_number_into_a_name_and_keeps_a_named_tab() {
 /// renamed every tab whenever one moved. Nothing may reintroduce that.
 #[test]
 fn tab_label_has_no_position_derived_path_left_in_the_shell() {
-    let shell = Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS");
     let mut offenders = Vec::new();
-    for entry in std::fs::read_dir(&shell).expect("the shell source directory") {
-        let path = entry.expect("a shell source entry").path();
-        if path.extension().and_then(|extension| extension.to_str()) != Some("swift") {
-            continue;
-        }
-        let source = std::fs::read_to_string(&path).expect("a readable Swift source");
+    for (name, source) in web_sources() {
         if source.contains("fallbackIndex") || source.contains("displayLabel") {
-            offenders.push(path.display().to_string());
+            offenders.push(name.clone());
         }
         // The same class of defect, read the other way: the shell taking a
         // label the core formatted and parsing the number back out of it.
         // That writes the "Tab N" convention down a second time across the
-        // FFI boundary, where a change to either half breaks the other in
-        // silence. The core decides the next label; the shell draws it.
-        if source.contains("hasPrefix(\"tab \")") || source.contains("hasPrefix(\"Tab \")") {
-            offenders.push(path.display().to_string());
+        // wire, where a change to either half breaks the other in silence.
+        // The core decides the next label; the shell draws it.
+        if source.contains("startsWith(\"tab \")") || source.contains("startsWith(\"Tab \")") {
+            offenders.push(name.clone());
         }
     }
     assert!(
@@ -2523,7 +2517,7 @@ fn tab_strip_reorder_a_drag_within_one_workspace_uses_that_workspaces_index() {
         socket_path: herdr.socket_path().to_path_buf(),
         herdr_bin: None,
         runtime: std::sync::Weak::new(),
-        notifier: crate::ffi::ChangeNotifier::noop(),
+        notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
     });
 
@@ -2619,7 +2613,7 @@ fn tab_strip_reorder_a_drag_that_interleaves_two_workspaces_still_lands() {
         socket_path: herdr.socket_path().to_path_buf(),
         herdr_bin: None,
         runtime: std::sync::Weak::new(),
-        notifier: crate::ffi::ChangeNotifier::noop(),
+        notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
     });
 

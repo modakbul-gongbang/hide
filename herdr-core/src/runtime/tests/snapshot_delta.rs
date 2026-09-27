@@ -72,56 +72,30 @@ fn agent_notes_state_the_view_authority_and_the_announcement_rule() {
 /// core once the runtime was known. Destroying the first one joined a
 /// worker mid-bootstrap, which is where the measured 360 ms between the
 /// runtime resolving and the second core being ready went. One core per
-/// launch means one `session.snapshot`, one subscription and one catalog
-/// build, and the shell is the only place that can put the second one
+/// daemon means one `session.snapshot`, one subscription and one catalog
+/// build, and the daemon is the only place that can put the second one
 /// back.
 #[test]
-fn one_launch_creates_the_core_once_and_never_replaces_it() {
-    let shell = Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS");
+fn one_daemon_creates_the_core_once_and_never_replaces_it() {
     let mut creations = Vec::new();
-    let mut destructions = Vec::new();
-    for entry in std::fs::read_dir(&shell).expect("the shell source directory") {
-        let path = entry.expect("a shell source entry").path();
-        if path.extension().and_then(|extension| extension.to_str()) != Some("swift") {
-            continue;
-        }
-        let source = std::fs::read_to_string(&path).expect("a readable Swift source");
-        let name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or_default()
-            .to_owned();
+    for (name, source) in shell_sources("hided/src", &["rs"]) {
         for line in source.lines().map(str::trim) {
             if line.starts_with("//") {
                 continue;
             }
-            if line.contains("herdr_core_create(") {
+            if line.contains("Core::create(") {
                 creations.push(format!("{name}: {line}"));
-            }
-            if line.contains("herdr_core_destroy(") {
-                destructions.push(format!("{name}: {line}"));
             }
         }
     }
     assert_eq!(
         creations.len(),
         1,
-        "the shell must call herdr_core_create from one place: {creations:?}"
-    );
-    assert_eq!(
-        destructions.len(),
-        1,
-        "a core is destroyed only when the bridge goes away: {destructions:?}"
-    );
-    let bridge =
-        std::fs::read_to_string(shell.join("CoreBridge.swift")).expect("the core bridge source");
-    assert!(
-        !bridge.contains("replaceCore"),
-        "replacing a live core with a second one is the path this removed"
+        "the daemon must call Core::create from one place: {creations:?}"
     );
     assert!(
-        bridge.contains("runtimePreparation"),
-        "the one core is created after the runtime resolves, so the resolution has to be awaited"
+        creations[0].starts_with("hided/src/core.rs"),
+        "the one creation belongs to the owner-thread wrapper: {creations:?}"
     );
 }
 
@@ -247,9 +221,9 @@ fn snapshot_delivery_serializes_the_delta_outside_the_runtime_lock() {
     let bytes = serialize(&payload).expect("a payload serializes on its own");
     assert!(!bytes.is_empty(), "the wire is written from the payload");
 
-    let ffi = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/ffi.rs"))
-        .expect("the ffi source");
-    let entry_point = ffi
+    let handle = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/handle.rs"))
+        .expect("the handle source");
+    let entry_point = handle
         .split_once("pub fn snapshot_delta(")
         .expect("the snapshot entry point")
         .1;
@@ -259,7 +233,7 @@ fn snapshot_delivery_serializes_the_delta_outside_the_runtime_lock() {
         .0;
     assert!(
         body.contains("serialize_snapshot_delta(&payload)"),
-        "the shell's read must serialize through the free function: {body}"
+        "the daemon's read must serialize through the free function: {body}"
     );
     let between = body
         .split_once("snapshot_delta_payload(")
@@ -489,27 +463,30 @@ fn retained_views_drop_a_pane_whose_tab_left_the_session() {
 
 /// AC5, R3. The shell drew one canvas keyed by the visible tab, so every
 /// switch destroyed its terminal views and the new ones started empty and
-/// reported a size. The surface now draws every visited tab and hides all
-/// but one, which is the mechanism zoom already uses for panes. Removing
-/// either half brings the blank frame and the switch-time resize back.
+/// reported a size. The web shell keeps every attached pane's terminal
+/// instance alive in a hidden parking lot and re-parents it on return, and
+/// only that module may make an instance. Removing either half brings the
+/// blank frame and the switch-time resize back.
 #[test]
-fn retained_views_have_no_single_canvas_keyed_by_the_visible_tab() {
-    let shell = Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS");
-    let surface = std::fs::read_to_string(shell.join("HideTerminalSurface.swift"))
-        .expect("the terminal surface source");
-    let presentation = std::fs::read_to_string(shell.join("ShellView.swift"))
-        .expect("the pane grid presentation source");
+fn retained_terminals_have_no_single_canvas_keyed_by_the_visible_tab() {
+    let sources = web_sources();
+    let terminals = &sources
+        .iter()
+        .find(|(name, _)| name == "web/src/terminals.ts")
+        .expect("the terminal instance module")
+        .1;
     assert!(
-        surface.contains("model.retainedTabCanvases"),
-        "the terminal surface no longer draws every visited tab"
+        terminals.contains("function parkingLot(") && terminals.contains("hidden = true"),
+        "the terminal module no longer parks a left tab's instances in a hidden lot"
     );
+    let makers: Vec<&String> = sources
+        .iter()
+        .filter(|(name, source)| name != "web/src/terminals.ts" && source.contains("new Terminal("))
+        .map(|(name, _)| name)
+        .collect();
     assert!(
-        surface.contains(".opacity(canvas.isVisible ? 1 : 0)"),
-        "a hidden tab is removed from the view tree instead of being hidden"
-    );
-    assert!(
-        presentation.contains("func retainedCanvases("),
-        "the rule deciding which tabs keep a canvas is gone"
+        makers.is_empty(),
+        "a terminal instance is made outside the parking module, so a tab switch can recreate it: {makers:?}"
     );
 }
 
@@ -533,120 +510,3 @@ fn diagnostics_keep_the_newest_entries_up_to_the_retention() {
     );
 }
 
-/// R2: the window draws no system titlebar and keeps its title string.
-///
-/// What the window got is an AppKit answer, so the proof lives in the
-/// Swift suite `MainWindowChromeTests`, which builds a window, applies the
-/// chrome, and asks AppKit. `swift test --filter` exits zero when its
-/// filter matches nothing, so a check bound to that suite would go green
-/// if the suite were deleted. This is the guard that closes: it fails if
-/// the chrome stops being applied, and it fails if the suite that proves
-/// it is gone.
-#[test]
-fn main_window_hides_the_system_titlebar_and_keeps_its_title() {
-    let shell = Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos");
-    let read = |relative: &str| {
-        std::fs::read_to_string(shell.join(relative))
-            .unwrap_or_else(|_| panic!("the shell no longer has {relative}"))
-    };
-
-    let chrome = read("Sources/HerdrMacOS/MainWindowChrome.swift");
-    for setting in [
-        "static let title = \"hide\"",
-        "window.styleMask.insert(.fullSizeContentView)",
-        "window.titlebarAppearsTransparent = true",
-        "window.titleVisibility = .hidden",
-        "hosting.safeAreaRegions = []",
-    ] {
-        assert!(
-            chrome.contains(setting),
-            "the window chrome no longer says `{setting}`"
-        );
-    }
-
-    let app = read("Sources/HerdrMacOS/HerdrApp.swift");
-    assert!(
-        app.contains("MainWindowChrome.apply(to: window"),
-        "the main window no longer takes its chrome from MainWindowChrome"
-    );
-    assert!(
-        !app.contains("window.title ="),
-        "the window title is set beside the chrome again, so the two can disagree"
-    );
-
-    let suite = read("Tests/HerdrMacOSTests/MainWindowChromeTests.swift");
-    for probe in [
-        "window.styleMask.contains(.fullSizeContentView)",
-        "window.titleVisibility == .hidden",
-        "window.title == \"hide\"",
-        "firstRow.origin.y == 0",
-    ] {
-        assert!(
-            suite.contains(probe),
-            "the window chrome suite no longer asks AppKit for `{probe}`"
-        );
-    }
-}
-
-/// R7: the strip's height, the traffic-light inset, and the spacing
-/// between the first row's controls come from `HideTheme`.
-///
-/// A number written at the call site is how two surfaces that should
-/// match drift apart, and the traffic lights are the case where drifting
-/// puts a control underneath a system button.
-#[test]
-fn first_row_metrics_come_from_theme_tokens_and_not_from_view_literals() {
-    let shell = Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS");
-    let main_surface =
-        std::fs::read_to_string(shell.join("HideMainView.swift")).expect("the main surface source");
-    let sidebar =
-        std::fs::read_to_string(shell.join("HideSidebar.swift")).expect("the sidebar source");
-
-    let tokens = std::fs::read_to_string(
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS/HideTheme.swift"),
-    )
-    .expect("the shell's theme token source");
-
-    for token in ["tabStripHeight", "trafficLightInset"] {
-        assert!(
-            tokens.contains(&format!("static let {token}: CGFloat")),
-            "HideTheme.Layout no longer declares {token}"
-        );
-    }
-
-    let mut offenders = Vec::new();
-    for (source, declaration) in [
-        (&main_surface, "private struct HideTabStrip: View {"),
-        (&sidebar, "private struct HideBrandHeader: View {"),
-    ] {
-        for line in shell_view_body(source, declaration).lines() {
-            let trimmed = line.trim();
-            // Spacing between controls, the padding that clears the
-            // traffic lights, and the row's own height. A square control
-            // written `width:height:` is a control's size rather than one
-            // of those three, so it is not this rule's business.
-            let measured = trimmed
-                .split_once(".padding(")
-                .or_else(|| trimmed.split_once(".frame(height:"))
-                .or_else(|| trimmed.split_once("HStack(spacing:"))
-                .or_else(|| trimmed.split_once("VStack(spacing:"));
-            let Some((_, arguments)) = measured else {
-                continue;
-            };
-            let head = arguments.split(')').next().unwrap_or(arguments);
-            let value = head.rsplit(',').next().unwrap_or(head).trim();
-            // Zero is the absence of spacing rather than a design value.
-            if value == "0" {
-                continue;
-            }
-            if value.starts_with(|c: char| c.is_ascii_digit()) {
-                offenders.push(format!("{declaration} -> {trimmed}"));
-            }
-        }
-    }
-
-    assert!(
-        offenders.is_empty(),
-        "the window's first row measures itself with literals: {offenders:#?}"
-    );
-}

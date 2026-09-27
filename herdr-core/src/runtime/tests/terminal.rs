@@ -456,7 +456,7 @@ fn attach_failure_names_its_reason_on_that_pane_and_leaves_the_others_idle() {
         Err(reason.to_owned()),
         12,
         Weak::new(),
-        crate::ffi::ChangeNotifier::noop(),
+        crate::handle::ChangeNotifier::noop(),
     ));
 
     let failed = runtime
@@ -525,21 +525,26 @@ fn runtime_owner_conflict_observes_ignores_stale_delivery_and_reconnects_once() 
 /// The shell used to draw an even grid of the tab's panes whenever it had
 /// no layout, which is a geometry Herdr never applied and which decides
 /// the PTY size. With every tab's layout in the snapshot there is nothing
-/// left for it to stand in for, and nothing may bring it back.
+/// left for it to stand in for: the web pane grid draws the layout the
+/// snapshot carries for the tab or nothing, and nothing may bring the
+/// stand-in back.
 #[test]
 fn tab_layouts_have_no_uniform_grid_stand_in_left_in_the_shell() {
-    let shell = Path::new(env!("CARGO_MANIFEST_DIR")).join("../macos/Sources/HerdrMacOS");
-    let mut offenders = Vec::new();
-    for entry in std::fs::read_dir(&shell).expect("the shell source directory") {
-        let path = entry.expect("a shell source entry").path();
-        if path.extension().and_then(|extension| extension.to_str()) != Some("swift") {
-            continue;
-        }
-        let source = std::fs::read_to_string(&path).expect("a readable Swift source");
-        if source.contains("uniformItems") {
-            offenders.push(path.display().to_string());
-        }
-    }
+    let sources = web_sources();
+    let grid = &sources
+        .iter()
+        .find(|(name, _)| name == "web/src/PaneGrid.tsx")
+        .expect("the pane grid")
+        .1;
+    assert!(
+        grid.contains("layoutForTab(") && grid.contains("!layout"),
+        "the pane grid no longer draws only the layout the snapshot carries"
+    );
+    let offenders: Vec<&String> = sources
+        .iter()
+        .filter(|(_, source)| source.contains("uniformItems") || source.contains("uniformGrid"))
+        .map(|(name, _)| name)
+        .collect();
     assert!(
         offenders.is_empty(),
         "a uniform pane grid stand-in is back in {offenders:?}"
@@ -683,7 +688,7 @@ fn observed_runtime(herdr: &FakeHerdr, pane: &str) -> Arc<Mutex<Runtime>> {
             socket_path: herdr.socket_path().to_path_buf(),
             herdr_bin: None,
             runtime: Arc::downgrade(&shared),
-            notifier: crate::ffi::ChangeNotifier::noop(),
+            notifier: crate::handle::ChangeNotifier::noop(),
             api_connector: Arc::new(herdr.connector()),
         });
         runtime.terminal_sessions.insert(
@@ -885,7 +890,7 @@ fn a_device_pane_is_searched_on_its_own_herdr() {
             "mini",
             Arc::new(herdr.connector()),
             Arc::downgrade(&shared),
-            crate::ffi::ChangeNotifier::noop(),
+            crate::handle::ChangeNotifier::noop(),
         ));
         runtime.dispatch_json(&find);
         assert_eq!(

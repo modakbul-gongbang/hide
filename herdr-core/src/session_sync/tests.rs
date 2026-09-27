@@ -197,7 +197,7 @@ fn context_for_fixture(runtime: &Arc<Mutex<Runtime>>, socket_path: &Path) -> Ses
         socket_path: socket_path.to_path_buf(),
         herdr_bin: None,
         runtime: Arc::downgrade(runtime),
-        notifier: crate::ffi::ChangeNotifier::noop(),
+        notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::UnixSocketConnector::new(socket_path)),
     };
     SessionSyncContext::local(&live)
@@ -537,7 +537,7 @@ fn official_remote_session_coordinator_probe() {
     // coordinator itself.
     {
         let mut guard = runtime.lock().expect("runtime lock");
-        guard.install_worker_context(Arc::downgrade(&runtime), crate::ffi::ChangeNotifier::noop());
+        guard.install_worker_context(Arc::downgrade(&runtime), crate::handle::ChangeNotifier::noop());
         let register_device = serde_json::to_vec(&json!({
             "schema_version": SCHEMA_VERSION,
             "kind": "register_device",

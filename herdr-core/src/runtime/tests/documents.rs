@@ -210,7 +210,7 @@ impl Fixture {
         shared
             .lock()
             .unwrap()
-            .install_worker_context(Arc::downgrade(&shared), crate::ffi::ChangeNotifier::noop());
+            .install_worker_context(Arc::downgrade(&shared), crate::handle::ChangeNotifier::noop());
         Self {
             _dir: dir,
             root,
@@ -807,7 +807,7 @@ fn a_slow_local_read_blocks_nothing_and_a_reveal_moves_only_when_it_lands() {
     shared
         .lock()
         .unwrap()
-        .install_worker_context(Arc::downgrade(&shared), crate::ffi::ChangeNotifier::noop());
+        .install_worker_context(Arc::downgrade(&shared), crate::handle::ChangeNotifier::noop());
     let dispatch = |event: Vec<u8>| shared.lock().unwrap().dispatch_json(&event);
     let file = root.join("nested/b.txt");
 

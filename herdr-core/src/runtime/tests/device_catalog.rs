@@ -305,7 +305,7 @@ fn a_device_session_is_grouped_when_its_helper_answers() {
     shared
         .lock()
         .unwrap()
-        .install_worker_context(Arc::downgrade(&shared), crate::ffi::ChangeNotifier::noop());
+        .install_worker_context(Arc::downgrade(&shared), crate::handle::ChangeNotifier::noop());
     let raw = session(vec![
         herdr_workspace(TARGET, "w1", &t.main, &[("t1", &t.main)]),
         herdr_workspace(TARGET, "w2", &t.linked, &[("t3", &t.linked)]),

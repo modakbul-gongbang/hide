@@ -34,7 +34,7 @@ use operations::*;
 use view_areas::{BrowserOpenPayload, BrowserStatePayload, ViewLayoutPayload};
 use workspace_view::{AreaIntent, PanelCoversPayload, WorkspaceViewPayload, WorkspaceViewStore};
 
-use crate::ffi::ChangeNotifier;
+use crate::handle::ChangeNotifier;
 use crate::fork::{ForkRequest, ForkableAgent, fork_name, is_forkable};
 use crate::live::{
     LiveContext, PaneControlAction, PaneControlOutcome, PaneResizeDirection, PaneSplitDirection,
