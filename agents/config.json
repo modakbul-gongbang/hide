@@ -27,7 +27,7 @@
     "commands": {
       "test": "bash scripts/verify-cargo.sh test",
       "lint": "bash scripts/verify-cargo.sh lint",
-      "build": "bash scripts/verify-swift.sh test"
+      "web": "bash scripts/verify-web.sh"
     }
   }
 }
