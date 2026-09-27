@@ -331,8 +331,9 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     const keysBeforeSheet = sent.get("key") ?? 0;
     await page.keyboard.press("Meta+Slash");
     await expect(page.locator("[data-shortcut-sheet]")).toBeVisible();
-    // The S5 Settings row (⌥, in place of Chrome's ⌘,) is the 27th and the eighth move.
-    await expect(page.locator("[data-shortcut]")).toHaveCount(27);
+    // The S5 Settings row (⌥, in place of Chrome's ⌘,) is the eighth move;
+    // Toggle Explorer (issue 170) is the 28th row.
+    await expect(page.locator("[data-shortcut]")).toHaveCount(28);
     await expect(page.locator("[data-shortcut-sheet]").getByText("moved for Chrome")).toHaveCount(8);
     await screenshot(page, "s2-shortcut-sheet");
     await page.keyboard.press("Escape");
