@@ -1,7 +1,7 @@
 ---
 topic: "main의 Observer가 맡은 worktree를 한눈에: hcoord 이전, 부모 기록, 화면"
 status: "ready"
-human_approval: "pending"
+human_approval: "approved"  # user 2026-09-27 verbatim: ㅇㅇ 승인. 우선 electron app swift 저작업 머지되는것까지 모니터링하다가 되면 그다음에 진행시키도록 해. implement sol-6로~
 review_profile: "high-risk"
 review_rationale: "앱 설치만으로 로그인 때마다 뜨는 사용자 LaunchAgent를 등록하고, 에이전트에게 입력을 보내는 조율 데몬의 실행 파일과 소유 저장소를 바꾸며, Herdr pane에 남는 공용 토큰 규격을 공개하고 hide의 계보 계산과 사이드바 스냅샷을 기기 경계 너머로 넓힌다."
 source_intake: "current conversation"
