@@ -368,6 +368,18 @@ fn workspace_action_value(
     }
 }
 
+/// What the caller can do about a refused credential bootstrap. The daemon
+/// answers the bootstrap with a reason only, so the CLI names the next step.
+fn bootstrap_next_action(reason: &str) -> &'static str {
+    match reason {
+        "checkout_not_registered" => {
+            "Run the command from a shell inside a registered project checkout, or reconnect Hide, and retry"
+        }
+        "caller_unavailable" => "Retry from a live shell inside a registered project checkout",
+        _ => "Open Hide, reconnect this pane, and retry the same command",
+    }
+}
+
 fn workspace_action_before_send_refusal<T>(request_id: &str, reason: &str) -> Result<T, String> {
     println!(
         "{}",
@@ -376,7 +388,7 @@ fn workspace_action_before_send_refusal<T>(request_id: &str, reason: &str) -> Re
             "request_id": request_id,
             "reason": reason,
             "applied": "not_applied",
-            "next_action": "Open Hide, reconnect this pane, and retry the same command",
+            "next_action": bootstrap_next_action(reason),
         })
     );
     Err(reason.to_owned())
@@ -464,7 +476,7 @@ fn workspace_query_value(
     let (reference, ephemeral) = match workspace_reference(env) {
         Ok(reference) => reference,
         Err(reason) => {
-            return query_refusal(&reason, "Run Hide, reconnect this pane, and retry", report);
+            return query_refusal(&reason, bootstrap_next_action(&reason), report);
         }
     };
     let _reference_owner =
