@@ -4,7 +4,7 @@ use super::{AreaIntent, Runtime};
 use crate::view_layout::DisplayKind;
 use crate::workspace_control::{
     Action, ActionMaterial, ActionPreparation, ActionResult, ActionSource, BrowserRouteSource,
-    Context, Query, QueryResult, Refusal, View,
+    Caller, Context, Query, QueryResult, Refusal, View,
 };
 
 const ACTION_RESULTS_KEPT: usize = 128;
@@ -109,15 +109,14 @@ impl Runtime {
         action: &Action,
     ) -> Result<(Context, Option<Result<ActionResult, Refusal>>), Refusal> {
         // Membership is checked on every call, including a retry. A cached
-        // answer must never keep a moved or closed pane authorized.
+        // answer must never keep a moved or closed pane, or an unregistered
+        // checkout, authorized.
         let context = self
             .workspace_control_query(device_id, pane_id, Query::Info)?
             .context;
+        let changed = caller_changed(pane_id);
         if &context != expected {
-            return Err(Refusal {
-                reason: "pane_changed",
-                next_action: "Reconnect the pane and run hide workspace info again",
-            });
+            return Err(changed);
         }
         let now = super::unix_milliseconds();
         let issued = request_id
@@ -147,10 +146,7 @@ impl Runtime {
                 && record.request_id == request_id
         }) {
             let cached = if record.context != context {
-                Err(Refusal {
-                    reason: "pane_changed",
-                    next_action: "Reconnect the pane and run hide workspace info again",
-                })
+                Err(changed)
             } else if &record.action == action {
                 record.result.clone()
             } else {
@@ -593,13 +589,11 @@ impl Runtime {
         })
     }
 
-    pub fn workspace_control_query(
-        &self,
-        device_id: &str,
-        pane_id: &str,
-        query: Query,
-    ) -> Result<QueryResult, Refusal> {
-        let mut found = None;
+    /// Resolves the caller to its checkout among the connected workspaces of
+    /// `device_id`. A pane is found by membership; a checkout caller by the
+    /// longest registered checkout path that equals or contains its cwd.
+    fn resolve_caller(&self, device_id: &str, caller: Caller<'_>) -> Result<Context, Refusal> {
+        let mut found: Option<Context> = None;
         for workspace in self.catalog_workspaces() {
             if workspace.device_id != device_id {
                 continue;
@@ -615,30 +609,71 @@ impl Runtime {
                 continue;
             }
             for checkout in &workspace.checkouts {
-                if checkout
-                    .tabs
-                    .iter()
-                    .any(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
-                {
-                    if found.is_some() {
-                        return Err(Refusal {
-                            reason: "ambiguous_pane",
-                            next_action: "Reconnect the pane and run hide workspace info again",
-                        });
+                let context = || Context {
+                    device_id: workspace.device_id.clone(),
+                    workspace_id: workspace.id.clone(),
+                    checkout_id: checkout.id.clone(),
+                    checkout_path: checkout.path.clone(),
+                };
+                match caller {
+                    Caller::Pane(pane_id) => {
+                        if checkout
+                            .tabs
+                            .iter()
+                            .any(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
+                        {
+                            if found.is_some() {
+                                return Err(Refusal {
+                                    reason: "ambiguous_pane",
+                                    next_action: "Reconnect the pane and run hide workspace info again",
+                                });
+                            }
+                            found = Some(context());
+                        }
                     }
-                    found = Some(Context {
-                        device_id: workspace.device_id.clone(),
-                        workspace_id: workspace.id.clone(),
-                        checkout_id: checkout.id.clone(),
-                        checkout_path: checkout.path.clone(),
-                    });
+                    Caller::Checkout { path, .. } => {
+                        let root = checkout.path.trim_end_matches('/');
+                        if root.is_empty() || !path_within(path, root) {
+                            continue;
+                        }
+                        match &found {
+                            Some(best)
+                                if best.checkout_path.trim_end_matches('/').len() > root.len() => {}
+                            Some(best)
+                                if best.checkout_path.trim_end_matches('/').len() == root.len() =>
+                            {
+                                if best.checkout_id != checkout.id {
+                                    return Err(Refusal {
+                                        reason: "ambiguous_checkout",
+                                        next_action: "Register this checkout once in Hide and retry",
+                                    });
+                                }
+                            }
+                            _ => found = Some(context()),
+                        }
+                    }
                 }
             }
         }
-        let context = found.ok_or(Refusal {
-            reason: "pane_not_connected",
-            next_action: "Reconnect the pane in Hide and run hide workspace info again",
-        })?;
+        found.ok_or(match caller {
+            Caller::Pane(_) => Refusal {
+                reason: "pane_not_connected",
+                next_action: "Reconnect the pane in Hide and run hide workspace info again",
+            },
+            Caller::Checkout { .. } => Refusal {
+                reason: "checkout_not_registered",
+                next_action: "Run the command from a shell inside a registered project checkout, or reconnect Hide, and retry",
+            },
+        })
+    }
+
+    pub fn workspace_control_query(
+        &self,
+        device_id: &str,
+        pane_id: &str,
+        query: Query,
+    ) -> Result<QueryResult, Refusal> {
+        let context = self.resolve_caller(device_id, Caller::parse(pane_id))?;
         let key = (context.device_id.clone(), context.checkout_path.clone());
         if self.workspace_views.is_none() {
             return Err(Refusal {
@@ -715,6 +750,28 @@ impl Runtime {
             views,
         })
     }
+}
+
+/// The refusal for a caller whose checkout membership no longer matches what
+/// its capability recorded.
+fn caller_changed(caller_id: &str) -> Refusal {
+    match Caller::parse(caller_id) {
+        Caller::Pane(_) => Refusal {
+            reason: "pane_changed",
+            next_action: "Reconnect the pane and run hide workspace info again",
+        },
+        Caller::Checkout { .. } => Refusal {
+            reason: "checkout_not_registered",
+            next_action: "Run the command from a shell inside a registered project checkout, or reconnect Hide, and retry",
+        },
+    }
+}
+
+/// `path` is `root` itself or a descendant of it, by whole path segments, so
+/// `/checkouts/ab` is not within `/checkouts/a`.
+fn path_within(path: &str, root: &str) -> bool {
+    path.strip_prefix(root)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 fn layout_refusal(error: crate::view_layout::LayoutError) -> Refusal {
