@@ -283,20 +283,27 @@ impl AgentSleepStore {
             if record.phase == SleepPhase::Ending {
                 return true;
             }
-            let listed = payload.agents.iter().find(|agent| {
+            // Only an entry that names a provider and carries another state
+            // sequence is a new agent. The ended agent can stay listed a
+            // moment with its old sequence, and a pane whose metadata a
+            // plugin reports stays listed with no provider at all.
+            let new_agent = payload.agents.iter().any(|agent| {
                 agent.pane_id.as_deref().or(agent.id.as_deref()) == Some(pane_id.as_str())
+                    && agent
+                        .agent
+                        .as_deref()
+                        .is_some_and(|kind| !kind.trim().is_empty())
+                    && agent.state_change_seq != record.state_change_seq
             });
-            match listed {
-                Some(agent) if agent.state_change_seq != record.state_change_seq => {
-                    settled.push(Settled::Woke {
-                        pane_id: pane_id.clone(),
-                        phase: record.phase,
-                    });
-                    woke.push(pane_id.clone());
-                    false
-                }
-                _ => true,
+            if new_agent {
+                settled.push(Settled::Woke {
+                    pane_id: pane_id.clone(),
+                    phase: record.phase,
+                });
+                woke.push(pane_id.clone());
+                return false;
             }
+            true
         });
         // The pane's clock starts again from the agent that came back (B16).
         for pane_id in &woke {
@@ -310,15 +317,16 @@ impl AgentSleepStore {
             .iter()
             .map(|workspace| (workspace.workspace_id.as_str(), workspace.label.clone()))
             .collect::<HashMap<_, _>>();
+        // A sleeping pane's row is drawn from its record alone, whatever
+        // Herdr still lists for the pane.
         let mut rows = Vec::new();
         for (pane_id, record) in &self.records {
-            if record.phase == SleepPhase::Ending
-                || payload.agents.iter().any(|agent| {
-                    agent.pane_id.as_deref().or(agent.id.as_deref()) == Some(pane_id.as_str())
-                })
-            {
+            if record.phase == SleepPhase::Ending {
                 continue;
             }
+            payload.agents.retain(|agent| {
+                agent.pane_id.as_deref().or(agent.id.as_deref()) != Some(pane_id.as_str())
+            });
             let workspace_label = live
                 .get(pane_id.as_str())
                 .and_then(|layout| workspace_labels.get(layout.workspace_id.as_str()))
@@ -698,10 +706,25 @@ mod tests {
             store.settle_payload(&mut session).is_empty(),
             "the ended agent still reported"
         );
-        assert_eq!(
-            session.agents.len(),
-            2,
-            "one listed, one drawn from its record"
+        assert_eq!(session.agents.len(), 2, "both drawn from their records");
+        assert!(
+            session
+                .agents
+                .iter()
+                .all(|agent| agent.agent.as_deref() == Some("claude"))
+        );
+
+        // A plugin's labels keep the pane listed with no provider.
+        let labelled = serde_json::json!([{"pane_id": "w1:p1", "agent_status": "unknown",
+            "state_change_seq": 7, "tokens": {"task": "Refactor the parser"}}]);
+        let mut session = payload(labelled, &["w1:p1", "w1:p2"]);
+        assert!(store.settle_payload(&mut session).is_empty());
+        assert_eq!(session.agents.len(), 2);
+        assert!(
+            session
+                .agents
+                .iter()
+                .all(|agent| agent.agent.as_deref() == Some("claude"))
         );
 
         let fresh = serde_json::json!([{"pane_id": "w1:p1", "agent": "claude",

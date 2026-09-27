@@ -162,6 +162,7 @@ fn a_slept_agent_keeps_its_row_after_herdr_forgets_it() {
     assert_eq!(
         (
             &slept["id"],
+            &slept["agent_kind"],
             &slept["identity_label"],
             &slept["symbol"],
             &slept["status_label"],
@@ -170,6 +171,7 @@ fn a_slept_agent_keeps_its_row_after_herdr_forgets_it() {
         ),
         (
             &serde_json::json!("reviewer"),
+            &serde_json::json!("claude"),
             &serde_json::json!("Review the parser"),
             &serde_json::json!("\u{263e}"),
             &serde_json::json!("Sleeping \u{b7} resumes when opened"),
