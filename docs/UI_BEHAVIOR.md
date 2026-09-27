@@ -17,6 +17,7 @@ It is drawn pressed while the panel shows, and ⌘⇧B toggles the panel too, op
 The toggle, the tool column's toggle, Pin, and Expand each keep one accessible name and say their state as pressed or not; their tooltips say what a press does.
 A right-click or the menu key on the toolbar offers the three panel states (Side panel closed, open, and expanded), Pin or Unpin side panel, Copy Workspace path, and Open Project Overview; the palette offers the other two states, Pin or Unpin, and Show or Hide Explorer and History as commands.
 An empty Agent area offers New tab.
+The area is empty only when the checkout has no tab: a checkout whose only tab holds delegated children keeps that tab off the strip and still draws it on the canvas, so the agent chosen from the sidebar there opens on its pane.
 
 ### The side panel
 
