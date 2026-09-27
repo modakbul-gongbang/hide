@@ -1,4 +1,4 @@
-import { ArrowLeftRightIcon, Maximize2Icon, Minimize2Icon, PanelRightDashedIcon, PanelRightIcon, PinIcon, PinOffIcon, PlusIcon } from "lucide-react";
+import { ArrowLeftRightIcon, Maximize2Icon, Minimize2Icon, PanelRightDashedIcon, PanelRightIcon, PinIcon, PinOffIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AreaEmpty } from "./AreaEmpty";
@@ -20,6 +20,7 @@ import { ViewAreas } from "./ViewAreas";
 import { shownTool } from "./viewLayout";
 import { PANEL_STATES, panelCoversToSend, panelFrame, panelShareAt, panelWidth, workspaceViewOf, type PanelFrame, type PanelSizes, type PanelState, type Tool, type WorkspaceView } from "./workspace";
 import { hostKind } from "./host";
+import { keyboardOwner, noteKeyboardOwner } from "./viewFocus";
 import { displayCommand } from "./shortcuts";
 
 // A Workspace (PRD S6 D-01..D-05, B4-B11; S7 B12, B13; issue 170): one
@@ -45,7 +46,7 @@ import { displayCommand } from "./shortcuts";
 // floats there, without changing what the core stores, so widening brings it
 // back.
 
-const CLOSED: PanelFrame = { shown: "closed", content: "empty", width: 0, agentsRight: 0, narrow: false, resize: null, need: 0, toolsOverlay: false };
+const CLOSED: PanelFrame = { shown: "closed", content: "tools", width: 0, agentsRight: 0, narrow: false, resize: null, need: 0, toolsOverlay: false };
 
 export function WorkspaceScreen({ actions }: { actions: Actions }) {
   const checkout = useShellStore((s) => frontCheckout(s.rest));
@@ -67,13 +68,21 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
   // opens the overlay of a panel that turns out narrow.
   const panelShown = frame.shown !== "closed";
   useEffect(() => {
-    useUiStore.getState().setToolsNarrow(frame.toolsOverlay);
+    if (panelShown) useUiStore.getState().setToolsNarrow(frame.toolsOverlay);
   }, [frame.toolsOverlay, panelShown]);
   // An overlay opened in one Workspace is not left open over the next one,
   // nor over this screen when the operator comes back to it; one left with
   // no tool to show closes too, so a tool shown later does not float over
   // the work by itself.
   const checkoutId = checkout?.id ?? null;
+  // Making the Agent area inert retires its keyboard target before another
+  // chord can close a pane hidden by the panel.
+  useLayoutEffect(() => {
+    const owner = keyboardOwner();
+    if (frame.shown === "expanded" && owner.kind === "pane" && owner.workspace === checkoutId) {
+      noteKeyboardOwner({ kind: "none" });
+    }
+  }, [frame.shown, checkoutId]);
   useEffect(() => () => useUiStore.getState().closeTools(), [checkoutId]);
   // Only the page sees the window, so it tells the core whether this
   // Workspace's panel takes the whole body when it shows, a fact of the
@@ -368,31 +377,8 @@ function SidePanel({ view, frame, tool, placement, body, sizes, actions }: { vie
               </div>
               <Tools tool={tool} overlay={frame.toolsOverlay} header={column ? panelActions : null} actions={actions} />
             </>
-          ) : frame.content === "tools" ? (
-            <Tools tool={view.tool} overlay={false} alone header={panelActions} actions={actions} />
           ) : (
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-              <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center border-b border-border" data-panel-row="1">
-                <Hint label="New tab: open a file" shortcut={displayCommand("open_file", hostKind())}>
-                  <button
-                    type="button"
-                    aria-label="New tab: open a file"
-                    data-panel-new-tab="true"
-                    className="flex h-full min-w-[var(--size-tab-overflow-control)] shrink-0 items-center justify-center text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent"
-                    onClick={() => actions.openFilePalette()}
-                  >
-                    <PlusIcon className="size-(--size-icon)" />
-                  </button>
-                </Hint>
-                <span className="min-w-0 flex-1" />
-                {panelActions}
-              </div>
-              <AreaEmpty state="no-view" text="No file or diff is open in this Workspace.">
-                <span className="text-caption text-muted-foreground" data-empty-open-file="true">
-                  {displayCommand("open_file", hostKind())} opens a file
-                </span>
-              </AreaEmpty>
-            </div>
+            <Tools tool={view.tool} overlay={false} alone header={panelActions} actions={actions} />
           )}
         </div>
       </aside>
@@ -419,7 +405,7 @@ function PanelGrip({ className = "" }: { className?: string }) {
 
 /**
  * The panel's actions at the right end of its first row: the tool column's
- * toggle while a view or the empty state leaves room for it, Expand while a
+ * toggle while a view leaves room for it, Expand while a
  * view is open, Pin, and the panel toggle. A narrow window has no Expand or
  * Pin, since the panel already covers the Workspace there.
  */
@@ -483,11 +469,10 @@ function AgentArea({ checkout, actions }: { checkout: Checkout; actions: Actions
  * not empty. The empty state means there is no tab at all.
  */
 function LocalAgentArea({ checkout, actions }: { checkout: Checkout; actions: Actions }) {
-  const agents = useShellStore((s) => s.agents);
   const hasTabs = checkout.tabs.length > 0;
   return (
     <>
-      <AgentTabBar checkout={checkout} activeTabId={checkout.active_tab_id} agents={agents} actions={actions} />
+      <AgentTabBar checkout={checkout} activeTabId={checkout.active_tab_id} actions={actions} />
       <RelationStatus actions={actions} />
       <FindBar actions={actions} />
       {hasTabs ? (
@@ -561,7 +546,7 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
           ) : null}
         </div>
       )}
-      <AgentTabBar checkout={view.checkout} activeTabId={view.tab?.id ?? null} agents={session?.agents ?? null} device actions={actions} />
+      <AgentTabBar checkout={view.checkout} activeTabId={view.tab?.id ?? null} device actions={actions} />
       <RelationStatus actions={actions} />
       <FindBar actions={actions} />
       <RemotePaneCanvas view={view} connected={connected} actions={actions} />

@@ -210,6 +210,7 @@ impl ActiveSubscription {
 }
 
 mod coordinator;
+mod process_info;
 mod projection;
 mod replica;
 mod subscription;

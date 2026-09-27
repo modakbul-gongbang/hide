@@ -171,6 +171,11 @@ pub async fn run_daemon(env: Env) -> Result<(), String> {
 }
 
 pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
+    // Refused before anything is written: a daemon that came up on this
+    // path would answer healthy and then fail every pane attach in turn.
+    if let Some(error) = env::herdr_bin_error(&env) {
+        return Err(error);
+    }
     let lock = acquire_lock(&env.state_dir).map_err(|error| error.to_string())?;
     let host_id = state_file::host_id(&env.state_dir)
         .map_err(|error| format!("the daemon host id could not be read or written: {error}"))?;

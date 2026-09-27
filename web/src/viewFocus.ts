@@ -1,27 +1,90 @@
-// What the page itself knows about the View areas, apart from the pure rules:
-// which area a chord that could mean either one acts on (⌥W, text size), what
-// the View areas last drew (a split's room is a pixel question, and a palette
-// command asks it too), and whether a focus came from the keyboard. Each reads
-// the page, so none of it lives in the rules or the store.
+// Page-local keyboard ownership and measured View geometry. Focus is recorded
+// when it changes, never inferred from document.activeElement at chord time.
 
-import type { SnapshotRest } from "./snapshot";
-import type { Geometry, LayoutSizes, ViewFrame } from "./viewLayout";
+import { locateDisplay, workspaceKey, type Geometry, type LayoutSizes, type ViewFrame } from "./viewLayout";
+import { browserBridge } from "./host";
+import { frontCheckout } from "./snapshot";
+import { useShellStore } from "./store";
 import { workspaceViewOf } from "./workspace";
 
-/**
- * The View area when the side panel shows View areas and either covers the
- * whole body or holds the keyboard, else the Agent area (issue 170): the
- * agents beside an open panel are live, so the keyboard decides there.
- */
-export function viewAreaInUse(rest: SnapshotRest | null): boolean {
-  const view = workspaceViewOf(rest);
-  if (!view || view.panel === "closed") return false;
-  if (view.panel === "expanded" && (view.layout?.display_count ?? 0) > 0) return true;
-  if (drawnViews() === null || typeof document === "undefined") return false;
-  // A window too narrow for both draws an open panel over the whole body.
-  if (document.querySelector('[data-side-panel="expanded"]') !== null) return true;
-  const active = document.activeElement;
-  return active instanceof Element && active.closest("[data-view-area]") !== null;
+export type KeyboardOwner =
+  | { kind: "view"; workspace: string; areaId: string }
+  | { kind: "pane"; workspace: string; paneId: string }
+  | { kind: "tool"; workspace: string }
+  | { kind: "none" };
+
+let owner: KeyboardOwner = { kind: "none" };
+
+export function noteKeyboardOwner(next: KeyboardOwner): void {
+  owner = next;
+}
+
+export function keyboardOwner(): KeyboardOwner {
+  return owner;
+}
+
+/** One bounded value per page; no core events or per-key DOM reads. */
+export function installKeyboardOwner(): () => void {
+  const record = (event: Event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    // A menu temporarily borrows the keyboard from its invoker.
+    if (target?.closest('[role="menu"]')) return;
+    const workspace = target?.closest<HTMLElement>("[data-workspace-screen]")?.dataset.workspaceScreen;
+    if (!target || !workspace) {
+      owner = { kind: "none" };
+      return;
+    }
+    const tool = target.closest("[data-workspace-tools]");
+    const areaId = target.closest<HTMLElement>("[data-view-area-id]")?.dataset.viewAreaId;
+    const paneId = target.closest<HTMLElement>("[data-pane-view]")?.dataset.paneView;
+    owner = tool ? { kind: "tool", workspace }
+      : areaId ? { kind: "view", workspace, areaId }
+      : paneId ? { kind: "pane", workspace, paneId }
+      : { kind: "none" };
+  };
+  // Native browser pages are outside the renderer DOM. Their host reports
+  // the same ownership transition when the operator enters a page.
+  const unsubscribeBrowser = browserBridge()?.onEvent((event) => {
+    if (event.kind !== "focus") return;
+    const rest = useShellStore.getState().rest;
+    const view = workspaceViewOf(rest);
+    const checkout = frontCheckout(rest);
+    if (!view?.layout || !checkout || view.panel === "closed" || workspaceKey(view) !== event.workspace) return;
+    const located = locateDisplay(view.layout.root, event.id);
+    if (located) noteKeyboardOwner({ kind: "view", workspace: checkout.id, areaId: located.area.id });
+  });
+  window.addEventListener("focusin", record, true);
+  window.addEventListener("pointerdown", record, true);
+  return () => {
+    unsubscribeBrowser?.();
+    window.removeEventListener("focusin", record, true);
+    window.removeEventListener("pointerdown", record, true);
+    owner = { kind: "none" };
+  };
+}
+
+export type CloseShortcutTarget =
+  | { kind: "view"; id: string }
+  | { kind: "pane"; id: string }
+  | { kind: "nothing"; reason: string };
+
+/** Close the keyboard's unit, never fall through to a larger unit. */
+export function closeShortcutPolicy(input: {
+  owner: KeyboardOwner;
+  workspace: string | null;
+  displayId: string | null;
+  paneIds: readonly string[];
+}): CloseShortcutTarget {
+  const { owner, workspace, displayId, paneIds } = input;
+  if (owner.kind === "none") return { kind: "nothing", reason: "no keyboard owner" };
+  if (owner.workspace !== workspace) return { kind: "nothing", reason: "keyboard owner is outside the front Workspace" };
+  if (owner.kind === "tool") return { kind: "nothing", reason: "the tool column owns the keyboard" };
+  if (owner.kind === "view") return displayId
+    ? { kind: "view", id: displayId }
+    : { kind: "nothing", reason: "the focused View area has no visible display" };
+  return paneIds.includes(owner.paneId)
+    ? { kind: "pane", id: owner.paneId }
+    : { kind: "nothing", reason: "the focused pane is no longer visible" };
 }
 
 /**

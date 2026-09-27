@@ -4,7 +4,7 @@
 // (`rest.workspace_view`, the strip); these functions only read them, so they
 // are testable without a page. The View areas' own rules are `viewLayout.ts`.
 
-import type { AgentRow, Checkout, SnapshotRest, StripTab, Tab, ViewLayoutSnapshot } from "./snapshot";
+import type { Checkout, SnapshotRest, StripTab, ViewLayoutSnapshot } from "./snapshot";
 
 /** How the side panel shows (issue 170): closed, at its width, or over the whole body. */
 export type PanelState = "closed" | "open" | "expanded";
@@ -66,13 +66,13 @@ export type PanelSizes = {
  *   the panel's draws an open panel over the whole body, like Expanded, and a
  *   pinned one floats there; widening brings back what the core stores.
  * - `content`: the View areas while a view is open or opening, else the tool
- *   column alone, so the panel is only as wide as it, else the empty state.
+ *   column alone; with neither the panel is closed.
  * - `width`: the panel's width, and `agentsRight` how far the agents end from
  *   the body's right edge: the open panel's width while it is pinned, even
  *   under an expanded panel, so expanding moves no terminal; else 0, since
  *   the Agent area keeps the body's width under a panel that floats.
  * - `resize`: which stored width a drag on the panel's edge sets: the View
- *   areas' and the empty panel's share, or the tools-only panel's own, which
+ *   areas' share, or the tools-only panel's own, which
  *   is the tool column's width until it is first resized; null while the
  *   panel covers the body. `need` is the narrowest the panel may be.
  * - `toolsOverlay`: in a window too narrow for both, the tools fold into an
@@ -81,7 +81,7 @@ export type PanelSizes = {
  */
 export type PanelFrame = {
   shown: PanelState;
-  content: "views" | "tools" | "empty";
+  content: "views" | "tools";
   width: number;
   agentsRight: number;
   narrow: boolean;
@@ -99,9 +99,9 @@ export function panelFrame(input: {
 }): PanelFrame {
   const { view, views, body, sizes } = input;
   const tools = view.tools;
-  const content = views ? "views" : tools ? "tools" : "empty";
+  const content = views ? "views" : "tools";
   const need = panelMinimum(content, tools, sizes);
-  if (view.panel === "closed") return { shown: "closed", content, width: 0, agentsRight: 0, narrow: false, resize: null, need, toolsOverlay: false };
+  if (view.panel === "closed" || (!views && !tools)) return { shown: "closed", content, width: 0, agentsRight: 0, narrow: false, resize: null, need, toolsOverlay: false };
   // Before the body is measured nothing is placed, so no terminal fits to a guess.
   if (body <= 0) return { shown: view.panel === "expanded" && content === "views" ? "expanded" : "open", content, width: 0, agentsRight: 0, narrow: false, resize: null, need, toolsOverlay: false };
   const narrow = body < sizes.areaMin + need;
@@ -109,7 +109,7 @@ export function panelFrame(input: {
   const share = toolsOnly ? view.tools_share : view.views_over_share;
   const open = narrow ? body : share === null ? need : panelWidth(share, body, need, sizes.areaMin);
   // Only views expand: with none, the panel stays the tool column's width or
-  // its own at the empty state, and the agents stay in reach.
+  // the agents stay in reach.
   const expanded = narrow || (view.panel === "expanded" && content === "views");
   const width = expanded ? body : open;
   return {
@@ -179,31 +179,4 @@ export type Provider = (typeof KNOWN_PROVIDERS)[number];
 
 export function knownProvider(kind: string | null | undefined): Provider | null {
   return (KNOWN_PROVIDERS as readonly string[]).includes(kind ?? "") ? (kind as Provider) : null;
-}
-
-/**
- * The agent a Herdr tab stands for: the agent of the pane Herdr focused in it
- * when that pane has one, else the first pane that does. A tab of plain
- * shells stands for none and wears the neutral terminal mark.
- */
-export function tabAgent(tab: Tab | null | undefined, agents: AgentRow[], focusedPaneId: string | null): AgentRow | null {
-  if (!tab) return null;
-  const ids = tab.panes.map((pane) => pane.id);
-  const byPane = new Map(agents.map((agent) => [agent.pane_id, agent]));
-  if (focusedPaneId && ids.includes(focusedPaneId)) {
-    const focused = byPane.get(focusedPaneId);
-    if (focused) return focused;
-  }
-  for (const id of ids) {
-    const agent = byPane.get(id);
-    if (agent) return agent;
-  }
-  return null;
-}
-
-/** What an Agent tab is, read in its tooltip and by assistive technology with its full name (B17). */
-export function tabIdentity(entry: StripTab, agent: AgentRow | null): string {
-  const kind = agent ? `${agent.agent_kind} agent` : "Terminal";
-  const pane = agent ? ` · ${agent.identity_label} · ${agent.status_label}` : "";
-  return `${kind} tab ${entry.label}${pane}`;
 }

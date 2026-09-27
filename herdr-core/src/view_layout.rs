@@ -154,6 +154,11 @@ pub struct Display {
 }
 
 impl Display {
+    /// A shell-owned new-tab page; no native page exists until navigation.
+    pub fn is_new_tab(&self) -> bool {
+        self.kind == DisplayKind::Browser && self.url.is_none()
+    }
+
     /// Whether this display shows the document named by `path`, `kind` and,
     /// for a diff, its Changes group. A browser display shows no document.
     pub fn shows(&self, path: &str, kind: DisplayKind, committed: Option<bool>) -> bool {
@@ -586,7 +591,7 @@ impl Layout {
     /// It is never a preview: a page is opened on purpose.
     pub fn new_browser_display(&mut self, url: &str, load: u64) -> Display {
         Display {
-            url: Some(url.to_owned()),
+            url: (!url.is_empty()).then(|| url.to_owned()),
             load,
             ..self.new_display("", DisplayKind::Browser, None, false)
         }
@@ -1050,7 +1055,7 @@ impl Layout {
                     // A page has an address it may load and no path; a
                     // document has neither address nor title.
                     if display.kind == DisplayKind::Browser {
-                        let valid = display.url.as_deref().is_some_and(browser_address);
+                        let valid = display.url.as_deref().is_none_or(browser_address);
                         let title = display
                             .title
                             .as_deref()

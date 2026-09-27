@@ -672,6 +672,9 @@ export function Gallery() {
       <div className="flex h-full overflow-hidden bg-background text-foreground">
         <nav className="w-(--size-sidebar-min) shrink-0 overflow-auto border-r border-border bg-sidebar p-sm text-body">
           <h1 className="px-sm py-xs text-title font-semibold">System</h1>
+          <a href="#scenes" className="block rounded-xs px-sm py-xxs text-subtle-foreground hover:bg-accent hover:text-foreground">
+            Scenes
+          </a>
           {sections.map((section) => (
             <a key={section} href={`#${encodeURIComponent(section)}`} className="block rounded-xs px-sm py-xxs text-subtle-foreground hover:bg-accent hover:text-foreground">
               {section}
@@ -679,6 +682,7 @@ export function Gallery() {
           ))}
         </nav>
         <main className="min-w-0 flex-1 overflow-auto p-xl">
+          <Scenes />
           {sections.map((section) => (
             <section key={section} id={encodeURIComponent(section)} data-gallery-section={section} className="mb-xxxl">
               <h2 className="mb-sm text-headline font-semibold">{section}</h2>
@@ -701,6 +705,48 @@ export function Gallery() {
         </main>
       </div>
     </TooltipProvider>
+  );
+}
+
+/**
+ * The production screens the gallery renders on synthetic scenes, one
+ * document each (sceneData.ts): the Projects sidebar at the shipped width, a
+ * narrow width, and a larger interface font, with the Pen frame's titles and
+ * with long Korean ones, in both themes. Hover, focus and the folds are live.
+ */
+const SCENE_CASES = [
+  { label: "Reference · shipped width", query: "content=reference" },
+  { label: "Long titles · shipped width", query: "content=long" },
+  { label: "Long titles · narrow (240)", query: "content=long&width=240" },
+  { label: "Reference · larger text", query: "content=reference&scale=1.25" },
+] as const;
+
+function Scenes() {
+  return (
+    <section id="scenes" data-gallery-section="Scenes" className="mb-xxxl">
+      <h2 className="mb-sm text-headline font-semibold">Projects sidebar scene</h2>
+      <div className="grid grid-cols-[var(--size-sidebar-min)_minmax(0,1fr)_minmax(0,1fr)] overflow-hidden rounded-md border border-border">
+        <div className="bg-card px-md py-xs text-caption text-muted-foreground">Case</div>
+        <div className="bg-card px-md py-xs text-caption text-muted-foreground">Light</div>
+        <div className="bg-card px-md py-xs text-caption text-muted-foreground">Dark</div>
+        {SCENE_CASES.map(({ label, query }) => (
+          <SceneRow key={label} label={label} query={query} />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function SceneRow({ label, query }: { label: string; query: string }) {
+  return (
+    <>
+      <div className="border-t border-border px-md py-sm text-caption text-subtle-foreground">{label}</div>
+      {(["light", "dark"] as const).map((theme) => (
+        <div key={theme} className="border-t border-border">
+          <iframe loading="lazy" title={`${label} ${theme}`} src={`/gallery?scene=projects-sidebar&theme=${theme}&${query}`} className="h-(--size-gallery-scene-h) w-full border-0" />
+        </div>
+      ))}
+    </>
   );
 }
 

@@ -160,6 +160,13 @@ pub(super) struct FocusTabPayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct RenameTabPayload {
+    pub(super) request_id: String,
+    pub(super) tab_id: String,
+    pub(super) label: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct ReorderTabPayload {
     pub(super) workspace_id: String,
     pub(super) checkout_id: String,
@@ -188,6 +195,12 @@ pub(super) struct InactiveProjectsTogglePayload {
 #[derive(Debug, Deserialize)]
 pub(super) struct RemoveWorkspacePayload {
     pub(super) workspace_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct SetPrimaryCheckoutPayload {
+    pub workspace_id: String,
+    pub checkout_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -887,10 +900,12 @@ pub(super) enum Event {
     FocusCheckout(FocusCheckoutPayload),
     FocusTab(FocusTabPayload),
     ReorderTab(ReorderTabPayload),
+    RenameTab(RenameTabPayload),
     FocusDevice(FocusDevicePayload),
     InactiveCheckoutsToggle(InactiveCheckoutsTogglePayload),
     InactiveProjectsToggle(InactiveProjectsTogglePayload),
     WorkspacePinSet(WorkspacePinSetPayload),
+    SetPrimaryCheckout(SetPrimaryCheckoutPayload),
     RemoveWorkspace(RemoveWorkspacePayload),
     RegisterDevice(RegisterDevicePayload),
     DeviceHostConsent(DeviceHostConsentPayload),
@@ -1047,6 +1062,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "create_tab" => decode!(CreateTabPayload, CreateTab),
         "focus_checkout" => decode!(FocusCheckoutPayload, FocusCheckout),
         "focus_tab" => decode!(FocusTabPayload, FocusTab),
+        "rename_tab" => decode!(RenameTabPayload, RenameTab),
         "reorder_tab" => decode!(ReorderTabPayload, ReorderTab),
         "focus_device" => decode!(FocusDevicePayload, FocusDevice),
         "inactive_checkouts_toggle" => {
@@ -1055,6 +1071,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "inactive_projects_toggle" => {
             decode!(InactiveProjectsTogglePayload, InactiveProjectsToggle)
         }
+        "set_primary_checkout" => decode!(SetPrimaryCheckoutPayload, SetPrimaryCheckout),
         "workspace_pin_set" => decode!(WorkspacePinSetPayload, WorkspacePinSet),
         "remove_workspace" => decode!(RemoveWorkspacePayload, RemoveWorkspace),
         "register_device" => decode!(RegisterDevicePayload, RegisterDevice),
@@ -1654,6 +1671,7 @@ impl Runtime {
                     Some(PendingViewFocus::new(payload.checkout_id, payload.tab_id));
                 true
             }
+            Event::RenameTab(payload) => self.rename_tab(payload),
             Event::ReorderTab(payload) => self.reorder_tab(payload),
             Event::FocusDevice(payload) => {
                 self.bring_device_forward(payload.device_id);
@@ -1726,6 +1744,7 @@ impl Runtime {
                 true
             }
             Event::WorkspacePinSet(payload) => self.set_workspace_pinned(payload),
+            Event::SetPrimaryCheckout(payload) => self.set_primary_checkout(payload),
             Event::RemoveWorkspace(payload) => self.remove_workspace(payload),
             Event::DeviceHostConsent(payload) => {
                 self.set_host_consent(payload.device_id.trim(), payload.allow)

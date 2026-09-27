@@ -1374,11 +1374,45 @@ struct RusshApiConnection {
     session: Mutex<Option<Handle<KnownHostHandler>>>,
 }
 
+// Bound both contention and protocol waits: a coordinator joins its process reader
+// on shutdown, so an unresponsive host must not keep that owner alive forever.
+fn lock_api_session<T>(
+    state: &Mutex<T>,
+    timeout: Duration,
+) -> Result<std::sync::MutexGuard<'_, T>, ApiError> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        match state.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(ApiError::Transport(
+                    "remote Herdr SSH session state is poisoned".into(),
+                ));
+            }
+            Err(std::sync::TryLockError::WouldBlock) => {
+                if std::time::Instant::now() >= deadline {
+                    return Err(ApiError::Transport(
+                        "remote Herdr SSH session is busy".into(),
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(2));
+            }
+        }
+    }
+}
+
+async fn bounded_ssh_operation<T>(
+    operation: impl std::future::Future<Output = Result<T, russh::Error>>,
+) -> Result<T, String> {
+    tokio::time::timeout(SSH_OPERATION_TIMEOUT, operation)
+        .await
+        .map_err(|_| "SSH operation timed out".to_owned())?
+        .map_err(|error| error.to_string())
+}
+
 impl RusshApiConnection {
     fn open_stream(&self, socket_path: &str) -> Result<russh::ChannelStream<Msg>, ApiError> {
-        let mut session = self.session.lock().map_err(|_| {
-            ApiError::Transport("remote Herdr SSH session state is poisoned".to_owned())
-        })?;
+        let mut session = lock_api_session(&self.session, SSH_OPERATION_TIMEOUT)?;
         if session.is_none() {
             *session = Some(
                 self.client
@@ -1393,20 +1427,23 @@ impl RusshApiConnection {
         let channel = self
             .client
             .runtime
-            .block_on(
+            .block_on(bounded_ssh_operation(
                 session
                     .as_ref()
                     .expect("remote Herdr SSH session was initialized")
                     .channel_open_direct_streamlocal(socket_path.to_owned()),
-            )
+            ))
             .map_err(|error| {
                 let stale = session.take();
                 if let Some(stale) = stale {
-                    let _ = self.client.runtime.block_on(stale.disconnect(
-                        Disconnect::ByApplication,
-                        "Herdr socket open failed",
-                        "en",
-                    ));
+                    let _ = self
+                        .client
+                        .runtime
+                        .block_on(bounded_ssh_operation(stale.disconnect(
+                            Disconnect::ByApplication,
+                            "Herdr socket open failed",
+                            "en",
+                        )));
                 }
                 self.client.forget_herdr_socket();
                 ApiError::Transport(format!(
@@ -1425,11 +1462,15 @@ impl Drop for RusshApiConnection {
             Err(poisoned) => poisoned.into_inner().take(),
         };
         let Some(session) = session else { return };
-        if let Err(error) = self.client.runtime.block_on(session.disconnect(
-            Disconnect::ByApplication,
-            "Herdr socket connection complete",
-            "en",
-        )) {
+        if let Err(error) = self
+            .client
+            .runtime
+            .block_on(bounded_ssh_operation(session.disconnect(
+                Disconnect::ByApplication,
+                "Herdr socket connection complete",
+                "en",
+            )))
+        {
             crate::diagnostic!(serde_json::json!({
                 "component": "remote_herdr_api",
                 "kind": "disconnect.failed",
@@ -2108,20 +2149,35 @@ impl RusshRemoteClient {
             .runtime
             .block_on(self.connect(KnownHostHandler::new(&self.host, None)))?;
         let output = self.runtime.block_on(async {
-            execute_channel(
-                &mut session,
-                &command_line,
-                operation_id,
-                &self.host.host_id,
-                stage,
+            tokio::time::timeout(
+                SSH_OPERATION_TIMEOUT,
+                execute_channel(
+                    &mut session,
+                    &command_line,
+                    operation_id,
+                    &self.host.host_id,
+                    stage,
+                ),
             )
             .await
+            .map_err(|_| {
+                remote_error(
+                    operation_id,
+                    &self.host.host_id,
+                    stage,
+                    "remote read timed out",
+                    true,
+                    false,
+                )
+            })?
         });
-        let disconnect = self.runtime.block_on(session.disconnect(
-            Disconnect::ByApplication,
-            "read-only operation complete",
-            "en",
-        ));
+        let disconnect = self
+            .runtime
+            .block_on(bounded_ssh_operation(session.disconnect(
+                Disconnect::ByApplication,
+                "read-only operation complete",
+                "en",
+            )));
         match (output, disconnect) {
             (Ok(output), Ok(())) => Ok(output),
             (Err(primary), Ok(())) => Err(primary),
@@ -4393,6 +4449,27 @@ mod tests {
         AgentPhase, AgentProjection, DomainEventKind, LayoutNode, PaneProjection, TabProjection,
         WorkspaceProjection,
     };
+
+    #[test]
+    fn api_session_contention_has_a_deadline() {
+        let state = Mutex::new(());
+        let held = state.lock().unwrap();
+        assert!(
+            matches!(lock_api_session(&state, Duration::from_millis(20)),
+            Err(ApiError::Transport(message)) if message.contains("busy"))
+        );
+        drop(held);
+        assert!(lock_api_session(&state, Duration::from_millis(20)).is_ok());
+    }
+
+    #[test]
+    fn ssh_protocol_wait_has_an_absolute_deadline() {
+        let runtime = Builder::new_current_thread().enable_all().build().unwrap();
+        let result = runtime.block_on(bounded_ssh_operation(std::future::pending::<
+            Result<(), russh::Error>,
+        >()));
+        assert_eq!(result.unwrap_err(), "SSH operation timed out");
+    }
 
     fn host() -> SshAlias {
         SshAlias::from_config_contents(

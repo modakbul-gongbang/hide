@@ -363,11 +363,53 @@ impl SessionReplica {
                                 }
                             })
                             .collect::<Vec<_>>();
+                        let focused = state
+                            .layouts
+                            .iter()
+                            .find(|layout| layout.tab_id == tab.tab_id)
+                            .map(|layout| layout.focused_pane_id.as_str());
+                        let representative = agents
+                            .iter()
+                            .find(|agent| Some(agent.pane_id.as_str()) == focused);
+                        let process = state
+                            .panes
+                            .iter()
+                            .find(|pane| Some(pane.pane_id.as_str()) == focused)
+                            .and_then(|pane| pane.foreground_process.as_deref());
                         TabSnapshot {
+                            agent: representative.map(Into::into),
+                            naming: crate::model::TabNaming {
+                                focused_pane_id: focused
+                                    .map(|pane| remote_pane_id(target_id, pane))
+                                    .unwrap_or_default(),
+                                number: crate::model::tab_number(&tab.label, tab.number),
+                                processes: state
+                                    .panes
+                                    .iter()
+                                    .filter(|pane| pane.tab_id == tab.tab_id)
+                                    .filter_map(|pane| {
+                                        pane.foreground_process.clone().map(|name| {
+                                            (remote_pane_id(target_id, &pane.pane_id), name)
+                                        })
+                                    })
+                                    .collect(),
+                                raw: tab.label.clone(),
+                                automatic: crate::model::display_tab_label(
+                                    "",
+                                    tab.number,
+                                    representative.map(|agent| agent.identity_label.as_str()),
+                                    process,
+                                ),
+                            },
                             id: Some(remote_tab_id(target_id, &tab.tab_id)),
                             workspace_id: Some(workspace_id.clone()),
                             checkout_id: Some(checkout_id.clone()),
-                            label: Some(crate::model::display_tab_label(&tab.label, &tab.tab_id)),
+                            label: Some(crate::model::display_tab_label(
+                                &tab.label,
+                                tab.number,
+                                representative.map(|agent| agent.identity_label.as_str()),
+                                process,
+                            )),
                             empty: panes.is_empty(),
                             delegated: false,
                             panes,
@@ -1483,11 +1525,12 @@ fn upsert_tab(tabs: &mut Vec<ProjectedTab>, tab: ProjectedTab) {
     }
 }
 
-fn upsert_pane(panes: &mut Vec<ProjectedPane>, pane: ProjectedPane) {
+fn upsert_pane(panes: &mut Vec<ProjectedPane>, mut pane: ProjectedPane) {
     if let Some(existing) = panes
         .iter_mut()
         .find(|existing| existing.pane_id == pane.pane_id)
     {
+        pane.foreground_process = existing.foreground_process.clone();
         *existing = pane;
     } else {
         panes.push(pane);

@@ -92,6 +92,7 @@ pub fn registration(
         label.trim().to_owned()
     };
     Ok(WorkspaceRegistration {
+        primary_checkout_id: None,
         id: workspace_id_for_path(&path),
         label,
         path: path.to_string_lossy().into_owned(),
@@ -128,6 +129,7 @@ pub fn inspect_registered(registration: &WorkspaceRegistration) -> WorkspaceSnap
         false,
     );
     workspace.pinned = registration.pinned;
+    apply_primary_checkout(&mut workspace, registration.primary_checkout_id.as_deref());
     workspace
 }
 
@@ -324,6 +326,11 @@ pub fn build_catalog(
     for project in &mut result {
         apply_session_purposes(project, spaces);
         apply_worktrees(project, worktrees);
+        let primary = registrations
+            .iter()
+            .find(|row| row.id == project.id)
+            .and_then(|row| row.primary_checkout_id.as_deref());
+        apply_primary_checkout(project, primary);
     }
 
     result.sort_by(|left, right| {
@@ -333,6 +340,18 @@ pub fn build_catalog(
             .then_with(|| left.path.cmp(&right.path))
     });
     result
+}
+
+/// Projects the registration's choice without reading the filesystem. A vanished
+/// choice stays stored, so temporarily unavailable worktrees do not lose it.
+pub(crate) fn apply_primary_checkout(project: &mut WorkspaceSnapshot, primary_id: Option<&str>) {
+    for checkout in &mut project.checkouts {
+        checkout.is_primary = project.is_git
+            && match primary_id {
+                Some(id) => checkout.id == id,
+                None => !checkout.is_worktree,
+            };
+    }
 }
 
 /// The directory that identifies a project: the repository's main worktree
@@ -745,6 +764,7 @@ fn checkout(
         branch,
         purpose,
         is_worktree,
+        is_primary: repository.is_some() && !is_worktree,
         exists: path.exists(),
         temporary,
         tabs: Vec::<TabSnapshot>::new(),

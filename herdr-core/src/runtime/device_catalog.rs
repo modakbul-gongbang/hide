@@ -548,6 +548,7 @@ impl Runtime {
             .ui_state
             .workspace_registrations
             .push(crate::model::WorkspaceRegistration {
+                primary_checkout_id: None,
                 id: id.clone(),
                 label,
                 path: registrable.root,

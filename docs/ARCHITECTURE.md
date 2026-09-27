@@ -11,6 +11,11 @@ The code is the executable authority: `herdr-core/src/` for the core, `hided/src
 The core (`herdr-core`) owns all state behind one `Mutex<Runtime>`.
 The shell dispatches typed JSON events in and receives snapshot and delta frames out over hided's WebSocket (see hided and the WebSocket boundary) when the change notifier announces.
 The event sync coordinator (`session_sync/coordinator.rs`) delegates Herdr snapshot and subscription lifecycle to `session_sync/subscription.rs`, opens `events.subscribe` first and reads `session.snapshot` second, applies the topology events that follow, and refreshes agent telemetry with `agent.list` once per second.
+Tab names use core focus and the same agent row as the sidebar; process names arrive through a coordinator-owned off-lock `pane.process_info` reader on each host's connector.
+Its single worker reads at most the five attached tabs' focused panes, on focus or agent-state changes or a 30-second recheck, rejects obsolete generations, and publishes only changed names.
+Stopping its coordinator cancels the rest of the batch and joins the active read off the runtime lock.
+Small process responses have a one-second absolute read deadline and a 64 KiB cap; SSH session contention, connection setup, socket discovery, channel opening and disconnect each use the remote transport's 15-second bound, so shutdown can include those setup and cleanup stages.
+`rename_tab` keeps retry intent separate from the committed label; only Herdr success commits it, and a refusal or timeout preserves the prior label and a request-correlated inline retry result.
 Herdr's stream carries no sequence and cannot be resumed from a position, so subscribing before the snapshot is the only way not to lose an event between the two, and every reconnect is a fresh subscription followed by a fresh snapshot.
 The price of that order is that an event emitted just before the snapshot was taken arrives as well; for one second after the snapshot the replica reconciles (`ApplyMode::Reconcile`), dropping with a diagnostic an event the snapshot already accounts for, and after that window an event the replica cannot apply is a real divergence that rebuilds it.
 `wire.rs` names the day Herdr sequences its stream: a test fails when the event schema declares `sequence` or the subscribe params take `after_sequence`, because a resume cursor would then be worth building back.
@@ -19,7 +24,7 @@ A tick whose `agent.list` is unchanged publishes nothing, so an idle session rec
 The Git context refreshes local worktree state only when repository metadata, tracked paths, or Herdr worktree topology changes; disk usage refreshes when the section opens or its header refresh is pressed, and all three layers run outside the runtime mutex.
 A web Overview names its local Git project with `card_measure_disk` and `{workspace_id}`, for every window of the daemon like `sessions_refresh`: every worktree and the shared Git directory join the same disk request beside the right panel's, the reader counts each inode once, and each workspace row carries the result as `disk`, absent from the wire until measured; the payload `{}` re-measures the focused checkout's project, which the side panel uses.
 Pull requests also load once when a local Git project first appears in the sidebar and refresh from that project's menu or PR popover; these scoped requests reuse the same background reader, cache and generation coalescing.
-The Changes reader is also the only Git-status owner for Explorer decorations: it reads the checkout in front, on this machine or a device, while Explorer or Changes is visible or a diff tab needs it, and publishes one root-scoped changed-file set for every surface.
+The Changes reader is also the only Git-status owner for Explorer decorations: it reads the checkout in front, on this machine or a device, while Explorer or Changes is visible or a diff tab or new-tab page needs it, and publishes one root-scoped changed-file set for every surface.
 The read is `Call::Changes` to that checkout's host (`hide-host/src/git.rs`), which runs Git with its working directory at the opened root, normalizes rename and conflict state, and answers only the registered folder's paths; the reader (`changes.rs`) runs it on a `BackgroundRead` thread every two seconds or on a changed request, driven by its own pump (`ChangesPump`) that the core starts once rather than by a Herdr session's coordinator, so a device's History answers even when this machine runs no Herdr; a device helper that failed is not asked again by the refresh.
 The Explorer tree (`web/src/ExplorerTree.tsx`) derives file and ancestor-folder decorations from that snapshot in memory; it never starts Git from a row, scroll, hover, or paint.
 Per-pane attach threads stream PTY bytes into the runtime as terminal chunks.
@@ -27,6 +32,18 @@ Everything the shell renders comes from that one snapshot pull.
 The shell decodes it strictly: one string value it does not know fails the whole decode, the bridge keeps its last good frame, and every later notification repeats the failure until the two sides agree, so an unknown value is a stalled shell, not a blank field.
 The string enums the core serializes into the snapshot are therefore pinned in `contracts/snapshot-wire-enums.json`; `model.rs` tests that each variant emits the listed value and `SnapshotWireEnumTests` that each listed value decodes, so a variant added on one side fails a suite before it can reach a running shell (a `PullRequestTitle` origin once shipped as `pull_request_title` against a shell that read `pr_title`).
 The bridge publishes `bridgeError` only on change and names the coding path in it, because a repeated failure republished every notification rebuilt every view observing the bridge at the notification rate.
+
+## Stored primary checkout
+
+A local registered project stores `primary_checkout_id` on its `WorkspaceRegistration` in `core-state.json`.
+An absent choice keeps the root default for existing registrations; a stored choice remains stored while its checkout is unavailable.
+The single `set_primary_checkout` event carries `{workspace_id, checkout_id}` and accepts only an existing checkout of that registered local Git project.
+Missing projects or checkouts, plain folders and remote registrations are refused with a diagnostic, without changing the selection or presenting an alert.
+The catalog projects `CheckoutSnapshot.is_primary` after assigning registration identities and adding Git worktrees; sorting and inactive folding consume that flag, and the web reads it for the house glyph rather than comparing paths.
+A change updates the accepted catalog immediately, so stale worker results cannot restore the old choice, then uses the existing coalesced off-lock UI save.
+An unchanged choice publishes and saves nothing; there is no additional worker, subprocess, timer or queue.
+Checkout fields remain in the hand-maintained `web/src/snapshot.ts` shape; the WebSocket frame generator does not generate this part of the core snapshot.
+SSH catalogs currently read Herdr and the device helper, not another hided core's registrations, so they retain the remote root default and do not synchronize a primary choice stored by another daemon.
 
 ## Project sessions and Memory
 
@@ -305,6 +322,7 @@ The daemon leads its own process group, so an interrupt to the terminal job or h
 It does not start a Herdr server.
 A release `hided` carries `web/dist` inside the binary (`hided/build.rs`); a debug build reads the directory from disk, so `pnpm build` shows up without a cargo rebuild.
 The core spawns `herdr terminal session control` for every pane attach and refuses without a binary, so `hided` resolves one from `HERDR_BIN_PATH`, the variable Herdr sets in every pane it manages, then from the first `herdr` on PATH; with neither it logs `herdr_bin.missing` and no pane terminal can attach.
+A `HERDR_BIN_PATH` that names nothing executable refuses the daemon before it binds, and `hide connect` refuses the same value as `start_failed` before spawning one: Herdr hands every pane the path its server started from, that path dies when the app bundle is replaced under a running server, and a daemon that came up on it would answer healthy and then fail every pane attach one by one (`env::herdr_bin_error`).
 The web shell holds no UI authority: it draws the snapshot, writes terminal chunks straight into xterm.js, and sends one event per operator action.
 With `probe=1` in the page URL it also installs `window.__hideProbe`, the only way to read the WebGL-drawn terminal from Playwright or a CDP driver; without the query the writer path is the plain `term.write`.
 
@@ -384,7 +402,8 @@ That projection is never saved: `core-state.json` keeps the right panel it held 
 A new Workspace starts with its panel closed on the Explorer with the column shown, so the panel toggle, ⌘⇧B or a file open shows it.
 The panel sits over the Agent area's right side (issue 170), `views_over_share` of the body's width (0.2..0.8): unpinned, the Agent area keeps its size underneath, so opening, closing, resizing or expanding the panel moves no PTY; `pinned` docks it, and the agents' terminals resize once to end at its left edge.
 Pinned is not a fourth state: it is stored beside `panel` and the width, and a pinned panel still closes, opens and expands.
-The last view leaving changes nothing the core stores; the web draws a panel with no view as the tool column alone or as the empty state.
+The last view leaving keeps the tool column alone when tools are enabled; otherwise the core closes and persists the panel in the same transition.
+Hiding the final tool column also closes the panel, so the panel content is views or tools, never empty.
 An entry stored before the panel, with S6's `mode` (and `agent_share`, `views_over_agents`) instead of `panel`, is read into the nearest state (`legacy_panel`): `agents` as closed, or open when its View areas floated over the agents; `together` as pinned open at `1 - agent_share`; `views` as expanded; the next save writes only the new keys, and the schema stays 2 because the change adds keys.
 
 Schema 2 of that file (PRD S7) stores each Workspace's View areas as a binary split tree (`layout`, rules in `herdr-core/src/view_layout.rs`).
@@ -411,6 +430,8 @@ A browser display binds to nothing (issue 155, [BROWSER_DISPLAYS.md](BROWSER_DIS
 `browser_state` records the address, title, and native load state a page reports, while `view_layout` `navigate` loads the operator's own address.
 UI `browser_open` receipts remain in `status.browser_opens`; pane CLI requests receive their own scoped action result.
 A load stamp (`load`, never saved) is how the core asks the desktop app to load a display's address again, and the address, capped at 8 KiB, holds only `http`, `https`, `file` or `about:blank`; loading repairs a stored display that breaks this to `about:blank`.
+A browser display with no `url` is the shell’s new-tab page, creates no native page, and is never deduplicated with another empty display.
+A file open captures the active empty display with its placement before reading; it replaces that exact display on success only while it is still empty, and a diff selection uses the same placement rule.
 A build from before browser displays reads a file that holds one as a file that does not parse, and so takes the unreadable path above: the file is renamed aside and the page starts on Main.
 
 A layout change is one `view_layout` event whose `action` says which: `focus` (a display becomes its area's active display, its area the active area, and its `last_focused` is stamped), `focus_area` (keyboard focus moving between areas), `move` (a display to an index in its own area, which reorders, or in another existing area, where a display of the same document gives way so no area holds one twice; either way the index is the display's final place, counted without that twin), `split` (a display into a new area at one `edge` of an area, taking half of it), `resize` (a split's ratio), `close`, `keep_open`, `retry` (an unavailable display's file read again) and `navigate` (a browser display's address).
@@ -455,8 +476,8 @@ The one viewport fact the core hears is `panel_covers`: whether the Workspace th
 The page sends it only when that fact differs from both the `workspace_view.covered` the core echoes and its own last report (`panelCoversToSend`), so a crossing is sent once and never per resize, and two pages that disagree each send once instead of undoing each other; the page forgets its last report when it draws another Workspace or its connection goes down, so a report the core dropped or never received goes again, and nothing is sent before the body is measured.
 While the Workspace screen is not drawn (All projects, an Overview) the page sends nothing and the core keeps the last fact until the front moves, so an agent of that Workspace chosen there is uncovered as it would be on screen; the cost is that a window widened meanwhile still closes that pinned panel once, and one narrowed meanwhile leaves the chosen agent under it.
 The core takes it only for the Workspace in front, so a report that crossed a move of the front changes nothing, holds it in memory (`WorkspaceViewStore::covered`, never in the file) and drops it when the front moves, so it only ever affects the panel of the Workspace it describes.
-What the panel draws is `panelFrame` in `web/src/workspace.ts`, from the core's entry and the body's width alone: the View areas while a view is open or a file of the checkout is opening, else the tool column alone at its own width, else the empty state; the core's single empty area stays as the layout's root.
-The Agent area is placed absolutely in the Workspace body and ends at the body's right edge, or at the panel's left edge while it is pinned; the panel is an absolutely placed sibling over it (`SidePanel` in `web/src/WorkspaceScreen.tsx`), so the Agent area stays mounted and live beside it and its terminals neither park nor resize, and `viewAreaInUse` routes a chord by where the keyboard is.
+What the panel draws is `panelFrame` in `web/src/workspace.ts`, from the core's entry and the body's width alone: the View areas while a view is open or a file of the checkout is opening, else the tool column alone at its own width, with neither rendered as a closed panel; the core's single empty area stays as the layout's root.
+The Agent area is placed absolutely in the Workspace body and ends at the body's right edge, or at the panel's left edge while it is pinned; the panel is an absolutely placed sibling over it (`SidePanel` in `web/src/WorkspaceScreen.tsx`), so the Agent area stays mounted and live beside it and its terminals neither park nor resize, and the page records the keyboard owner from focus and pointer events, including native page focus from the desktop host, to route a chord.
 The Agent area is its own stacking context, so nothing it raises draws over the panel, and it is inert while an expanded panel covers it.
 The panel's left edge drags a guide and sends one `views_over_share`, or `tools_share` for a panel holding only the tools, on release, so the panel itself does not move during a drag; a browser display's slot inside the panel reports its rect like any other, a resize that lands reaches the page through the slot's ResizeObserver, and closing the panel unmounts the slots, which hides their pages without closing them.
 The web also owns the pixel rule, because it has the geometry: an edge takes a drop, and a Split item or an Open to the side from the only area is enabled, only when the target area's size along the split axis is at least twice `--size-workspace-area-min` (a `row` split) or twice `--size-view-area-min-height` (a `column` split) plus the divider, and the split stays within `layout.limits`; the core owns the counts and the depth and refuses whatever passes them.
@@ -547,7 +568,7 @@ A snapshot section is declared there once the web reads it through the contract 
 
 The Explorer (`web/src/ExplorerTree.tsx`) and History (`web/src/HistoryList.tsx`) are the Workspace's two tools (`web/src/Tools.tsx`), one at a time in the side panel's tool column, shown while the front Workspace's `workspace_view` says so (see Workspaces in the web shell): the core owns which folders are expanded (`ui_state.expanded_paths`) and hided answers one listing per folder, so an Explorer row is a pure function of those, the checkout's changed-file set and the file's icon (`web/src/explorer.ts`, unit-tested without a browser).
 `@tanstack/react-virtual` lays out a 10,000-row folder; nothing in a row runs git or reads the disk (B16).
-The core computes a checkout's changed files only while Explorer or History is visible or a diff tab is active (in the web shell, any area's active display that is a diff), and the web renders only a Changes snapshot whose root matches the front checkout's `navigator.changes_root_path`.
+The core computes a checkout's changed files only while Explorer or History is visible or a diff or empty new tab is active (in the web shell, any area's active display that is a diff or empty browser), and the web renders only a Changes snapshot whose root matches the front checkout's `navigator.changes_root_path`.
 Each answer names the device and folder it was read for (`ChangesKey`); the core drops one that no longer matches the checkout in front, and moving to another device's checkout clears the published set in the same frame, so the same path on two devices never shows the other's changes (B22).
 An answer lands one pump wake after its request and also names the History row it was read for; in the web shell, an answer for a row the operator has left since publishes its lists and View diffs but keeps the row and the diff in front, because taking that row would make the next request ask for it again and two rows would alternate with a Git read and a frame on every wake while nothing is driven.
 History keeps the core's uncommitted and branch groups separate, and a row sends one `changes_select` event with its path, group and preview intent; it starts no Git read from render, scroll or click.
@@ -659,6 +680,9 @@ Signing with a real identity, notarization, auto-update, installers, a tray item
 
 `web/src/shortcuts.ts` is one table, command to chord per host, matched on `KeyboardEvent.code` at the window capture phase ahead of xterm and Chrome's defaults and never during IME composition (`web/src/keyboard.ts`).
 The `⌘/` sheet is generated from the table.
+The close chord uses the page's recorded keyboard owner: the focused View display first, otherwise the owned visible pane, with tools, absent or retired owners producing a diagnostic and no close.
+It never closes a whole tab; tab controls and their menus name that intent explicitly.
+The explicit Close pane command still closes the core's focused pane through the same confirmation path.
 ⌘F follows where the operator works: inside a View area it opens the document's find, anywhere else the focused terminal pane's find bar, even with an editor open beside it; Escape and × end the pane search and give the keyboard back to that pane.
 Settings > Shortcuts rebinds the seven pane commands (split right and down, zoom, close pane, larger, smaller and reset text) in the running host's own set.
 Each host keeps its set in the core apart from the other's, because the hosts reserve different keys: a browser's in `ui_state.browser_shortcut_bindings`, and the desktop app's in `ui_state.shortcut_bindings`, the macOS chord set, in the removed native app's text form (`command+shift+return`) and command names (`increase_text_size`), with `toggle_conversation` kept but never run here; a save that omits `browser_shortcut_bindings` keeps it.
@@ -676,7 +700,7 @@ The e2e covers each path alone (a Playwright chord, a main-process menu click, o
 | Command | macOS | Browser | Electron |
 | --- | --- | --- | --- |
 | New tab | ⌘T | ⌥T (moved: Chrome reserves ⌘T) | ⌘T |
-| Close tab | ⌘W | ⌥W (moved) | ⌘W |
+| Close focused View or pane | ⌘W | ⌥W (moved) | ⌘W |
 | Reopen closed tab | ⌘⇧T | ⌥⇧T (moved) | ⌘⇧T |
 | New workspace | ⌘⇧N | ⌥⇧N (moved) | ⌘⇧N |
 | Next / previous recent panel (Recent Panels) | ⌃Tab / ⌃⇧Tab | ⌥` / ⌥⇧` (moved) | ⌃Tab / ⌃⇧Tab, committed on releasing ⌃ |
@@ -686,7 +710,7 @@ The e2e covers each path alone (a Playwright chord, a main-process menu click, o
 | Save file | ⌘S | ⌘S | ⌘S |
 | Toggle left sidebar, Toggle side panel, Find in pane, Keep open | ⌘B, ⌘⇧B, ⌘F, ⌘⇧K | same chords | same chords |
 | Toggle sidebar view | ⌘E | none by default; bindable in Settings | none by default; bindable in Settings, kept in the macOS set |
-| Toggle Explorer | - | ⌘E | ⌘E |
+| Toggle tools | - | ⌘E | ⌘E |
 | Split right / down | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D |
 | Zoom pane | ⌘⌥↩ | ⌘⌥↩ | ⌘⌥↩ |
 | Close pane | ⌘⇧W | ⌥⇧W (moved: Chrome reserves ⌘⇧W) | ⌘⇧W |

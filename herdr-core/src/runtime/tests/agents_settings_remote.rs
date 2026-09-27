@@ -114,6 +114,8 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
     );
     remote_checkout.tabs[0].id = Some(active_tab_id.to_owned());
     remote_checkout.tabs.push(TabSnapshot {
+        agent: None,
+        naming: Default::default(),
         id: Some(inactive_tab_id.to_owned()),
         workspace_id: Some(workspace_id.to_owned()),
         checkout_id: Some(checkout_id.to_owned()),
@@ -983,6 +985,7 @@ fn read_record_is_released_and_not_raised_by_a_checkout_switch() {
     }
     runtime.snapshot.ui_state.workspace_registrations = vec![
         WorkspaceRegistration {
+            primary_checkout_id: None,
             id: "workspace:a".to_owned(),
             label: "a".to_owned(),
             path: root_a.clone(),
@@ -990,6 +993,7 @@ fn read_record_is_released_and_not_raised_by_a_checkout_switch() {
             pinned: false,
         },
         WorkspaceRegistration {
+            primary_checkout_id: None,
             id: "workspace:b".to_owned(),
             label: "b".to_owned(),
             path: root_b.clone(),
@@ -1123,6 +1127,7 @@ fn a_remote_pane_left_in_the_selection_does_not_block_local_projection() {
     let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
     let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
     let registration = WorkspaceRegistration {
+        primary_checkout_id: None,
         id: workspace_id.clone(),
         label: "Remote selection leak".to_owned(),
         path: checkout_path.to_owned(),
@@ -1461,6 +1466,8 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
             )],
         );
         remote_workspace.checkouts[0].tabs = vec![TabSnapshot {
+            agent: None,
+            naming: Default::default(),
             id: Some("remote:tab".to_owned()),
             workspace_id: Some("remote:ws".to_owned()),
             checkout_id: Some("remote:checkout".to_owned()),
@@ -1646,6 +1653,7 @@ fn read_record_reaches_the_pane_tree_and_not_only_the_agent_rows() {
     };
     let checkout_path = "/private/tmp/hide-read-record-pane-tree";
     runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
+        primary_checkout_id: None,
         id: "workspace:read-record".to_owned(),
         label: "read-record".to_owned(),
         path: checkout_path.to_owned(),

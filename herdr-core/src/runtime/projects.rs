@@ -132,6 +132,7 @@ impl Runtime {
             && !section_visible(RightPanelSection::Explorer)
             && self.active_diff_tab().is_none()
             && self.visible_view_diffs().is_empty()
+            && !self.new_tab_visible()
         {
             return None;
         }
@@ -965,6 +966,83 @@ impl Runtime {
         {
             self.ingest_worktree_close_result(id, &[], Err(message));
         }
+        true
+    }
+
+    /// One local registration choice; no filesystem or Herdr work under the lock.
+    pub(super) fn set_primary_checkout(&mut self, payload: SetPrimaryCheckoutPayload) -> bool {
+        let registration_index = self
+            .snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .position(|row| row.id == payload.workspace_id);
+        let project = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|row| row.id == payload.workspace_id);
+        let refusal = match (registration_index, project) {
+            (Some(index), _)
+                if self.snapshot.ui_state.workspace_registrations[index].device_id
+                    != workspace::LOCAL_DEVICE_ID =>
+            {
+                Some("remote_read_only")
+            }
+            (None, _) => Some("unregistered"),
+            (_, None) => Some("missing_workspace"),
+            (_, Some(project)) if !project.is_git => Some("plain_folder"),
+            (_, Some(project))
+                if !project
+                    .checkouts
+                    .iter()
+                    .any(|checkout| checkout.id == payload.checkout_id && checkout.exists) =>
+            {
+                Some("missing_checkout")
+            }
+            _ => None,
+        };
+        if let Some(reason) = refusal {
+            self.push_diagnostic(
+                format!("workspace.primary_{reason}"),
+                format!(
+                    "Project {} checkout {}",
+                    payload.workspace_id, payload.checkout_id
+                ),
+            );
+            return true;
+        }
+        if project.is_some_and(|project| {
+            project
+                .checkouts
+                .iter()
+                .any(|checkout| checkout.id == payload.checkout_id && checkout.is_primary)
+        }) {
+            return false;
+        }
+        let registration = &mut self.snapshot.ui_state.workspace_registrations
+            [registration_index.expect("validated registration")];
+        if registration.primary_checkout_id.as_ref() == Some(&payload.checkout_id) {
+            return false;
+        }
+        registration.primary_checkout_id = Some(payload.checkout_id.clone());
+        for project in self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter_mut()
+            .chain(self.last_accepted_catalog.iter_mut().flatten())
+            .filter(|project| project.id == payload.workspace_id)
+        {
+            workspace::apply_primary_checkout(project, Some(&payload.checkout_id));
+        }
+        crate::project_context::sort_projects(
+            &mut self.snapshot.navigator.workspaces,
+            &self.snapshot.navigator.agents,
+        );
+        self.refresh_inactive_groups();
+        self.persist_ui_state();
         true
     }
 

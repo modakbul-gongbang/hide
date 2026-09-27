@@ -43,6 +43,8 @@ pub struct SessionWorkspacePayload {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionTabPayload {
+    #[serde(default)]
+    pub number: u32,
     pub tab_id: String,
     #[serde(default)]
     pub workspace_id: String,
@@ -132,6 +134,8 @@ pub struct SessionAgentSessionPayload {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionPanePayload {
+    #[serde(default)]
+    pub foreground_process: Option<String>,
     pub pane_id: String,
     #[serde(default)]
     pub tokens: BTreeMap<String, Value>,
@@ -1770,6 +1774,8 @@ mod tests {
         let checkout = |id: &str, panes: &[&str]| CheckoutSnapshot {
             id: id.to_owned(),
             tabs: vec![TabSnapshot {
+                agent: None,
+                naming: Default::default(),
                 panes: panes
                     .iter()
                     .map(|id| PaneSnapshot {

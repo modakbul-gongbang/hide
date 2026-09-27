@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { AgentRow, Checkout, StripTab, Tab } from "./snapshot";
-import { agentEntries, panelCoversToSend, panelFrame, panelShareAt, tabAgent, tabIdentity, type WorkspaceView } from "./workspace";
+import type { Checkout, StripTab } from "./snapshot";
+import { agentEntries, panelCoversToSend, panelFrame, panelShareAt, type WorkspaceView } from "./workspace";
 
 const strip: StripTab[] = [
   { id: "herdr:1", kind: "herdr", source_id: "t1", label: "1", preview: false },
@@ -11,30 +11,9 @@ const strip: StripTab[] = [
 
 const checkout = { id: "c1", strip, tabs: [], active_tab_id: "t1" } as unknown as Checkout;
 
-function agent(pane: string, kind: string): AgentRow {
-  return { id: pane, pane_id: pane, identity_label: `task ${pane}`, agent_kind: kind, symbol: "●", group: "working", status_label: "Working", elapsed: "1m", emphasized: false, unread: false };
-}
-
 describe("the Workspace strips", () => {
   it("takes the Agent tabs from the core strip in the core's order", () => {
     expect(agentEntries(checkout).map((entry) => entry.source_id)).toEqual(["t1", "t2"]);
-  });
-});
-
-describe("tab identity", () => {
-  const tab = { id: "t1", panes: [{ id: "p1" }, { id: "p2" }] } as unknown as Tab;
-
-  it("marks a Herdr tab with the focused pane's agent, else the first agent, else none", () => {
-    const agents = [agent("p1", "codex"), agent("p2", "claude")];
-    expect(tabAgent(tab, agents, "p2")?.agent_kind).toBe("claude");
-    expect(tabAgent(tab, agents, "elsewhere")?.agent_kind).toBe("codex");
-    expect(tabAgent(tab, [], "p1")).toBeNull();
-  });
-
-  it("names the kind and the full identity without replacing Herdr's tab name", () => {
-    const entry = strip[0]!;
-    expect(tabIdentity(entry, agent("p1", "codex"))).toBe("codex agent tab 1 · task p1 · Working");
-    expect(tabIdentity(entry, null)).toBe("Terminal tab 1");
   });
 });
 
@@ -54,12 +33,12 @@ describe("the side panel", () => {
     expect(frame("expanded", true, 1400, { pinned: true })).toMatchObject({ width: 1400, agentsRight: 840 });
   });
 
-  it("is only as wide as the tool column while no view is open, and says nothing is open only without a tool", () => {
+  it("is only as wide as the tool column while no view is open, and closes when neither views nor tools remain", () => {
     expect(frame("open", false, 1400)).toMatchObject({ content: "tools", width: 260, resize: "tools_share", need: 260 });
     expect(frame("expanded", false, 1400)).toMatchObject({ shown: "open", content: "tools", width: 260 });
-    expect(frame("open", false, 1400, { tools: false })).toMatchObject({ content: "empty", width: 840, resize: "views_over_share" });
-    // Only views expand, so the empty state never covers the agents.
-    expect(frame("expanded", false, 1400, { tools: false })).toMatchObject({ shown: "open", content: "empty", width: 840 });
+    expect(frame("open", false, 1400, { tools: false })).toMatchObject({ shown: "closed", width: 0, agentsRight: 0, resize: null });
+    // No empty surface, even when the previous panel was expanded.
+    expect(frame("expanded", false, 1400, { tools: false })).toMatchObject({ shown: "closed", width: 0, agentsRight: 0 });
   });
 
   it("resizes the tools-only panel to a width of its own, never under the tool column or over the agents' minimum", () => {

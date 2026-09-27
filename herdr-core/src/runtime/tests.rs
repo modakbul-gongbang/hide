@@ -477,6 +477,17 @@ fn pane(id: &str, cwd: &str) -> PaneSnapshot {
 
 fn tab(workspace_id: &str, checkout_id: &str, pane: Option<PaneSnapshot>) -> TabSnapshot {
     TabSnapshot {
+        agent: None,
+        naming: crate::model::TabNaming {
+            focused_pane_id: pane
+                .as_ref()
+                .map(|pane| pane.id.clone())
+                .unwrap_or_default(),
+            number: 1,
+            raw: "Session".into(),
+            automatic: "Tab 1".into(),
+            ..Default::default()
+        },
         id: Some(format!("{checkout_id}:tab")),
         workspace_id: Some(workspace_id.to_owned()),
         checkout_id: Some(checkout_id.to_owned()),
@@ -559,7 +570,8 @@ fn tab_order_payload(
         .iter()
         .map(|tab_id| {
             serde_json::json!({
-                "workspace_id": "w-order", "tab_id": tab_id, "label": ""
+                "workspace_id": "w-order", "tab_id": tab_id, "label": "",
+                "number": tab_id.rsplit(":t").next().and_then(|n| n.parse::<u32>().ok()).unwrap_or(1)
             })
         })
         .collect::<Vec<_>>();
@@ -665,6 +677,7 @@ fn split_checkout_payload(
 fn tab_order_runtime(checkout_path: &str) -> (Runtime, String) {
     let mut runtime = runtime();
     runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
+        primary_checkout_id: None,
         id: "workspace:order".to_owned(),
         label: "order".to_owned(),
         path: checkout_path.to_owned(),
@@ -933,7 +946,8 @@ fn split_workspace_payload(
     let tabs = tab_order
         .iter()
         .map(|(tab_id, _)| {
-            serde_json::json!({"workspace_id": "w-order", "tab_id": tab_id, "label": ""})
+            serde_json::json!({"workspace_id": "w-order", "tab_id": tab_id, "label": "",
+                "number": tab_id.rsplit(":t").next().and_then(|n| n.parse::<u32>().ok()).unwrap_or(1)})
         })
         .collect::<Vec<_>>();
     let panes = tab_order
@@ -1046,6 +1060,7 @@ fn reveal_runtime() -> (Runtime, PathBuf, String, PathBuf, String) {
         .iter()
         .enumerate()
         .map(|(index, path)| WorkspaceRegistration {
+            primary_checkout_id: None,
             id: format!("workspace:{index}"),
             label: format!("workspace {index}"),
             path: path.to_string_lossy().into_owned(),
@@ -1103,6 +1118,7 @@ fn explorer_runtime() -> (Runtime, PathBuf) {
 /// way a click on it in the sidebar leaves the navigator.
 fn focus_local_checkout(runtime: &mut Runtime, root: &Path) {
     runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
+        primary_checkout_id: None,
         id: "workspace:0".to_owned(),
         label: "workspace 0".to_owned(),
         path: root.to_string_lossy().into_owned(),

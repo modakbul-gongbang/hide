@@ -44,8 +44,6 @@ import {
   type ViewWorkspace,
 } from "./viewLayout";
 import { workspaceViewOf } from "./workspace";
-import { hostKind } from "./host";
-import { displayCommand } from "./shortcuts";
 
 // The View areas (PRD S7 B1-B13, B20; contract 3 and 6): the front
 // Workspace's tree of areas as the core published it, drawn as nested flex
@@ -105,7 +103,7 @@ function useTree(): Tree {
 /**
  * The front Workspace's View areas, in the side panel. With no display they
  * are drawn only while a file of this checkout is opening; otherwise the
- * panel holds its tools or its empty state (`panelFrame`). `trailing` is what
+ * panel holds its tools or closes (`panelFrame`). `trailing` is what
  * the panel's strip carries at its right end when no tool column is there to
  * carry it.
  */
@@ -535,11 +533,13 @@ function DisplayBody({ display }: { display: ViewDisplaySnapshot }) {
 
 /**
  * An area's own tab bar; only the active area's shown tab carries the accent
- * indicator (B1, B20). Its New tab follows the tabs and opens the file
- * palette into this area (issue 170).
+ * indicator (B1, B20). New tab opens an empty browser display in this area.
  */
 function AreaTabBar({ area, active, index, count, switcher }: { area: ViewAreaSnapshot; active: boolean; index: number; count: number; switcher: boolean }) {
   const tree = useTree();
+  const newTab = () => tree.actions.openBrowser("", tree.workspace, area.id);
+  const menu = (id: string): MenuEntry<ViewMenuId | "new_tab">[] => [{ id: "new_tab", label: "New tab", unavailable: null }, ...tree.menu(id)];
+  const selectMenu = (id: ViewMenuId | "new_tab", displayId: string) => id === "new_tab" ? newTab() : tree.actions.runViewMenu(id, displayId);
   const shown = area.displays.find((row) => row.id === area.active) ?? null;
   // The shown view's tab stays in sight however many tabs the area holds
   // (B20, B21): the strip scrolls itself, and nothing around it, whenever
@@ -566,8 +566,8 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: ViewAreaSn
           <EntryContextMenu
             key={display.id}
             label={`${display.label} view actions`}
-            items={() => tree.menu(display.id)}
-            onSelect={(id) => tree.actions.runViewMenu(id, display.id)}
+            items={() => menu(display.id)}
+            onSelect={(id) => selectMenu(id, display.id)}
             className="flex shrink-0"
             data-tab-menu={display.id}
           >
@@ -575,17 +575,13 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: ViewAreaSn
           </EntryContextMenu>
         ))}
       </div>
-      <Hint label="New tab: open a file" shortcut={displayCommand("open_file", hostKind())}>
+      <Hint label="New tab">
         <button
           type="button"
-          aria-label="New tab: open a file"
+          aria-label="New tab"
           data-view-new-tab={area.id}
           className="flex min-w-[var(--size-tab-overflow-control)] shrink-0 items-center justify-center text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent"
-          onClick={() => {
-            // The palette opens into the active area, so this one becomes it first.
-            if (tree.layout.active_area !== area.id) tree.actions.focusViewArea(area.id);
-            tree.actions.openFilePalette();
-          }}
+          onClick={newTab}
         >
           <PlusIcon className="size-(--size-icon)" />
         </button>
@@ -596,8 +592,8 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: ViewAreaSn
         <EntryDropdown
           label={`View actions: ${shown.label}`}
           hint={`View actions: ${shown.label}`}
-          items={tree.menu(shown.id)}
-          onSelect={(id) => tree.actions.runViewMenu(id, shown.id)}
+          items={menu(shown.id)}
+          onSelect={(id) => selectMenu(id, shown.id)}
           trigger={
             <button
               type="button"

@@ -28,7 +28,7 @@ export const REVEALED_CONTROL =
  * the chevrons of the whole list stand in one column each (D-3).
  */
 export function FoldLane() {
-  return <span aria-hidden="true" className="w-(--size-lineage-chevron) shrink-0" />;
+  return <span aria-hidden="true" data-fold-slot="true" className="w-(--size-lineage-chevron) shrink-0" />;
 }
 
 /**

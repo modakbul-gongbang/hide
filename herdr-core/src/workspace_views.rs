@@ -248,6 +248,15 @@ impl WorkspaceView {
         self.device_id == device_id && self.path == path
     }
 
+    /// No empty panel surface: losing the last view without tools closes it.
+    pub(crate) fn close_empty_panel(&mut self) -> bool {
+        if self.panel.is_shown() && !self.tools && self.layout.displays().next().is_none() {
+            self.panel = PanelState::Closed;
+            return true;
+        }
+        false
+    }
+
     /// Whether the View areas are on screen: the panel that holds them shows.
     pub fn shows_views(&self) -> bool {
         self.panel.is_shown()
