@@ -47,7 +47,7 @@ test("native tab composition and Korean inline naming", async () => {
       execFileSync("/usr/sbin/screencapture", ["-x", "-o", "-l", candidate.source.split(":")[1]!, path.join(dir, "tab-names-native.png")]);
       fs.writeFileSync(path.join(dir, "tab-names-native.json"), JSON.stringify({ ...candidate, build: "worktree desktop/dist", isolated: true, occludedPainting: true }));
       for (const theme of ["light", "dark"] as const) {
-        await page.keyboard.press("Alt+Comma");
+        await page.locator("[data-open-settings]").click();
         await expect(page.locator('[data-settings="true"]')).toBeVisible();
         await page.locator('[data-settings-tab="appearance"]').click();
         await page.locator(`[data-theme-option="${theme}"]`).click();
