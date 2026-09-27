@@ -100,6 +100,77 @@ fn event(kind: &str, data: Value) -> ReplicaEvent {
 }
 
 #[test]
+fn creation_focus_pairing_survives_bootstrap_and_blocked_publication() {
+    for bootstrap in [false, true] {
+        for explicit_before_layout in [false, true] {
+            let created = two_tab_snapshot();
+            let mut replica = SessionReplica::from_snapshot(&if bootstrap {
+                created.clone()
+            } else {
+                snapshot()
+            })
+            .unwrap();
+            let mut tab = created["tabs"][1].clone();
+            tab["focused"] = json!(true);
+            replica
+                .apply(
+                    event("tab_created", json!({"type":"tab_created","tab":tab})),
+                    if bootstrap {
+                        ApplyMode::Reconcile
+                    } else {
+                        ApplyMode::Strict
+                    },
+                )
+                .unwrap();
+            let focus = || {
+                event(
+                    "tab_focused",
+                    json!({"type":"tab_focused","workspace_id":"w1","tab_id":"w1:t2"}),
+                )
+            };
+            replica.apply(focus(), ApplyMode::Strict).unwrap();
+            if explicit_before_layout {
+                replica.apply(focus(), ApplyMode::Strict).unwrap();
+            }
+            if !bootstrap {
+                assert!(
+                    replica.project().tab_focus.is_none(),
+                    "blocked membership keeps its old focus provenance"
+                );
+                replica
+                    .apply(
+                        event(
+                            "pane_created",
+                            json!({"type":"pane_created","pane":created["panes"][1]}),
+                        ),
+                        ApplyMode::Strict,
+                    )
+                    .unwrap();
+                replica
+                    .apply(
+                        event(
+                            "layout_updated",
+                            json!({"type":"layout_updated","layout":created["layouts"][1]}),
+                        ),
+                        ApplyMode::Strict,
+                    )
+                    .unwrap();
+            }
+            let before = replica.project().tab_focus.unwrap();
+            assert_eq!(before.creation, !explicit_before_layout);
+            assert_eq!(before.tab_id, "w1:t2");
+            assert!(
+                replica.apply(focus(), ApplyMode::Strict).unwrap().publish,
+                "an explicit same-tab focus must publish its new intent"
+            );
+            let after = replica.project().tab_focus.unwrap();
+            assert!(!after.creation);
+            assert!(after.revision > before.revision);
+        }
+    }
+}
+
+#[test]
 fn creation_focus_is_published_with_membership_before_its_later_focus_event() {
     for focused_at_creation in [false, true] {
         let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
@@ -160,6 +231,10 @@ fn creation_focus_is_published_with_membership_before_its_later_focus_event() {
             )
             .expect("later pane focus");
         let after = replica.project();
+        assert_eq!(
+            after.tab_focus.as_ref().unwrap().creation,
+            focused_at_creation
+        );
         assert_eq!(after.workspaces[0].active_tab_id.as_deref(), Some("w1:t2"));
         assert_eq!(
             before.workspaces[0].active_tab_id == after.workspaces[0].active_tab_id,

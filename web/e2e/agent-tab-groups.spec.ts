@@ -243,9 +243,9 @@ test("An external focused creation joins a bar without replacing either shown ca
     await expect.poll(async () => (await shape(page)).map(({ id, active, shown }) => ({ id, active, shown }))).toEqual(before);
     await page.waitForTimeout(1500);
     expect((await shape(page)).map(({ id, active, shown }) => ({ id, active, shown }))).toEqual(before);
-    // A genuinely later external focus still selects a known tab (B21).
-    herdr.run(["tab", "focus", second.result.tab.tab_id]);
-    await page.waitForTimeout(300);
+    // A genuinely later external focus still selects a known tab.
+    // Herdr is already on this tab: event identity must still make this a
+    // fresh intent, without first focusing another tab as a workaround.
     herdr.run(["tab", "focus", external.result.tab.tab_id]);
     await expect(tab(page, external.result.tab.tab_id)).toHaveAttribute("aria-selected", "true");
     await expect(page.locator(`[data-canvas="${external.result.tab.tab_id}"]`)).toBeVisible();

@@ -430,6 +430,7 @@ struct HerdrTabView {
     workspace_by_tab: BTreeMap<String, String>,
     /// The active tab of Herdr's focused workspace.
     focused_tab_id: Option<String>,
+    focus_event: Option<crate::sidebar::SessionTabFocus>,
 }
 
 impl HerdrTabView {
@@ -481,6 +482,10 @@ impl HerdrTabView {
             .and_then(|workspace_id| active_tab_by_workspace.get(workspace_id))
             .cloned();
         Self {
+            focus_event: payload.tab_focus.clone().filter(|event| {
+                focused_tab_id.as_ref() == Some(&event.tab_id)
+                    && focused_workspace_id.as_ref() == Some(&event.workspace_id)
+            }),
             active_tab_by_workspace,
             workspace_by_tab,
             focused_tab_id,
@@ -1154,6 +1159,7 @@ pub struct Runtime {
     /// Hide's, as it does after a notification Herdr never answered, is not
     /// an operator action and is not followed.
     herdr_focused_tab_seen: Option<String>,
+    herdr_tab_focus_seen: Option<crate::sidebar::SessionTabFocus>,
     /// The pane focus Hide has told Herdr about and is still waiting to see
     /// confirmed.
     pending_pane_focus: Option<PendingViewFocus>,
@@ -1508,6 +1514,7 @@ impl Runtime {
             visible_tab_ids: BTreeMap::new(),
             pending_tab_focus: None,
             herdr_focused_tab_seen: None,
+            herdr_tab_focus_seen: None,
             pending_pane_focus: None,
             herdr_active_tab_ids: BTreeSet::new(),
             pet_unseen_observed: std::collections::BTreeMap::new(),

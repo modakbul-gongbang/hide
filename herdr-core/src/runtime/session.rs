@@ -1011,11 +1011,15 @@ impl Runtime {
         let mut followed: Vec<(String, String, String)> = Vec::new();
         let mut follow_pane: Option<String> = None;
         let mut confirmed_pending = false;
-        // Herdr's focus moved since the last update. Only then is its focused
-        // tab an action to follow; an unchanged focus that differs from
-        // Hide's tab is the state a timed-out notification leaves behind, and
-        // Hide keeps its value through that.
-        let herdr_focus_moved = herdr.focused_tab_id != self.herdr_focused_tab_seen;
+        // A changed value or a new focus event is an action to follow. Repeated
+        // projections of the same event are only state; a later explicit focus
+        // on the same Herdr tab still carries a fresh intent after creation.
+        let herdr_focus_moved = herdr.focused_tab_id != self.herdr_focused_tab_seen
+            || herdr
+                .focus_event
+                .as_ref()
+                .is_some_and(|event| self.herdr_tab_focus_seen.as_ref() != Some(event));
+        self.herdr_tab_focus_seen = herdr.focus_event.clone();
         self.herdr_focused_tab_seen = herdr.focused_tab_id.clone();
         let selected_pane_id = self.snapshot.terminal.pane_id.clone();
         // The catalog is rebuilt whole on every pass, so a checkout absent
@@ -1165,22 +1169,23 @@ impl Runtime {
                         restored_agent_tab.is_none()
                             && herdr_focus_moved
                             && has_tab(tab_id)
-                            // A newly observed external tab joins the strip without
-                            // stealing the canvas. A later focus of that known tab
-                            // is still an action to follow; Hide creates carry a claim.
+                            // Creation provenance keeps external admissions from
+                            // stealing the canvas. Snapshots without event metadata
+                            // use first membership; local creates carry a claim.
                             && (workspace.device_id != workspace::LOCAL_DEVICE_ID
                                 || self.workspace_views.is_none()
                                 || self.pending_tab_focus.as_ref().is_some_and(|pending| {
                                     pending.target_id == *tab_id
                                 })
-                                || self.snapshot.navigator.workspaces.iter().any(|previous| {
+                                || (herdr.focus_event.as_ref().is_some_and(|event| !event.creation))
+                                || (herdr.focus_event.is_none() && self.snapshot.navigator.workspaces.iter().any(|previous| {
                                     previous.checkouts.iter().any(|previous| {
                                         previous.id == checkout.id
                                             && previous.tabs.iter().any(|tab| {
                                                 tab.id.as_deref() == Some(*tab_id)
                                             })
                                     })
-                                }))
+                                })))
                     })
                     .map(str::to_owned);
                 let pending_tab = self

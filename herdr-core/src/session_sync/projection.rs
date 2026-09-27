@@ -60,6 +60,7 @@ pub(crate) struct ProjectedAgent {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ProjectionState {
+    pub(crate) tab_focus: Option<crate::sidebar::SessionTabFocus>,
     pub(crate) focused_pane_id: Option<String>,
     /// Herdr's focused workspace, read from `session.snapshot` and kept
     /// current from the focus events. A `tab_focused` or `pane_focused` in
@@ -156,6 +157,7 @@ impl ProjectionState {
             })
             .collect();
         SessionSnapshotPayload {
+            tab_focus: self.tab_focus.clone(),
             focused_pane_id: self.focused_pane_id.clone(),
             focused_workspace_id: self.focused_workspace_id.clone(),
             tabs,

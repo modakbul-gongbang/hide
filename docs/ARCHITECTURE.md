@@ -416,6 +416,10 @@ Hiding the final tool column also closes the panel, so the panel content is view
 An entry stored before the panel, with S6's `mode` (and `agent_share`, `views_over_agents`) instead of `panel`, is read into the nearest state (`legacy_panel`): `agents` as closed, or open when its View areas floated over the agents; `together` as pinned open at `1 - agent_share`; `views` as expanded; the next save writes only the new keys, and the schema stays 2 because the change adds keys.
 
 The same schema-2 entry adds a defaulted `agent_layout` key for local Agent areas.
+Externally created tabs join the active area's bar without replacing a shown canvas, including when creation focuses the new tab in Herdr.
+The replica carries the creation cause and a focus-event revision with the authoritative workspace focus, including during partial publication and bootstrap replay.
+One pending creation pairing per live tab is consumed by its first `tab_focused` event; a later explicit focus, even on that same tab, gets a new revision and is followed.
+This metadata remains inside the core projection, adds no terminal-output work, and is removed with its tab; local New and Reopen intents retain their existing focus claim.
 Agent admission counts the shared 64-item limit together with pending creates, placements, reopen and replacement-close effects.
 Request-specific claims reserve slots before the worker starts; reconciliation places acknowledged local effects before external arrivals and does not expire uncertain claims by time.
 An ambiguous local create gets one bounded marker lookup outside the runtime lock, without another mutation; an unresolved claim remains charged for that runtime session.

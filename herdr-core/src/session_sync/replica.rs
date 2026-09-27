@@ -11,6 +11,9 @@ pub(crate) struct SessionReplica {
     /// a different workspace still waits for its layout or replacement focus.
     pub(crate) published_state: ProjectionState,
     pub(crate) pending_layouts: BTreeSet<String>,
+    /// At most one pairing per live tab; consumed when its creation focus event
+    /// is applied, even when that workspace cannot publish its layout yet.
+    pending_creation_focuses: BTreeSet<String>,
     pub(crate) pending_workspace_closures: BTreeSet<String>,
     pub(crate) pending_active_tab_focuses: BTreeSet<String>,
     /// How many events this replica has applied since its snapshot. Herdr's
@@ -69,6 +72,7 @@ impl SessionReplica {
             published_state: state.clone(),
             state,
             pending_layouts: BTreeSet::new(),
+            pending_creation_focuses: BTreeSet::new(),
             pending_workspace_closures: BTreeSet::new(),
             pending_active_tab_focuses: BTreeSet::new(),
             applied_events: 0,
@@ -171,9 +175,16 @@ impl SessionReplica {
 
     fn partial_published_state(&self) -> ProjectionState {
         let blocked = self.pending_workspace_ids();
+        let focused_workspace_id = self.focused_workspace_for_partial_publish(&blocked);
+        let tab_focus = match self.state.focused_workspace_id.as_ref() {
+            Some(workspace) if !blocked.contains(workspace) => self.state.tab_focus.clone(),
+            _ => self.published_state.tab_focus.clone(),
+        }
+        .filter(|focus| focused_workspace_id.as_ref() == Some(&focus.workspace_id));
         ProjectionState {
+            tab_focus,
             focused_pane_id: self.focused_pane_for_partial_publish(&blocked),
-            focused_workspace_id: self.focused_workspace_for_partial_publish(&blocked),
+            focused_workspace_id,
             workspaces: Self::merge_by_workspace(
                 &self.state.workspaces,
                 &self.published_state.workspaces,
@@ -631,7 +642,7 @@ impl SessionReplica {
                 | ReplicaEvent::WorktreeOpened { .. }
                 | ReplicaEvent::WorktreeRemoved { .. }
         );
-        let refresh_agents = match (candidate.apply_new_event(event), mode) {
+        let refresh_agents = match (candidate.apply_new_event(event, mode), mode) {
             (Ok(refresh_agents), _) => refresh_agents,
             (Err(SessionFetchError::Malformed(detail)), ApplyMode::Reconcile) => {
                 crate::diagnostic!(json!({
@@ -658,7 +669,11 @@ impl SessionReplica {
         })
     }
 
-    fn apply_new_event(&mut self, data: ReplicaEvent) -> Result<bool, SessionFetchError> {
+    fn apply_new_event(
+        &mut self,
+        data: ReplicaEvent,
+        mode: ApplyMode,
+    ) -> Result<bool, SessionFetchError> {
         match data {
             ReplicaEvent::WorkspaceCreated {
                 workspace: input_workspace,
@@ -832,6 +847,19 @@ impl SessionReplica {
                     .iter()
                     .any(|tab| tab.tab_id == input_tab.tab_id)
                 {
+                    if mode == ApplyMode::Reconcile
+                        && self.state.tabs.iter().any(|tab| {
+                            tab.tab_id == input_tab.tab_id
+                                && tab.workspace_id == input_tab.workspace_id
+                        })
+                    {
+                        // Bootstrap already holds this topology. Preserve only
+                        // the buffered event's cause, without rewinding the snapshot.
+                        if focused {
+                            self.record_creation_focus(&input_tab);
+                        }
+                        return Ok(false);
+                    }
                     return Err(malformed_event(event, "created tab already exists"));
                 }
                 // Creation already reports its focus. Publish it with membership,
@@ -848,6 +876,7 @@ impl SessionReplica {
                     self.state.focused_workspace_id = Some(input_tab.workspace_id.clone());
                     self.pending_active_tab_focuses
                         .remove(&input_tab.workspace_id);
+                    self.record_creation_focus(&input_tab);
                 }
                 self.pending_layouts.insert(input_tab.tab_id.clone());
                 self.state.tabs.push(input_tab);
@@ -964,7 +993,13 @@ impl SessionReplica {
                         "focused tab belongs to another workspace",
                     ));
                 }
-                workspace.active_tab_id = input_tab_id;
+                workspace.active_tab_id = input_tab_id.clone();
+                self.state.tab_focus = Some(crate::sidebar::SessionTabFocus {
+                    workspace_id: input_workspace_id.clone(),
+                    creation: self.pending_creation_focuses.remove(&input_tab_id),
+                    tab_id: input_tab_id,
+                    revision: self.applied_events.saturating_add(1),
+                });
                 self.state.focused_workspace_id = Some(input_workspace_id.clone());
                 self.pending_active_tab_focuses.remove(&input_workspace_id);
             }
@@ -1259,7 +1294,33 @@ impl SessionReplica {
         self.clear_missing_focus();
     }
 
+    fn record_creation_focus(&mut self, tab: &ProjectedTab) {
+        self.pending_creation_focuses.insert(tab.tab_id.clone());
+        if self.state.focused_workspace_id.as_ref() == Some(&tab.workspace_id)
+            && self.state.workspaces.iter().any(|workspace| {
+                workspace.workspace_id == tab.workspace_id && workspace.active_tab_id == tab.tab_id
+            })
+        {
+            self.state.tab_focus = Some(crate::sidebar::SessionTabFocus {
+                workspace_id: tab.workspace_id.clone(),
+                tab_id: tab.tab_id.clone(),
+                revision: self.applied_events.saturating_add(1),
+                creation: true,
+            });
+        }
+    }
+
     fn clear_missing_focus(&mut self) {
+        self.pending_creation_focuses
+            .retain(|id| self.state.tabs.iter().any(|tab| &tab.tab_id == id));
+        if self
+            .state
+            .tab_focus
+            .as_ref()
+            .is_some_and(|focus| !self.state.tabs.iter().any(|tab| tab.tab_id == focus.tab_id))
+        {
+            self.state.tab_focus = None;
+        }
         if self
             .state
             .focused_pane_id
