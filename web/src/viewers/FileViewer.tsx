@@ -59,7 +59,7 @@ function VideoView({ path }: { path: string }) {
   if (playbackFailed) return <ViewerNotice state="video-codec" reason="This video cannot be played in the browser." />;
   if (!url) return <ViewerNotice state="video-loading" reason="Loading video…" />;
   return (
-    <div className="flex min-h-0 flex-1 items-center justify-center bg-background p-lg" data-viewer="video">
+    <div className="flex min-h-0 flex-1 items-center justify-center p-lg" data-viewer="video">
       <video
         src={url}
         controls
@@ -122,5 +122,5 @@ function PdfView({ path }: { path: string }) {
   if (state.status === "failed") return <ViewerNotice state="pdf-failed" reason={`PDF unavailable: ${state.reason}`} />;
   if (failure) return <ViewerNotice state="pdf-render" reason={failure} />;
   if (state.status !== "ready") return <ViewerNotice state="pdf-loading" reason="Loading PDF…" />;
-  return <div ref={host} className="min-h-0 flex-1 overflow-auto bg-background p-lg" data-viewer="pdf" />;
+  return <div ref={host} className="min-h-0 flex-1 overflow-auto p-lg" data-viewer="pdf" />;
 }

@@ -638,7 +638,7 @@ function DisplayTab({ display, selected, areaActive }: { display: ViewDisplaySna
       data-unavailable={unavailable ? "true" : "false"}
       data-view-state={display.state}
       className={`group relative flex max-w-[var(--size-tab-preferred)] min-w-[var(--size-tab-title-min)] shrink-0 cursor-default select-none items-center gap-xs px-sm text-caption outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${
-        selected ? "bg-background text-foreground" : "text-subtle-foreground hover:bg-accent"
+        selected ? "text-foreground" : "text-subtle-foreground hover:bg-accent"
       } ${tree.draggingId === display.id ? "opacity-[var(--opacity-dimmed)]" : ""}`}
       onPointerDown={(event) => tree.press(display.id, event)}
       onClick={() => {

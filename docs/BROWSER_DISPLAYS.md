@@ -99,7 +99,7 @@ Tooltips are left alone, so a tooltip over a page is drawn under it.
 The toolbar holds Back, Forward, Reload (Stop while the page loads) and the address, shown without a web scheme until it is focused, so a narrow area still shows the host.
 A page that cannot load says so in its slot with the address and Chromium's reason, and Reload loads its address again.
 A page whose renderer stopped says the same with the reason.
-In a plain browser tab a browser display reads `Pages open in the hide desktop app.` with its address, and a web address gets Open in browser, which opens it in a new tab.
+In a plain browser tab a browser display shows its address on the toolbar row and reads `Pages open in the hide desktop app.` below it, and a web address gets Open in browser, which opens it in a new tab.
 
 ## Verification
 

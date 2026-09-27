@@ -7,7 +7,8 @@ import { CodeMirrorEditor } from "./editor/CodeMirrorEditor";
 import { PatchView } from "./editor/PatchView";
 import { clearDraft, closingWithSave, latestDraft, noteDraft } from "./editor/draft";
 import { downloadFile } from "./fileBytes";
-import { changesFor, editorTabFor, type EditorDocumentSnapshot, type EditorTabSnapshot, type ViewDisplaySnapshot } from "./snapshot";
+import { relativeTo } from "./explorer";
+import { changesFor, editorTabFor, frontCheckout, type EditorDocumentSnapshot, type EditorTabSnapshot, type ViewDisplaySnapshot } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { FileViewer } from "./viewers/FileViewer";
@@ -222,7 +223,7 @@ export function DisplayEditor({ display, placeKey, actions }: { display: ViewDis
   const scale = typeof scaleValue === "number" ? scaleValue : DEFAULT_SCALE;
   if (!tab) return <Notice text="Loading…" state="loading" />;
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" data-editor={tab.id} data-editor-kind={display.kind} data-editor-display={display.id}>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-editor={tab.id} data-editor-kind={display.kind} data-editor-display={display.id}>
       <EditorHeader display={display} tab={tab} document={document} actions={actions} />
       {display.kind === "diff" ? (
         <DiffBody display={display} scale={scale} />
@@ -275,11 +276,15 @@ function EditorHeader({
   const isMarkdown = file && document?.document_kind === "markdown";
   const editable = document?.document_kind === "text" || isMarkdown;
   const group = display.committed ? "Committed on branch" : "Uncommitted";
+  // A file or a diff is named from its checkout, as the Explorer names it; a path the
+  // header still cannot fit loses its start, so the file name stays shown.
+  const root = useShellStore((s) => frontCheckout(s.rest)?.path ?? null);
+  const path = root ? relativeTo(display.path, root) : display.path;
   return (
     <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border px-md text-caption text-subtle-foreground" data-document-header="true">
       <Hint label={file ? display.path : `${group}: ${display.path}`} reveals>
-      <span className="min-w-0 flex-1 truncate" data-editor-path="true">
-        {file ? "" : `${display.committed ? "Branch diff" : "Working diff"} · `}{display.path}
+      <span className="min-w-0 flex-1 truncate text-left [direction:rtl]" data-editor-path="true">
+        <bdi dir="ltr">{file ? "" : `${display.committed ? "Branch diff" : "Working diff"} · `}{path}</bdi>
       </span>
       </Hint>
       {document?.dirty ? (

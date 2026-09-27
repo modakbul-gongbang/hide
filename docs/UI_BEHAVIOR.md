@@ -24,6 +24,7 @@ The Workspace holds the agent column (the toolbar, then the Agent area), always 
 The panel is closed, open at its width, or expanded over the whole body; the state is stored per Workspace and survives a restart, and a Workspace seen for the first time starts closed.
 Open, the panel floats over the right part of the agent column and the Agent area keeps its full size underneath, so opening, closing, resizing and expanding the panel never resizes a terminal.
 The panel is a `--card` surface with a `--border` hairline and a `--radius-lg` top-left corner, and no shadow; a `--spacing-sm` gap in `--background` on its left separates it from the agents.
+Everything inside it sits on `--card`: the tabs, the document header, the editor, the diff, a page and the empty body, so a shown View tab is marked by its indicator and title alone, never by a surface of its own.
 The pane header actions and the right part of an agent's lines under an open panel stay under it; Pin is the remedy.
 Pin docks the panel instead: the agents end at its left edge and their terminals resize once to fit, and Unpin gives them the body's width back.
 Pin is not a fourth state: it is stored per Workspace with the width, and a pinned panel still closes, opens, and expands, its agents keeping their docked width under an expanded panel so expanding and restoring resize nothing.
@@ -32,7 +33,7 @@ The agents left of the panel are live: clicking a pane or a tab there focuses it
 While an expanded panel covers them, the agents take no pointer or keyboard, so Tab never walks into a terminal out of sight.
 
 The panel's first row sits at the toolbar row's height and holds each top area's View tabs with their kind marks, each area's tabs followed by its own New tab (the file palette, into that area), and, at its right end, the panel actions: the tool column's toggle (pressed while the tools show), Expand (only while a view is open), Pin, and the panel toggle.
-Its second row is level with the agents' tab strip: the active document's header over each View area, and over the tool column the Explorer and History icon tabs, the shown one marked, named Explorer and History in their tooltips and accessible names.
+Its second row is level with the agents' tab strip: the active document's header over each View area, naming a file from its checkout and cutting a long path at its start so the file name stays, and over the tool column the Explorer and History icon tabs, the shown one marked, named Explorer and History in their tooltips and accessible names.
 The tool column holds one tool at a time, with no title row and no close: a tab swaps the tool, and the column's toggle hides and shows it, keeping the tool it held.
 With stacked View areas each area keeps its own tab strip, and the first row holds the top area's tabs and the panel actions.
 With no view open and the tools shown, the panel is only the tool column, including after the last view closes, and its first row holds the tool tabs, Pin, and the panel toggle, so the tools alone can be pinned beside the agents.
@@ -133,7 +134,7 @@ Opening an address the Workspace already shows moves to that view and loads it a
 The view's own toolbar holds Back, Forward, Reload (Stop while the page loads) and the address, which shows a web address without its scheme until it is focused; focusing it selects the whole address, Return loads what was typed, and Escape puts the page's address back.
 A page that cannot load says so in its place with the address and the reason, and Reload tries again; nothing else on screen changes.
 While the palette, a menu, a dialog, or a dragged tab covers a page, the page is shown as a still picture of itself, so the overlay draws over it, and it comes back live when the overlay closes.
-In a plain browser tab the view reads `Pages open in the hide desktop app.` with its address, and a web address offers Open in browser; nothing else is drawn in its place.
+In a plain browser tab the view keeps its address on the toolbar row, level with a document header beside it, and below it reads `Pages open in the hide desktop app.`; a web address offers Open in browser, and nothing else is drawn in its place.
 [BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md) owns which addresses a page may hold, the `file:` boundary, and the page's lifetime.
 
 ### Narrow windows
