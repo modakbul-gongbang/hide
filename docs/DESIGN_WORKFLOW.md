@@ -135,12 +135,16 @@ Each sheet carries a `Light` and a `Dark` frame and uses realistic content, incl
 `scripts/check-hide-screens.mjs` enforces the shape (`Screen / ` naming, both theme frames, every reference resolving against the library, every cross-library color restated locally, and local variables matching `design/tokens.json`) and `scripts/gen-screens.mjs` regenerates the file from `scripts/pen-screens.mjs`.
 
 All projects is `Screen / Main`, named after its web file and screen kind.
-It draws the agent and project sidebar beside All projects: its title with Add project, its facts line, the waiting band, the `Tasks · Agents · Projects` tabs, every project's tasks on one board, and a project with agents and no task source gathered under it; below it, the Dependencies mode with each card's project above its title and an arrow that crosses projects.
-Its web files are `web/src/App.tsx`, `web/src/sidebar.tsx`, `web/src/MainScreen.tsx`, `web/src/TaskBoards.tsx`, and `web/src/WaitingBand.tsx`.
+It draws the agent and project sidebar beside All projects: its title with Add project and `새 이슈` as the primary action, its facts line with the open issues, and the `Tasks · Agents · Projects` tabs with the waiting count on Agents.
+Its Tasks board holds every project's issues and worktrees in `백로그 · 진행 중 · 리뷰 · 완료`, each card with its project beside its id, `시작` on a backlog card under the pointer, the idle worktrees folded at the foot of 진행 중, and 완료 folded to one line per project with its count.
+Below it, the Dependencies mode draws an arrow that crosses projects, with the blocker named by its repository on the lock line.
+Its web files are `web/src/App.tsx`, `web/src/sidebar.tsx`, `web/src/MainScreen.tsx`, `web/src/TaskBoards.tsx`, and `web/src/projectBoard.ts`.
 
 Project Overview is `Screen / Project Overview`.
-It draws a project's Tasks board under its header: the title row with the path back and New agent, the facts line, the waiting band, the Tasks, Agents and Sessions tabs, the five columns with Done folded, task cards (id and title, the lock line, delivery facts, at most two agents, an untracked checkout with no task, Start agent on a ready card), and a needs-you card in the warning halo; under it, the Dependencies mode (the `Board | Dependencies` toggle, a chain of cards with stage words and arrows, blocked and done cards dimmed, unrelated tasks below); beside it, the Agents board with each agent's checkout, task chip and device.
-Its web files are `web/src/ProjectOverview.tsx`, `web/src/TaskBoards.tsx`, `web/src/WaitingBand.tsx` and `web/src/projectBoard.ts`; its agent rows are `web/src/components/agent-row.tsx`.
+It draws a project's issue-first Tasks board under its header: the title row with the path back, New agent as the quiet action and `새 이슈` as the primary one, the facts line starting with the open issues and their source, and the Tasks, Agents and Sessions tabs with the waiting count on Agents and `Board | List | Dependencies` on the right.
+The board has the four columns `백로그 · 진행 중 · 리뷰 · 완료`: 백로그 with `+` in its head and a card offering `시작` under the pointer, a needs-you card in the warning border, a worktree with no issue leading with its branch and offering `이슈 연결` under the pointer, the idle worktrees folded at the foot of 진행 중, and 완료 folded to branch names.
+Beside it are the Dependencies mode (a chain of cards with stage words and arrows, blocked cards dimmed, unrelated tasks below) and the Agents inbox, rows grouped `내 차례 · 실행 중 · 쉬는 중 · 정리할 것` with each agent's issue id or checkout, pull request and age.
+Its web files are `web/src/ProjectOverview.tsx`, `web/src/TaskBoards.tsx` and `web/src/projectBoard.ts`; its agent rows are `web/src/components/agent-row.tsx`.
 
 Workspace is `Screen / Workspace`.
 It draws the side panel (`Component / Side panel`) open at the Workspace's full height over the agent column, then the panel closed with two views still open.
@@ -152,7 +156,7 @@ It draws the Project Overview on its Sessions tab: the Overview's header over th
 Its web files are `web/src/ProjectOverview.tsx` and `web/src/ProjectSessions.tsx`.
 
 Settings is `Screen / Settings`.
-It draws the five tabs (General, Appearance, Agents, Devices, Shortcuts) and the Group/Row layout a tab renders, shown on the Appearance tab.
+It draws the seven tabs (General, Appearance, Agents, Issues, Devices, Performance, Shortcuts) and the Group/Row layout a tab renders, shown on the Appearance tab.
 Its web files are `web/src/SettingsSheet.tsx` and `web/src/settings.ts`.
 
 Palette is `Screen / Palette`.
@@ -160,8 +164,8 @@ It draws the sidebar Search field, the ⌘K palette with its grouped two-line re
 Its web files are `web/src/Palette.tsx`, `web/src/search.ts`, and `web/src/components/search-field.tsx`.
 
 Dialogs and Sheets is `Screen / Dialogs and Sheets`.
-It draws every Dialog and AlertDialog surface the shell opens: New worktree, Delete worktree, Remove project, Purpose, Unsaved drafts, New workspace, and Keyboard shortcuts.
-Its web files are `web/src/WorkspaceDialogs.tsx`, `web/src/NewWorkspace.tsx`, `web/src/DraftRecovery.tsx`, and `web/src/ShortcutSheet.tsx`.
+It draws every Dialog and AlertDialog surface the shell opens: New worktree, Delete worktree, Remove project, Purpose, Unsaved drafts, New workspace, Keyboard shortcuts, New issue (with `만들고 바로 시작` unchecked and checked), and Start from an issue.
+Its web files are `web/src/WorkspaceDialogs.tsx`, `web/src/NewWorkspace.tsx`, `web/src/DraftRecovery.tsx`, `web/src/ShortcutSheet.tsx`, and `web/src/IssueDialogs.tsx`.
 
 Menus and Overlays is `Screen / Menus and Overlays`.
 It draws the sidebar row menu, the Explorer context menu, the device picker, and the Explorer git-status notice, each anchored in its real screen context.
