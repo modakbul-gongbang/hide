@@ -252,6 +252,7 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     // Another window moves the agent focus: this window keeps its Project and
     // its list (B6). Then it names another Project: this window says so and
     // takes its Project back only when asked (A7).
+    await page.locator('[data-sidebar-mode="agents"]').click();
     const other = await context.newPage();
     await other.setViewportSize({ width: 1280, height: 800 });
     await open(other, daemon);

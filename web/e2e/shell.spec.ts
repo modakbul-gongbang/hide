@@ -117,6 +117,8 @@ test("a sidebar row click switches the pane and typed text echoes there", async 
     const [first, second] = herdr.panes;
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
     await enterWorkspace(page);
+    // The sidebar opens on Projects; the rows this test clicks are the Agents list's.
+    await page.locator('[data-sidebar-mode="agents"]').click();
     await expect(page.locator(`[data-pane="${first}"]`)).toContainText("Agent one");
     await expect(page.locator(`[data-pane="${second}"]`)).toContainText("Agent two");
     await expect(page.locator('[data-pane-view][data-focused="true"]')).toHaveAttribute("data-pane-view", first);

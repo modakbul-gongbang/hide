@@ -1,9 +1,9 @@
-import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, FolderGit2Icon, FolderIcon, LayoutGridIcon, LayoutDashboardIcon, SettingsIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, FolderGit2Icon, FolderIcon, LayoutDashboardIcon, SettingsIcon } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
 import { EntryContextMenu } from "./components/entry-menu";
-import { SearchField } from "./components/search-field";
+import { SidebarHeader } from "./components/sidebar-header";
 import { Hint } from "./components/ui/tooltip";
 import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
 import { CheckoutCardHint, pullRequestOpenExternal } from "./components/pr-card";
@@ -42,7 +42,7 @@ import { agentMenu, checkoutMenu, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryChec
 import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
-import { SIDEBAR_MODES, useUiStore } from "./ui";
+import { useUiStore } from "./ui";
 
 function herdrRowLabel(state: string | null): string | null {
   if (state === "unconfigured" || state === "socket_missing") return "Herdr 소켓 없음";
@@ -62,6 +62,8 @@ export function Sidebar({ actions }: { actions: Actions }) {
   const status = remote ? null : herdrRowLabel(herdrState);
   // The switch has no chord of its own until the operator binds one (issue 170).
   const switchChord = useShellStore((s) => displayCommand("toggle_sidebar_view", hostKind(), hostRegistry(s.rest?.ui_state, hostKind()).registry));
+  const overviewSelected = useUiStore((s) => s.screen?.kind === "main");
+  const projectCount = useShellStore((s) => (s.rest === null ? null : allProjectsCount(s.rest)));
   const storedWidth = useShellStore((s) => s.rest?.ui_state?.sidebar_width ?? null);
   // A drag draws the nav alone at the width under the pointer, over the
   // center, so nothing beside it (a terminal above all) reflows per move; the
@@ -94,36 +96,23 @@ export function Sidebar({ actions }: { actions: Actions }) {
         style={preview === null ? undefined : ({ "--sidebar-width": `${preview}px` } as CSSProperties)}
         data-sidebar={mode}
       >
-        <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm px-md text-caption">
-          {SIDEBAR_MODES.map((candidate) => (
-            <button
-              key={candidate}
-              type="button"
-              data-sidebar-mode={candidate}
-              aria-pressed={mode === candidate}
-              className={mode === candidate ? "text-foreground" : "text-muted-foreground hover:text-subtle-foreground"}
-              onClick={() => actions.showSidebarMode(candidate)}
-            >
-              {candidate === "agents" ? "Agents" : "Projects"}
-            </button>
-          ))}
-          <span className="flex-1" />
-          {switchChord ? <span className="text-muted-foreground">{switchChord}</span> : null}
-        </div>
-        <SearchField onOpen={() => actions.openSearch()} />
+        <SidebarHeader
+          mode={mode}
+          overviewSelected={overviewSelected}
+          projectCount={projectCount}
+          switchChord={switchChord || null}
+          searchChord={displayCommand("search", hostKind()) || null}
+          newWorkspaceChord={displayCommand("new_workspace", hostKind()) || null}
+          onOverview={() => useUiStore.getState().setScreen({ kind: "main" })}
+          onMode={actions.showSidebarMode}
+          onSearch={() => actions.openSearch()}
+          onNewWorkspace={() => actions.openNewWorkspace()}
+        />
         {status ? (
           <div className="border-b border-border px-md py-sm text-caption text-muted-foreground">{status}</div>
         ) : null}
         {mode === "agents" ? <AgentList actions={actions} /> : <ProjectList actions={actions} />}
         <NewWorkspace actions={actions} />
-        <button
-          type="button"
-          data-new-workspace-button="true"
-          className="shrink-0 border-t border-border px-md py-sm text-left text-caption text-subtle-foreground hover:text-foreground"
-          onClick={() => actions.openNewWorkspace()}
-        >
-          + 새 워크스페이스 <span className="text-muted-foreground">{displayCommand("new_workspace", hostKind())}</span>
-        </button>
         <div className="flex shrink-0 items-center gap-xs border-t border-border px-md py-xs">
           <DevicePicker actions={actions} />
           <span className="flex-1" />
@@ -361,12 +350,12 @@ function catalogLineOf(rest: SnapshotRest | null) {
 }
 
 /**
- * The scope picker: All projects on top, then the projects of the context on
+ * The scope picker below the Overview destination: the projects of the context on
  * screen. A selected SSH device lists its Herdr workspaces, one checkout
  * each; the inactive folds and pins are this machine's and are not drawn
  * there (docs/UI_BEHAVIOR.md: the remote context carries no pins). The row of
- * the scope the center shows is marked: All projects, a project on its
- * Overview, or the focused checkout and its agent while a Workspace is in front.
+ * the scope the center shows is marked: a project on its Overview, or the
+ * focused checkout and its agent while a Workspace is in front.
  */
 function ProjectList({ actions }: { actions: Actions }) {
   const loaded = useShellStore((s) => s.rest !== null);
@@ -410,7 +399,6 @@ function ProjectList({ actions }: { actions: Actions }) {
   if (!loaded) return <ListLoading />;
   return (
     <ul className="min-h-0 flex-1 overflow-auto px-xs" data-project-list="true">
-      <AllProjectsRow selected={screenKind === "main"} />
       {catalogLine ? (
         <li role="status" className="px-md py-xs text-caption text-muted-foreground" data-device-catalog={catalogLine.state}>
           {catalogLine.text}
@@ -450,34 +438,6 @@ type ListContext = {
   actions: Actions;
   agentRowMenu: AgentRowMenu;
 };
-
-/** The top row: every project on every device, the scope All projects shows. */
-function AllProjectsRow({ selected }: { selected: boolean }) {
-  const count = useShellStore((s) => allProjectsCount(s.rest));
-  return (
-    <li>
-      <button
-        type="button"
-        data-all-projects="true"
-        aria-current={selected ? "page" : undefined}
-        className={cn(
-          "flex min-h-(--size-project-row) w-full items-center gap-sm rounded-sm pr-xs pl-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
-          selected ? "bg-secondary" : "hover:bg-accent",
-        )}
-        onClick={() => useUiStore.getState().setScreen({ kind: "main" })}
-      >
-        <LayoutGridIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
-        <span className="min-w-0 flex-1 truncate text-subhead font-semibold text-foreground">All projects</span>
-        <RowEnd>
-          <span className="text-body text-muted-foreground">
-            {count} {count === 1 ? "project" : "projects"}
-          </span>
-          <FoldLane />
-        </RowEnd>
-      </button>
-    </li>
-  );
-}
 
 function rowKey(row: ProjectRow): string {
   switch (row.kind) {
