@@ -14,7 +14,7 @@ import {
   LayoutDashboardIcon,
   SettingsIcon,
 } from "lucide-react";
-import { memo, useMemo, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
 import { EntryContextMenu } from "./components/entry-menu";
@@ -51,6 +51,7 @@ import { contextAgents, contextWorkspaces, deviceCatalogLine, remoteContext, rem
 import { checkoutMenu, folderMenu, projectMenu, remotePurposeProblem, type MenuItem } from "./workspaceManage";
 import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
+import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
 import { SIDEBAR_MODES, useUiStore } from "./ui";
 
 function herdrRowLabel(state: string | null): string | null {
@@ -71,54 +72,172 @@ export function Sidebar({ actions }: { actions: Actions }) {
   const status = remote ? null : herdrRowLabel(herdrState);
   // The switch has no chord of its own until the operator binds one (issue 170).
   const switchChord = useShellStore((s) => displayCommand("toggle_sidebar_view", hostKind(), hostRegistry(s.rest?.ui_state, hostKind()).registry));
+  const storedWidth = useShellStore((s) => s.rest?.ui_state?.sidebar_width ?? null);
+  // A drag draws the nav alone at the width under the pointer, over the
+  // center, so nothing beside it (a terminal above all) reflows per move; the
+  // box beside the center takes the width once the core carries it.
+  const [preview, setPreview] = useState<number | null>(null);
+  const dragging = useRef(false);
+  useEffect(() => {
+    if (!dragging.current) setPreview(null);
+  }, [storedWidth]);
   if (!visible) return null;
+  const land = (current: number, landed: number) => {
+    const send = sidebarWidthToSend(storedWidth ?? current, landed);
+    if (send === null) setPreview(null);
+    else actions.setSidebarWidth(send);
+  };
 
   return (
-    // The sidebar keeps its own text sizes whatever Appearance's interface
-    // font is (PRD sidebar-typography D-05): `interface-scale-exempt` is the
-    // generated rule in tokens.css that declares the sizes again at scale 1.
-    <nav className="interface-scale-exempt flex h-full w-[var(--size-sidebar-ideal)] shrink-0 flex-col bg-sidebar text-foreground" data-sidebar={mode}>
-      <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm px-md text-caption">
-        {SIDEBAR_MODES.map((candidate) => (
-          <button
-            key={candidate}
-            type="button"
-            data-sidebar-mode={candidate}
-            aria-pressed={mode === candidate}
-            className={mode === candidate ? "text-foreground" : "text-muted-foreground hover:text-subtle-foreground"}
-            onClick={() => actions.showSidebarMode(candidate)}
-          >
-            {candidate === "agents" ? "Agents" : "Projects"}
-          </button>
-        ))}
-        <span className="flex-1" />
-        {switchChord ? <span className="text-muted-foreground">{switchChord}</span> : null}
-      </div>
-      <SearchField onOpen={() => actions.openSearch()} />
-      {status ? (
-        <div className="border-b border-border px-md py-sm text-caption text-muted-foreground">{status}</div>
-      ) : null}
-      {mode === "agents" ? <AgentList actions={actions} /> : <ProjectList actions={actions} />}
-      <NewWorkspace actions={actions} />
-      <button
-        type="button"
-        data-new-workspace-button="true"
-        className="shrink-0 border-t border-border px-md py-sm text-left text-caption text-subtle-foreground hover:text-foreground"
-        onClick={() => actions.openNewWorkspace()}
+    // The width is a CSS variable, never the nav's own inline width, which
+    // the e2e overflow check sets to try other widths (PRD sidebar-typography D-13).
+    <div
+      className="relative h-full w-(--sidebar-width) shrink-0"
+      style={{ "--sidebar-width": storedWidth === null ? "var(--size-sidebar-ideal)" : `${storedWidth}px` } as CSSProperties}
+      data-sidebar-box="true"
+    >
+      {/* The sidebar keeps its own text sizes whatever Appearance's interface
+          font is (D-05): `interface-scale-exempt` is the generated rule in
+          tokens.css that declares the sizes again at scale 1. */}
+      <nav
+        className={cn("interface-scale-exempt absolute inset-y-0 left-0 flex w-(--sidebar-width) flex-col bg-sidebar text-foreground", preview !== null && "z-30")}
+        style={preview === null ? undefined : ({ "--sidebar-width": `${preview}px` } as CSSProperties)}
+        data-sidebar={mode}
       >
-        + 새 워크스페이스 <span className="text-muted-foreground">{displayCommand("new_workspace", hostKind())}</span>
-      </button>
-      <div className="flex shrink-0 items-center gap-xs border-t border-border px-md py-xs">
-        <DevicePicker actions={actions} />
-        <span className="flex-1" />
-        <WeeklyUsage actions={actions} />
-        <Hint label={`Settings (${displayCommand("settings", hostKind())})`}>
-          <Button variant="ghost" size="icon-sm" data-open-settings="true" onClick={() => actions.openSettings()}>
-            <SettingsIcon />
-          </Button>
-        </Hint>
-      </div>
-    </nav>
+        <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm px-md text-caption">
+          {SIDEBAR_MODES.map((candidate) => (
+            <button
+              key={candidate}
+              type="button"
+              data-sidebar-mode={candidate}
+              aria-pressed={mode === candidate}
+              className={mode === candidate ? "text-foreground" : "text-muted-foreground hover:text-subtle-foreground"}
+              onClick={() => actions.showSidebarMode(candidate)}
+            >
+              {candidate === "agents" ? "Agents" : "Projects"}
+            </button>
+          ))}
+          <span className="flex-1" />
+          {switchChord ? <span className="text-muted-foreground">{switchChord}</span> : null}
+        </div>
+        <SearchField onOpen={() => actions.openSearch()} />
+        {status ? (
+          <div className="border-b border-border px-md py-sm text-caption text-muted-foreground">{status}</div>
+        ) : null}
+        {mode === "agents" ? <AgentList actions={actions} /> : <ProjectList actions={actions} />}
+        <NewWorkspace actions={actions} />
+        <button
+          type="button"
+          data-new-workspace-button="true"
+          className="shrink-0 border-t border-border px-md py-sm text-left text-caption text-subtle-foreground hover:text-foreground"
+          onClick={() => actions.openNewWorkspace()}
+        >
+          + 새 워크스페이스 <span className="text-muted-foreground">{displayCommand("new_workspace", hostKind())}</span>
+        </button>
+        <div className="flex shrink-0 items-center gap-xs border-t border-border px-md py-xs">
+          <DevicePicker actions={actions} />
+          <span className="flex-1" />
+          <WeeklyUsage actions={actions} />
+          <Hint label={`Settings (${displayCommand("settings", hostKind())})`}>
+            <Button variant="ghost" size="icon-sm" data-open-settings="true" onClick={() => actions.openSettings()}>
+              <SettingsIcon />
+            </Button>
+          </Hint>
+        </div>
+        <SidebarEdge
+          onBegin={(start) => {
+            dragging.current = true;
+            setPreview(start);
+          }}
+          onPreview={setPreview}
+          onLand={(start, landed) => {
+            dragging.current = false;
+            land(start, landed);
+          }}
+          onCancel={() => {
+            dragging.current = false;
+            setPreview(null);
+          }}
+          onReset={(current) => land(current, tokenPx("--size-sidebar-ideal"))}
+        />
+      </nav>
+    </div>
+  );
+}
+
+function tokenPx(name: string): number {
+  const value = Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name));
+  if (!Number.isFinite(value)) throw new Error(`token ${name} is not a length`);
+  return value;
+}
+
+/**
+ * The sidebar's right edge (PRD sidebar-typography B10-B12): the pane
+ * divider's part, a `--size-resize-grab` hit area over the edge and a
+ * `--size-resize-handle` line in the accent under the pointer and while
+ * dragging. The edge follows the pointer between `--size-sidebar-min` and
+ * `--size-sidebar-max` and lands once on release; a double-click returns it
+ * to `--size-sidebar-ideal`. Widths are measured on the nav, so the start is
+ * what the operator sees.
+ */
+function SidebarEdge({
+  onBegin,
+  onPreview,
+  onLand,
+  onCancel,
+  onReset,
+}: {
+  onBegin: (start: number) => void;
+  onPreview: (width: number) => void;
+  onLand: (start: number, landed: number) => void;
+  onCancel: () => void;
+  onReset: (current: number) => void;
+}) {
+  const drag = useRef<{ start: number; x: number; landed: number } | null>(null);
+  const [active, setActive] = useState(false);
+  const navWidth = (edge: HTMLElement) => Math.round(edge.parentElement!.getBoundingClientRect().width);
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      data-sidebar-edge="true"
+      className="group/edge absolute inset-y-0 z-30 flex w-(--size-resize-grab) cursor-col-resize justify-center"
+      style={{ right: "calc(var(--size-resize-grab) / -2)" }}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        const start = navWidth(event.currentTarget);
+        drag.current = { start, x: event.clientX, landed: start };
+        setActive(true);
+        onBegin(start);
+      }}
+      onPointerMove={(event) => {
+        const current = drag.current;
+        if (!current) return;
+        current.landed = draggedSidebarWidth(current.start, event.clientX - current.x, {
+          min: tokenPx("--size-sidebar-min"),
+          max: tokenPx("--size-sidebar-max"),
+        });
+        onPreview(current.landed);
+      }}
+      onPointerUp={(event) => {
+        const current = drag.current;
+        if (!current) return;
+        event.currentTarget.releasePointerCapture(event.pointerId);
+        drag.current = null;
+        setActive(false);
+        onLand(current.start, current.landed);
+      }}
+      onPointerCancel={() => {
+        drag.current = null;
+        setActive(false);
+        onCancel();
+      }}
+      onDoubleClick={(event) => onReset(navWidth(event.currentTarget))}
+    >
+      <span aria-hidden="true" className={cn("h-full w-(--size-resize-handle) bg-primary opacity-0 group-hover/edge:opacity-100", active && "opacity-100")} />
+    </div>
   );
 }
 
