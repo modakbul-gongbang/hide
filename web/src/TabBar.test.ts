@@ -29,12 +29,13 @@ describe("tab composition", () => {
       strip: [{ id: "herdr:t1", kind: "herdr", source_id: "t1", label: "작업 제목", preview: false }],
       tabs: [{ id: "t1", agent: { agent_kind: "claude", symbol: "!", demand: "approval", activity: "stopped", emphasized: true, waiting_on_descendants: false, status_label: "Needs You" } }],
     } as unknown as import("./snapshot").Checkout;
-    const markup = renderToStaticMarkup(createElement(TooltipProvider, { children: createElement(AgentTab, { checkout, entry: checkout.strip[0]!, interaction: { selected: true, areaActive: true, dragging: false, press: () => {}, select: () => {} }, renaming: false, onCancelRename: () => {}, actions: {} as import("./actions").Actions }) }));
+    const markup = renderToStaticMarkup(createElement(TooltipProvider, { children: createElement(AgentTab, { number: 2, checkout, entry: checkout.strip[0]!, interaction: { selected: true, areaActive: true, dragging: false, press: () => {}, select: () => {} }, renaming: false, onCancelRename: () => {}, actions: {} as import("./actions").Actions }) }));
     const mark = markup.indexOf('data-tab-status="Needs You"');
     const logo = markup.indexOf('<img', mark);
     const title = markup.indexOf('작업 제목', logo);
     expect(mark).toBeGreaterThan(0);
     expect(logo).toBeGreaterThan(mark);
     expect(title).toBeGreaterThan(logo);
+    expect(markup).toContain('data-keycap="2"');
   });
 });
