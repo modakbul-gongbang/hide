@@ -18793,12 +18793,12 @@
                     {
                       "type": "text",
                       "id": "ws-sidebar-seen-lg",
-                      "name": "SEEN · 2",
-                      "content": "SEEN · 2",
+                      "name": "Seen · 2",
+                      "content": "Seen · 2",
                       "fill": "$--muted-foreground",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "600"
+                      "fontWeight": "500"
                     },
                     {
                       "id": "ws-sidebar-agent0-lg",
@@ -22613,12 +22613,12 @@
                     {
                       "type": "text",
                       "id": "ws-sidebar-seen-dg",
-                      "name": "SEEN · 2",
-                      "content": "SEEN · 2",
+                      "name": "Seen · 2",
+                      "content": "Seen · 2",
                       "fill": "$--muted-foreground",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "600"
+                      "fontWeight": "500"
                     },
                     {
                       "id": "ws-sidebar-agent0-dg",
