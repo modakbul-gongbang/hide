@@ -433,7 +433,8 @@ test("Open to the side from the only area is refused with its reason until that 
     await expect(item).toBeDisabled();
     await expect(item).toContainText(BESIDE_TOO_NARROW);
     await page.keyboard.press("Escape");
-    await page.mouse.click(5, 5);
+    // A click on the tab strip's empty padding, which holds no control, takes focus off the Explorer.
+    await page.locator("[data-sidebar-strip]").click({ position: { x: 2, y: 2 } });
     await page.keyboard.press("Meta+KeyK");
     await page.keyboard.type("Open file to the side");
     const command = page.locator('[data-palette-row="command:open_beside"]');
@@ -1178,7 +1179,8 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     // agent chosen from the sidebar uncovers them: the panel closes and
     // stays pinned (issue 170).
     await expect.poll(() => stack.events.filter((event) => event.kind === "panel_covers").at(-1)?.payload).toMatchObject({ workspace: { device_id: "local", path: stack.root }, covers: true });
-    const agent = page.locator("[data-agent-open]").first();
+    await page.locator('[data-sidebar-mode="agents"]').click();
+    const agent = page.locator("[data-agent-list] [data-agent-open]").first();
     const pane = await agent.getAttribute("data-agent-open");
     await agent.click();
     await expect(workspace).toHaveAttribute("data-panel", "closed");
