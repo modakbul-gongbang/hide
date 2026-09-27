@@ -12,7 +12,7 @@ fn worktree_refresh_keeps_derived_checkout_purpose_with_its_agent() {
     runtime.snapshot.navigator.agents = crate::sidebar::project_agents(
         serde_json::from_value(serde_json::json!({"agents": [{
             "pane_id": "pane", "workspace_label": "Project", "agent": "claude",
-            "agent_status": "idle", "tokens": {"task": "메인 체크아웃 정리"}
+            "agent_status": "idle", "state_change_seq": 1, "tokens": {"task": "메인 체크아웃 정리"}
         }]}))
         .unwrap(),
     )
@@ -20,6 +20,13 @@ fn worktree_refresh_keeps_derived_checkout_purpose_with_its_agent() {
     crate::sidebar::sync_checkout_purposes(
         &mut runtime.snapshot.navigator.workspaces,
         &runtime.snapshot.navigator.agents,
+    );
+    assert_eq!(
+        runtime.snapshot.navigator.workspaces[0].checkouts[0]
+            .purpose
+            .as_ref()
+            .map(|purpose| purpose.text.as_str()),
+        Some("메인 체크아웃 정리")
     );
     runtime.worktree_catalog.projects = vec![crate::model::ProjectWorktreesSnapshot {
         root_path: path.into(),
