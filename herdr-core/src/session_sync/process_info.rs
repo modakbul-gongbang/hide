@@ -45,7 +45,7 @@ impl ProcessReader {
                         }
                         let result = wire::pane_process_info_params(pane_id)
                             .and_then(|params| {
-                                hide_herdr_client::request_with_connector(
+                                hide_herdr_client::request_small_response(
                                     connector.as_ref(),
                                     "pane.process_info",
                                     params,

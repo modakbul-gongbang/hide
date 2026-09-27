@@ -2468,6 +2468,14 @@ impl Runtime {
             // would hide the pane the operator just clicked behind another.
             self.snapshot.zoomed = layout.zoomed.then(|| layout.focused_pane_id.clone());
         }
+        if previous_focus != self.snapshot.focused.pane_id {
+            sync_pane_status(
+                &mut self.snapshot.navigator.workspaces,
+                &self.snapshot.navigator.agents,
+                self.snapshot.focused.pane_id.as_deref(),
+            );
+            self.sync_active_tab_projection();
+        }
         let mut notice_cleared = false;
         if self
             .snapshot

@@ -2942,6 +2942,17 @@ fn tab_name_follows_core_focus_before_herdr_and_on_refusal() {
         "rect":{"x":0,"y":0,"width":80,"height":24}
     }]))
     .unwrap();
+    runtime.ingest_session(Ok(payload.clone()));
+    assert_eq!(runtime.snapshot.tab.label.as_deref(), Some("zsh"));
+    let mut external = payload.clone();
+    external.focused_pane_id = Some("w-order:p2".into());
+    external.layouts[0].focused_pane_id = "w-order:p2".into();
+    runtime.ingest_session(Ok(external));
+    assert_eq!(
+        runtime.snapshot.focused.pane_id.as_deref(),
+        Some("w-order:p2")
+    );
+    assert_eq!(runtime.snapshot.tab.label.as_deref(), Some("cargo"));
     runtime.ingest_session(Ok(payload));
     assert_eq!(runtime.snapshot.tab.label.as_deref(), Some("zsh"));
     runtime.dispatch_json(&correlated_pane_focus_event("w-order:p2", "label-focus"));

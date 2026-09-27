@@ -270,6 +270,22 @@ pub fn request_with_connector(
     )
 }
 
+/// Read a small response with an absolute read deadline and a 64 KiB frame cap.
+/// Connection establishment has the connector's own deadline.
+pub fn request_small_response(
+    connector: &dyn ApiConnector,
+    method: &str,
+    params: Value,
+    timeout: Duration,
+) -> Result<Value, ApiError> {
+    let request_id = format!("herdr-core:{method}");
+    let mut stream = connector.connect()?;
+    stream.set_write_timeout(Some(timeout))?;
+    write_request(stream.as_mut(), &request_id, method, params)?;
+    let response = decode_response(&stream.read_line_with_timeout(timeout)?)?;
+    response_result(response, &request_id)
+}
+
 /// Sends one request with a caller-selected correlation id.
 ///
 /// The pinned Herdr contract explicitly keeps this envelope id separate from
@@ -534,6 +550,38 @@ mod tests {
                 outgoing: Arc::clone(&self.outgoing),
             }))
         }
+    }
+
+    #[test]
+    fn small_response_rejects_a_peer_that_never_finishes_its_frame() {
+        let root = std::env::temp_dir().join(format!("hide-small-response-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let socket = root.join("peer.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = String::new();
+            BufReader::new(stream.try_clone().unwrap())
+                .read_line(&mut request)
+                .unwrap();
+            // Keep making progress, so a per-read timeout would never fire.
+            while stream.write_all(b" ").is_ok() {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+        let started = std::time::Instant::now();
+        let result = request_small_response(
+            &UnixSocketConnector::new(&socket),
+            "pane.process_info",
+            json!({"pane_id":"w1:p1"}),
+            Duration::from_millis(50),
+        );
+        assert!(
+            matches!(result, Err(ApiError::Transport(message)) if message.contains("timed out"))
+        );
+        assert!(started.elapsed() < Duration::from_secs(2));
+        server.join().unwrap();
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
