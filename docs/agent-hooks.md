@@ -126,8 +126,8 @@ Every later install is the `install_agent_hooks` event, sent from the Settings d
 The request is a set and the write rewrites the same hook group either way, so approving twice is one install.
 The write itself runs on the coordinator thread, outside every lock, and the diagnosis is read back from the file afterwards so the screen shows what the file now says rather than what was asked for.
 
-The helper ships beside the app's own executable, in `Contents/MacOS/`, under the name `hide_agent_hooks::HELPER_BINARY_NAME`.
-`hide_agent_hooks::helper_for` is the only thing that resolves it, and it checks the layout rather than the file name: the executable's parent must be `MacOS`, its parent `Contents`, and its parent must end in `.app`.
+The helper ships beside the daemon that installs it, in the packaged app's `Contents/Resources/` (`desktop/scripts/package.mjs` stages `hided`, `hide`, the device helper, the pinned Herdr and the helper there together), under the name `hide_agent_hooks::HELPER_BINARY_NAME`.
+`hide_agent_hooks::helper_for` is the only thing that resolves it, and it checks the layout rather than the file name: the executable's parent must be `Resources`, its parent `Contents`, and its parent must end in `.app`.
 Anything else is refused as `HelperNotBundled`, and a bundle that shipped without the helper is refused as `HelperMissing`.
 A refused install writes nothing and reports why; an install the operator pressed for also raises `agent_hooks.install_refused` and announces it, so the press is answered on screen at once rather than on some later change.
 A standalone `hided` is not inside an application bundle, so the web shell's install is refused this way and names the installed app as the place to install from.
