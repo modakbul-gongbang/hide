@@ -1,0 +1,12 @@
+id = "hide.hcoord"
+name = "hcoord"
+version = "0.1.0"
+description = "Agent coordination and portable pane lineage for Herdr"
+min_herdr_version = "0.9.1"
+platforms = ["linux", "macos"]
+
+[[build]]
+command = ["/bin/sh", "scripts/build.sh"]
+
+[[startup]]
+command = ["/bin/sh", "scripts/startup.sh"]
