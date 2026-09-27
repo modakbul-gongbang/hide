@@ -73,6 +73,13 @@ pub(crate) fn end_agent(
     else {
         return Err("Herdr reported no shell or foreground process group for the pane".into());
     };
+    // kill(-0) signals Hide's own group and kill(-1) every process the user
+    // owns, so a group id that is not a real group never reaches the signal.
+    if foreground <= 1 || shell <= 1 {
+        return Err(format!(
+            "Herdr reported process group {foreground} and shell {shell}, which are not a pane's"
+        ));
+    }
     if foreground == shell {
         return Err("the pane's shell already holds the terminal".into());
     }
@@ -279,10 +286,11 @@ mod tests {
         let herdr = FakeHerdr::start("agent-sleep-end", move |method, _| match method {
             "agent.get" => agent_info("idle", 7),
             "pane.process_info" => {
-                // The shell (pid 1 stands in for it) takes the terminal back
-                // only once the agent's group is really gone.
+                // The shell (this test process stands in for it) takes the
+                // terminal back only once the agent's group is really gone.
+                let shell = std::process::id();
                 let gone = !alive(pid as i32) || seen.load(Ordering::SeqCst);
-                process_info(1, if gone { 1 } else { pid })
+                process_info(shell, if gone { shell } else { pid })
             }
             other => panic!("unexpected {other}"),
         });
@@ -305,6 +313,20 @@ mod tests {
         let error = end_agent(&herdr.connector(), "w1:p1", "claude").expect_err("nothing to end");
         assert!(error.contains("shell already holds"), "{error}");
         assert_eq!(herdr.methods(), ["agent.get", "pane.process_info"]);
+    }
+
+    #[test]
+    fn a_group_that_would_signal_every_process_is_refused() {
+        for (shell, foreground) in [(42, 0), (42, 1), (0, 42), (1, 42)] {
+            let herdr = FakeHerdr::start("agent-sleep-broadcast", move |method, _| match method {
+                "agent.get" => agent_info("idle", 3),
+                "pane.process_info" => process_info(shell, foreground),
+                other => panic!("unexpected {other}"),
+            });
+            let error = end_agent(&herdr.connector(), "w1:p1", "claude").expect_err("refused");
+            assert!(error.contains("not a pane's"), "{error}");
+            assert_eq!(herdr.methods(), ["agent.get", "pane.process_info"]);
+        }
     }
 
     #[test]
