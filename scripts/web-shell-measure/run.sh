@@ -13,11 +13,18 @@
 # Needs: the pinned herdr (HERDR_BIN_PATH or PATH), Google Chrome,
 # target/release/hided built after `pnpm --dir web build` (docs/BUILD.md: a release hided embeds web/dist).
 set -euo pipefail
+# Optional unattended mode: no native window and no operator socket read.
+isolated_headless=false
+case "${1:-}" in
+  '') ;;
+  --isolated-headless) isolated_headless=true ;;
+  *) echo 'usage: run.sh [--isolated-headless]' >&2; exit 2 ;;
+esac
 measure_dir="$(cd "$(dirname "$0")" && pwd)"
 source "$measure_dir/isolated-env.sh"
 trap 'rmdir "$MEASURE_SOCKET_DIR"' EXIT
 scenario="${MEASURE_SCENARIO:-single}"
-case "$scenario" in single|multi) ;; *) echo "MEASURE_SCENARIO must be single or multi" >&2; exit 2;; esac
+case "$scenario" in single|multi|areas2|areas3) ;; *) echo "MEASURE_SCENARIO must be single, multi, areas2 or areas3" >&2; exit 2;; esac
 chrome_bin="${MEASURE_CHROME_BIN:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
 hided_bin="$MEASURE_WORKTREE/target/release/hided"
 [[ -x "$hided_bin" ]] || { echo "build target/release/hided first: pnpm --dir web build, then the release build described in docs/BUILD.md" >&2; exit 1; }
@@ -25,6 +32,13 @@ hided_bin="$MEASURE_WORKTREE/target/release/hided"
 pids=()
 server_started=false
 note() { printf 'measure: %s\n' "$*"; }
+operator_counts() {
+  if $isolated_headless; then
+    printf '{"observed":false,"reason":"isolated-headless mode never reads the operator socket"}\n' > "$MEASURE_RUN_DIR/operator-$1.json"
+  else
+    python3 "$measure_dir/operator-counts.py" "$HERDR_BIN_PATH" "$MEASURE_OPERATOR_SOCKET" "$MEASURE_RUN_DIR/operator-$1.json"
+  fi
+}
 cleanup() {
   trap - EXIT INT TERM
   set +e
@@ -47,7 +61,7 @@ cleanup() {
       ps -p "$pid" -o pid=,ppid=,comm= || printf '%s exited\n' "$pid"
     done
   } > "$MEASURE_RUN_DIR/cleanup-processes.txt"
-  python3 "$measure_dir/operator-counts.py" "$HERDR_BIN_PATH" "$MEASURE_OPERATOR_SOCKET" "$MEASURE_RUN_DIR/operator-after.json"
+  operator_counts after
 }
 trap cleanup EXIT
 trap 'exit 130' INT TERM
@@ -113,10 +127,11 @@ reset_fixture() {
   echo "chrome_version=$("$chrome_bin" --version 2>/dev/null)"
   echo "socket=$HERDR_SOCKET_PATH"
   echo "scenario=$scenario"
+  echo "isolated_headless=$isolated_headless"
   echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   uptime
 } > "$MEASURE_RUN_DIR/identity.txt"
-python3 "$measure_dir/operator-counts.py" "$HERDR_BIN_PATH" "$MEASURE_OPERATOR_SOCKET" "$MEASURE_RUN_DIR/operator-before.json"
+operator_counts before
 
 # Private server and one cat pane.
 [[ -S "$HERDR_SOCKET_PATH" ]] && { echo "socket already exists: $HERDR_SOCKET_PATH" >&2; exit 2; }
@@ -169,6 +184,15 @@ if [[ "$scenario" == multi ]]; then
   for pane in "${extra_panes[@]}"; do wait_prompt "$pane"; done
 fi
 
+if [[ "$scenario" == areas* ]]; then
+  for ((area=1; area<${scenario#areas}; area++)); do
+    created="$("$HERDR_BIN_PATH" tab create --workspace "$measure_workspace" --cwd "$MEASURE_FIXTURE" --label "area-$area" --no-focus)"
+    extra_tabs+=("$(printf %s "$created" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["tab"]["tab_id"])')")
+    extra_panes+=("$(printf %s "$created" | python3 -c 'import json,sys; print(json.load(sys.stdin)["result"]["root_pane"]["pane_id"])')")
+  done
+  for pane in "${extra_panes[@]}"; do wait_prompt "$pane"; done
+fi
+
 # Product hided (release, embedded web/dist) on the private socket.
 spawn_owned hided env HOME="$MEASURE_PRIVATE/home" HIDE_STATE_DIR="$MEASURE_PRIVATE/hide-state" HIDE_KEEP_ALIVE=1 HIDE_PORT=0 "$hided_bin"
 hided_pid=$owned_pid
@@ -180,7 +204,9 @@ page_url="http://127.0.0.1:$hided_port/?probe=1#token=$hided_token"
 
 port_file="$MEASURE_RUN_DIR/chrome-profile/DevToolsActivePort"
 [[ ! -e "$port_file" ]] || { echo 'stale CDP port file; use a new run directory' >&2; exit 2; }
-spawn_owned chrome "$chrome_bin" --user-data-dir="$MEASURE_RUN_DIR/chrome-profile" --remote-debugging-port=0 --remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check --disable-sync --disable-background-networking --disable-component-update --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --window-size=1280,900 about:blank
+chrome_flags=()
+if $isolated_headless; then chrome_flags+=(--headless=new); fi
+spawn_owned chrome "$chrome_bin" "${chrome_flags[@]}" --user-data-dir="$MEASURE_RUN_DIR/chrome-profile" --remote-debugging-port=0 --remote-debugging-address=127.0.0.1 --no-first-run --no-default-browser-check --disable-sync --disable-background-networking --disable-component-update --disable-background-timer-throttling --disable-renderer-backgrounding --disable-backgrounding-occluded-windows --window-size=1280,900 about:blank
 chrome_pid=$owned_pid
 deadline=$((SECONDS+20)); until [[ -s "$port_file" ]]; do
   [[ "$(ps -p "$chrome_pid" -o ppid= | tr -d ' ')" == "$$" ]] || { echo 'owned Chrome exited before CDP became ready' >&2; exit 1; }
@@ -196,6 +222,12 @@ printf '%s' "$page_url" | node "$measure_dir/navigate.mjs" "$MEASURE_CDP_PORT"
 wait_js "(() => { if (document.querySelector('[data-workspace-screen]')) return true; const projects = document.querySelector('[data-sidebar-mode=\"projects\"]'); if (projects?.getAttribute('aria-pressed') !== 'true') { projects?.click(); return false; } const checkout = document.querySelector('[data-checkout-kind=\"branch\"]:not([disabled])'); if (checkout) { checkout.click(); return false; } document.querySelector('[data-project-toggle][aria-expanded=\"false\"]')?.click(); return false; })()"
 wait_js "window.__hideProbe?.paneId() === '$MEASURE_PANE_ID'"
 sleep 2
+if [[ "$scenario" == areas* ]]; then
+  for tab in "${extra_tabs[@]}"; do
+    node "$measure_dir/split-agent.mjs" "$MEASURE_CDP_PORT" "$tab"
+  done
+  wait_js "(() => { document.querySelector('[data-agent-tab-bar] [data-tab=\"$measure_tab\"]')?.click(); return document.querySelectorAll('[data-agent-area-id]').length === ${scenario#areas} && window.__hideProbe.paneId() === '$MEASURE_PANE_ID'; })()"
+fi
 if [[ "$scenario" == multi ]]; then
   # Show each extra tab once so the core attaches it, then return.
   for tab in "${extra_tabs[@]}" "$measure_tab"; do
@@ -214,6 +246,7 @@ cat "$MEASURE_RUN_DIR/page.json"
 # before the echo trials and again after the driven window.
 python3 "$measure_dir/memory.py" settled "$chrome_pid" "$hided_pid" "$MEASURE_CDP_PORT" > "$MEASURE_RUN_DIR/memory-settled.json"
 cat "$MEASURE_RUN_DIR/memory-settled.json"
+python3 "$measure_dir/resources.py" "$hided_pid" "$server_pid" "$chrome_pid" > "$MEASURE_RUN_DIR/resources-idle.json"
 
 for trial in 1 2 3; do
   reset_fixture
@@ -229,7 +262,11 @@ reset_fixture
 "$HERDR_BIN_PATH" pane send-keys "$MEASURE_PANE_ID" ctrl+c >/dev/null
 sleep 0.5
 uptime > "$MEASURE_RUN_DIR/frames-uptime-before.txt"
+spawn_owned resources-driven python3 "$measure_dir/resources.py" "$hided_pid" "$server_pid" "$chrome_pid"
+resource_pid=$owned_pid
 node "$measure_dir/frames.mjs" > "$MEASURE_RUN_DIR/frames.json"
+wait "$resource_pid"
+cp "$MEASURE_RUN_DIR/logs/resources-driven.log" "$MEASURE_RUN_DIR/resources-driven.json"
 uptime > "$MEASURE_RUN_DIR/frames-uptime-after.txt"
 "$HERDR_BIN_PATH" pane read "$MEASURE_PANE_ID" --source recent-unwrapped --lines 5 > "$MEASURE_RUN_DIR/frames-pane-tail.txt" || true
 ps -p "$hided_pid" -o pid,%cpu,rss,etime,command > "$MEASURE_RUN_DIR/driven-hided-frames.ps"
