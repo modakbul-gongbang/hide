@@ -7,8 +7,7 @@ fn worktree_refresh_keeps_derived_checkout_purpose_with_its_agent() {
     let mut row = checkout("project", "checkout", path, None);
     row.is_primary = true;
     row.agent_summary.representative_pane_id = Some("pane".into());
-    runtime.snapshot.navigator.workspaces =
-        vec![workspace("project", "Project", path, vec![row])];
+    runtime.snapshot.navigator.workspaces = vec![workspace("project", "Project", path, vec![row])];
     runtime.snapshot.navigator.agents = crate::sidebar::project_agents(
         serde_json::from_value(serde_json::json!({"agents": [{
             "pane_id": "pane", "workspace_label": "Project", "agent": "claude",
