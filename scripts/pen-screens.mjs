@@ -869,11 +869,10 @@ function buildWorkspace(tokens) {
 
   // The agent column: the toolbar, the agents' tab strip, the pane, the terminal.
   // The panel never resizes it while it floats over it.
-  function agentColumn(key, count) {
-    return frame(`ws-agents-${key}`, 'Agent column', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0, fill: '$--background', clip: true}, [
-      toolbar(key, count),
+  function agentArea(key, active = true) {
+    return frame(`ws-agentarea-${key}`, 'Agent area', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: 0, fill: '$--background', clip: true}, [
       frame(`ws-agtabs-${key}`, 'Tab bar', {width: 'fill_container', height: ROW, layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
-        screenPanelTab(`ws-agtab1-${key}`, 'square-terminal', '탭 이름과 구성 개선', true, 'claude'),
+        screenPanelTab(`ws-agtab1-${key}`, 'square-terminal', active ? '탭 이름과 구성 개선' : '검증 결과 확인', active, 'claude'),
         screenIconButton(`ws-agtabclose-${key}`, 'x', {size: 20}),
         screenIconButton(`ws-agtabadd-${key}`, 'plus', {size: 20}),
       ]),
@@ -882,6 +881,17 @@ function buildWorkspace(tokens) {
       frame(`ws-terminal-${key}`, 'Terminal', {width: 'fill_container', height: 'fill_container', fill: '$--background', padding: '$--spacing-sm', layout: 'vertical', gap: '$--spacing-xxs'},
         TERMINAL.map(([line, fill], index) => text(`ws-term${index}-${key}`, line, {fill, mono: true, size: '$--text-caption'}))),
     ]);
+  }
+
+  function agentColumn(key, count, groups = false) {
+    const areas = groups
+      ? frame(`ws-agentareas-${key}`, 'Two Agent areas', {width: 'fill_container', height: 'fill_container', layout: 'horizontal', gap: 0}, [
+        agentArea(`${key}-left`),
+        frame(`ws-agentdivider-${key}`, 'Agent area divider', {width: '$--size-resize-handle', height: 'fill_container', fill: '$--border'}),
+        agentArea(`${key}-right`, false),
+      ])
+      : agentArea(key);
+    return frame(`ws-agents-${key}`, 'Agent column', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0, fill: '$--background', clip: true}, [toolbar(key, count), areas]);
   }
 
   // Component / Side panel (issue 170, "Side panel hierarchy, revised"), from
@@ -963,15 +973,15 @@ function buildWorkspace(tokens) {
   // One composition: the sidebar, then the Workspace. Open, the panel runs its
   // full height over the agent column; closed, the toolbar carries the panel
   // toggle with the open-view count.
-  function workspace(key, open) {
+  function workspace(key, open, groups = false) {
     const sidebar = screenSidebar(tokens, 'ws-sidebar', key, [
       {title: 'Agent two', status: 'Working'},
       {title: 'Agent one', status: 'Seen', symbol: '○', statusColor: '$--muted-foreground'},
     ]);
     const main = open
       ? frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'none', clip: true}, [{...agentColumn(key, 0), x: 0, y: 0}, sidePanel(key)])
-      : frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0}, [agentColumn(key, 2)]);
-    return frame(`ws-wrap-${key}`, open ? 'Side panel open' : 'Side panel closed, two views open', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [sidebar, main]);
+      : frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0}, [agentColumn(key, 2, groups)]);
+    return frame(`ws-wrap-${key}`, groups ? 'Two Agent areas, independent tab bars and live terminals' : open ? 'Side panel open' : 'Side panel closed, two views open', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [sidebar, main]);
   }
   function newTab(key, changed) {
     const choice = (name, glyph, shortcut = '') => frame(`ws-newtab-${name}-${key}`, name, {width: 'fill_container', height: num(tokens, '--size-control-lg'), layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: [0, '$--spacing-lg'], fill: '$--secondary', cornerRadius: '$--radius-sm'}, [
@@ -994,8 +1004,8 @@ function buildWorkspace(tokens) {
       ]),
     ]);
   }
-  const build = suffix => [workspace(`${suffix}o`, true), workspace(`${suffix}c`, false), newTab(`${suffix}n`, true), newTab(`${suffix}e`, false)];
-  return screenSheet('screen-workspace', 'Screen / Workspace', 'web/src/WorkspaceScreen.tsx, TabBar.tsx, ViewAreas.tsx, Tools.tsx: the Workspace with its side panel (Component / Side panel, issue 170) open at full height over the agent column, then closed with two views still open. The toolbar spans only the agent column and holds no tool toggles; row 1 of the panel holds the area tabs and their New tab, then the tool-column toggle, Expand, Pin and the panel toggle, which the toolbar carries with the open-view count while the panel is closed; row 2 holds the document header and the Explorer and History tool tabs. A Korean file name verifies B11 wrapping.', build, build);
+  const build = suffix => [workspace(`${suffix}o`, true), workspace(`${suffix}c`, false), workspace(`${suffix}g`, false, true), newTab(`${suffix}n`, true), newTab(`${suffix}e`, false)];
+  return screenSheet('screen-workspace', 'Screen / Workspace', 'web/src/WorkspaceScreen.tsx, AreaTree.tsx, AgentAreas.tsx, TabBar.tsx, ViewAreas.tsx, Tools.tsx: the Workspace with its side panel (Component / Side panel, issue 170) open at full height over the agent column, then closed with two views still open, and with two Agent areas using the shared divider and independent tab bars. The toolbar spans only the agent column and holds no tool toggles; row 1 of the panel holds the area tabs and their New tab, then the tool-column toggle, Expand, Pin and the panel toggle, which the toolbar carries with the open-view count while the panel is closed; row 2 holds the document header and the Explorer and History tool tabs. A Korean file name verifies B11 wrapping.', build, build);
 }
 
 // -- Screen / Project Sessions --------------------------------------------------
