@@ -1,0 +1,102 @@
+// Agent sleep on an isolated pinned Herdr and hided (PRD agent-sleep B2, B3,
+// B10-B12, B15, B16): Sleep agent from the pane menu ends the agent and
+// leaves the pane's shell, the row keeps its place with the moon, the pane
+// shows Sleeping instead of its terminal, Settings counts it, and a visit
+// back to its tab starts the same provider in the same pane with the
+// conversation's resume arguments.
+
+import { expect, test } from "@playwright/test";
+import { execFileSync } from "node:child_process";
+import path from "node:path";
+import { startHerdr } from "./herdr-fixture";
+import { startHided, type Daemon } from "./hided-fixture";
+import { countSent, screenshot } from "./wire";
+
+test.describe.configure({ timeout: 150_000 });
+
+const SESSION = "11111111-2222-3333-4444-555555555555";
+
+type ProcessInfo = {
+  result: { process_info: { shell_pid: number; foreground_process_group_id: number; foreground_processes: { argv: string[] }[] } };
+};
+
+test("an agent slept from the pane menu keeps its row and wakes in the same pane on a visit", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    const [, sleeper] = herdr.panes;
+    // The official Claude integration's report: the conversation id, under
+    // Herdr's own source.
+    execFileSync(
+      herdr.bin,
+      ["pane", "report-agent-session", sleeper, "--source", "herdr:claude", "--agent", "claude", "--agent-session-id", SESSION],
+      { env: herdr.env, timeout: 30_000 },
+    );
+    const other = herdr.run([
+      "tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "other", "--env", `PATH=${herdr.fixturePath}`, "--no-focus",
+    ]) as { result: { tab: { tab_id: string } } };
+    const processInfo = () => (herdr.run(["pane", "process-info", "--pane", sleeper]) as ProcessInfo).result.process_info;
+
+    daemon = await startHided(herdr, "agent-sleep");
+    const last = new Map<string, Record<string, unknown>>();
+    countSent(page, last);
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await page.locator('[data-sidebar-mode="projects"]').click();
+    await page.locator("[data-checkout]").first().click();
+    const pane = page.locator(`[data-pane-view="${sleeper}"]`);
+    await expect(pane).toBeVisible({ timeout: 20_000 });
+
+    // B15: Sleep agent from the pane menu.
+    await page.locator(`[data-pane-menu="${sleeper}"]`).click();
+    const item = page.locator('[data-menu-item="sleep_agent"]');
+    await expect(item).toBeEnabled({ timeout: 20_000 });
+    await screenshot(page, "agent-sleep-menu");
+    await item.click();
+    await expect.poll(() => last.get("agent_sleep")?.pane_id).toBe(sleeper);
+
+    // B7, B11: the agent ended and its shell holds the pane; the pane says
+    // Sleeping with Wake agent instead of showing that shell.
+    await expect(pane.locator('[data-pane-sleep="sleeping"]')).toBeVisible({ timeout: 30_000 });
+    await expect(pane.locator(`[data-agent-wake="${sleeper}"]`)).toBeVisible();
+    await expect(pane.locator('[data-pane-sleep-caption="sleeping"]')).toHaveText("sleeping");
+    const slept = processInfo();
+    expect(slept.foreground_process_group_id).toBe(slept.shell_pid);
+
+    // B10: the row keeps its name with the moon.
+    await page.locator('[data-sidebar-mode="agents"]').click();
+    const row = page.locator(`[data-agent-list] [data-pane="${sleeper}"]`);
+    await expect(row.locator('[data-mark="☾"]')).toBeVisible({ timeout: 20_000 });
+    await expect(row).toContainText("Agent two");
+    await expect(row.locator('[data-agent-mark="claude"]')).toBeVisible();
+    await screenshot(page, "agent-sleep-sleeping");
+
+    // B2, B3: Settings > Performance counts it and keeps the choice.
+    await page.keyboard.press("Alt+Comma");
+    await page.locator('[data-settings-tab="performance"]').click();
+    await expect(page.locator('[data-settings-group="idle-agents"]')).toContainText("1 sleeping");
+    const choice = page.locator("[data-agent-sleep-after]");
+    await expect(choice).toHaveAttribute("data-agent-sleep-after", "never");
+    await choice.click();
+    await page.locator('[data-agent-sleep-option="24"]').click();
+    await expect(choice).toHaveAttribute("data-agent-sleep-after", "24", { timeout: 10_000 });
+    await screenshot(page, "agent-sleep-settings");
+    await page.keyboard.press("Escape");
+    await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
+
+    // B12, B16: leaving the tab and coming back wakes it in the same pane,
+    // resuming the conversation, and the row is awake again.
+    await page.locator(`[data-tab="${other.result.tab.tab_id}"]`).click();
+    await expect(page.locator(`[data-pane-view="${sleeper}"]`)).toHaveCount(0);
+    await page.locator(`[data-tab="${herdr.tab}"]`).click();
+    await expect.poll(() => processInfo().foreground_processes.map((process) => process.argv.join(" ")), { timeout: 30_000 }).toContain(
+      `claude --resume ${SESSION}`,
+    );
+    await expect(pane.locator("[data-pane-sleep]")).toHaveCount(0, { timeout: 30_000 });
+    await expect(row.locator('[data-mark="☾"]')).toHaveCount(0);
+    await screenshot(page, "agent-sleep-awake");
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});
