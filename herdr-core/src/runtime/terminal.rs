@@ -1240,6 +1240,32 @@ impl Runtime {
     ///
     /// Another checkout's visible tab is that checkout's memory, not a tab on
     /// screen, so it does not renew an attach.
+    pub(crate) fn process_info_attached_tabs(&self, target: Option<&str>) -> Vec<String> {
+        let Some(target) = target else {
+            return self.recent_visible_tabs.clone();
+        };
+        if !self.device_in_front(target) {
+            return Vec::new();
+        }
+        self.snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == target)
+            .and_then(|status| status.session.as_ref())
+            .and_then(|session| {
+                session.focused_tab_id.clone().or_else(|| {
+                    session
+                        .focused_checkout_id
+                        .as_ref()
+                        .and_then(|checkout| session.active_tab_ids.get(checkout))
+                        .cloned()
+                })
+            })
+            .into_iter()
+            .collect()
+    }
+
     pub(super) fn focused_visible_tab_id(&self) -> Option<String> {
         self.snapshot
             .navigator

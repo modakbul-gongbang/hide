@@ -4,7 +4,7 @@
 // (`rest.workspace_view`, the strip); these functions only read them, so they
 // are testable without a page. The View areas' own rules are `viewLayout.ts`.
 
-import type { AgentRow, Checkout, SnapshotRest, StripTab, Tab, ViewLayoutSnapshot } from "./snapshot";
+import type { Checkout, SnapshotRest, StripTab, ViewLayoutSnapshot } from "./snapshot";
 
 /** How the side panel shows (issue 170): closed, at its width, or over the whole body. */
 export type PanelState = "closed" | "open" | "expanded";
@@ -179,31 +179,4 @@ export type Provider = (typeof KNOWN_PROVIDERS)[number];
 
 export function knownProvider(kind: string | null | undefined): Provider | null {
   return (KNOWN_PROVIDERS as readonly string[]).includes(kind ?? "") ? (kind as Provider) : null;
-}
-
-/**
- * The agent a Herdr tab stands for: the agent of the pane Herdr focused in it
- * when that pane has one, else the first pane that does. A tab of plain
- * shells stands for none and wears the neutral terminal mark.
- */
-export function tabAgent(tab: Tab | null | undefined, agents: AgentRow[], focusedPaneId: string | null): AgentRow | null {
-  if (!tab) return null;
-  const ids = tab.panes.map((pane) => pane.id);
-  const byPane = new Map(agents.map((agent) => [agent.pane_id, agent]));
-  if (focusedPaneId && ids.includes(focusedPaneId)) {
-    const focused = byPane.get(focusedPaneId);
-    if (focused) return focused;
-  }
-  for (const id of ids) {
-    const agent = byPane.get(id);
-    if (agent) return agent;
-  }
-  return null;
-}
-
-/** What an Agent tab is, read in its tooltip and by assistive technology with its full name (B17). */
-export function tabIdentity(entry: StripTab, agent: AgentRow | null): string {
-  const kind = agent ? `${agent.agent_kind} agent` : "Terminal";
-  const pane = agent ? ` · ${agent.identity_label} · ${agent.status_label}` : "";
-  return `${kind} tab ${entry.label}${pane}`;
 }

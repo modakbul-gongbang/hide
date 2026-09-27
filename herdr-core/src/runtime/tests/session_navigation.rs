@@ -1996,13 +1996,21 @@ fn tab_strip_reorder_ignores_a_result_a_later_drag_has_replaced() {
 }
 
 #[test]
-fn tab_label_turns_a_herdr_number_into_a_name_and_keeps_a_named_tab() {
-    assert_eq!(crate::model::display_tab_label("2", "w1:t2"), "Tab 2");
-    assert_eq!(crate::model::display_tab_label(" 2 ", "w1:t2"), "Tab 2");
-    assert_eq!(crate::model::display_tab_label("notes", "w1:t2"), "notes");
-    // A tab Herdr reports with no label at all falls back to its own id,
-    // which is still its identity rather than its place in the strip.
-    assert_eq!(crate::model::display_tab_label("", "w1:t2"), "w1:t2");
+fn tab_label_follows_focused_pane_unless_custom_named() {
+    use crate::model::display_tab_label;
+    assert_eq!(
+        display_tab_label("notes", 2, Some("작업 제목"), Some("cargo")),
+        "notes"
+    );
+    for raw in ["2", " Tab 2 ", ""] {
+        assert_eq!(
+            display_tab_label(raw, 2, Some("작업 제목"), Some("cargo")),
+            "작업 제목"
+        );
+        assert_eq!(display_tab_label(raw, 2, None, Some("cargo")), "cargo");
+        assert_eq!(display_tab_label(raw, 2, None, None), "Tab 2");
+    }
+    assert_eq!(display_tab_label("", 7, Some("  "), Some("zsh")), "zsh");
 }
 
 /// The shell used to name an unlabelled tab after its position, which
@@ -2833,4 +2841,62 @@ fn a_checkout_chosen_with_its_device_moves_both_or_neither() {
         runtime.snapshot.navigator.focused_device_id.as_deref(),
         Some(workspace::LOCAL_DEVICE_ID)
     );
+}
+
+#[test]
+fn tab_rename_keeps_the_committed_name_on_failure_and_ignores_old_receipts() {
+    let mut runtime = runtime();
+    let mut checkout = checkout("w", "c", "/fixture", None);
+    let mut tab = tab("w", "c", None);
+    tab.naming = crate::model::TabNaming {
+        focused_pane_id: String::new(),
+        raw: "Saved".into(),
+        automatic: "작업 제목".into(),
+    };
+    tab.label = Some("Saved".into());
+    checkout.tabs.push(tab.clone());
+    checkout.strip = StripTabSnapshot::from_herdr_tabs(&checkout.tabs);
+    runtime.snapshot.navigator.workspaces =
+        vec![workspace("w", "Fixture", "/fixture", vec![checkout])];
+    runtime.snapshot.tab = tab;
+    let request = |id: &str, label: &str| RenameTabPayload {
+        request_id: id.into(),
+        tab_id: "c:tab".into(),
+        label: label.into(),
+    };
+    // No connector is installed. The real event failure leaves the committed
+    // name and records a correlated retry result without a global alert.
+    runtime.rename_tab(request("first", "변경할 이름"));
+    assert_eq!(
+        runtime.snapshot.status.tab_rename.as_ref().unwrap().phase,
+        "failed"
+    );
+    assert_eq!(
+        runtime.snapshot.status.tab_rename.as_ref().unwrap().label,
+        "변경할 이름"
+    );
+    assert_eq!(runtime.snapshot.tab.label.as_deref(), Some("Saved"));
+    assert!(runtime.snapshot.status.last_error.is_none());
+    runtime.rename_tab(request("retry", ""));
+    assert!(!runtime.ingest_tab_rename_result("first", Ok(())));
+    assert_eq!(runtime.snapshot.tab.label.as_deref(), Some("Saved"));
+    runtime.ingest_tab_rename_result("retry", Ok(()));
+    assert_eq!(runtime.snapshot.tab.label.as_deref(), Some("작업 제목"));
+    assert_eq!(
+        runtime.snapshot.navigator.workspaces[0].checkouts[0].strip[0].label,
+        "작업 제목"
+    );
+    // A stale projection cannot undo an acknowledged clear; once Herdr
+    // confirms it, a subsequent external rename becomes authoritative.
+    let mut incoming = runtime.snapshot.tab.clone();
+    incoming.naming.raw = "Saved".into();
+    incoming.label = Some("Saved".into());
+    runtime.apply_tab_rename(&mut incoming);
+    assert_eq!(incoming.label.as_deref(), Some("작업 제목"));
+    incoming.naming.raw.clear();
+    runtime.apply_tab_rename(&mut incoming);
+    incoming.naming.raw = "External".into();
+    incoming.label = Some("External".into());
+    runtime.apply_tab_rename(&mut incoming);
+    assert_eq!(incoming.label.as_deref(), Some("External"));
 }

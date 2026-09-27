@@ -332,6 +332,8 @@ mod tests {
                 ..Default::default()
             }),
             tabs: vec![TabSnapshot {
+                agent: None,
+                naming: Default::default(),
                 id: None,
                 workspace_id: None,
                 checkout_id: None,

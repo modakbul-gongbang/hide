@@ -26,6 +26,7 @@ fn run_coordinator(
     sender: Sender<CoordinatorMessage>,
 ) {
     let home_path = usage_paths.as_ref().and_then(|paths| paths.home.clone());
+    let mut process_reader = super::process_info::ProcessReader::new(&context);
     let mut replica: Option<SessionReplica> = None;
     let mut active_tab_reads: BTreeMap<String, u32> = BTreeMap::new();
     let mut subscription: Option<ActiveSubscription> = None;
@@ -268,6 +269,19 @@ fn run_coordinator(
         let run_background_reads = subscription.is_some() && !defer_background_reads;
         defer_background_reads = false;
         if run_background_reads {
+            if let Some(current) = replica.as_mut()
+                && process_reader.poll(&context, current, subscription_generation)
+            {
+                match current.refresh_published_state() {
+                    Ok(true) => {
+                        publish_replica(&context, current, &mut catalog_cache, &mut purpose_mirror);
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        log_sync_failure(&context, "process.publish_failed", Some(current), &error)
+                    }
+                }
+            }
             if let Some(reader) = usage_reader.as_mut() {
                 let Some(activity) = read_usage_activity(&context) else {
                     stop_subscription(&mut subscription);

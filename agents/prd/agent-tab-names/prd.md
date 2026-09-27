@@ -30,16 +30,16 @@ hide 사용자가 워크스페이스의 탭 스트립에서 "Tab 6" 대신 그 �
 
 | D-n | 결정 | 근거 |
 | --- | --- | --- |
-| D-01 | 지금 탭 이름은 Herdr 라벨을 core가 "Tab N"으로만 바꾼다; Herdr 0.9.1은 `tab.rename`과 pane별 `foreground_processes`·`terminal_title`을 준다. | 저장소 사실 (qa-log D-01: herdr-core/src/model.rs, contracts/herdr-api.schema.json) |
+| D-01 | 지금 탭 이름은 Herdr 라벨을 core가 "Tab N"으로만 바꾼다; Herdr 0.9.1은 `tab.rename`과 PaneInfo의 `terminal_title`을 준다. `foreground_processes`는 PaneInfo가 아니라 별도 `pane.process_info` 응답에 있다. | 저장소 사실 (qa-log D-01: herdr-core/src/model.rs, contracts/herdr-api.schema.json) |
 | D-02 | 탭 라벨 우선순위: (1) 사용자가 붙인 이름, (2) 탭의 포커스 pane 에이전트 제목(사이드바 행과 같은 ai-title 토큰), (3) 그 pane의 foreground 프로세스명, (4) "Tab N". 조건이 바뀌면 라벨도 따라간다. 이름 붙은 탭은 덮어쓰지 않는다. | 사용자 추천 수락 "2. C로해서" (qa-log D-02) |
 | D-03 | 에이전트 탭의 구성은 [상태 마크][provider 로고] 제목; 마크와 로고는 사이드바 행과 같은 기호·색·이미지. 셸만 있는 탭은 터미널 아이콘 + 프로세스명. 탭 폭 규칙은 그대로. | 사용자: "(상태 badge) 에이전트로고 텍스트 이렇게 보여주자" (qa-log D-03) |
 | D-04 | 탭 우클릭 메뉴에 Rename…: 이름을 받아 Herdr `tab.rename`으로 저장; 빈 이름 저장은 이름을 지워 자동 라벨로 돌아간다. Copy name은 표시 중인 라벨을 복사한다. | 보드 섹션 3 승인 (qa-log D-04) |
-| D-05 | foreground 프로세스명과 pane 제목은 wire.rs에서만 변환해 도메인 pane 필드로 넣고, 라벨은 core의 한 함수(`display_tab_label` 확장)가 계산한다. 웹은 스냅샷의 라벨과 탭 구성 필드(상태·provider)를 그리기만 한다. 비어 있는 pane은 (4). | 가정 (qa-log D-05) |
+| D-05 | foreground 프로세스명과 pane 제목은 wire.rs에서만 변환해 도메인 pane 필드로 넣고, 라벨은 core의 한 함수(`display_tab_label` 확장)가 계산한다. coordinator 소유의 bounded off-lock reader가 ATTACHED_TAB_LIMIT 안의 attached tab별 focused pane만 각 로컬·원격 host의 socket에 `pane.process_info`로 묻는다. focused pane 변경, 해당 pane의 agent 상태 변경(pane_updated), 낮은 빈도의 재확인 한 종류만 읽기를 요청하고 tick마다 조회하지 않는다. generation fencing으로 늦은 답을 버리고 값이 바뀔 때만 publish하며, 실패·무응답은 프로세스 없음과 진단으로 남긴다. terminal_title로 프로세스를 추정하지 않는다. 웹은 스냅샷의 라벨과 탭 구성 필드(상태·provider)를 그리기만 한다. 비어 있는 pane은 (4). | 가정 (qa-log D-05) |
 | D-06 | UI_BEHAVIOR.md의 탭 이름·탭 메뉴 문장을 고치고 Screen / Workspace 시트의 탭 바를 [마크][로고] 제목으로 다시 그린다(gen-screens). 라이브러리는 그대로. | 가정 (qa-log D-06) |
 | D-07 | 검증: core 단위 테스트(우선순위 4단계와 전환), wire 테스트, vitest(탭 구성), 웹 e2e 1개(에이전트 시작 시 탭 이름 변화와 Rename 유지). | 가정 (qa-log D-07) |
 | D-08 | 실행: please, Codex Implementor(gpt-6-astra, effort high), PR 배포, Observer 자동 머지. T0 머지 후 main에서 시작. | 사용자: "core 작업(T4, T8)만 Codex" (qa-log D-08) |
 | D-10 | Rename…은 에이전트 탭·셸 탭 가리지 않고 모든 탭에 있다(원격 탭은 원격 Herdr에 같은 메서드). 선택하면 탭 제목 자리에 인라인 입력이 현재 라벨을 채운 채 전체 선택으로 열리고, Enter가 저장, Escape·포커스 이탈이 취소다. 이름은 Herdr 탭 라벨이라 Herdr가 살아 있는 한 재접속 뒤에도 남는다. | 가정 (qa-log D-10) |
-| D-11 | Herdr가 `tab.rename`을 거부하거나 답이 없으면 인라인 입력이 입력한 글자를 유지한 채 열려 있고 그 아래 한 줄 caption "이름을 저장하지 못했습니다 · 다시 시도"가 보인다; Enter가 재시도, Escape가 취소(라벨은 이전 그대로). 사유는 진단 로그에만. | 가정 (qa-log D-11) |
+| D-11 | Herdr가 `tab.rename`을 거부하거나 답이 없으면 인라인 입력이 입력한 글자를 유지한 채 열려 있고 그 아래 한 줄 caption "이름을 저장하지 못했습니다 · 다시 시도"가 보인다; Enter가 재시도, Escape가 취소(라벨은 이전 그대로). 재시도용 요청 intent와 committed 표시 라벨은 분리하며, 실패해도 intent의 입력은 남기고 committed 라벨은 이전 그대로 둔다. 사유는 진단 로그에만. | 가정 (qa-log D-11) 및 HCOORD 승인 |
 | D-12 | 자동 라벨은 사용자가 붙인 이름이 없는 탭에만 적용된다. Herdr 라벨이 "Tab N" 형식이거나 비어 있으면 이름 없음, 그 외는 사용자 이름(`next_tab_label`의 기존 규칙). | 가정 (qa-log D-12) |
 | D-09 | 원칙 intake: engineering/principles.md와 design/principles.md(oh-my-principle 654485f)를 읽었다. engineering 5·7이 D-05에, design 4(파생 상태 표시)·7(시각 부호)이 D-03에 반영됐다. | 가정 |
 
@@ -60,7 +60,7 @@ hide 사용자가 워크스페이스의 탭 스트립에서 "Tab 6" 대신 그 �
 
 ## Technical structure
 
-- core: `wire.rs`에 pane의 foreground 프로세스명·terminal_title 변환 추가, 도메인 pane 필드 추가, `display_tab_label` 확장(에이전트 제목·프로세스명 입력), 스냅샷의 탭 항목에 구성 필드(상태·provider) 추가, `rename_tab` 이벤트 → Herdr `tab.rename`.
+- core: coordinator가 소유하는 bounded off-lock `pane.process_info` reader를 추가한다. ATTACHED_TAB_LIMIT 안의 attached tab별 focused pane만 해당 host의 socket으로 읽고, 포커스 pane 변경·해당 pane의 agent 상태 변경·낮은 빈도의 재확인으로만 요청한다. generation fencing, 결과 변경 시에만 publish, 실패 시 프로세스 없음과 진단을 적용한다. `wire.rs`에 응답의 foreground 프로세스명 변환 추가 및 기존 terminal_title 변환 재사용, 도메인 pane 필드 추가, `display_tab_label` 확장(에이전트 제목·프로세스명 입력), 스냅샷의 탭 항목에 구성 필드(상태·provider) 추가, `rename_tab` 이벤트 → Herdr `tab.rename`; core의 재시도 intent와 committed 라벨을 분리하여 거부·무응답 시 B9의 이전 라벨과 입력을 유지한다.
 - web: `TabBar.tsx`의 탭 렌더와 메뉴, Rename 입력; `pen-screens.mjs`의 Workspace 탭 바.
 - 바뀌지 않음: 사이드바, 탭 폭 규칙, 다른 도메인.
 

@@ -1720,6 +1720,14 @@ impl Runtime {
     ) -> bool {
         // A device's tab move is held per checkout like this machine's, and
         // its own record already names the connection that carried it.
+        if let RemoteControlAction::RenameTab { request_id, .. } = &action {
+            return self.ingest_tab_rename_result(
+                request_id,
+                result
+                    .map(|_| ())
+                    .map_err(|error| error.message().to_owned()),
+            );
+        }
         if let RemoteControlAction::MoveTab {
             checkout_id,
             tab_id,

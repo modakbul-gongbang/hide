@@ -68,6 +68,8 @@ fn herdr_workspace(
     row.tabs = tabs
         .iter()
         .map(|(tab, cwd)| TabSnapshot {
+            agent: None,
+            naming: Default::default(),
             id: Some(format!("remote:{target}:tab:{tab}")),
             workspace_id: Some(workspace_id.clone()),
             checkout_id: Some(checkout_id.clone()),

@@ -114,6 +114,8 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
     );
     remote_checkout.tabs[0].id = Some(active_tab_id.to_owned());
     remote_checkout.tabs.push(TabSnapshot {
+        agent: None,
+        naming: Default::default(),
         id: Some(inactive_tab_id.to_owned()),
         workspace_id: Some(workspace_id.to_owned()),
         checkout_id: Some(checkout_id.to_owned()),
@@ -1461,6 +1463,8 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
             )],
         );
         remote_workspace.checkouts[0].tabs = vec![TabSnapshot {
+            agent: None,
+            naming: Default::default(),
             id: Some("remote:tab".to_owned()),
             workspace_id: Some("remote:ws".to_owned()),
             checkout_id: Some("remote:checkout".to_owned()),

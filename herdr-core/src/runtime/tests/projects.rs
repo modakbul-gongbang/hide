@@ -2200,6 +2200,8 @@ fn an_explicit_checkout_waits_without_rendering_stale_projection_when_catalog_is
         },
     }];
     runtime.snapshot.tab = TabSnapshot {
+        agent: None,
+        naming: Default::default(),
         id: Some("w3P:t1".to_owned()),
         workspace_id: Some("w3P".to_owned()),
         checkout_id: Some(stale_checkout_id.to_owned()),

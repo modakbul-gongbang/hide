@@ -265,18 +265,40 @@ impl Runtime {
                 &listening_ports,
                 &checkout.path,
             );
-            let tab = TabSnapshot {
+            let representative = projected_agents
+                .iter()
+                .find(|agent| agent.pane_id == layout.focused_pane_id);
+            let process = payload
+                .panes
+                .iter()
+                .find(|pane| pane.pane_id == layout.focused_pane_id)
+                .and_then(|pane| pane.foreground_process.as_deref());
+            let mut tab = TabSnapshot {
+                agent: representative.map(Into::into),
+                naming: crate::model::TabNaming {
+                    focused_pane_id: layout.focused_pane_id.clone(),
+                    raw: session_tab.label.clone(),
+                    automatic: crate::model::display_tab_label(
+                        "",
+                        session_tab.number,
+                        representative.map(|agent| agent.identity_label.as_str()),
+                        process,
+                    ),
+                },
                 id: Some(session_tab.tab_id.clone()),
                 workspace_id: Some(workspace_snapshot.id.clone()),
                 checkout_id: Some(checkout.id.clone()),
                 label: Some(crate::model::display_tab_label(
                     &session_tab.label,
-                    &session_tab.tab_id,
+                    session_tab.number,
+                    representative.map(|agent| agent.identity_label.as_str()),
+                    process,
                 )),
                 empty: panes.is_empty(),
                 delegated: false,
                 panes,
             };
+            self.apply_tab_rename(&mut tab);
             if let Some(existing) = checkout
                 .tabs
                 .iter_mut()
@@ -1227,6 +1249,8 @@ impl Runtime {
         let Some(focused_checkout_id) = self.snapshot.navigator.focused_checkout_id.as_deref()
         else {
             self.snapshot.tab = TabSnapshot {
+                agent: None,
+                naming: Default::default(),
                 id: None,
                 workspace_id: None,
                 checkout_id: None,
@@ -1251,6 +1275,8 @@ impl Runtime {
                 })
         else {
             self.snapshot.tab = TabSnapshot {
+                agent: None,
+                naming: Default::default(),
                 id: None,
                 workspace_id: None,
                 checkout_id: None,
@@ -1276,6 +1302,8 @@ impl Runtime {
             self.snapshot.tab = tab.clone();
         } else {
             self.snapshot.tab = TabSnapshot {
+                agent: None,
+                naming: Default::default(),
                 id: None,
                 workspace_id: Some(workspace_id),
                 checkout_id: Some(checkout.id.clone()),
@@ -1309,6 +1337,14 @@ impl Runtime {
         let mut read_changed = false;
         if let Ok(session) = fetched.as_mut() {
             read_changed = self.apply_remote_read_state(target_id, session);
+            for workspace in &mut session.workspaces {
+                for checkout in &mut workspace.checkouts {
+                    for tab in &mut checkout.tabs {
+                        self.apply_tab_rename(tab);
+                    }
+                    rename::refresh_strip_labels(checkout);
+                }
+            }
         }
         let pane_sets = fetched.as_ref().ok().map(|session| {
             remote_terminal_pane_sets(
@@ -3339,6 +3375,14 @@ impl Runtime {
         elapsed_ms: u128,
     ) -> bool {
         let action_kind = action.kind();
+        if let RemoteControlAction::RenameTab { request_id, .. } = &action {
+            return self.ingest_tab_rename_result(
+                request_id,
+                result
+                    .map(|_| ())
+                    .map_err(|error| error.message().to_owned()),
+            );
+        }
         if let RemoteControlAction::MoveTab {
             checkout_id,
             tab_id,

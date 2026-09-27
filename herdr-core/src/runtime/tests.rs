@@ -476,6 +476,8 @@ fn pane(id: &str, cwd: &str) -> PaneSnapshot {
 
 fn tab(workspace_id: &str, checkout_id: &str, pane: Option<PaneSnapshot>) -> TabSnapshot {
     TabSnapshot {
+        agent: None,
+        naming: Default::default(),
         id: Some(format!("{checkout_id}:tab")),
         workspace_id: Some(workspace_id.to_owned()),
         checkout_id: Some(checkout_id.to_owned()),
@@ -558,7 +560,8 @@ fn tab_order_payload(
         .iter()
         .map(|tab_id| {
             serde_json::json!({
-                "workspace_id": "w-order", "tab_id": tab_id, "label": ""
+                "workspace_id": "w-order", "tab_id": tab_id, "label": "",
+                "number": tab_id.rsplit(":t").next().and_then(|n| n.parse::<u32>().ok()).unwrap_or(1)
             })
         })
         .collect::<Vec<_>>();
@@ -932,7 +935,8 @@ fn split_workspace_payload(
     let tabs = tab_order
         .iter()
         .map(|(tab_id, _)| {
-            serde_json::json!({"workspace_id": "w-order", "tab_id": tab_id, "label": ""})
+            serde_json::json!({"workspace_id": "w-order", "tab_id": tab_id, "label": "",
+                "number": tab_id.rsplit(":t").next().and_then(|n| n.parse::<u32>().ok()).unwrap_or(1)})
         })
         .collect::<Vec<_>>();
     let panes = tab_order
