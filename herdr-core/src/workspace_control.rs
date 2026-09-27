@@ -327,12 +327,12 @@ mod tests {
 
     #[test]
     fn caller_ids_round_trip_and_pane_ids_are_left_alone() {
-        let id = checkout_caller_id("0123abcd", "/Users/dev/project");
+        let id = checkout_caller_id("0123abcd", "/srv/project");
         assert_eq!(
             Caller::parse(&id),
             Caller::Checkout {
                 key: "0123abcd",
-                path: "/Users/dev/project"
+                path: "/srv/project"
             }
         );
         let colon = checkout_caller_id("k", "/mnt/a:b/c");
