@@ -1492,6 +1492,10 @@
       "type": "number",
       "value": 12
     },
+    "--size-icon-lg": {
+      "type": "number",
+      "value": 20
+    },
     "--font-ui": {
       "type": "string",
       "value": "Inter"
@@ -17291,7 +17295,7 @@
           "type": "text",
           "id": "screen-settings-spec",
           "name": "web/src/SettingsSheet.tsx (a",
-          "content": "web/src/SettingsSheet.tsx (a Dialog), settings.ts SETTINGS_TABS, settings-rows.tsx Group/Row: the five-tab strip and, on Appearance, the Theme group (ToggleGroup + accent swatches) and Density group (Slider), matching web/src/SettingsSheet.tsx’s AppearanceTab exactly rather than a Select-based approximation.",
+          "content": "web/src/SettingsSheet.tsx (a Dialog), settings.ts SETTINGS_TABS, settings-rows.tsx Group/Row: the six-tab strip and, on Appearance, the Theme group (ToggleGroup + accent swatches) and Density group (Slider), matching web/src/SettingsSheet.tsx’s AppearanceTab exactly rather than a Select-based approximation.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -17431,6 +17435,18 @@
                     },
                     {
                       "id": "set-tabs-l-4",
+                      "type": "ref",
+                      "ref": "hideui:tab-m",
+                      "name": "Performance",
+                      "descendants": {
+                        "hideui:tab-t": {
+                          "fill": "$--subtle-foreground",
+                          "content": "Performance"
+                        }
+                      }
+                    },
+                    {
+                      "id": "set-tabs-l-5",
                       "type": "ref",
                       "ref": "hideui:tab-m",
                       "name": "Shortcuts",
@@ -17975,6 +17991,18 @@
                     },
                     {
                       "id": "set-tabs-d-4",
+                      "type": "ref",
+                      "ref": "hideui:tab-m",
+                      "name": "Performance",
+                      "descendants": {
+                        "hideui:tab-t": {
+                          "fill": "$--subtle-foreground",
+                          "content": "Performance"
+                        }
+                      }
+                    },
+                    {
+                      "id": "set-tabs-d-5",
                       "type": "ref",
                       "ref": "hideui:tab-m",
                       "name": "Shortcuts",

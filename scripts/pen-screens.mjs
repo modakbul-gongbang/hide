@@ -876,7 +876,7 @@ function settingsRow(id, label, control) {
 
 function buildSettings(tokens) {
   const W = num(tokens, '--size-settings-sheet-w');
-  const TABS = ['General', 'Appearance', 'Agents', 'Devices', 'Shortcuts'];
+  const TABS = ['General', 'Appearance', 'Agents', 'Devices', 'Performance', 'Shortcuts'];
   const SUBTITLE = 'Theme, accent and interface density.';
   const OWNER = 'Appearance, shortcuts, Background AI, hooks and the device list are kept by hided on fixture.';
   const ACCENTS = [
@@ -916,7 +916,7 @@ function buildSettings(tokens) {
       stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
     }, [header, nav, body])];
   }
-  return screenSheet('screen-settings', 'Screen / Settings', 'web/src/SettingsSheet.tsx (a Dialog), settings.ts SETTINGS_TABS, settings-rows.tsx Group/Row: the five-tab strip and, on Appearance, the Theme group (ToggleGroup + accent swatches) and Density group (Slider), matching web/src/SettingsSheet.tsx’s AppearanceTab exactly rather than a Select-based approximation.', build, build);
+  return screenSheet('screen-settings', 'Screen / Settings', 'web/src/SettingsSheet.tsx (a Dialog), settings.ts SETTINGS_TABS, settings-rows.tsx Group/Row: the six-tab strip and, on Appearance, the Theme group (ToggleGroup + accent swatches) and Density group (Slider), matching web/src/SettingsSheet.tsx’s AppearanceTab exactly rather than a Select-based approximation.', build, build);
 }
 
 // -- Screen / Palette ------------------------------------------------------------

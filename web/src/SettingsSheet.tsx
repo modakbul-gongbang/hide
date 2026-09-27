@@ -35,6 +35,9 @@ import {
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
   SETTINGS_TABS,
+  SLEEP_AFTER_CHOICES,
+  sleepAfterChoice,
+  sleepingCount,
   aliasProblem,
   canRetryDevice,
   deviceFacts,
@@ -133,6 +136,7 @@ function SettingsSheet({ actions }: { actions: Actions }) {
             {tab === "appearance" ? <AppearanceTab actions={actions} /> : null}
             {tab === "agents" ? <AgentsTab actions={actions} /> : null}
             {tab === "devices" ? <DevicesTab actions={actions} /> : null}
+            {tab === "performance" ? <PerformanceTab actions={actions} /> : null}
             {tab === "shortcuts" ? <ShortcutsTab actions={actions} /> : null}
           </TabsContent>
         </Tabs>
@@ -260,6 +264,48 @@ function DiagnosticList() {
 }
 
 // --- Appearance ----------------------------------------------------------------
+
+/**
+ * Sleep idle agents (PRD agent-sleep B1-B3): one choice, and how many of this
+ * machine's agents sleep now so the effect of the choice is visible.
+ */
+function PerformanceTab({ actions }: { actions: Actions }) {
+  const choice = useShellStore((s) => sleepAfterChoice(s.rest?.ui_state?.agent_sleep_after_hours));
+  const sleeping = useShellStore((s) => sleepingCount(s.rest?.navigator?.agents));
+  const [changedAt, setChangedAt] = useState<number | null>(null);
+  const error = useErrorSince(changedAt, ["agent_sleep."]);
+  return (
+    <Group
+      title="Idle agents"
+      note="Working agents, unread results and the tab on screen never sleep. Delegated agents sleep too; opening one resumes its conversation."
+      data-settings-group="idle-agents"
+    >
+      <Row label="Sleep idle agents after" detail={error ? <Note tone="error" data-agent-sleep-error="true">Not saved: {error}</Note> : null}>
+        {sleeping > 0 ? <Value>{sleeping} sleeping</Value> : null}
+        <Select
+          value={choice}
+          onValueChange={(value) => {
+            const next = SLEEP_AFTER_CHOICES.find((row) => row.id === value);
+            if (!next || value === choice) return;
+            setChangedAt(Date.now());
+            actions.setAgentSleepAfter(next.hours);
+          }}
+        >
+          <SelectTrigger aria-label="Sleep idle agents after" data-agent-sleep-after={choice}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {SLEEP_AFTER_CHOICES.map((row) => (
+              <SelectItem key={row.id} value={row.id} data-agent-sleep-option={row.id}>
+                {row.label}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </Row>
+    </Group>
+  );
+}
 
 function AppearanceTab({ actions }: { actions: Actions }) {
   const accent = useShellStore((s) => usableAccent(s.rest?.ui_state?.accent_hex));

@@ -136,7 +136,7 @@ export function RelationStatus({ actions }: { actions: Actions }) {
   );
 }
 
-type PaneMenuId = `open:${string}` | "copy_name" | "close_pane";
+type PaneMenuId = `open:${string}` | "sleep_agent" | "copy_name" | "close_pane";
 
 /**
  * What the pane header offers about this pane (B16, B18): its relatives,
@@ -150,7 +150,17 @@ export function paneMenuItems(pane: PaneRow, title: string): MenuEntry<PaneMenuI
     label: `${relationLabel[entry.relation]}: ${entry.label}`,
     unavailable: null,
   }));
-  items.push({ id: "copy_name", label: "Copy pane name", unavailable: null, separated: items.length > 0 });
+  // Sleep agent (PRD agent-sleep B15): offered on a local agent pane that is
+  // awake, disabled with the core's reason when this agent cannot sleep now.
+  if (pane.sleep_action) {
+    items.push({
+      id: "sleep_agent",
+      label: "Sleep agent",
+      unavailable: pane.sleep_action.available ? null : (pane.sleep_action.reason ?? "This agent cannot sleep now"),
+      separated: items.length > 0,
+    });
+  }
+  items.push({ id: "copy_name", label: "Copy pane name", unavailable: null, separated: items.length > 0 && !pane.sleep_action });
   items.push({ id: "close_pane", label: `Close pane ${title}`, unavailable: null, separated: true });
   return items;
 }
@@ -163,6 +173,7 @@ export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
       return;
     }
     if (id === "close_pane") return actions.closePane(pane.id);
+    if (id === "sleep_agent") return actions.sleepAgent(pane.id);
     const target = relationEntries(pane).find((entry) => `open:${entry.paneId}` === id);
     if (target) actions.followRelation(pane.id, target.paneId, target.label);
   };

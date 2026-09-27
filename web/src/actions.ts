@@ -716,6 +716,21 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "theme_set", payload: { theme } });
     },
 
+    /** Sleep idle agents after `hours`; null is Never (PRD agent-sleep B2). */
+    setAgentSleepAfter(hours: number | null) {
+      dispatch({ schema_version: 2, kind: "agent_sleep_set", payload: { after_hours: hours } });
+    },
+
+    /** Sleep agent from the pane menu (B15). */
+    sleepAgent(paneId: string) {
+      dispatch({ schema_version: 2, kind: "agent_sleep", payload: { pane_id: paneId } });
+    },
+
+    /** Wake agent and Retry resume the conversation; Start new session is `fresh` (B12, B14). */
+    wakeAgent(paneId: string, fresh = false) {
+      dispatch({ schema_version: 2, kind: "agent_wake", payload: { pane_id: paneId, fresh } });
+    },
+
     setFontSize(size: number) {
       updateUiState({ font_size: size });
     },
