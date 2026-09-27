@@ -133,6 +133,12 @@ A chip opens the existing child at once; while that move is in flight the chip s
 A child pane has a compact Return mark in its identity row, named with the parent in its tooltip and accessible name.
 The pane menu (from its overflow control or a right-click on the header) lists the parent, the other siblings, and the children as explicit Open items, then Copy pane name and Close pane; opening it moves no focus and marks nothing read.
 
+A pane whose agent sleeps (PRD agent-sleep) shows its state in place of the terminal, which stays hidden until the agent is back because the shell under it is not what the operator was talking to: Sleeping with the last progress line and Wake agent; Waking… with how old the resumed conversation is; or `Couldn’t resume this conversation` with the core's plain reason, Retry, and Start new session.
+The header caption reads `☾ sleeping · 22h`, `☾ waking…` or `could not resume`, and typed input to the pane goes nowhere.
+Opening the pane's tab by a committed move (a row, a tab, a checkout, a relation) wakes it in the same pane with its conversation; a Recent Panels preview does not, and neither does a click inside the tab already on screen.
+The pane menu offers Sleep agent on a local agent pane that is awake, disabled with the core's reason when the agent is working, waiting for the operator, of another kind, or has no conversation Herdr reported.
+Web owner: `web/src/PaneView.tsx` (`SleepBody`), `web/src/sleep.ts`, `web/src/PaneRelations.tsx`.
+
 The Agents explorer groups every current agent, this machine's and each connected device's, under Needs You, Done, Working, and Seen, and leaves an empty group out; a device's row names its device before the agent kind, and a device that is not connected lists nothing it only last reported.
 Each group lists its root rows; a delegated row is drawn only beneath its parent, indented one step per level and muted, while the operator has that parent unfolded.
 A group's heading counts every agent it speaks for, its roots and all their live descendants whether folded or not, so each agent is counted once, under its root's heading.
