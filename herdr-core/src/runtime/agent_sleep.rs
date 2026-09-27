@@ -451,11 +451,26 @@ impl Runtime {
         record.reason = None;
         record.pending_wake = None;
         let args = match mode {
-            WakeMode::Resume => crate::recent_closed::resume_arguments(&ClosedAgent {
-                kind: record.kind.clone(),
-                session_id: Some(record.session_id.clone()),
-            })
-            .unwrap_or_default(),
+            WakeMode::Resume => {
+                let Some(args) = crate::recent_closed::resume_arguments(&ClosedAgent {
+                    kind: record.kind.clone(),
+                    session_id: Some(record.session_id.clone()),
+                }) else {
+                    // Only Claude and Codex sleep, so this is a record this
+                    // build cannot resume; starting it bare would lose the
+                    // conversation without saying so.
+                    let detail = format!("{} has no resume arguments", record.kind);
+                    return self.ingest_agent_wake(
+                        pane_id,
+                        mode,
+                        WakeOutcome::Failed {
+                            reason: "The conversation couldn\u{2019}t be resumed.".to_owned(),
+                            detail,
+                        },
+                    );
+                };
+                args
+            }
             WakeMode::Fresh => Vec::new(),
         };
         let request = WakeRequest {
