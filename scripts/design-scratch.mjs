@@ -3,63 +3,11 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {randomUUID} from 'node:crypto';
-import {spawn, execFileSync} from 'node:child_process';
+import {execFileSync} from 'node:child_process';
 import {CANVAS} from './pen-tokens.mjs';
+import {PEN_VERSION, pen, requirePen} from './pen-cli.mjs';
 
-const PEN_VERSION = '0.3.8'; // Re-verify import, rendering and reopen before changing.
-const TIMEOUT_MS = 60_000;
-const MAX_OUTPUT_BYTES = 1024 * 1024;
 const usage = 'Usage: node scripts/design-scratch.mjs <task-slug>';
-
-// The guard's stdin belongs only to this creator. EOF on owner crash/SIGKILL
-// kills the isolated group even when this process cannot run its cleanup.
-const guard = `
-const {spawn} = require('node:child_process');
-const stop = () => { try { process.kill(-process.pid, 'SIGKILL'); } catch { process.exit(1); } };
-process.stdin.resume();
-process.stdin.once('end', stop);
-process.stdin.once('error', stop);
-const cli = spawn('pen', process.argv.slice(1), {stdio: ['ignore', 'inherit', 'inherit']});
-cli.once('error', error => { console.error('Cannot run pen: ' + error.message); process.exit(1); });
-cli.once('exit', code => process.exit(code ?? 1));
-`;
-
-// One short-lived CLI process group at a time; no prompt means no model run.
-function pen(args, cwd) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ['-e', guard, '--', ...args], {cwd, detached: true, stdio: ['pipe', 'pipe', 'pipe']});
-    let stdout = '', stderr = '', bytes = 0, failure;
-    const stop = () => {
-      if (!child.pid) return;
-      try { process.kill(-child.pid, 'SIGKILL'); }
-      catch (error) { if (error.code !== 'ESRCH') failure ??= error; }
-    };
-    const abort = message => { failure ??= new Error(message); stop(); };
-    const interrupt = () => abort('Interrupted; scratch creation cancelled.');
-    process.once('SIGINT', interrupt);
-    process.once('SIGTERM', interrupt);
-    const timer = setTimeout(() => abort(`Pen exceeded ${TIMEOUT_MS / 1000}s; scratch creation cancelled.`), TIMEOUT_MS);
-    for (const [stream, name] of [[child.stdout, 'stdout'], [child.stderr, 'stderr']]) {
-      stream.on('data', chunk => {
-        bytes += chunk.length;
-        if (bytes > MAX_OUTPUT_BYTES) return abort('Pen output exceeded 1 MiB; scratch creation cancelled.');
-        if (name === 'stdout') stdout += chunk; else stderr += chunk;
-      });
-    }
-    child.once('error', error => { failure = new Error(`Cannot run pen: ${error.message}`); });
-    // Do not wait for close: a descendant may still hold the output pipes.
-    child.once('exit', stop);
-    child.once('close', (code, signal) => {
-      stop();
-      clearTimeout(timer);
-      process.removeListener('SIGINT', interrupt);
-      process.removeListener('SIGTERM', interrupt);
-      if (failure) reject(failure);
-      else if (code !== 0) reject(new Error(`Pen failed (${signal ?? code}).\n${stderr}${stdout}`));
-      else resolve(stdout);
-    });
-  });
-}
 
 function ordinaryFile(file) {
   const stat = fs.lstatSync(file);
@@ -94,12 +42,11 @@ try {
     execFileSync('git', ['check-ignore', '--quiet', '--', relative], {cwd: root});
     const target = path.join(root, relative);
     if (fs.existsSync(target)) throw new Error(`Scratch already exists; not overwritten: ${target}`);
-    const version = (await pen(['version'], root)).trim();
-    if (version !== `pen ${PEN_VERSION}`) throw new Error(`Expected pen ${PEN_VERSION}, received ${JSON.stringify(version)}. Install with: npm install -g @pen.dev/cli@${PEN_VERSION}`);
+    await requirePen(root);
     const directory = localDirectory(root, ['agents', 'runs', slug, 'design']);
     // Same directory preserves the import's relative path on publication.
     temporary = path.join(directory, `.scratch-${randomUUID()}.pen`);
-    const output = await pen(['--repo', root, '--out', temporary, '--library', library], root);
+    const output = await pen(['--repo', root, '--out', temporary, '--library', library], {cwd: root, action: 'scratch creation'});
     ordinaryFile(temporary);
     // Atomic publication fails if another creator (or a symlink) won the name.
     fs.linkSync(temporary, target);

@@ -26,6 +26,11 @@ The dev-only route `/gallery` (`web/src/gallery/`) renders every `System /` stat
 It is excluded from the production build `hided` serves.
 `node scripts/check-pen-gallery.mjs` refuses a manifest and a library that name different parts or different states for either theme frame; see Checks below.
 
+The gallery also renders production screens on synthetic scenes, one document per scene because a scene seeds the app's own stores.
+`/gallery?scene=projects-sidebar` is the shell's real `Sidebar` and `createActions` over `web/src/gallery/sceneData.ts`, a snapshot with the content `Screen / Projects Sidebar` draws; its folds go through the real actions and the scene answers them as the core would.
+Its query takes `theme` (`light`, `dark`), `width` (the sidebar's CSS width), `scale` (the interface text scale) and `content` (`reference`, or `long` for long Korean titles).
+Every name, path and count in a scene is invented example data, so a capture of it is safe to publish.
+
 ## The flow: scratch to one PR
 
 1. **Scratch.** Create an ignored, library-linked scratch document with `node scripts/design-scratch.mjs <task-slug>`.
@@ -52,15 +57,61 @@ It is excluded from the production build `hided` serves.
      `scripts/check-hide-screens.mjs` refuses a ref or a descendant-override key whose colorable properties are not restated this way.
 4. **Human approval.** Show alternatives in the task's scratch document, let the user choose and revise them, and get approval before implementing.
    Record the approved behavior and any proposed system addition in the PRD so the decision survives scratch cleanup; a scratch is not a merge deliverable.
+   Keep the chosen design as a reference bundle (see Reference bundle and review run below) before anything else edits it, marked `user` when the operator chose it and `delegated` when it is a proposal made under delegated authority.
 5. **Library or screen file.** Promote only the approved reusable components or tokens into `design/hide-ui.lib.pen`, or the approved screen into `design/hide-screens.pen`, with one writer handling the shared update.
    Preserve master IDs when editing so existing instances keep their identity: a component state is a `ref` of its reusable master with descendant overrides, never a redrawn copy.
    Run `node scripts/gen-pen.mjs` after editing the library; it refreshes mapped variables and the Foundations sheet without moving authored sheet positions.
 6. **Code.** Implement the change in `web/src/components/ui` or `web/src/components`, reaching every color, spacing, and radius value through a token.
 7. **Compare in both themes.** For a `System /` part, compare the gallery's rendering against the Pen export, Light and Dark.
    For a `Component /` or a screen, compare an actual app capture against the Pen export, Light and Dark, because Pen cannot reproduce real app state or Radix behavior.
+   For a screen with a review target, `node scripts/design-review.mjs review` does this in one run against the reference bundle.
    Pen has no code export and does not model Radix interaction; the comparison is a human visual judgment, not an automated pixel diff.
    Keep every capture under `agents/runs/<slug>/`; never commit a screenshot, scratch file, or comparison image (see AGENTS.md, Evidence Belongs Outside The Repository).
 8. **One PR.** Land the token/library/screen change and the code change together.
+   The PR body follows `.github/pull_request_template.md`: one before/after image of the actual screen above the fold, captioned with where to look, and the one visual judgment the reviewer has to make; the rule results as automated facts in Evidence.
+   The review run's other comparison images and state captures go in Evidence's folded block (uploaded, never committed); `prd_ship.js screenshots` puts every image it uploads under Summary, so pick the one that stays there and move the rest before publishing.
+   A failed rule, an INCOMPLETE item, or a required check that was not run stays visible in Evidence, never only in a folded block.
+
+## Reference bundle and review run
+
+A design change is judged against the design that was chosen, not against whatever the Pen file says by the time the code lands: a later edit to Pen, or the same wrong change made to Pen and code together, would otherwise hide the drift.
+`scripts/design-review.mjs` keeps that choice and checks the production screen against it.
+A target in `design/review-targets.json` names what one run covers: the committed Pen file and its `Screen /` sheet, the Pen nodes it pairs with the screen and each node's width, theme, text scale, content and state, the gallery scene, the states the scene can be put in, the conditions to measure, the default layout rules, and the questions left to a person.
+A target exists for `projects-sidebar`; add one when a change touches another screen, not before.
+
+### Keep the chosen design: `baseline`
+
+```sh
+node scripts/design-review.mjs baseline <slug> --target projects-sidebar --approval user|delegated --reference "agents/prd/<slug>/prd.md D-08" [--name <name>] [--from <file.pen>] [--rules <rules.json>]
+```
+
+- It copies the target's Pen file (or `--from`, such as a scratch proposal), every library it imports and every image it uses into `agents/runs/<slug>/design/baseline/<name>/`, rewriting the references so the bundle opens in Pen from any directory or machine (two different files that would share one name in the bundle are refused), and exports the target's nodes from that copy, so the images prove the copy is whole.
+- `manifest.json` records when, from which file and commit, with which Pen version, each frame's conditions and image, the layout rules, and a hash of every file.
+- `--approval` separates the operator's choice from a delegated proposal, and `--reference` points at the decision in the PRD instead of restating it.
+- A bundle is never overwritten: a rerun with the same name is refused, and a failed export publishes nothing.
+- `node scripts/design-review.mjs show <bundle>` prints the approval, frames and rules and checks every hash, with neither Pen nor a browser, so an implementor on a machine without Pen still reads the numbers and opens the PNGs.
+
+### Check the screen against it: `review`
+
+```sh
+node scripts/design-review.mjs review <slug> --baseline <bundle> [--theme light,dark] [--width 292,240] [--content reference,long] [--scale 1,1.25] [--state rest,hover-parent,...] [--no-pen]
+```
+
+One run, in this order, with each step's real result in `agents/runs/<slug>/design/review/<run>/report.md` and `report.json`:
+
+1. The static contract: `node scripts/check-design-contract.mjs`, as CI runs it.
+2. The current Pen: the bundle's nodes exported from the target's Pen file in this checkout, so a proposal bundle is set against what the checkout now carries.
+3. The production screen: the command starts its own Vite dev server and headless Chromium, opens the target's gallery scene under each selected condition, and measures the bundle's rules there through `web/e2e/sidebar-geometry.mjs`, the same geometry the e2e specs assert on.
+   The rules are the bundle's, never values read back from the code under review: `childIndentPx` (a child's status mark and title start that many pixels per level right of its list's roots), `rootsAligned`, `stableUnderHover` and `stableUnderFocus` (no row moves or resizes while any one row is hovered or keyboard-focused), `noOverlap` (no part of a row overlaps another or runs past the row, no text spills), `sharedColumns` (one column for every time and badge end, one for every chevron) and `noSidewaysOverflow`.
+4. Comparisons: for each bundle frame, the reference, the current Pen and the actual screen side by side, captured under that frame's width, theme, text scale, content and state and labelled with them; an image whose width is not the frame's is reported as a different condition, never scaled to look alike.
+5. State sheets: every selected condition and state no Pen frame draws (a narrow width, a larger text size, long titles, hover, focus, a folded parent, a closed checkout) as captures of the actual screen only, labelled as such.
+
+The exit status is 0 for PASS, 1 for FAIL (the static contract or a rule failed) and 3 for INCOMPLETE: a missing Pen or Pen login, a node Pen did not export, a bundle file that no longer matches its hash, or a browser step that did not finish.
+An INCOMPLETE report names the cause and the command to rerun on a machine that can render; it is never read as a pass.
+A PASS covers only the rules; the comparisons and the report's judgment list are for a person.
+The run owns its dev server, browser and Pen session and closes them on every exit, including an interrupt at any step, which ends the whole run; a process it cannot close is reported, and it touches no other app, pane or server.
+
+Only the selected conditions are measured, so a change names what it touched (`--theme dark --width 240 --content long`), and a bundle frame is always captured under its own conditions so its comparison exists.
 
 ## The screen transplant procedure
 
@@ -158,7 +209,7 @@ A `Component /` sheet is a hide composite assembled from `System /` masters (nev
 - `check-hide-screens.mjs` - refuses a `design/hide-screens.pen` top-level node not named `Screen / `, an id that names more than one node, a `Screen /` sheet missing a `Light` or a `Dark` frame, a local `$--variable` the file does not define, a ref or descendant-override key whose import alias or target id does not resolve against the imported library, a cross-library ref that leaves one of the imported master's own colors un-restated locally, or a local variable block that differs from what `design/tokens.json` generates.
 
 `--staged` reads the exact staged content of the design inputs and checker files into a temporary directory and checks that, without touching the index or working tree; the tracked `.githooks/pre-commit` runs it and is opt-in (`git -c core.hooksPath=.githooks commit`).
-The node test suites `scripts/tests/pen-gallery.test.mjs`, `scripts/tests/pen-transplant.test.mjs`, `scripts/tests/design-scratch.test.mjs`, and `scripts/tests/hide-screens.test.mjs` exercise the gallery comparison, the transplant script, the scratch creator, and the screen-list checker respectively against fixtures; they do not prove Pen rendering, which stays a local step with the real CLI.
+The node test suites `scripts/tests/pen-gallery.test.mjs`, `scripts/tests/pen-transplant.test.mjs`, `scripts/tests/design-scratch.test.mjs`, `scripts/tests/design-review.test.mjs`, and `scripts/tests/hide-screens.test.mjs` exercise the gallery comparison, the transplant script, the scratch creator, the reference bundle and the review rules, and the screen-list checker respectively against fixtures; they do not prove Pen rendering or browser layout, which stay a local `design-review.mjs review` run with the real Pen CLI and Chromium.
 
 These are static source checks, not a rendering engine or an aesthetic evaluator: they catch drift between the files that are supposed to agree, not whether a composition looks right.
-Visual approval is always a human judgment made from a gallery-or-app capture beside the Pen export, recorded under `agents/runs/<slug>/` and never as a committed image.
+Visual approval is always a human judgment made from a gallery-or-app capture beside the Pen export, recorded under `agents/runs/<slug>/` and never as a committed image; the review run's rules make layout drift a failure, not an approval.

@@ -1444,6 +1444,10 @@
       "type": "number",
       "value": 430
     },
+    "--size-gallery-scene-h": {
+      "type": "number",
+      "value": 880
+    },
     "--size-settings-sheet-w": {
       "type": "number",
       "value": 720
@@ -27484,7 +27488,7 @@
                         "hideui:nZkan": {
                           "fill": "$--muted-foreground",
                           "enabled": true,
-                          "content": "12 projects"
+                          "content": "6 projects"
                         },
                         "hideui:iBYjj": {
                           "fill": "$--muted-foreground"
@@ -27645,7 +27649,7 @@
                           "type": "text",
                           "id": "psb-sec-recent-l-t",
                           "name": "PROJECTS · RECENT ACTIVITY ·",
-                          "content": "PROJECTS · RECENT ACTIVITY · 12",
+                          "content": "PROJECTS · RECENT ACTIVITY · 5",
                           "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-micro",
@@ -29327,7 +29331,7 @@
                         "hideui:nZkan": {
                           "fill": "$--muted-foreground",
                           "enabled": true,
-                          "content": "12 projects"
+                          "content": "6 projects"
                         },
                         "hideui:iBYjj": {
                           "fill": "$--muted-foreground"
@@ -29488,7 +29492,7 @@
                           "type": "text",
                           "id": "psb-sec-recent-d-t",
                           "name": "PROJECTS · RECENT ACTIVITY ·",
-                          "content": "PROJECTS · RECENT ACTIVITY · 12",
+                          "content": "PROJECTS · RECENT ACTIVITY · 5",
                           "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-micro",
