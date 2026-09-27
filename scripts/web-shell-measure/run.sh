@@ -68,7 +68,7 @@ trap 'exit 130' INT TERM
 spawn_owned() {
   local name=$1; shift
   (( ${#pids[@]} < 8 )) || { echo 'process owner budget exceeded' >&2; exit 1; }
-  "$@" >"$MEASURE_RUN_DIR/logs/$name.log" 2>&1 &
+  "$@" >"$MEASURE_RUN_DIR/logs/$name.log" 2>"$MEASURE_RUN_DIR/logs/$name.stderr.log" &
   owned_pid=$!
   pids+=("$owned_pid")
 }
