@@ -83,3 +83,50 @@ fn agent_last_member_departure_collapses_its_area_and_stale_workspace_does_nothi
     runtime.dispatch_json(&explorer_event("agent_layout", serde_json::json!({"workspace":{"device_id":"local","path":"/other"},"action":"split","tab_id":"w-order:t1","area_id":"a1","edge":"right","request_id":"stale"})));
     assert_eq!(layout(&runtime), before);
 }
+
+#[test]
+fn requested_new_tab_area_survives_a_focus_change_before_topology_arrives() {
+    let (mut runtime, _) = setup();
+    action(
+        &mut runtime,
+        serde_json::json!({"action":"split","tab_id":"w-order:t2","area_id":"a1","edge":"right","request_id":"split-new"}),
+    );
+    runtime.ingest_local_control_result(
+        RemoteControlAction::CreateTab {
+            workspace_id: "w-order".into(),
+            cwd: "/agent-groups".into(),
+            label: "Tab".into(),
+            area_id: Some("a1".into()),
+        },
+        Ok(RemoteControlOutcome::Acknowledged {
+            created_tab_id: Some("w-order:t4".into()),
+            created_pane_id: Some("w-order:p4".into()),
+        }),
+        1,
+    );
+    ingest(
+        &mut runtime,
+        &["w-order:t1", "w-order:t2", "w-order:t3", "w-order:t4"],
+    );
+    let arranged = layout(&runtime);
+    assert_eq!(
+        arranged
+            .tree
+            .area("a1")
+            .unwrap()
+            .displays
+            .last()
+            .unwrap()
+            .id,
+        "w-order:t4"
+    );
+    assert_eq!(arranged.tree.active_area, "a1");
+    assert!(
+        runtime
+            .workspace_views
+            .as_ref()
+            .unwrap()
+            .agent_placements
+            .is_empty()
+    );
+}

@@ -1008,6 +1008,27 @@ impl Runtime {
             .retain(|checkout_id, _| live_checkout_ids.contains(checkout_id));
         let mut agent_layout_changed = false;
         let mut agent_layout_errors = Vec::new();
+        if let Some(store) = self.workspace_views.as_mut() {
+            let keys = workspaces
+                .iter()
+                .flat_map(|workspace| {
+                    workspace
+                        .checkouts
+                        .iter()
+                        .map(|checkout| (workspace.device_id.clone(), checkout.path.clone()))
+                })
+                .collect::<HashSet<_>>();
+            store.agent_live.retain(|key| keys.contains(key));
+            store.agent_placements.retain(|id, (_, _, started)| {
+                let current = started.elapsed() < std::time::Duration::from_secs(30);
+                if !current {
+                    agent_layout_errors.push(format!(
+                        "Placement for tab {id} expired before topology confirmed it"
+                    ));
+                }
+                current
+            });
+        }
         for workspace in workspaces.iter_mut() {
             for checkout in workspace.checkouts.iter_mut() {
                 let key = (workspace.device_id.clone(), checkout.path.clone());
@@ -1027,6 +1048,34 @@ impl Runtime {
                         Err(error) => {
                             agent_layout_errors.push(format!("{}: {error:?}", checkout.id))
                         }
+                    }
+                    let placements = store
+                        .agent_placements
+                        .iter()
+                        .filter(|(id, (scope, _, _))| {
+                            scope == &key && topology.iter().any(|(tab, _)| tab == *id)
+                        })
+                        .map(|(id, (_, area, _))| (id.clone(), area.clone()))
+                        .collect::<Vec<_>>();
+                    for (id, area) in placements {
+                        let target = layout
+                            .tree
+                            .area(&area)
+                            .unwrap_or_else(|| layout.tree.active_area());
+                        let area = target.id.clone();
+                        let index = target.displays.len();
+                        match layout.tree.move_display(
+                            &id,
+                            &area,
+                            index,
+                            layout.tree.next_stamp(unix_milliseconds()),
+                        ) {
+                            Ok(changed) => agent_layout_changed |= changed,
+                            Err(error) => {
+                                agent_layout_errors.push(format!("Created tab {id}: {error:?}"))
+                            }
+                        }
+                        store.agent_placements.remove(&id);
                     }
                     if first
                         || self
@@ -3473,6 +3522,40 @@ impl Runtime {
                 created_tab_id,
                 created_pane_id,
             }) => {
+                if let Some(tab_id) = created_tab_id.as_ref() {
+                    let placement = match &action {
+                        RemoteControlAction::CreateTab {
+                            cwd,
+                            area_id: Some(area),
+                            ..
+                        }
+                        | RemoteControlAction::CreateWorkspace {
+                            cwd,
+                            area_id: Some(area),
+                            ..
+                        } => Some((cwd.clone(), area.clone())),
+                        _ => None,
+                    };
+                    if let Some((path, area)) = placement
+                        && let Some(store) = self.workspace_views.as_mut()
+                    {
+                        if store.agent_placements.len() < 64 {
+                            store.agent_placements.insert(
+                                tab_id.clone(),
+                                (
+                                    (workspace::LOCAL_DEVICE_ID.to_owned(), path),
+                                    area,
+                                    Instant::now(),
+                                ),
+                            );
+                        } else {
+                            self.push_diagnostic(
+                                "agent_layout.placement_limit",
+                                "Too many pending Agent tab placements",
+                            );
+                        }
+                    }
+                }
                 if matches!(
                     action,
                     RemoteControlAction::CreateTab { .. }

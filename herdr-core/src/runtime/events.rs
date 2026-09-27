@@ -121,6 +121,8 @@ pub(super) struct CreateWorkspacePayload {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateTabPayload {
+    #[serde(default)]
+    pub(super) area_id: Option<String>,
     pub(super) workspace_id: String,
     #[serde(default)]
     pub(super) checkout_id: Option<String>,
@@ -1472,6 +1474,22 @@ impl Runtime {
                     );
                     return true;
                 };
+                let key = (workspace::LOCAL_DEVICE_ID.to_owned(), cwd.clone());
+                let area_id = payload.area_id.or_else(|| {
+                    self.agent_layout_of(&key)
+                        .map(|layout| layout.tree.active_area.clone())
+                });
+                if area_id.as_ref().is_some_and(|id| {
+                    self.agent_layout_of(&key)
+                        .is_none_or(|layout| layout.tree.area(id).is_none())
+                }) {
+                    self.set_error(
+                        "agent_layout.unknown_area",
+                        "The Agent area is no longer available",
+                        false,
+                    );
+                    return true;
+                }
                 let label = payload.label.trim();
                 if label.is_empty() {
                     self.set_error("tab.invalid_label", "Tab label cannot be empty", false);
@@ -1498,10 +1516,12 @@ impl Runtime {
                         workspace_id: session_workspace_id,
                         cwd,
                         label: label.to_owned(),
+                        area_id,
                     },
                     None => RemoteControlAction::CreateWorkspace {
                         cwd,
                         label: workspace_label,
+                        area_id,
                     },
                 };
                 self.push_diagnostic(

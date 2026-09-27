@@ -852,6 +852,7 @@ fn remote_tab_creation_key(
             workspace_id,
             cwd,
             label,
+            ..
         } => Some((
             target_id.to_owned(),
             workspace_id.clone(),
@@ -859,7 +860,7 @@ fn remote_tab_creation_key(
             label.clone(),
         )),
         // A workspace created for a registered project is keyed by its folder.
-        RemoteControlAction::CreateWorkspace { cwd, label } => Some((
+        RemoteControlAction::CreateWorkspace { cwd, label, .. } => Some((
             target_id.to_owned(),
             cwd.clone(),
             cwd.clone(),

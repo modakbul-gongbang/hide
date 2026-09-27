@@ -562,6 +562,7 @@ impl Runtime {
                     RemoteControlAction::CreateWorkspace {
                         cwd: registration.path.clone(),
                         label: registration.label.clone(),
+                        area_id: None,
                     }
                 } else {
                     let Some(source_id) = remote_herdr_workspace(
@@ -591,6 +592,7 @@ impl Runtime {
                         workspace_id: source_id.to_owned(),
                         cwd,
                         label,
+                        area_id: None,
                     }
                 }
             }

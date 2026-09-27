@@ -380,10 +380,12 @@ pub enum RemoteControlAction {
         workspace_id: String,
         cwd: String,
         label: String,
+        area_id: Option<String>,
     },
     CreateWorkspace {
         cwd: String,
         label: String,
+        area_id: Option<String>,
     },
     CloseTab {
         tab_id: String,
@@ -537,6 +539,7 @@ fn execute_remote_control(
             workspace_id,
             cwd,
             label,
+            ..
         } => {
             let result = mutation_request(
                 connector,
@@ -546,7 +549,7 @@ fn execute_remote_control(
             let (tab_id, pane_id) = wire::created_tab(result).map_err(ControlFailure::Ambiguous)?;
             (Some(tab_id), Some(pane_id))
         }
-        RemoteControlAction::CreateWorkspace { cwd, label } => {
+        RemoteControlAction::CreateWorkspace { cwd, label, .. } => {
             let result = mutation_request(
                 connector,
                 "workspace.create",
@@ -4318,6 +4321,7 @@ mod tests {
             &RemoteControlAction::CreateWorkspace {
                 cwd: "/tmp/herdr-ide-hide".to_owned(),
                 label: "hide".to_owned(),
+                area_id: None,
             },
         )
         .expect("workspace control request");
@@ -4426,6 +4430,7 @@ mod tests {
                 workspace_id: "w1".to_owned(),
                 cwd: "/tmp/herdr-ide-remote-tab".to_owned(),
                 label: "New tab".to_owned(),
+                area_id: None,
             },
             RemoteControlAction::CloseTab {
                 tab_id: "w1:t3".to_owned(),
@@ -4564,6 +4569,7 @@ mod tests {
                 workspace_id: workspace_id.clone(),
                 cwd: cwd.clone(),
                 label: "Herdr IDE remote control probe".to_owned(),
+                area_id: None,
             },
         )
         .expect("create fixture tab")

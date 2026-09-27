@@ -115,6 +115,7 @@ fn local_tab_creation_acknowledgement_preserves_the_created_pane_focus() {
             workspace_id: "w1".to_owned(),
             cwd: "/tmp/project".to_owned(),
             label: "2".to_owned(),
+            area_id: None,
         },
         Ok(RemoteControlOutcome::Acknowledged {
             created_tab_id: Some("w1:t2".to_owned()),
@@ -1246,6 +1247,7 @@ fn split_checkout_a_created_tab_is_visible_on_the_acknowledgment() {
             workspace_id: "wa".to_owned(),
             cwd: checkout_path.to_owned(),
             label: "2".to_owned(),
+            area_id: None,
         },
         Ok(RemoteControlOutcome::Acknowledged {
             created_tab_id: Some("wa:t2".to_owned()),
