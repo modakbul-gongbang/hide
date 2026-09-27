@@ -664,6 +664,7 @@ fn split_checkout_payload(
 fn tab_order_runtime(checkout_path: &str) -> (Runtime, String) {
     let mut runtime = runtime();
     runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
+        primary_checkout_id: None,
         id: "workspace:order".to_owned(),
         label: "order".to_owned(),
         path: checkout_path.to_owned(),
@@ -1045,6 +1046,7 @@ fn reveal_runtime() -> (Runtime, PathBuf, String, PathBuf, String) {
         .iter()
         .enumerate()
         .map(|(index, path)| WorkspaceRegistration {
+            primary_checkout_id: None,
             id: format!("workspace:{index}"),
             label: format!("workspace {index}"),
             path: path.to_string_lossy().into_owned(),
@@ -1102,6 +1104,7 @@ fn explorer_runtime() -> (Runtime, PathBuf) {
 /// way a click on it in the sidebar leaves the navigator.
 fn focus_local_checkout(runtime: &mut Runtime, root: &Path) {
     runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
+        primary_checkout_id: None,
         id: "workspace:0".to_owned(),
         label: "workspace 0".to_owned(),
         path: root.to_string_lossy().into_owned(),

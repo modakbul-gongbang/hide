@@ -580,6 +580,7 @@ fn pane_focus_request_moves_to_the_checkout_that_owns_the_target() {
     let mut runtime = runtime();
     runtime.snapshot.ui_state.workspace_registrations = vec![
         WorkspaceRegistration {
+            primary_checkout_id: None,
             id: project_a.to_owned(),
             label: "Alpha".to_owned(),
             path: path_a.clone(),
@@ -587,6 +588,7 @@ fn pane_focus_request_moves_to_the_checkout_that_owns_the_target() {
             pinned: false,
         },
         WorkspaceRegistration {
+            primary_checkout_id: None,
             id: project_b.to_owned(),
             label: "Beta".to_owned(),
             path: path_b.clone(),
@@ -2052,6 +2054,7 @@ fn a_plain_terminal_pane_cwd_is_reconciled_into_its_checkout() {
     let mut runtime = runtime();
     let checkout_path = "/private/tmp/hide-registered-checkout";
     runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
+        primary_checkout_id: None,
         id: "workspace:registered".to_owned(),
         label: "registered".to_owned(),
         path: checkout_path.to_owned(),
@@ -2174,6 +2177,7 @@ fn a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd() {
     let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
     let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
     let registration = WorkspaceRegistration {
+        primary_checkout_id: None,
         id: workspace_id.clone(),
         label: "Selected".to_owned(),
         path: checkout_path.to_owned(),
@@ -2324,6 +2328,7 @@ fn a_missing_selected_pane_reports_without_falling_back_to_a_same_cwd_pane() {
     let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
     let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
     let registration = WorkspaceRegistration {
+        primary_checkout_id: None,
         id: workspace_id.clone(),
         label: "Missing pane".to_owned(),
         path: checkout_path.to_owned(),

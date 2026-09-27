@@ -588,6 +588,7 @@ fn returning_to_a_workspace_without_agent_tabs_keeps_its_active_view_tab() {
         .ui_state
         .workspace_registrations
         .push(WorkspaceRegistration {
+            primary_checkout_id: None,
             id: "workspace:other".to_owned(),
             label: "other".to_owned(),
             path: other.to_string_lossy().into_owned(),
@@ -680,6 +681,7 @@ pub(super) fn second_checkout(runtime: &mut Runtime, directory: &Path) -> (PathB
         .ui_state
         .workspace_registrations
         .push(WorkspaceRegistration {
+            primary_checkout_id: None,
             id: "workspace:other".to_owned(),
             label: "other".to_owned(),
             path: other.to_string_lossy().into_owned(),

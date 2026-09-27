@@ -463,6 +463,7 @@ fn a_closed_projected_pane_retargets_to_the_remaining_pane_in_its_checkout() {
     let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
     let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
     let registration = WorkspaceRegistration {
+        primary_checkout_id: None,
         id: workspace_id.clone(),
         label: "Closed pane".to_owned(),
         path: checkout_path.to_owned(),
@@ -1397,6 +1398,7 @@ fn explorer_file_create_opens_the_created_file_as_a_tab_and_others_do_not() {
     );
     let mut runtime = runtime();
     runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
+        primary_checkout_id: None,
         id: "workspace:0".to_owned(),
         label: "workspace 0".to_owned(),
         path: root.to_string_lossy().into_owned(),

@@ -77,10 +77,10 @@ pub(crate) fn sort_projects(
         // The primary checkout leads its project whatever its activity: it is
         // the one checkout that never folds, so the list starts at the same
         // place every time. The rest follow by activity.
-        let project_path = project.path.clone();
         project.checkouts.sort_by(|left, right| {
-            is_primary(right, &project_path)
-                .cmp(&is_primary(left, &project_path))
+            right
+                .is_primary
+                .cmp(&left.is_primary)
                 .then_with(|| keys[&right.id].cmp(&keys[&left.id]))
                 .then_with(|| left.id.cmp(&right.id))
         });
@@ -109,11 +109,6 @@ pub(crate) fn sort_projects(
                 || project.last_activity_unix_ms != last_activity_unix_ms
                 || project.checkouts.iter().map(|c| &c.id).ne(checkouts.iter())
         })
-}
-
-/// The checkout that is the project's own folder rather than a linked worktree.
-fn is_primary(checkout: &CheckoutSnapshot, project_path: &str) -> bool {
-    !checkout.is_worktree && checkout.path == project_path
 }
 
 fn checkout_has_live_exception(
@@ -191,7 +186,7 @@ pub(crate) fn refresh_inactive_groups(
             .checkouts
             .iter()
             .filter(|checkout| {
-                !is_primary(checkout, &workspace.path)
+                !checkout.is_primary
                     && checkout_is_inactive(checkout, &by_pane, focused_checkout_id, now_unix_ms)
             })
             .map(|checkout| checkout.id.clone())
@@ -327,6 +322,7 @@ mod tests {
     ) -> CheckoutSnapshot {
         CheckoutSnapshot {
             id: id.to_owned(),
+            is_primary: true,
             worktree: last_commit_unix_seconds.map(|seconds| WorktreeSnapshot {
                 last_commit_unix_seconds: Some(seconds),
                 ..Default::default()

@@ -138,10 +138,11 @@ export function checkoutPresentation(workspace: Workspace, checkout: Checkout, n
   // A stale refresh keeps the last known pull request and mutes its glyph; an
   // unavailable answer that is not stale falls back to the branch glyph.
   const showsPr = pr !== null && (!github || github.available || github.stale || github.unavailable_reason === null);
-  const primary = !checkout.is_worktree && checkout.path === workspace.path;
+  const primary = checkout.is_primary === true;
   const detached = checkout.worktree ? checkout.worktree.branch === null : false;
-  const kind: CheckoutKind =
-    pr && showsPr
+  const kind: CheckoutKind = primary
+    ? "primary"
+    : pr && showsPr
       ? pr.badge === "merged"
         ? "pr_merged"
         : pr.badge === "closed"
@@ -151,11 +152,9 @@ export function checkoutPresentation(workspace: Workspace, checkout: Checkout, n
             : "pr_open"
       : !workspace.is_git
         ? "folder"
-        : primary
-          ? "primary"
-          : detached
-            ? "detached"
-            : "branch";
+        : detached
+          ? "detached"
+          : "branch";
   const kindTone = !checkout.exists
     ? "text-destructive"
     : kind.startsWith("pr_")
