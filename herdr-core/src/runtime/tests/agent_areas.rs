@@ -769,3 +769,113 @@ fn reopen_unknown_claim_survives_error_and_retry_launch_failure_then_transfers_t
     assert_eq!(layout(&runtime).waiting, 0);
     assert!(layout(&runtime).tree.display("w-order:restored").is_some());
 }
+
+#[test]
+fn cross_machine_lineage_updates_agent_tab_placement_in_every_arrival_order() {
+    // B16: a resolved child is a sidebar canvas, never a normal Agent tab.
+    for order in [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ] {
+        let (mut runtime, _) = setup();
+        let mut local = tab_order_payload(
+            "/agent-groups",
+            &["w-order:t1", "w-order:t2"],
+            &["w-order:t1", "w-order:t2"],
+            "w-order:t1",
+        );
+        local.agents = serde_json::from_value(serde_json::json!([{
+            "id":"child", "pane_id":"w-order:t2:p", "agent_status":"working",
+            "state_change_seq":1, "spawned_from_pane_id":"parent",
+            "spawned_from_machine_id":"machine-mini", "tokens":{"task":"Child"}
+        }]))
+        .unwrap();
+        let remote = RemoteSessionSnapshot {
+            workspaces: vec![],
+            agents: project_agents(
+                serde_json::from_value(serde_json::json!({"agents":[{
+                    "id":"parent", "pane_id":"remote:mini:pane:parent", "agent_status":"working",
+                    "state_change_seq":1, "tokens":{"task":"Parent"}
+                }]}))
+                .unwrap(),
+            )
+            .agents,
+            active_tab_ids: Default::default(),
+            focused_workspace_id: None,
+            focused_checkout_id: None,
+            focused_tab_id: None,
+            focused_pane_id: None,
+            pane_layouts: vec![],
+        };
+        runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+            target_id: "mini".into(),
+            state: "connected".into(),
+            message: None,
+            herdr_version: Some("0.9.1".into()),
+            session: None,
+            files: RemoteFileListSnapshot::idle(),
+            catalog: Default::default(),
+        });
+        for step in order {
+            match step {
+                0 => {
+                    runtime.ingest_session(Ok(local.clone()));
+                }
+                1 => {
+                    runtime.ingest_remote_session("mini", Ok(remote.clone()));
+                }
+                _ => {
+                    runtime.ingest_device_machine_id("mini", Ok("machine-mini".into()));
+                }
+            }
+        }
+        let assert_placement = |runtime: &Runtime, delegated: bool| {
+            let child = runtime
+                .snapshot
+                .navigator
+                .agents
+                .iter()
+                .find(|agent| agent.pane_id == "w-order:t2:p")
+                .unwrap();
+            assert_eq!(child.delegated, delegated, "arrival order {order:?}");
+            let checkout = runtime
+                .snapshot
+                .navigator
+                .workspaces
+                .iter()
+                .flat_map(|w| &w.checkouts)
+                .find(|c| c.path == "/agent-groups")
+                .unwrap();
+            let tab = checkout
+                .tabs
+                .iter()
+                .find(|t| t.id.as_deref() == Some("w-order:t2"))
+                .unwrap();
+            assert_eq!(tab.delegated, delegated, "tab ownership {order:?}");
+            assert_eq!(
+                checkout.strip.iter().any(|t| t.source_id == "w-order:t2"),
+                !delegated
+            );
+            assert_eq!(
+                layout(runtime).tree.display("w-order:t2").is_some(),
+                !delegated
+            );
+        };
+        assert_placement(&runtime, true);
+        runtime.dispatch_json(&operator_focus_event("w-order:t2:p"));
+        runtime.sync_workspace_view();
+        assert_eq!(layout(&runtime).active(), Some("w-order:t2"));
+        assert!(layout(&runtime).tree.display("w-order:t2").is_none());
+        runtime.ingest_device_machine_id("mini", Err("disconnected".into()));
+        assert_placement(&runtime, false);
+        runtime.ingest_device_machine_id("mini", Ok("machine-mini".into()));
+        assert_placement(&runtime, true);
+        // A later local topology pass must not temporarily re-admit the child.
+        runtime.ingest_session(Ok(local));
+        assert_placement(&runtime, true);
+    }
+}

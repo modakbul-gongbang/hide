@@ -39,6 +39,64 @@ enum AgentLayoutAction {
 }
 
 impl Runtime {
+    /// Both authoritative topology and resolved ownership enter the same
+    /// admission policy; lineage changes do not create a second placement rule.
+    pub(super) fn reconcile_agent_topology(
+        &mut self,
+        key: &WorkspaceKey,
+        topology: &[(String, bool)],
+    ) -> Result<bool, LayoutError> {
+        let reserved = self.pending_agent_admissions(&key.1);
+        let Some(store) = self.workspace_views.as_mut() else {
+            return Ok(false);
+        };
+        let admitted = store
+            .agent_placements
+            .iter()
+            .filter(|(_, (scope, _, _))| scope == key)
+            .map(|(id, _)| id.clone())
+            .collect();
+        store
+            .views
+            .entry(&key.0, &key.1)
+            .agent_layout
+            .reconcile_admissions(topology, reserved, &admitted)
+    }
+
+    pub(super) fn sync_agent_lineage_layouts(&mut self) {
+        let topologies = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.device_id == workspace::LOCAL_DEVICE_ID)
+            .flat_map(|workspace| {
+                workspace.checkouts.iter().map(|checkout| {
+                    (
+                        (workspace.device_id.clone(), checkout.path.clone()),
+                        checkout
+                            .tabs
+                            .iter()
+                            .filter_map(|tab| Some((tab.id.clone()?, tab.delegated)))
+                            .collect::<Vec<_>>(),
+                    )
+                })
+            })
+            .collect::<Vec<_>>();
+        let mut changed = false;
+        for (key, topology) in topologies {
+            match self.reconcile_agent_topology(&key, &topology) {
+                Ok(updated) => changed |= updated,
+                Err(error) => self.push_diagnostic(
+                    "agent_layout.reconcile_refused",
+                    format!("Lineage placement for {}: {error:?}", key.1),
+                ),
+            }
+        }
+        if changed {
+            self.persist_workspace_views();
+        }
+    }
     /// Common stale-frame boundary for both independently owned columns.
     pub(super) fn area_workspace_is_current(&mut self, key: &WorkspaceKey, column: &str) -> bool {
         if self.front_workspace_key().as_ref() == Some(key) {

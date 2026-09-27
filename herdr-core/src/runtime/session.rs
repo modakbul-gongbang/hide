@@ -1060,31 +1060,25 @@ impl Runtime {
         for workspace in workspaces.iter_mut() {
             for checkout in workspace.checkouts.iter_mut() {
                 let key = (workspace.device_id.clone(), checkout.path.clone());
-                let reserved = self.pending_agent_admissions(&checkout.path);
                 let mut restored_agent_tab = None;
                 let mut placed_tabs: Option<HashSet<String>> = None;
                 if workspace.device_id == workspace::LOCAL_DEVICE_ID
-                    && let Some(store) = self.workspace_views.as_mut()
+                    && self.workspace_views.is_some()
                 {
-                    let first = store.agent_live.insert(key.clone());
-                    let layout = &mut store.views.entry(&key.0, &key.1).agent_layout;
                     let topology = checkout
                         .tabs
                         .iter()
                         .filter_map(|tab| Some((tab.id.clone()?, tab.delegated)))
                         .collect::<Vec<_>>();
-                    let admitted = store
-                        .agent_placements
-                        .iter()
-                        .filter(|(_, (scope, _, _))| scope == &key)
-                        .map(|(id, _)| id.clone())
-                        .collect();
-                    match layout.reconcile_admissions(&topology, reserved, &admitted) {
+                    match self.reconcile_agent_topology(&key, &topology) {
                         Ok(changed) => agent_layout_changed |= changed,
                         Err(error) => {
                             agent_layout_errors.push(format!("{}: {error:?}", checkout.id))
                         }
                     }
+                    let store = self.workspace_views.as_mut().expect("checked above");
+                    let first = store.agent_live.insert(key.clone());
+                    let layout = &mut store.views.entry(&key.0, &key.1).agent_layout;
                     placed_tabs = Some(
                         layout
                             .tree
@@ -2201,10 +2195,9 @@ impl Runtime {
                 self.snapshot.navigator.agents = agents;
                 changed = true;
             }
-            changed |= self.sync_pane_lineage();
-            changed |= self.relocate_delegated_child_panes();
         }
         changed |= self.refresh_agent_lineage();
+        changed |= self.relocate_delegated_child_panes();
         for (tab_id, reason) in &rejected_layouts {
             crate::diagnostic!(serde_json::json!({
                 "component": "session",

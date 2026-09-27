@@ -135,6 +135,8 @@ A spawned child does not split the operator's pane.
 Herdr owns split geometry and the PTY size, so a delegated child pane is really moved out - `pane.move` to a new tab in the workspace it is already in - rather than left undrawn; a tab holding nothing but delegated children then stays out of the tab strip while remaining in the checkout.
 Detection is the same on every pass, so a child that arrives while Hide is running and one already split when Hide started take the same path, and a refusal is retried on a fixed interval rather than assumed to have worked.
 Herdr reports a refusal as an unchanged move with a reason rather than as an error, so the decision reads `changed` instead of trusting a successful request.
+Machine-qualified lineage is resolved before tab ownership is projected; local snapshots, remote snapshots and machine identity changes all update the tab strip and Agent area membership in the same transition.
+A disconnected parent restores its unresolved local child to normal placement, and reconnecting removes it from the bar while preserving sidebar selection as a delegated canvas.
 
 Ownership is the fifth derived status axis and it is read off the lineage, never stored.
 A delegated row can only be Working or Seen, so a child's question or completion never enters the operator's own attention groups; instead it is a signal in every ancestor's read fingerprint, so the ancestor turns unread and its badge reports the count, while the ancestor's own group stays whatever its own axes say.
