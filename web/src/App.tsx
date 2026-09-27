@@ -266,6 +266,10 @@ function CenterScreen({ actions }: { actions: Actions }) {
   useEffect(() => {
     if (!opening || opening.failure || progress === null) return;
     const store = useUiStore.getState();
+    if (progress === "cancelled") {
+      store.setOpening(null);
+      return;
+    }
     if (progress === "landed") {
       store.setOpening(null);
       store.setScreen({ kind: "workspace" });

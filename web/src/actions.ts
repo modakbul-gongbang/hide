@@ -2,7 +2,7 @@
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
-import type { UiStateUsageHints } from "./generated/hided-ws";
+import type { FocusCheckoutPayload, UiStateUsageHints } from "./generated/hided-ws";
 import type { ThemeChoice } from "./theme";
 import type { HostKind } from "./host";
 import {
@@ -210,7 +210,7 @@ export function createActions(dispatch: DispatchFn) {
    * A project or checkout row. On a selected SSH device a project can hold
    * several Herdr workspaces, and the checkout names the one to focus.
    */
-  const focusCheckout = (workspaceId: string, checkoutId: string) => {
+  const focusCheckout = (workspaceId: string, checkoutId: string, expanded?: FocusCheckoutPayload["expanded"]) => {
     const context = remoteContext(rest());
     if (context) {
       const host = remoteHost("Switching workspace");
@@ -229,7 +229,7 @@ export function createActions(dispatch: DispatchFn) {
       sendRemote(host.targetId, { action: "focus_workspace", workspace_id: workspaceId, checkout_id: checkoutId });
       return;
     }
-    dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId } });
+    dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId, ...(expanded === undefined ? {} : { expanded }) } });
   };
 
   /**
@@ -846,16 +846,16 @@ export function createActions(dispatch: DispatchFn) {
      * also brings its device forward, so a refusal moves neither. The screen
      * follows once the core has moved there (`opening`).
      */
-    openWorkspace(deviceId: string, workspaceId: string, checkoutId: string) {
+    openWorkspace(deviceId: string, workspaceId: string, checkoutId: string, expanded?: FocusCheckoutPayload["expanded"]) {
       const path =
         (deviceId === "local" ? rest()?.navigator?.workspaces : rest()?.status?.remote?.find((row) => row.target_id === deviceId)?.session?.workspaces)
           ?.flatMap((row) => row.checkouts)
           .find((row) => row.id === checkoutId)?.path ?? null;
-      beginOpening({ checkoutId, deviceId, path });
+      beginOpening({ checkoutId, deviceId, path, workspaceId, expanded });
       const front = rest()?.navigator?.focused_device_id ?? "local";
-      if (front === deviceId) return focusCheckout(workspaceId, checkoutId);
+      if (front === deviceId) return focusCheckout(workspaceId, checkoutId, expanded);
       if (deviceId === "local") {
-        dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId, focus_device: true } });
+        dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId, focus_device: true, ...(expanded === undefined ? {} : { expanded }) } });
         return;
       }
       // A registered device project Herdr has no workspace in yet is opened
@@ -1014,7 +1014,7 @@ export function createActions(dispatch: DispatchFn) {
       const focusDevice = (rest()?.navigator?.focused_device_id ?? "local") !== "local" ? { focus_device: true } : {};
       const ids = { workspace_id: surface.workspaceId, checkout_id: surface.checkoutId };
       expectSurface(surface.key);
-      beginOpening({ checkoutId: checkout.id, deviceId: "local", path: checkout.path });
+      beginOpening({ checkoutId: checkout.id, deviceId: "local", path: checkout.path, workspaceId: surface.workspaceId });
       if (surface.kind === "herdr") {
         dispatch({ schema_version: 2, kind: "focus_tab", payload: { ...ids, tab_id: surface.id, ...focusDevice } });
         return;

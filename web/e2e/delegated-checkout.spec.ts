@@ -55,7 +55,8 @@ test("a checkout whose only tab is delegated opens on the child's pane", async (
     await page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first().click();
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toBeVisible({ timeout: 20_000 });
     const betaProject = page.locator("[data-project]", { hasText: "beta" });
-    await betaProject.locator("[data-checkout-toggle]").click();
+    // Opening beta unfolded it; switching checkout keeps that expansion.
+    await expect(betaProject.locator("[data-checkout-toggle]")).toHaveAttribute("aria-expanded", "true");
     await betaProject.locator(`[data-agent-open="${child}"]`).click();
     await expect.poll(() => last.get("focus_pane")?.pane_id).toBe(child);
     await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveAttribute("data-focused", "true", { timeout: 20_000 });

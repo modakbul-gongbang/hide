@@ -147,3 +147,13 @@ export interface UiStateUsageHints {
   usage_popover_open?: boolean;
   [k: string]: unknown;
 }
+/**
+ * focus_checkout: one admitted focus and optional sidebar disclosure transition. Unknown workspace/checkout refuses the disclosure intent before either value changes.
+ */
+export interface FocusCheckoutPayload {
+  workspace_id: string;
+  checkout_id: string;
+  focus_device?: boolean;
+  display_id?: string;
+  expanded?: boolean;
+}

@@ -34,7 +34,7 @@ hide 사용자가 Projects 사이드바에서 체크아웃 행을 클릭하면 �
 | D-02 | 체크아웃 행 클릭 = 열기 + 에이전트 펼치기. 이미 열려 있고 펼쳐진 체크아웃의 행을 다시 클릭하면 접는다(열림 유지). chevron은 그대로 접기/펼치기만. 에이전트가 없는 체크아웃은 열기만. PR #167의 "행은 열기만" 결정을 번복한다. | 사용자: "저 체크아웃 row 클릭하면 나오게 해줘!" (qa-log D-02) |
 | D-03 | 펼친 프로젝트의 체크아웃 목록 첫 행에 Overview 행(layout-dashboard 글리프, 체크아웃 행의 열)을 둔다. 클릭하면 Project Overview. Overview가 앞이면 선택 fill은 이 행이 받고 프로젝트 이름 행은 받지 않는다. 플레인 폴더에는 없다. | 사용자: "Overview가 하나는 있게 보여지면 좋을 것 같아!!!" (qa-log D-03) |
 | D-04 | Overview 행은 체크아웃 행과 같은 높이·포커스 링·키보드 동작(Enter/Space로 열기)을 가지며 배지·시간·chevron 슬롯은 비어 있다. 행 클릭 펼침은 마우스와 Enter/Space가 같고 다른 행을 움직이지 않는다. | 가정 (qa-log D-04) |
-| D-05 | 펼침 상태는 그대로 core가 소유한다. 행 클릭은 열기 이벤트 하나에 펼침 의도를 함께 실어 보낸다(한 동작 = 한 이벤트); 웹이 두 이벤트를 연달아 보내지 않는다. core 변경은 그 이벤트의 페이로드 확장뿐. | 가정; AGENTS.md "A user action is one event, not a sequence" (qa-log D-05) |
+| D-05 | 펼침 상태는 그대로 core가 소유한다. 행 클릭은 열기 이벤트 하나에 펼침 의도를 함께 실어 보낸다(한 동작 = 한 이벤트); 웹이 두 이벤트를 연달아 보내지 않는다. core 변경은 그 이벤트의 페이로드 확장과 admission 검증뿐. 유효하지 않은 workspace/checkout은 focus와 펼침 모두 바꾸지 않고 진단만 남긴다. 수락 후 Herdr pane.layout 실패·타임아웃은 기존 정책대로 core 값을 유지하고 진단하며 펼침을 되돌리지 않는다. | 가정; AGENTS.md "A user action is one event, not a sequence" (qa-log D-05) |
 | D-06 | Pen: Screen / Projects Sidebar 시트에 Overview 행을 넣고(gen-screens), 라이브러리는 바꾸지 않는다. UI_BEHAVIOR.md 401·407·410행과 시트 설명을 새 동작으로 고친다. | 가정 (qa-log D-06) |
 | D-07 | 검증: vitest(행 클릭 규칙, 선택 규칙), 웹 e2e 1개(클릭 → 열림+펼침, 재클릭 → 접힘, Overview 행 → Overview, 선택 fill), gen-screens diff. | 가정 (qa-log D-07) |
 | D-08 | 실행: please, Claude Implementor --effort high, PR 배포, Observer 자동 머지. T0 머지 후 main에서 시작. | 사용자 (qa-log D-08) |
@@ -53,7 +53,7 @@ hide 사용자가 Projects 사이드바에서 체크아웃 행을 클릭하면 �
 | B6 | Overview가 앞에 있을 때 Overview 행이 선택 fill을 갖고 프로젝트 이름 행은 갖지 않는다; 체크아웃 Workspace가 앞이면 지금처럼 그 체크아웃 행만 선택 fill을 갖는다. | D-03 |
 | B7 | Overview 행은 체크아웃 행과 같은 높이·글꼴·포커스 링이며 배지·시간·chevron이 없다; 프로젝트를 접으면 함께 사라진다. | D-03, D-04 |
 | B8 | 행 클릭 펼침과 Overview 행 추가로 다른 행의 높이나 위치가 바뀌지 않는다(펼친 에이전트 행이 아래 행을 미는 것 외). | D-04 |
-| B9 | 웹 셸이 보내는 이벤트는 행 클릭당 하나이고, Herdr가 열기를 거부하면 펼침도 일어나지 않는다(반쯤 움직인 화면 없음). | D-05 |
+| B9 | 웹 셸이 보내는 이벤트는 행 클릭당 하나이다. core admission이 유효하지 않은 workspace/checkout을 거부하면 focus와 펼침 모두 바뀌지 않고 진단만 남는다. 수락되면 focus와 expanded가 같은 snapshot에 함께 반영된다. 이후 Herdr pane.layout 실패·타임아웃은 기존 정책대로 core 값을 유지하고 진단하며 펼침을 되돌리지 않는다. | D-05 |
 | B10 | UI_BEHAVIOR.md와 Screen / Projects Sidebar 시트가 새 동작을 서술하고, gen-screens 산출물에 Overview 행이 있다. | D-06 |
 
 ## Technical structure

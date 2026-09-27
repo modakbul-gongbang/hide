@@ -153,7 +153,7 @@ The new-tab page offers no tools or panes; ⌘P remains the file palette everywh
 
 A web page is a view like a file: it opens in the active area, has a tab, splits, moves, and closes like one, and comes back after a restart at the address it last showed.
 A page with an address carries a globe mark and the page's title, else its host, else a local file's name; its tooltip and accessible name carry `Page`, the title, and the full address.
-It opens from pane-scoped `hide browser open` in a connected Herdr pane, from Open in Browser on an HTML file in the Explorer's menu (listed after Open to the side), from a page that asks for a new window, and from the address field.
+It opens from `hide browser open` in a connected Herdr pane or a shell inside a registered checkout, from Open in Browser on an HTML file in the Explorer's menu (listed after Open to the side), from a page that asks for a new window, and from the address field.
 On a connected SSH device, the native page uses that device's localhost or consented checkout resources; a route failure appears in the page's existing failure state.
 Opening an address the Workspace already shows moves to that view and loads it again instead of adding a second one.
 The view's own toolbar holds Back, Forward, Reload (Stop while the page loads) and the address, which shows a web address without its scheme until it is focused; focusing it selects the whole address, Return loads what was typed, and Escape puts the page's address back.
@@ -307,7 +307,7 @@ A pull request shows here only in the task chip's tooltip (title, branch, pull r
 
 On the web, the sidebar picks the scope and the tabs under the title pick the view.
 All projects is every project on every device, a project is its Overview, and a checkout is its Workspace, which has no views of its own.
-The board is the Project Overview: the sidebar's project name (a plain folder's one row opens its checkout instead), All projects' project row, the palette and the Workspace toolbar menu open it, and ⌘⇧H opens it for the checkout in front.
+The board is the Project Overview: the sidebar's project name or its Overview child (a plain folder's one row opens its checkout instead), All projects' project row, the palette and the Workspace toolbar menu open it, and ⌘⇧H opens it for the checkout in front.
 Escape, once no dialog or menu is open and no text field holds text, returns to the Workspace in front, or to All projects when there is none.
 The title row carries the path back (`All projects / Project`) and New agent; directly under it is one line of facts, then the `Tasks · Agents · Sessions` tabs, which show even while the project has no agent.
 The facts line holds only numbers the system has: the worktree count, the open pull-request count once GitHub has answered, the disk every worktree and the shared Git directory occupy, main's distance behind origin only above zero, and the merged worktrees only above zero.
@@ -430,7 +430,12 @@ Open, draft, merged, and closed pull requests keep their own lifecycle shapes an
 In the web shell every row reads on the left and ends the same way on the right: its time or its status badge, then a fold slot kept at rest, so nothing moves when a control shows and the times and badges of project, checkout and agent rows end on one column while their chevrons stand on another.
 A folded chevron is always shown; an unfolded one shows under the pointer, while focus is inside the row, while its menu is open, and always on an input with no hover.
 Nothing on a row stands for its menu: a right-click, or the menu key or ⇧F10 on the focused row, opens it.
-A web checkout row always opens its checkout: its chevron, drawn only while agents run there, opens and closes their rows, and its last-commit age stays in place whatever the pointer does and while the menu is open.
+A web checkout row opens its checkout and unfolds its agent rows in one event; activating its already selected, unfolded Workspace folds the agents while keeping that Workspace in front.
+Click, Enter and Space have the same behavior, and a checkout without agents only opens.
+Its chevron changes disclosure alone, and other checkouts keep their own expansion.
+The core admits the workspace/checkout pair before changing focus or expansion and publishes both in the same snapshot; a stale pair changes neither and leaves a diagnostic.
+A later Herdr projection failure retains these accepted values under the existing focus policy.
+The last-commit age stays in place whatever the pointer does and while the menu is open.
 An opened checkout and its agent rows share one small group fill; no card border nests inside another.
 A web checkout's agent rows start closed, so its status badge counts them, and the checkouts the operator opens are kept in the core's ui state across launches.
 A status badge counts agents under the mark each agent's own row draws, one mark and count per state, worst first (`× ! ? ● ✓ ○`), with idle agents included and zero states left out (docs/status-model.md, Workspace aggregation).
@@ -438,10 +443,12 @@ A web project row folds its checkouts from its chevron on the right, and the res
 A web project row carries no time: it ends in its checkouts' badges added up, which stay while its checkouts are open because they are the project's own summary, and a project with no agent draws none.
 An opened checkout's parent agent folds its children with the lineage chevron and badge the Agents list uses, from the same core state; a child working in another checkout is also drawn as a root in that checkout, so folding a parent never hides where an agent runs, and a selected SSH device's lineage is drawn unfolded with no chevron.
 A checkout whose root came from another checkout prefixes its purpose line with the Return glyph and the parent checkout's branch, adding `+N` when more than one external root raised it.
-Folding a project, a checkout or a parent changes the list only: the center, the focused pane and tab, read state, groups and running processes stay as they were.
+Folding a project or parent, or using a checkout chevron, changes the list only: the center, the focused pane and tab, read state, groups and running processes stay as they were.
 Before the first snapshot arrives the Agents and Projects lists say they are connecting rather than drawing an empty list, and a local Projects list with no registered project offers Add project.
 The web Projects list is the scope picker: an All projects row heads it, with the layout-grid glyph and `N projects`, and opens All projects.
-One row carries the selected fill at a time, the row of the scope the center shows: All projects, a project row on its Overview, or the focused checkout and its open agent row only while a Workspace is in front.
+One row carries the selected fill at a time, the row of the scope the center shows: All projects, a Git project’s Overview child on its Overview, or the focused checkout and its open agent row only while a Workspace is in front.
+An expanded Git project starts with an Overview row using the checkout row’s columns, single-line height, font and focus ring, with a layout-dashboard glyph and no badge, time or chevron.
+Click, Enter or Space opens the same Overview as the project name; only the Overview child carries its selection fill, and folding the project hides the child too.
 A plain folder, a project that is not a Git repository and holds one checkout, is one web row instead of a project row over an identical checkout row.
 Its first line is the project's folder glyph, name and status badge, set in the checkout row's columns, and the badge stays while its agent rows are open, as a project's does; its second line and trailing chevron are the checkout's, and a plain folder has no commit age.
 It has no project fold of its own and keeps the checkout row's right slots; the row opens the checkout and is marked while that checkout's Workspace or the project's Overview is in front, its menu lists the project's items and then the checkout's, and its Overview is reached from All projects, the palette or the Workspace toolbar.

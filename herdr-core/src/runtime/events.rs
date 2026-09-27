@@ -129,6 +129,9 @@ pub(super) struct CreateTabPayload {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct FocusCheckoutPayload {
+    /// Sidebar row disclosure, committed with checkout focus. Omitted by other open entrypoints.
+    #[serde(default)]
+    pub(super) expanded: Option<bool>,
     pub(super) workspace_id: String,
     pub(super) checkout_id: String,
     /// Also makes this machine the device in front when the checkout is
@@ -1514,6 +1517,14 @@ impl Runtime {
                 {
                     self.set_error(error.kind(), error.message(), false);
                     return true;
+                }
+                if let Some(expanded) = payload.expanded {
+                    let ids = &mut self.snapshot.ui_state.expanded_checkout_ids;
+                    ids.retain(|id| id != &payload.checkout_id);
+                    if expanded {
+                        ids.push(payload.checkout_id.clone());
+                        ids.sort();
+                    }
                 }
                 let mut changed = self.focus_checkout(&payload.workspace_id, &payload.checkout_id);
                 // The display follows whenever the checkout came forward: a

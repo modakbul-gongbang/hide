@@ -12,6 +12,7 @@ import {
   GitPullRequestIcon,
   HouseIcon,
   LayoutGridIcon,
+  LayoutDashboardIcon,
   SettingsIcon,
 } from "lucide-react";
 import { memo, useMemo, type ReactNode } from "react";
@@ -34,6 +35,8 @@ import { foldedLineage, type FoldedLineage } from "./lineageSummary";
 import {
   activeCheckouts,
   checkoutPresentation,
+  checkoutRowExpansion,
+  overviewRowSelected,
   folderCheckout,
   inactiveCheckouts,
   projectMarks,
@@ -497,7 +500,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
     );
   }
   const ProjectIcon = workspace.is_git ? FolderGit2Icon : FolderIcon;
-  const selected = context.overviewProjectId === workspace.id;
+  const selected = overviewRowSelected(workspace, context.overviewProjectId);
   const marks = projectMarks(workspace);
   const checkoutRow = (checkout: Checkout) => (
     <CheckoutRowView
@@ -519,13 +522,12 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
         data-project-menu={workspace.id}
       >
         <div
-          className={cn("flex min-h-(--size-control-regular) w-full items-center gap-xs rounded-sm pr-xs", selected ? "bg-secondary" : "hover:bg-accent")}
+          className="flex min-h-(--size-control-regular) w-full items-center gap-xs rounded-sm pr-xs hover:bg-accent"
           style={{ paddingLeft: PROJECT_COLUMN }}
         >
           <button
             type="button"
             data-project-row={workspace.id}
-            aria-current={selected ? "page" : undefined}
             aria-label={[workspace.label, badgeWords(marks)].filter(Boolean).join(", ")}
             className="flex min-w-0 flex-1 self-stretch items-center gap-sm rounded-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
             onClick={() => useUiStore.getState().setScreen({ kind: "overview", projectId: workspace.id })}
@@ -549,6 +551,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
       </EntryContextMenu>
       {expanded ? (
         <ul>
+          {workspace.is_git ? <OverviewRow workspace={workspace} selected={selected} /> : null}
           {active.map(checkoutRow)}
           {inactive.length > 0 ? (
             <li>
@@ -565,6 +568,28 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
           {workspace.inactive_checkouts.expanded ? inactive.map(checkoutRow) : null}
         </ul>
       ) : null}
+    </li>
+  );
+}
+
+function OverviewRow({ workspace, selected }: { workspace: Workspace; selected: boolean }) {
+  return (
+    <li>
+      <button
+        type="button"
+        data-project-overview={workspace.id}
+        aria-current={selected ? "page" : undefined}
+        className={cn(
+          "flex min-h-(--size-checkout-row) w-full items-center gap-sm rounded-sm pr-xs text-left text-subhead text-foreground outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+          selected ? "bg-secondary font-semibold" : "font-medium hover:bg-accent",
+        )}
+        style={{ paddingLeft: CHECKOUT_COLUMN }}
+        onClick={() => useUiStore.getState().setScreen({ kind: "overview", projectId: workspace.id })}
+      >
+        <LayoutDashboardIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
+        <span className="min-w-0 flex-1 truncate">Overview</span>
+        <FoldLane />
+      </button>
     </li>
   );
 }
@@ -659,6 +684,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
             focused={focused}
             label={[name, open ? null : badgeWords(marks), view.age, purpose].filter(Boolean).join(", ")}
             actions={actions}
+            expanded={checkoutRowExpansion(foldable, context.workspaceScreen && focused, open)}
           />
           {/* The row button covers the whole row; a control drawn over it is positioned, so it stacks above. */}
           <span className="pointer-events-none flex min-w-0 items-center gap-sm">
@@ -744,6 +770,7 @@ const FolderRowView = memo(function FolderRowView({
             focused={focused}
             label={[workspace.label, badgeWords(marks), purpose].filter(Boolean).join(", ")}
             actions={actions}
+            expanded={checkoutRowExpansion(foldable, context.workspaceScreen && focused, open)}
           />
           <span className="pointer-events-none flex min-w-0 items-center gap-sm">
             <FolderIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />
@@ -782,6 +809,7 @@ function CheckoutOpenButton({
   focused,
   label,
   actions,
+  expanded,
 }: {
   workspace: Workspace;
   checkout: Checkout;
@@ -789,6 +817,7 @@ function CheckoutOpenButton({
   focused: boolean;
   label: string;
   actions: Actions;
+  expanded?: boolean;
 }) {
   return (
     <Hint label={view.detail}>
@@ -799,7 +828,7 @@ function CheckoutOpenButton({
         aria-current={focused ? "true" : undefined}
         aria-label={label}
         className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-        onClick={() => actions.openWorkspace(workspace.device_id, checkout.workspace_id, checkout.id)}
+        onClick={() => actions.openWorkspace(workspace.device_id, checkout.workspace_id, checkout.id, expanded)}
       />
     </Hint>
   );
