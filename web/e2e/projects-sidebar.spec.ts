@@ -61,6 +61,28 @@ async function projectButtonFills(page: Page): Promise<boolean> {
   });
 }
 
+/** The font size, in px, of a `text-body` probe placed inside `selector`: what the interface's body text measures there. */
+async function probeTextSize(page: Page, selector: string): Promise<number> {
+  return page.evaluate((within) => {
+    const probe = document.createElement("span");
+    probe.className = "text-body";
+    probe.textContent = "x";
+    document.querySelector(within)!.append(probe);
+    const size = Number.parseFloat(getComputedStyle(probe).fontSize);
+    probe.remove();
+    return size;
+  }, selector);
+}
+
+/** Every text-holding element's font size in the sidebar's lists, in document order. */
+async function sidebarTextSizes(page: Page): Promise<string[]> {
+  return page.evaluate(() =>
+    Array.from(document.querySelectorAll("nav[data-sidebar] *"))
+      .filter((part) => part.getClientRects().length > 0 && Array.from(part.childNodes).some((node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim()))
+      .map((part) => getComputedStyle(part).fontSize),
+  );
+}
+
 async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await page.keyboard.press("Alt+Comma");
   await expect(page.locator('[data-settings="true"]')).toBeVisible();
@@ -138,10 +160,11 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     const lineOf = async (part: Locator) => Math.round((await part.boundingBox())!.y);
     expect(await lineOf(feature.locator("[data-checkout-age]"))).toBeGreaterThan(await lineOf(feature.getByText("feature/sidebar-rows", { exact: true })));
     expect(await lineOf(feature.locator("[data-checkout-age]"))).toBe(await lineOf(feature.locator("[data-purpose]")));
-    // A checkout where agents run keeps line two, with its age, before the
-    // core knows a purpose for it: its agent's title becomes one later (once
-    // the checkout is opened below), and the row must not grow when it does.
-    expect(await lineOf(primary.locator("[data-checkout-age]"))).toBeGreaterThan(await lineOf(primary.getByText("main", { exact: true })));
+    // PRD sidebar-typography B4: line two is the purpose, here the agent's
+    // title standing in for one, with the age ending it. Agents alone earn no
+    // line two (projects.test.ts); a checkout with neither is one line (below).
+    await expect(primary.locator("[data-purpose]")).toHaveText("메인 체크아웃 정리");
+    expect(await lineOf(primary.locator("[data-checkout-age]"))).toBe(await lineOf(primary.locator("[data-purpose]")));
     await expect(project.locator('[data-project-status] [data-badge-part="idle"]')).toHaveText("2");
     await expect(project.locator("[data-project-row]")).toHaveAccessibleName("repo, 2 idle");
     await screenshot(page, "projects-sidebar-closed");
@@ -403,8 +426,17 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
       await screenshot(page, `projects-sidebar-${theme}`);
     }
 
-    // B26: at the largest interface font the rows still hold their text and
+    // PRD sidebar-typography B8 (was sidebar-readability B26): the sidebar
+    // does not follow the interface font. At the largest size its text and
+    // rows are the ones the default draws, while text outside it grows, and
     // hover still moves nothing.
+    await rest(page);
+    const projectsAtDefault = { sizes: await sidebarTextSizes(page), row: await rowGeometry(primaryRow, feature, primaryParts) };
+    const outsideAtDefault = await probeTextSize(page, "main");
+    await page.locator('[data-sidebar-mode="agents"]').click();
+    await rest(page);
+    const agentsAtDefault = { sizes: await sidebarTextSizes(page), row: await rowGeometry(agentRow, nextRow, agentParts) };
+    await page.locator('[data-sidebar-mode="projects"]').click();
     await page.keyboard.press("Alt+Comma");
     await page.locator('[data-settings-tab="appearance"]').click();
     const fontSize = page.locator('[data-font-size="true"] [role="slider"]');
@@ -413,26 +445,28 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await expect(fontSize).toHaveAttribute("aria-valuenow", "17");
     await page.keyboard.press("Escape");
     await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
-    await expect.poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue("--interface-scale"))).not.toBe("");
+    // The scale is already set at the default size, so wait for its effect, not its presence.
+    await expect.poll(() => probeTextSize(page, "main")).toBeGreaterThan(outsideAtDefault);
     await rest(page);
+    expect(await probeTextSize(page, "nav[data-sidebar]")).toBe(12);
+    expect(await sidebarTextSizes(page)).toEqual(projectsAtDefault.sizes);
+    expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(projectsAtDefault.row);
     expect(await sidebarRowsFit(page)).toEqual([]);
     expect(await projectButtonFills(page)).toBe(true);
-    const largeAtRest = await rowGeometry(primaryRow, feature, primaryParts);
     await primaryRow.hover();
-    expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(largeAtRest);
+    expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(projectsAtDefault.row);
     await rest(page);
     await keyboardFocus(page, primary.locator("[data-checkout]"));
-    expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(largeAtRest);
+    expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(projectsAtDefault.row);
     await rest(page);
     await screenshot(page, "projects-sidebar-large-font");
     await page.locator('[data-sidebar-mode="agents"]').click();
     await rest(page);
+    expect(await sidebarTextSizes(page)).toEqual(agentsAtDefault.sizes);
+    expect(await rowGeometry(agentRow, nextRow, agentParts)).toEqual(agentsAtDefault.row);
     expect(await sidebarRowsFit(page)).toEqual([]);
-    const largeAgentAtRest = await rowGeometry(agentRow, nextRow, agentParts);
     await agentRow.hover();
-    expect(await rowGeometry(agentRow, nextRow, agentParts)).toEqual(largeAgentAtRest);
-    await keyboardFocus(page, agentRow.locator("[data-agent-open]"));
-    expect(await rowGeometry(agentRow, nextRow, agentParts)).toEqual(largeAgentAtRest);
+    expect(await rowGeometry(agentRow, nextRow, agentParts)).toEqual(agentsAtDefault.row);
     await rest(page);
     await screenshot(page, "agents-sidebar-large-font");
     await page.locator('[data-sidebar-mode="projects"]').click();

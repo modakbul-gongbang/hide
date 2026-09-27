@@ -213,3 +213,24 @@ export function checkoutRowExpansion(foldable: boolean, workspaceSelected: boole
 export function overviewRowSelected(workspace: Workspace, overviewProjectId: string | null): boolean {
   return workspace.is_git === true && workspace.id === overviewProjectId;
 }
+
+/**
+ * Whether a checkout row draws line two: only when it has something to say,
+ * a purpose or the parent its agents were raised from, once Git has been read
+ * (PRD sidebar-typography D-04). Agents alone never earn a line; the row's age
+ * then ends line one.
+ */
+export function checkoutHasSecondLine(view: Pick<CheckoutPresentation, "secondLineReady">, purpose: string | null, raisedFrom: string | null): boolean {
+  return view.secondLineReady && (purpose !== null || raisedFrom !== null);
+}
+
+/**
+ * A checkout name read as its path prefix, up to and including the first
+ * slash (`prd/`, `gen-prd/`), which the row mutes, and the rest (D-06). A
+ * name without a slash, or with nothing on either side of it, has no prefix.
+ */
+export function checkoutNameParts(name: string): { prefix: string; rest: string } {
+  const slash = name.indexOf("/");
+  if (slash <= 0 || slash === name.length - 1) return { prefix: "", rest: name };
+  return { prefix: name.slice(0, slash + 1), rest: name.slice(slash + 1) };
+}

@@ -15,6 +15,9 @@ export const CSS = 'web/src/tokens.css';
 export const ACCENTS = 'web/src/generated/accents.ts';
 
 /** The interface text sizes Settings > Appearance > Interface font scales; terminal and editor text do not. */
+/** The class a subtree carries to draw the interface text at its own size whatever the Appearance scale. */
+export const SCALE_EXEMPT = 'interface-scale-exempt';
+
 export const INTERFACE_TEXT = ['--text-micro', '--text-caption', '--text-body', '--text-subhead', '--text-title', '--text-headline'];
 
 export function readTokens(root = process.cwd()) {
@@ -34,7 +37,7 @@ function color(value) {
 
 export function generate(root = process.cwd()) {
   const tokens = readTokens(root);
-  const theme = [], mapped = [], light = [], dark = [], rest = [];
+  const theme = [], mapped = [], light = [], dark = [], rest = [], fixed = [];
   for (const [name, token] of Object.entries(tokens)) {
     if (token.type === 'color') {
       if (!token.light) throw new Error(`${name} has no Light value`);
@@ -50,6 +53,7 @@ export function generate(root = process.cwd()) {
       mapped.push(`  --color-${name.slice(2)}: var(${name});`);
     } else if (INTERFACE_TEXT.includes(name)) {
       theme.push(`  ${name}: calc(${plain(token)} * var(--interface-scale, 1));`);
+      fixed.push(`  ${name}: ${plain(token)};`);
     } else if (name.startsWith('--spacing-') || name.startsWith('--radius-')) {
       theme.push(`  ${name}: ${plain(token)};`);
     } else {
@@ -71,6 +75,15 @@ export function generate(root = process.cwd()) {
     '',
     ':root {',
     ...rest,
+    '}',
+    '',
+    // The sidebar does not follow Settings > Appearance > Interface font
+    // (PRD sidebar-typography D-05). A custom property resolves its var()
+    // where it is declared, so the scaled sizes above are already fixed at
+    // :root; a subtree that opts out declares the sizes again.
+    `.${SCALE_EXEMPT} {`,
+    '  --interface-scale: 1;',
+    ...fixed,
     '}',
     '',
     '/* `.light` and `.dark` also scope a subtree, so one page can show both (the dev gallery). */',

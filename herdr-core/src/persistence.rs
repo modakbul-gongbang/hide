@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::model::{
     DeviceRegistration, PaneReadRecord, PetOriginSnapshot, RightPanelSection, SessionsMode,
     ThemePreference, UiStateSnapshot, WorkspaceRegistration, default_accent_hex, default_font_size,
-    default_pane_text_scale, default_panel_visible,
+    default_pane_text_scale, default_panel_visible, default_sidebar_width,
 };
 
 const UI_STATE_SCHEMA_VERSION: u32 = 1;
@@ -83,6 +83,8 @@ struct StoredUiState {
     /// store written before the web theme existed, which loads as Dark.
     #[serde(default)]
     theme: Option<String>,
+    #[serde(default = "default_sidebar_width")]
+    sidebar_width: u32,
     #[serde(default = "default_font_size")]
     font_size: f32,
     #[serde(default)]
@@ -247,6 +249,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             device_registrations: stored.device_registrations,
             accent_hex: stored.accent_hex,
             theme,
+            sidebar_width: stored.sidebar_width,
             font_size: stored.font_size,
             pane_text_scales: stored.pane_text_scales,
             editor_text_scale: stored.editor_text_scale,
@@ -308,6 +311,7 @@ pub fn save(
         device_registrations: state.device_registrations.clone(),
         accent_hex: state.accent_hex.clone(),
         theme: Some(state.theme.as_str().to_owned()),
+        sidebar_width: state.sidebar_width,
         font_size: state.font_size,
         pane_text_scales: state.pane_text_scales.clone(),
         editor_text_scale: state.editor_text_scale,

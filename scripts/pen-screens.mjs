@@ -321,7 +321,8 @@ function screenSidebarAgentRow(id, {title, symbol = '●', color = '$--agent-wor
   return themedXref(id, 'sidebar-agent-row', title, {width, padding: ['$--spacing-xs', '$--spacing-xs', '$--spacing-xs', inset], ...(selected ? {fill: '$--secondary'} : {})}, {
     ...markOverrides({dot: 'sar-dot', ring: 'sar-ring', glyph: 'sar-glyph'}, symbol, color),
     'sar-provider': {fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'fit'}},
-    'sar-title': {content: title, ...(bright || selected ? {fill: '$--foreground', fontWeight: '500'} : {})},
+    // 12/400 in every state: attention and selection brighten the title, never thicken it.
+    'sar-title': {content: title, ...(bright || selected ? {fill: '$--foreground'} : {})},
     'sar-elapsed': {content: age},
     'sar-line': line ? {enabled: true, content: line, fill: lineFill} : {enabled: false},
     'sar-place': place ? {enabled: true, content: place} : {enabled: false},
@@ -438,7 +439,7 @@ function screenSidebar(tokens, id, suffix, agents) {
       text(`${id}-agentstab-${suffix}`, 'Agents', {weight: '600'}),
       text(`${id}-projectstab-${suffix}`, 'Projects', {fill: '$--muted-foreground'}),
     ]),
-    text(`${id}-seen-${suffix}`, 'SEEN · 2', {size: '$--text-micro', fill: '$--muted-foreground', weight: '600'}),
+    text(`${id}-seen-${suffix}`, 'Seen · 2', {size: '$--text-micro', fill: '$--muted-foreground', weight: '500'}),
     // Agents' rows name their project and checkout on a fixed context line.
     ...agents.flatMap((agent, index) => [
       screenSidebarAgentRow(`${id}-agent${index}-${suffix}`, {
@@ -1355,7 +1356,7 @@ function buildProjectsSidebar(tokens) {
 
   // A project's badge is its checkouts' added up, and it stays while they are open.
   function projectRow(id, {name, marks, expanded, selected = false}) {
-    return themedXref(id, 'qdhY0', name, {width: row, height: num(tokens, '--size-control-regular'), ...(selected ? {fill: '$--secondary'} : {})}, {
+    return themedXref(id, 'qdhY0', name, {width: row, height: num(tokens, '--size-project-row'), ...(selected ? {fill: '$--secondary'} : {})}, {
       iBYjj: {icon: expanded ? 'chevron-down' : 'chevron-right'},
       // An unfolded project's chevron waits for the pointer in its slot.
       wgtfo: {opacity: expanded ? 0 : 1},
@@ -1368,7 +1369,7 @@ function buildProjectsSidebar(tokens) {
   // sidebar.tsx's AllProjectsRow: the project row's columns with the fold slot
   // empty, the layout-grid glyph, and the project count where a badge stands.
   function allProjectsRow(id, {count}) {
-    return themedXref(id, 'qdhY0', 'All projects', {width: row, height: num(tokens, '--size-control-regular')}, {
+    return themedXref(id, 'qdhY0', 'All projects', {width: row, height: num(tokens, '--size-project-row')}, {
       wgtfo: {opacity: 0},
       mIzlX: {icon: 'layout-grid'},
       JkPyX: {content: 'All projects'},
@@ -1377,28 +1378,33 @@ function buildProjectsSidebar(tokens) {
     });
   }
 
-  // Line one is the name, the badge while the agent rows are folded (always, on
-  // a folder, whose badge is its project's) and the fold slot; line two is the
-  // purpose and the last-commit age, kept wherever agents run. A row with
-  // neither is one line with its age there, and a missing folder has none.
+  // Line one is the name, 12/400 with its path prefix muted (500 while its
+  // Workspace is in front), the badge while the agent rows are folded (always,
+  // on a folder, whose badge is its project's) and the fold slot; line two is
+  // the purpose (after the parent it was raised from, if any) and the
+  // last-commit age, drawn only when one of them exists. A row without either
+  // is one line with its age there, and a missing folder has none.
   // Pen draws no ellipsis, so a long name or purpose is written already cut the
   // way the row truncates it.
   function checkoutRow(id, {name, kind = 'branch', age, purpose, raisedFrom, marks, expanded = false, selected = false}) {
     const k = KIND[kind];
     const project = kind === 'folder';
     const agents = Boolean(marks);
-    const secondLine = Boolean(purpose) || agents;
+    const secondLine = Boolean(purpose || raisedFrom);
+    const slash = name.indexOf('/');
+    const [prefix, rest] = project || slash <= 0 ? ['', name] : [name.slice(0, slash + 1), name.slice(slash + 1)];
     // Line one starts with the master's mark slot and a gap before the glyph.
     const leading = (project ? sm : glyphColumn) - markSlot - sm;
     const inner = row - xs - leading;
     return themedXref(id, 'DLP27', name, {
-      width: row, height: num(tokens, secondLine ? '--size-checkout-row-detailed' : project ? '--size-control-regular' : '--size-checkout-row'),
+      width: row, height: num(tokens, secondLine ? '--size-checkout-row-detailed' : project ? '--size-project-row' : '--size-checkout-row'),
       padding: [0, xs, 0, leading],
       ...(selected ? {fill: '$--secondary'} : {}),
     }, {
       QetL0: {width: inner},
       VtSRn: {icon: k.icon, fill: k.fill},
-      q91d7: project ? {content: name, fontSize: '$--text-title', fontWeight: '600'} : {content: name, fontWeight: selected ? '600' : '500'},
+      'checkout-name-prefix': prefix ? {content: prefix, enabled: true} : {enabled: false},
+      q91d7: project ? {content: name, fontSize: '$--text-subhead', fontWeight: '600'} : {content: rest, fontWeight: selected ? '500' : 'normal'},
       TS5x9: {enabled: kind === 'missing'},
       ...status('checkout', project || !expanded ? marks : null),
       TuosT: !secondLine && age ? {content: age, enabled: true} : {enabled: false},
@@ -1433,17 +1439,22 @@ function buildProjectsSidebar(tokens) {
 
   // An opened checkout and its agent rows, on one small group fill.
   function group(id, rows) {
-    return frame(id, 'Opened checkout', {width: row, layout: 'vertical', fill: '$--muted', cornerRadius: '$--radius-sm'}, rows);
+    return frame(id, 'Opened checkout', {width: row, layout: 'vertical', padding: ['$--spacing-xs', 0], fill: '$--muted', cornerRadius: '$--radius-sm'}, rows);
   }
 
   function fold(id, label, level) {
     return themedXref(id, 'inactive-fold-row', label, {width: row, padding: [0, xs, 0, level === 'project' ? sm : glyphColumn]}, {'inactive-fold-label': {content: label}});
   }
 
+  // The library's Section Header, 10/500 in sentence case (D-11), at the
+  // list's own inset, with neither chevron nor detail: these sections do not fold.
   function section(id, label) {
-    return frame(id, 'Section', {width: row, padding: ['$--spacing-sm', '$--spacing-sm', '$--spacing-xxs', '$--spacing-sm']}, [
-      text(`${id}-t`, label, {size: '$--text-micro', fill: '$--muted-foreground', weight: '600'}),
-    ]);
+    return themedXref(id, 'O79KF', label, {width: row, padding: ['$--spacing-sm', '$--spacing-sm', '$--spacing-xxs', '$--spacing-sm']}, {
+      eK6gz: {enabled: false},
+      VOd6D: {content: label, fill: '$--muted-foreground'},
+      rVsKB: {enabled: false},
+      g7fzt: {enabled: false},
+    });
   }
 
   function build(s) {
@@ -1457,9 +1468,9 @@ function buildProjectsSidebar(tokens) {
     const list = frame(`psb-list-${s}`, 'Projects list', {width, layout: 'vertical', padding: [0, xs]}, [
       // Counts the rows below can produce: one pinned, herdr-ide and sasu, and three folded inactive projects.
       allProjectsRow(`psb-all-${s}`, {count: '6 projects'}),
-      section(`psb-sec-pin-${s}`, 'PINNED · 1'),
+      section(`psb-sec-pin-${s}`, 'Pinned · 1'),
       folderRow(`psb-p-notes-${s}`, {name: 'team-notes', marks: {idle: 1}, purpose: '회의록 요약 정리'}),
-      section(`psb-sec-recent-${s}`, 'PROJECTS · RECENT ACTIVITY · 5'),
+      section(`psb-sec-recent-${s}`, 'Projects · Recent activity · 5'),
       projectRow(`psb-p-herdr-${s}`, {name: 'herdr-ide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
       checkoutRow(`psb-overview-${s}`, {name: 'Overview', kind: 'overview', selected: true}),
       group(`psb-g-main-${s}`, [
@@ -1500,7 +1511,7 @@ function buildProjectsSidebar(tokens) {
     ]);
     return [frame(`psb-sidebar-${s}`, 'Sidebar', {width, layout: 'vertical', fill: '$--sidebar', clip: true}, [header, list, footer])];
   }
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. Line two is the purpose with the last-commit age on the time column, kept wherever agents run; a checkout with neither is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. A folded parent keeps its own-checkout descendants in the badge and draws one C-style line per other checkout, with the R1 server-glyph device chip. A checkout raised by an external root prefixes line two with the parent checkout. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.', build, build);
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent; a checkout without either is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. A folded parent keeps its own-checkout descendants in the badge and draws one C-style line per other checkout, with the R1 server-glyph device chip. A checkout raised by an external root prefixes line two with the parent checkout. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.', build, build);
 }
 
 // -- assembly ---------------------------------------------------------------------

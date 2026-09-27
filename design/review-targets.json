@@ -12,8 +12,7 @@
     "conditions": {
       "themes": ["light", "dark"],
       "widths": [292, 240],
-      "contents": ["reference", "long"],
-      "scales": [1, 1.25]
+      "contents": ["reference", "long"]
     },
     "states": {
       "rest": "No pointer on the list and no keyboard focus.",

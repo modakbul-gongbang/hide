@@ -16,9 +16,9 @@ import { applyEvent, REFERENCE_FOLDS, sidebarScene, type SceneContent, type Scen
 /** What one scene document shows; every value comes from its query string. */
 export type SceneParams = {
   theme: "light" | "dark";
-  /** The sidebar's width in CSS pixels; the shipped web sidebar is `--size-sidebar-ideal`. */
+  /** The sidebar's width in CSS pixels, seeded as the core's `ui_state.sidebar_width`; absent, the sidebar's default. */
   width: number | null;
-  /** The interface text scale the Appearance font size sets (`--interface-scale`). */
+  /** The interface text scale the Appearance font size sets (`--interface-scale`); the sidebar itself does not follow it (PRD sidebar-typography D-05). */
   scale: number;
   content: SceneContent;
 };
@@ -50,8 +50,9 @@ export function SidebarScene({ theme, width, scale, content }: SceneParams) {
   // Seed the app's stores before the first paint, and again on every fold.
   const scene = useMemo(() => sidebarScene(content, folds, Date.now()), [content, folds]);
   useLayoutEffect(() => {
-    useShellStore.setState({ rest: scene.rest, agents: scene.agents, connection: "live" });
-  }, [scene]);
+    const rest = width === null ? scene.rest : { ...scene.rest, ui_state: { ...scene.rest.ui_state, sidebar_width: width } };
+    useShellStore.setState({ rest, agents: scene.agents, connection: "live" });
+  }, [scene, width]);
 
   useLayoutEffect(() => {
     useUiStore.setState({ sidebarMode: "projects", screen: { kind: "overview", projectId: "herdr-ide" } });
@@ -63,9 +64,7 @@ export function SidebarScene({ theme, width, scale, content }: SceneParams) {
     root.classList.toggle("light", theme === "light");
     if (scale === 1) root.style.removeProperty("--interface-scale");
     else root.style.setProperty("--interface-scale", String(scale));
-    if (width === null) root.style.removeProperty("--size-sidebar-ideal");
-    else root.style.setProperty("--size-sidebar-ideal", `${width}px`);
-  }, [theme, scale, width]);
+  }, [theme, scale]);
 
   return (
     <TooltipProvider>
