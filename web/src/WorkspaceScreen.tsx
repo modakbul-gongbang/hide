@@ -405,12 +405,13 @@ function SidePanel({ view, frame, tool, placement, body, sizes, actions }: { vie
   );
 }
 
-/** The resize grip (issue 170): a hairline with a ⇆ pill at its middle, drawn on hover, keyboard focus and while dragging. */
+/** The resize grip (issue 170; `Component / Side panel grip`): a hairline with a ⇆ pill at its middle, centred on the gap so the pill overlaps the card's edge, drawn on hover, keyboard focus and while dragging. */
 function PanelGrip({ className = "" }: { className?: string }) {
   return (
-    <span aria-hidden="true" className={`relative h-full w-(--size-hairline) bg-border ${className}`} data-panel-grip="true">
-      <span className="absolute left-1/2 top-1/2 flex size-(--size-control-compact) -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-md border border-border bg-card text-muted-foreground">
-        <ArrowLeftRightIcon className="size-(--size-icon)" />
+    <span aria-hidden="true" className={`relative h-full w-(--size-hairline) ${className}`} data-panel-grip="true">
+      <span className="absolute inset-0 bg-muted-foreground opacity-[var(--opacity-secondary)]" />
+      <span className="absolute left-1/2 top-1/2 flex size-(--size-icon-button-toolbar) -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-md border border-border bg-card text-muted-foreground">
+        <ArrowLeftRightIcon className="size-(--size-icon-sm)" />
       </span>
     </span>
   );
