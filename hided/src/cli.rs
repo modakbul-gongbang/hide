@@ -372,9 +372,7 @@ fn workspace_action_value(
 /// answers the bootstrap with a reason only, so the CLI names the next step.
 fn bootstrap_next_action(reason: &str) -> &'static str {
     match reason {
-        "checkout_not_registered" => {
-            "Run the command from a shell inside a registered project checkout, or reconnect Hide, and retry"
-        }
+        "checkout_not_registered" => crate::pane_auth::CHECKOUT_NEXT_ACTION,
         "caller_unavailable" => "Retry from a live shell inside a registered project checkout",
         _ => "Open Hide, reconnect this pane, and retry the same command",
     }

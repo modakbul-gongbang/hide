@@ -613,7 +613,7 @@ async fn scoped_client_loop(
                         let outcome = tokio::task::spawn_blocking(move || {
                             let cap = registry
                                 .validate(&query_token, herdr_socket.as_deref(), &core)
-                                .map_err(|reason| (reason, "Reconnect the pane and retry"))?;
+                                .map_err(|reason| (reason, crate::pane_auth::refusal_next_action(reason)))?;
                             if renderers.load(Ordering::SeqCst) == 0 {
                                 return Err((
                                     "renderer_unavailable",
@@ -630,10 +630,7 @@ async fn scoped_client_loop(
                                         )
                                         .map_err(|refusal| (refusal.reason, refusal.next_action))?;
                                     if result.context != cap.context {
-                                        return Err((
-                                            "pane_changed",
-                                            "Reconnect the pane and retry",
-                                        ));
+                                        return Err(cap.changed_refusal());
                                     }
                                     if desktop_renderers.load(Ordering::SeqCst) == 0 {
                                         result.capabilities.retain(|capability| !capability.starts_with("browser."));
@@ -686,10 +683,7 @@ async fn scoped_client_loop(
                                         )
                                         .map_err(|refusal| (refusal.reason, refusal.next_action))?;
                                     if result.context != cap.context {
-                                        return Err((
-                                            "pane_changed",
-                                            "Reconnect the pane and retry",
-                                        ));
+                                        return Err(cap.changed_refusal());
                                     }
                                     serde_json::to_value(result).map_err(|_| {
                                         ("result_encoding_failed", "Reconnect Hide and retry")

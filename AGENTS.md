@@ -49,6 +49,17 @@ They once did: an evidence tree reached 123 MB and carried a browser profile wit
 - The root checkout stays on `main`; every branch is worked on in its own worktree under `../herdr-ide.worktrees/`.
   `scripts/hooks/root-worktree-main-only.sh` is a `PreToolUse` hook (registered for Claude Code in `.claude/settings.json`, for Codex in `~/.codex/hooks.json`) that refuses a `git checkout`/`git switch` off `main` in the root worktree and answers with the `git worktree add` form to use instead.
 
+## The Installed App Is The Operator's
+
+`/Applications/hide.app` is the copy the operator works in, and a live check against it is only as good as knowing which build it is.
+On 2026-09-27 one session replaced it with a build that predated a merged fix, deleted the backup bundles beside it, and a second session spent an hour proving the fix was gone.
+
+- Replace `/Applications/hide.app` only when the operator asked for it in the session doing the replacing; another session's approval, a PRD, or a verification plan is not that authority.
+- Keep the bundle you replace as `/Applications/hide-previous-<version>.app.bak`, and never delete a `.bak` another session left; the version is `CFBundleShortVersionString` in its `Contents/Info.plist`.
+- Before a live check, read the installed `Contents/Info.plist` version and `hide --help` from its `Contents/Resources`, and say in the run record which build answered.
+- Launch it with the `HERDR_*` and `HIDE_*` variables stripped from the launching shell (`env -u HERDR_BIN_PATH -u HERDR_SOCKET_PATH … open /Applications/hide.app`): a Herdr pane carries the paths of the Herdr that opened it, and `hided` refuses to start behind a `HERDR_BIN_PATH` that no longer exists.
+- Package with `HIDE_VERSION=<version>` set, because no release tag describes `main` (`docs/BUILD.md`).
+
 ## Runtime Architecture
 
 Read `docs/ARCHITECTURE.md` in full before changing anything under `herdr-core/`, `hided/` or `desktop/`; it owns the reasons behind these boundaries.
