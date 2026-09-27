@@ -1232,6 +1232,7 @@ function buildProjectsSidebar(tokens) {
   const sm = num(tokens, '--spacing-sm');
   const row = width - 2 * xs;
   const indent = num(tokens, '--size-lineage-indent');
+  const childIndent = num(tokens, '--size-agent-child-indent');
   const glyphColumn = sm + indent;
   const nameColumn = glyphColumn + num(tokens, '--size-checkout-icon') + sm;
   const markSlot = num(tokens, '--size-agent-mark');
@@ -1325,9 +1326,9 @@ function buildProjectsSidebar(tokens) {
   }
 
   // An opened checkout's agent row: its marks under the checkout name, one
-  // lineage step further per level, the context already said by the rows above.
+  // child step further per level, the context already said by the rows above.
   function agentRow(id, {status, depth = 0, ...options}) {
-    return screenSidebarAgentRow(id, {symbol: SYMBOL[status], color: STATUS[status], inset: nameColumn + depth * indent, width: row, ...options});
+    return screenSidebarAgentRow(id, {symbol: SYMBOL[status], color: STATUS[status], inset: nameColumn + depth * childIndent, width: row, ...options});
   }
 
   // An opened checkout and its agent rows, on one small group fill.

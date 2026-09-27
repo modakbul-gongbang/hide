@@ -149,4 +149,4 @@ export async function keyboardFocus(page: Page, control: Locator): Promise<void>
 
 // The sidebar's geometry is measured in one module, shared with the design
 // review command, so a spec and a review judge the same boxes.
-export { sidebarColumns, sidebarOverflow, sidebarRowsFit } from "./sidebar-geometry.mjs";
+export { agentColumns, sidebarColumns, sidebarOverflow, sidebarRowsFit } from "./sidebar-geometry.mjs";

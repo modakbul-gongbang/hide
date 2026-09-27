@@ -93,7 +93,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
       data-agent-device={device ?? "local"}
       data-depth={depth}
       className={cn("group/row relative flex items-start gap-xs rounded-sm py-xs pr-xs text-body", selected ? "bg-secondary" : "hover:bg-accent")}
-      style={{ paddingLeft: `calc(${inset} + ${depth} * var(--size-lineage-indent))` }}
+      style={{ paddingLeft: `calc(${inset} + ${depth} * var(--size-agent-child-indent))` }}
     >
       <Hint label={hint} reveals>
         <button

@@ -14,7 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sidebarColumns, sidebarOverflow, sidebarRowsFit } from "./wire";
+import { agentColumns, countSent, keyboardFocus, rest, rowGeometry, screenshot, sidebarColumns, sidebarOverflow, sidebarRowsFit } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -261,6 +261,11 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     // D-3: project, checkout, folder and agent rows, parents and the rest, end
     // their times on one column and centre their chevrons on another.
     expect(await sidebarColumns(page)).toEqual({ times: [expect.any(Number)], chevrons: [expect.any(Number)] });
+    // A child's status mark and title start one 12px child step right of its parent's.
+    // The child is also a root in its own checkout's list, so both are read from the parent's list.
+    const lineage = (await agentColumns(page)).find((list) => list.rows.some((entry) => entry.pane === mainPane))?.rows ?? [];
+    const [parentColumns, childColumns] = [mainPane, rowsPane].map((pane) => lineage.find((entry) => entry.pane === pane));
+    expect([childColumns!.mark - parentColumns!.mark, childColumns!.title - parentColumns!.title].map(Math.round)).toEqual([12, 12]);
     // The same fold in Agents: the child is drawn under its parent there too.
     await page.locator('[data-sidebar-mode="agents"]').click();
     await expect(page.locator(`[data-agent-list] [data-pane="${rowsPane}"]`)).toHaveAttribute("data-depth", "1");

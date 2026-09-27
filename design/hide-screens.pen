@@ -1264,6 +1264,10 @@
       "type": "number",
       "value": 18
     },
+    "--size-agent-child-indent": {
+      "type": "number",
+      "value": 12
+    },
     "--size-lineage-chevron": {
       "type": "number",
       "value": 16
@@ -27951,7 +27955,7 @@
                             "$--spacing-xs",
                             "$--spacing-xs",
                             "$--spacing-xs",
-                            66
+                            60
                           ],
                           "descendants": {
                             "hideui:sar-dot": {
@@ -28033,7 +28037,7 @@
                             "$--spacing-xs",
                             "$--spacing-xs",
                             "$--spacing-xs",
-                            66
+                            60
                           ],
                           "descendants": {
                             "hideui:sar-dot": {
@@ -29794,7 +29798,7 @@
                             "$--spacing-xs",
                             "$--spacing-xs",
                             "$--spacing-xs",
-                            66
+                            60
                           ],
                           "descendants": {
                             "hideui:sar-dot": {
@@ -29876,7 +29880,7 @@
                             "$--spacing-xs",
                             "$--spacing-xs",
                             "$--spacing-xs",
-                            66
+                            60
                           ],
                           "descendants": {
                             "hideui:sar-dot": {

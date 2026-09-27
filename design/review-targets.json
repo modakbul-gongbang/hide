@@ -23,7 +23,7 @@
       "checkout-closed": "main's agent rows closed with its chevron, so its status badge counts them."
     },
     "rules": {
-      "childIndentPx": 18,
+      "childIndentPx": 12,
       "rootsAligned": true,
       "stableUnderHover": true,
       "stableUnderFocus": true,
