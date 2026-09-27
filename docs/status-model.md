@@ -140,6 +140,7 @@ A closed pane leaves the list and therefore the badge on the next projection.
 
 The badge is drawn while the row's descendants are folded away and leaves when they are opened, since the opened rows carry their own marks; a raised row in Needs You or Done never unfolds and always wears it.
 Descendants are folded by default: `expanded_agent_pane_ids` in the persisted UI state names the panes the operator opened, it lives as long as the pane id does, and an older store's collapsed set is ignored rather than migrated, so the first launch after the change starts every parent folded.
+The web shell folds a parent by this one set wherever it draws the parent, in Agents and under its checkout in Projects, and counts the badge over every live descendant of the parent's device, so a descendant in another checkout is counted on the badge and still drawn as a root in its own checkout.
 
 Regression owners: `the_descendant_badge_sums_every_live_descendant_and_skips_ready_and_unknown_ones`, `lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappearance`, `the_snapshot_carries_no_stall_notice_and_ownership_is_operator_or_delegated`, and the Swift `DelegatedRowPresentationTests`.
 
@@ -205,6 +206,15 @@ Equivalent candidates keep canonical agent order.
 A read error in Seen cannot outrank an unread question in Needs You.
 The Workspace draws the representative agent's exact mark, color, and emphasis through the shared presentation.
 
+The web shell draws no representative chip; it draws a status badge in its place.
+The same pass counts each agent under the mark its own row draws (`RowMark` in `sidebar.rs`, the one decision behind the row's symbol): error, approval, question, working, done, and idle, the hollow ring of a quiet agent the operator has already seen.
+A row Herdr reports as unknown draws `~` and is counted in none of them, so the badge claims nothing the projection cannot vouch for.
+The counts ride the summary as `marks`, and a project's badge is its checkouts' counts added up.
+The badge draws one mark and count per state, worst first (`× ! ? ● ✓ ○`), zero states left out, in the marks and colors the rows use, so it says what opening the rows would show.
+Unlike the descendant badge it counts idle agents, because on a folded checkout it is also how the operator sees that agents are there at all.
+A checkout's badge stands for its folded agent rows and leaves while they are open; a project's stays, open or folded, because it is the project's own summary (docs/UI_BEHAVIOR.md, Sidebar hierarchy).
+Regression owners: `workspace_summary_uses_physical_ownership_priority_and_unique_panes` for the counts, `projects.test.ts` for the project sum, and `projects-sidebar.spec.ts` for where the badges are drawn.
+
 The tooltip lists positive counts in group order: Needs You, Done, Working, Seen.
 Unknown is reported as a subset of Seen, never added again to the total.
 When the owning server disconnects, a Workspace with retained agents displays Disconnected and suppresses the stale activity breakdown.
@@ -224,6 +234,8 @@ Collapsing does not change the selected pane, tab, agent read state, running pro
 `collapsed_checkout_ids` persists across launches.
 The web shell starts every checkout closed instead and keeps the ones the operator opened in `expanded_checkout_ids`; a `ui_state_update` without that set, as the Swift shell sends, leaves it unchanged, and each shell ignores the other's set.
 Raised Needs You and Done rows remain available, while number shortcuts skip hidden tree rows.
+In the web shell the fold controls of a project, a checkout and a parent agent all sit on the right of their row in slots kept at rest; a folded control is always shown and an unfolded one appears under the pointer, with focus inside the row, while the row's menu is open, or on an input with no hover.
+The body of each row navigates (a project to its Overview, a checkout to its Workspace, an agent to its pane) and a fold never does: folding changes no screen, pane, tab, read state, group or process.
 
 ### Verification ownership
 

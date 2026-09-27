@@ -5,7 +5,6 @@
 // reason, never hidden behind an action that would fail.
 
 import { DropdownMenu as MenuPrimitive } from "radix-ui";
-import { EllipsisIcon } from "lucide-react";
 import { Fragment, useState, type ReactNode } from "react";
 import { cn } from "../lib/utils";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuTrigger } from "./ui/context-menu";
@@ -143,51 +142,5 @@ export function EntryPointMenu<Id extends string>({
         </MenuPrimitive.Content>
       </MenuPrimitive.Portal>
     </MenuPrimitive.Root>
-  );
-}
-
-/**
- * The `⋯` menu on a sidebar row, also opened by a right-click on the row, the
- * way the native project and checkout menus open (WorktreeMenuPolicy). The
- * trigger shows only while the row is under the pointer, focused or open; the
- * row places it, filling a positioned slot, so it can stand in for whatever
- * that slot shows at rest.
- */
-export function RowMenu<Id extends string>({
-  label,
-  items,
-  onSelect,
-  children,
-  ...data
-}: {
-  label: string;
-  items: MenuEntry<Id>[];
-  onSelect: (id: Id) => void;
-  /** The row itself, given the trigger to place; a right-click on it opens the same menu. */
-  children: (trigger: ReactNode) => ReactNode;
-} & Record<`data-${string}`, string>) {
-  const [open, setOpen] = useState(false);
-  const trigger = (
-    <DropdownMenu open={open} onOpenChange={setOpen}>
-      <Hint label={label}>
-        <DropdownMenuTrigger
-          className={cn(
-            "absolute inset-0 flex items-center justify-center text-muted-foreground outline-none hover:text-foreground focus-visible:text-foreground",
-            open ? "text-foreground" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
-          )}
-          {...data}
-        >
-          <EllipsisIcon className="size-(--size-icon)" />
-        </DropdownMenuTrigger>
-      </Hint>
-      <DropdownMenuContent aria-label={label} align="end">
-        <EntryItems items={items} onSelect={onSelect} parts={{ Item: DropdownMenuItem, Separator: DropdownMenuSeparator }} />
-      </DropdownMenuContent>
-    </DropdownMenu>
-  );
-  return (
-    <EntryContextMenu label={label} items={() => items} onSelect={onSelect} className="group flex items-stretch">
-      {children(trigger)}
-    </EntryContextMenu>
   );
 }

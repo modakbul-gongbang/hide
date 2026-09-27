@@ -823,6 +823,24 @@ pub struct CheckoutAgentSummary {
     pub seen: usize,
     /// A subset of Seen, not an additional group.
     pub unknown: usize,
+    /// How many agents here draw each mark on their own row, so a row that
+    /// stands for them can say what opening it would show.
+    pub marks: MarkCountsSnapshot,
+}
+
+/// How many rows draw each status mark (docs/status-model.md, The status
+/// badge). A row counts under the mark it draws, read or not, so `idle` holds
+/// every quiet agent the operator has already seen. A row whose activity
+/// Herdr reports as unknown draws `~` and is counted in none: the badge does
+/// not claim a state the projection cannot vouch for.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct MarkCountsSnapshot {
+    pub error: u32,
+    pub approval: u32,
+    pub question: u32,
+    pub working: u32,
+    pub done: u32,
+    pub idle: u32,
 }
 
 /// The source of the one-line checkout purpose chosen by the core.

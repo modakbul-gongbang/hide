@@ -88,7 +88,7 @@ function Hint({
         {children}
       </TooltipTrigger>
       <TooltipContent side={side}>
-        <span className="inline-flex items-center gap-sm">
+        <span className="inline-flex items-center gap-sm whitespace-pre-line">
           {label}
           {shortcut ? <span className="text-muted-foreground">{shortcut}</span> : null}
         </span>

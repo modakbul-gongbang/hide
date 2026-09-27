@@ -240,9 +240,9 @@ test("editing a document marks it dirty, saves it, and a disk change asks how to
     await page.keyboard.press("Meta+KeyA");
     await page.keyboard.type("export const answer = 42;\n");
 
-    // The edit is one file_draft and the tab shows the core's dirty badge (B4).
-    await expect.poll(() => sent.get("file_draft")).toBeGreaterThanOrEqual(1);
-    expect(lastSent.get("file_draft")).toMatchObject({ contents_utf8: "export const answer = 42;\n" });
+    // Each keystroke is a file_draft, so wait for the one that carries the
+    // whole typed text; the tab shows the core's dirty badge (B4).
+    await expect.poll(() => lastSent.get("file_draft")?.contents_utf8).toBe("export const answer = 42;\n");
     await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
 
     // Autosave: no chord, and the draft lands on disk after the idle delay,
