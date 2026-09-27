@@ -519,6 +519,12 @@ impl Runtime {
                 continue;
             }
             workspace::apply_worktrees(workspace, &self.worktree_catalog);
+            // Git refreshes the persistent purpose sources. Restore the
+            // agent/PR fallback in this same projection before publishing it.
+            crate::sidebar::sync_checkout_purposes(
+                std::slice::from_mut(workspace),
+                &self.snapshot.navigator.agents,
+            );
             let named = self.disk_project.as_deref() == Some(workspace.path.as_str());
             workspace.disk = project_disk(self.worktree_catalog.project(&workspace.path), named);
         }
