@@ -3,7 +3,7 @@
 // real Electron build. Each test owns its state directory and so its daemon.
 
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
@@ -181,7 +181,7 @@ test("failure: a missing CLI shows its reason and Retry attaches once it exists"
   await shellShown(page);
 });
 
-test("discovery: with hide on no PATH, the app finds it where it is installed and remembers it for the next launch", async () => {
+test("discovery: a Finder-style PATH still lets a new daemon run installed tools", async () => {
   // launchd's bare PATH, no override, no worktree build beside it. Playwright runs the app
   // unpackaged, so the login-shell step is skipped here; cli.test.ts covers its place in the order.
   const bare = ["/usr/bin", "/bin", "/usr/sbin", "/sbin"];
@@ -191,12 +191,21 @@ test("discovery: with hide on no PATH, the app finds it where it is installed an
   const installed = path.join(env.HOME!, ".local", "bin", "hide");
   fs.mkdirSync(path.dirname(installed), { recursive: true });
   fs.symlinkSync(HIDE_CLI, installed);
+  const gh = path.join(path.dirname(installed), "gh");
+  fs.writeFileSync(gh, "#!/bin/sh\nprintf 'fixture-gh\\n'\n", { mode: 0o755 });
   // The unpackaged host still looks beside its app folder for a worktree build; there is none.
   const before = [...["debug", "release"].map((profile) => path.join(run.root, "target", profile, "hide")), ...bare.map((dir) => path.join(dir, "hide"))];
   const resolved = () => hostLog(env).filter((line) => line.event === "cli.resolved");
 
   ({ app } = await launch(env, { appDir }));
   await shellShown(await app.firstWindow());
+  const daemon = run.daemonPid();
+  expect(daemon).not.toBeNull();
+  const processInfo = spawnSync("/bin/ps", ["eww", "-p", String(daemon), "-o", "command="], { encoding: "utf8" });
+  expect(processInfo.status).toBe(0);
+  const daemonPath = /(?:^|\s)PATH=(.*?)(?=\s[A-Za-z_][A-Za-z_0-9]*=|$)/s.exec(processInfo.stdout)?.[1];
+  expect(daemonPath).toBeTruthy();
+  expect(spawnSync("gh", ["--version"], { env: { PATH: daemonPath }, encoding: "utf8" }).stdout).toBe("fixture-gh\n");
   expect(resolved().at(-1)).toMatchObject({ source: "well-known", path: installed, tried: [...before, installed].join(":") });
   const remembered = path.join(env.HIDE_DESKTOP_USER_DATA_DIR!, "cli-path.json");
   expect(JSON.parse(fs.readFileSync(remembered, "utf8"))).toEqual({ schema: 1, path: installed });
