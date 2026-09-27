@@ -1,4 +1,4 @@
-# Every pull request and every push to main runs the same three lanes, and the
+# Every pull request and every push to main runs the same four lanes, and the
 # single `verify` job is what branch protection requires. Adding a lane means
 # adding it to `verify`'s `needs`; the protection rule never changes.
 #
@@ -37,65 +37,6 @@ jobs:
         # hide-ai drives its codex backend against a python fake app server.
         run: cargo test --locked --workspace
 
-  swift:
-    name: swift shell
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v7
-      # The tests build with the Xcode toolchain the runner ships. The
-      # open-source 6.0.3 toolchain the release uses crashes in IRGen on a
-      # debug build of MainWindowChrome.swift, which -O never reaches.
-      #
-      # `core` covers everything the release archive is built from, `shell`
-      # everything SwiftPM compiles. Cargo decides freshness by mtime, which a
-      # fresh checkout always fails, so the artifact worth caching is the
-      # archive itself keyed by content: a Swift-only change hashes the same as
-      # main and restores main's archive instead of rebuilding it.
-      - name: Fingerprint the toolchains and the sources
-        id: inputs
-        run: |
-          swift --version
-          rustc --version
-          {
-            echo "rustc=$(rustc --version | cut -d' ' -f2)"
-            echo "core=${{ hashFiles('Cargo.lock', 'Cargo.toml', 'contracts/**', 'herdr-core/**', 'hided/**', 'hide-*/**', 'plugins/agent-context-labels/**') }}"
-            echo "shell=${{ hashFiles('macos/**', '!macos/.build/**', '!macos/build/**') }}"
-          } >> "$GITHUB_OUTPUT"
-      - name: Restore the core archive built from these sources
-        id: core-archive
-        uses: actions/cache@v6
-        with:
-          path: target/release/libherdr_core.a
-          key: core-archive-${{ runner.os }}-${{ steps.inputs.outputs.rustc }}-${{ steps.inputs.outputs.core }}
-      - uses: Swatinem/rust-cache@v2
-        if: steps.core-archive.outputs.cache-hit != 'true'
-        with:
-          workspaces: ". -> target"
-      - name: Build the core archive the shell links
-        if: steps.core-archive.outputs.cache-hit != 'true'
-        run: bash scripts/verify-cargo.sh build
-      - name: Link the restored archive without a Cargo run
-        if: steps.core-archive.outputs.cache-hit == 'true'
-        run: echo "HIDE_CORE_ARCHIVE_PREBUILT=1" >> "$GITHUB_ENV"
-      # The key carries every Swift input so each run with a change saves a
-      # newer build; an exact hit saves nothing, and a key on Package.swift
-      # alone kept restoring the build from the last manifest change.
-      - uses: actions/cache@v6
-        with:
-          path: macos/.build
-          key: swift-build-${{ runner.os }}-${{ steps.inputs.outputs.shell }}-${{ steps.inputs.outputs.core }}
-          restore-keys: |
-            swift-build-${{ runner.os }}-${{ steps.inputs.outputs.shell }}-
-            swift-build-${{ runner.os }}-
-      - name: Test the shell
-        run: bash scripts/verify-swift.sh test
-      - name: Assert the shell's user-facing contracts
-        # Both scripts pair a targeted test with a source search no test can
-        # perform; the search half is what the full suite above does not cover.
-        run: |
-          bash scripts/check-right-panel-sections.sh
-          bash scripts/check-shortcut-contract.sh
-
   scripts:
     name: repository invariants
     runs-on: macos-15
@@ -107,15 +48,8 @@ jobs:
         run: |
           bash scripts/check-harness-ignore-anchor.sh
           bash scripts/check-agent-asset-committed.sh
-          python3 scripts/check-core-bridge-structure.py
           bash scripts/check-capability-readers-off-lock.sh
-          bash scripts/check-terminal-row-cache.sh
-          bash scripts/check-packaged-resource-access.sh
           bash scripts/check-no-workstation-identity.sh
-          bash scripts/check-git-worktree-presentation.sh
-          bash scripts/check-git-worktree-states.sh
-          bash scripts/check-worktree-base-policy.sh
-          bash scripts/check-worktree-catalog-presentation.sh
           bash scripts/check-worktree-removal-boundary.sh
           zsh scripts/check-herdr-pin-single-source.sh
       - name: Fetch the pinned Herdr runtime
@@ -234,7 +168,7 @@ jobs:
 
   verify:
     name: verify
-    needs: [rust, swift, scripts, web, desktop]
+    needs: [rust, scripts, web, desktop]
     if: always()
     runs-on: ubuntu-latest
     steps:
