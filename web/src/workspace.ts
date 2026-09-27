@@ -25,6 +25,8 @@ export type WorkspaceView = {
   tools: boolean;
   /** The open panel's width, as a share of the Workspace body's. */
   views_over_share: number;
+  /** A panel holding only the tools: its width as a share of the body's, or null for the tool column's own width until it is resized. */
+  tools_share: number | null;
   /** A page reported that this panel takes the whole body when it shows (a narrow window). */
   covered: boolean;
   /** The Workspace the operator last chose, now or before a restart, so the page opens on it (D-11). */
@@ -67,6 +69,10 @@ export type PanelSizes = {
  *   the body's right edge: the open panel's width while it is pinned, even
  *   under an expanded panel, so expanding moves no terminal; else 0, since
  *   the Agent area keeps the body's width under a panel that floats.
+ * - `resize`: which stored width a drag on the panel's edge sets: the View
+ *   areas' and the empty panel's share, or the tools-only panel's own, which
+ *   is the tool column's width until it is first resized; null while the
+ *   panel covers the body. `need` is the narrowest the panel may be.
  * - `toolsOverlay`: in a window too narrow for both, the tools fold into an
  *   overlay inside the panel; anywhere else the panel's minimum already holds
  *   a View area beside the tool column.
@@ -77,12 +83,13 @@ export type PanelFrame = {
   width: number;
   agentsRight: number;
   narrow: boolean;
-  resizable: boolean;
+  resize: "views_over_share" | "tools_share" | null;
+  need: number;
   toolsOverlay: boolean;
 };
 
 export function panelFrame(input: {
-  view: Pick<WorkspaceView, "panel" | "pinned" | "views_over_share" | "tools">;
+  view: Pick<WorkspaceView, "panel" | "pinned" | "views_over_share" | "tools_share" | "tools">;
   /** A view is open, or a file of this checkout is opening into the View areas. */
   views: boolean;
   body: number;
@@ -91,12 +98,14 @@ export function panelFrame(input: {
   const { view, views, body, sizes } = input;
   const tools = view.tools;
   const content = views ? "views" : tools ? "tools" : "empty";
-  if (view.panel === "closed") return { shown: "closed", content, width: 0, agentsRight: 0, narrow: false, resizable: false, toolsOverlay: false };
-  // Before the body is measured nothing is placed, so no terminal fits to a guess.
-  if (body <= 0) return { shown: view.panel === "expanded" && content === "views" ? "expanded" : "open", content, width: 0, agentsRight: 0, narrow: false, resizable: false, toolsOverlay: false };
   const need = panelMinimum(content, tools, sizes);
+  if (view.panel === "closed") return { shown: "closed", content, width: 0, agentsRight: 0, narrow: false, resize: null, need, toolsOverlay: false };
+  // Before the body is measured nothing is placed, so no terminal fits to a guess.
+  if (body <= 0) return { shown: view.panel === "expanded" && content === "views" ? "expanded" : "open", content, width: 0, agentsRight: 0, narrow: false, resize: null, need, toolsOverlay: false };
   const narrow = body < sizes.areaMin + need;
-  const open = narrow ? body : content === "tools" ? sizes.toolColumn + sizes.chrome : panelWidth(view.views_over_share, body, need, sizes.areaMin);
+  const toolsOnly = content === "tools";
+  const share = toolsOnly ? view.tools_share : view.views_over_share;
+  const open = narrow ? body : share === null ? need : panelWidth(share, body, need, sizes.areaMin);
   // Only views expand: with none, the panel stays the tool column's width or
   // its own at the empty state, and the agents stay in reach.
   const expanded = narrow || (view.panel === "expanded" && content === "views");
@@ -107,7 +116,8 @@ export function panelFrame(input: {
     width,
     agentsRight: view.pinned && !narrow ? open : 0,
     narrow,
-    resizable: !expanded && content !== "tools",
+    resize: expanded ? null : toolsOnly ? "tools_share" : "views_over_share",
+    need,
     toolsOverlay: content === "views" && tools && narrow,
   };
 }
@@ -136,11 +146,6 @@ export function panelWidth(share: number, total: number, need: number, areaMin: 
 export function panelShareAt(x: number, total: number, need: number, areaMin: number): number {
   if (total <= 0) return PANEL_SHARE_MIN;
   return panelWidth((total - x) / total, total, need, areaMin) / total;
-}
-
-/** The minimum an open panel holding the View areas needs, for a drag to land within. */
-export function panelNeed(tools: boolean, sizes: PanelSizes): number {
-  return panelMinimum("views", tools, sizes);
 }
 
 /**

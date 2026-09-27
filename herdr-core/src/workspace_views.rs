@@ -121,6 +121,11 @@ pub struct WorkspaceView {
     /// panel while no view is open.
     pub tools: bool,
     pub views_over_share: f32,
+    /// The width of a panel that holds only the tools, as a share of the
+    /// body, once the operator resized one; until then it is the tool
+    /// column's own width.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tools_share: Option<f32>,
     pub last_used_unix_ms: u64,
     pub layout: Layout,
 }
@@ -146,6 +151,8 @@ struct StoredView {
     changes: bool,
     #[serde(default)]
     views_over_share: Option<f32>,
+    #[serde(default)]
+    tools_share: Option<f32>,
     #[serde(default)]
     last_used_unix_ms: u64,
     #[serde(default)]
@@ -180,6 +187,7 @@ impl StoredView {
             tool,
             tools,
             views_over_share: share.unwrap_or(DEFAULT_VIEWS_OVER_SHARE),
+            tools_share: self.tools_share,
             last_used_unix_ms: self.last_used_unix_ms,
             layout: self.layout,
         }
@@ -230,6 +238,7 @@ impl WorkspaceView {
             tool: Tool::default(),
             tools: true,
             views_over_share: DEFAULT_VIEWS_OVER_SHARE,
+            tools_share: None,
             last_used_unix_ms: 0,
             layout: Layout::default(),
         }
@@ -382,6 +391,7 @@ impl V1View {
             tool,
             tools,
             views_over_share: share.unwrap_or(DEFAULT_VIEWS_OVER_SHARE),
+            tools_share: None,
             last_used_unix_ms: self.last_used_unix_ms,
             layout,
         }
@@ -470,6 +480,7 @@ fn settle(
     let mut repairs = Vec::new();
     for view in &mut workspaces {
         view.views_over_share = clamp_views_over_share(view.views_over_share);
+        view.tools_share = view.tools_share.map(clamp_views_over_share);
         for note in view.layout.repair() {
             repairs.push(format!("{} on {}: {note}", view.path, view.device_id));
         }
@@ -559,6 +570,7 @@ mod tests {
         entry.tool = Tool::Changes;
         entry.tools = false;
         entry.views_over_share = 0.3;
+        entry.tools_share = Some(0.25);
         let layout = &mut entry.layout;
         for (path, kind, committed, preview) in [
             ("/repo/a.md", DisplayKind::File, None, false),

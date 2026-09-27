@@ -300,6 +300,31 @@ fn the_side_panel_closes_and_opens_without_closing_a_view() {
             .views_over_share,
         crate::workspace_views::MAX_VIEWS_OVER_SHARE
     );
+    // A panel holding only the tools keeps a width of its own, the tool
+    // column's until it is resized, clamped like the other.
+    let shares = |runtime: &Runtime| {
+        let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+        (view.views_over_share, view.tools_share)
+    };
+    assert_eq!(shares(&runtime).1, None);
+    layout(&mut runtime, serde_json::json!({"tools_share": 0.3}));
+    assert_eq!(
+        shares(&runtime),
+        (crate::workspace_views::MAX_VIEWS_OVER_SHARE, Some(0.3))
+    );
+    layout(&mut runtime, serde_json::json!({"tools_share": 0.01}));
+    assert_eq!(
+        shares(&runtime).1,
+        Some(crate::workspace_views::MIN_VIEWS_OVER_SHARE)
+    );
+    let (saved, _) = crate::workspace_views::load(&state, 0);
+    assert!(
+        saved
+            .workspaces
+            .iter()
+            .any(|view| view.tools_share == Some(crate::workspace_views::MIN_VIEWS_OVER_SHARE)),
+        "the file keeps the tools-only width"
+    );
 
     // Closing the last view leaves the panel where it is: it narrows to the
     // Explorer, or says nothing is open.

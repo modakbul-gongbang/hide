@@ -1,4 +1,4 @@
-import { Maximize2Icon, Minimize2Icon, PanelRightDashedIcon, PanelRightIcon, PinIcon, PinOffIcon, PlusIcon } from "lucide-react";
+import { ArrowLeftRightIcon, Maximize2Icon, Minimize2Icon, PanelRightDashedIcon, PanelRightIcon, PinIcon, PinOffIcon, PlusIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AreaEmpty } from "./AreaEmpty";
@@ -18,7 +18,7 @@ import { Tools } from "./Tools";
 import { useUiStore } from "./ui";
 import { ViewAreas } from "./ViewAreas";
 import { shownTool } from "./viewLayout";
-import { PANEL_STATES, agentEntries, panelCoversToSend, panelFrame, panelNeed, panelShareAt, panelWidth, workspaceViewOf, type PanelFrame, type PanelSizes, type PanelState, type Tool, type WorkspaceView } from "./workspace";
+import { PANEL_STATES, agentEntries, panelCoversToSend, panelFrame, panelShareAt, panelWidth, workspaceViewOf, type PanelFrame, type PanelSizes, type PanelState, type Tool, type WorkspaceView } from "./workspace";
 import { hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
 
@@ -45,7 +45,7 @@ import { displayCommand } from "./shortcuts";
 // floats there, without changing what the core stores, so widening brings it
 // back.
 
-const CLOSED: PanelFrame = { shown: "closed", content: "empty", width: 0, agentsRight: 0, narrow: false, resizable: false, toolsOverlay: false };
+const CLOSED: PanelFrame = { shown: "closed", content: "empty", width: 0, agentsRight: 0, narrow: false, resize: null, need: 0, toolsOverlay: false };
 
 export function WorkspaceScreen({ actions }: { actions: Actions }) {
   const checkout = useShellStore((s) => frontCheckout(s.rest));
@@ -275,16 +275,23 @@ function PanelToggle({ view, actions }: { view: WorkspaceView; actions: Actions 
  * height, docked to its right edge, with a --spacing-sm gap on its left that
  * is the resize grip. Its first row carries the View tabs above each top
  * area and the panel's actions at its right end, over the tool column when
- * that shows. A drag in the gap moves a guide line and sends one
- * `views_over_share` on release, so the panel itself does not move during a
- * drag; a browser display's slot inside the panel reports its rect like any
+ * that shows. Hovering the gap shows the grip, a hairline with a ⇆ pill; a
+ * drag moves the grip as a guide and sends the panel's one stored width on
+ * release (the tools-only panel keeps its own), so the panel itself does not
+ * move during a drag; a browser display's slot inside the panel reports its rect like any
  * other, and closing the panel unmounts the slots, which hides their pages
  * without closing them.
  */
 function SidePanel({ view, frame, tool, placement, body, sizes, actions }: { view: WorkspaceView; frame: PanelFrame; tool: Tool | null; placement: "column" | "open" | "closed"; body: HTMLElement | null; sizes: PanelSizes; actions: Actions }) {
   const [guide, setGuide] = useState<number | null>(null);
-  const share = view.views_over_share;
-  const need = panelNeed(view.tools, sizes);
+  const resize = frame.resize;
+  const need = frame.need;
+  // The share the panel is drawn at, which a key steps from and assistive
+  // technology reads.
+  const share = body && body.clientWidth > 0 ? frame.width / body.clientWidth : view.views_over_share;
+  const land = (next: number) => {
+    if (resize && Math.abs(next - share) > 0.001) actions.setWorkspaceView({ [resize]: next });
+  };
   const column = !frame.toolsOverlay && tool !== null;
   // The column toggle reads pressed while the tools show: the column, or a
   // narrow panel's overlay while it is open.
@@ -308,8 +315,7 @@ function SidePanel({ view, frame, tool, placement, body, sizes, actions }: { vie
     };
     const up = (next: PointerEvent) => {
       end();
-      const landed = shareOf(next);
-      if (Math.abs(landed - share) > 0.001) actions.setWorkspaceView({ views_over_share: landed });
+      land(shareOf(next));
     };
     // A drag the system cancels lands nothing and leaves no guide behind.
     target.addEventListener("pointermove", move);
@@ -326,7 +332,7 @@ function SidePanel({ view, frame, tool, placement, body, sizes, actions }: { vie
         data-side-panel={frame.shown}
         data-panel-content={frame.content}
       >
-        {frame.resizable ? (
+        {resize ? (
           <div
             role="separator"
             aria-orientation="vertical"
@@ -336,7 +342,7 @@ function SidePanel({ view, frame, tool, placement, body, sizes, actions }: { vie
             aria-valuemax={80}
             tabIndex={0}
             data-panel-edge="true"
-            className="group flex w-sm shrink-0 cursor-col-resize justify-center outline-none"
+            className="group relative z-10 flex w-sm shrink-0 cursor-col-resize justify-center outline-none"
             onPointerDown={drag}
             onKeyDown={(event) => {
               if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
@@ -345,11 +351,11 @@ function SidePanel({ view, frame, tool, placement, body, sizes, actions }: { vie
               if (total <= 0) return;
               // Left widens the panel, as its edge moves left.
               const step = event.key === "ArrowLeft" ? 0.05 : -0.05;
-              const next = panelWidth(share + step, total, need, sizes.areaMin) / total;
-              if (Math.abs(next - share) > 0.001) actions.setWorkspaceView({ views_over_share: next });
+              land(panelWidth(share + step, total, need, sizes.areaMin) / total);
             }}
           >
-            <span aria-hidden="true" className="h-full w-[var(--size-resize-handle)] bg-primary opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" />
+            {/* While a drag moves the guide, the grip travels with it. */}
+            <PanelGrip className={guide === null ? "opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" : "opacity-0"} />
           </div>
         ) : (
           <div aria-hidden="true" className="w-sm shrink-0" />
@@ -390,8 +396,23 @@ function SidePanel({ view, frame, tool, placement, body, sizes, actions }: { vie
           )}
         </div>
       </aside>
-      {guide !== null ? <div className="pointer-events-none absolute inset-y-0 z-30 w-[var(--size-resize-handle)] bg-primary" style={{ left: guide }} data-panel-guide="true" /> : null}
+      {guide !== null ? (
+        <div className="pointer-events-none absolute inset-y-0 z-30 flex w-sm justify-center" style={{ left: guide }} data-panel-guide="true">
+          <PanelGrip />
+        </div>
+      ) : null}
     </>
+  );
+}
+
+/** The resize grip (issue 170): a hairline with a ⇆ pill at its middle, drawn on hover, keyboard focus and while dragging. */
+function PanelGrip({ className = "" }: { className?: string }) {
+  return (
+    <span aria-hidden="true" className={`relative h-full w-(--size-hairline) bg-border ${className}`} data-panel-grip="true">
+      <span className="absolute left-1/2 top-1/2 flex size-(--size-control-compact) -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-md border border-border bg-card text-muted-foreground">
+        <ArrowLeftRightIcon className="size-(--size-icon)" />
+      </span>
+    </span>
   );
 }
 

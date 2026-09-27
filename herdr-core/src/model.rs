@@ -188,6 +188,9 @@ pub struct WorkspaceViewSnapshot {
     pub tools: bool,
     /// The open panel's width, as a share of the Workspace body's.
     pub views_over_share: f32,
+    /// A panel holding only the tools: its width as a share of the body's,
+    /// or null for the tool column's own width until it is resized.
+    pub tools_share: Option<f32>,
     /// The shell reported drawing this panel over the whole body (a narrow
     /// window), so an agent chosen from elsewhere closes it even when pinned.
     pub covered: bool,

@@ -40,26 +40,36 @@ describe("tab identity", () => {
 
 describe("the side panel", () => {
   const sizes = { areaMin: 224, toolColumn: 260, chrome: 0 };
-  const view = (panel: WorkspaceView["panel"], extra: Partial<WorkspaceView> = {}) => ({ panel, pinned: false, views_over_share: 0.6, tools: true, ...extra });
+  const view = (panel: WorkspaceView["panel"], extra: Partial<WorkspaceView> = {}) => ({ panel, pinned: false, views_over_share: 0.6, tools_share: null, tools: true, ...extra });
   const frame = (panel: WorkspaceView["panel"], views: boolean, body: number, extra: Partial<WorkspaceView> = {}) => panelFrame({ view: view(panel, extra), views, body, sizes });
 
   it("floats at its share over agents that keep the body's width, and a pinned one narrows them to its edge", () => {
-    expect(frame("open", true, 1400)).toMatchObject({ shown: "open", content: "views", width: 840, agentsRight: 0, resizable: true, narrow: false });
+    expect(frame("open", true, 1400)).toMatchObject({ shown: "open", content: "views", width: 840, agentsRight: 0, resize: "views_over_share", narrow: false });
     expect(frame("open", true, 1400, { pinned: true })).toMatchObject({ width: 840, agentsRight: 840 });
     expect(frame("closed", true, 1400, { pinned: true })).toMatchObject({ shown: "closed", width: 0, agentsRight: 0 });
   });
 
   it("covers the whole body when expanded, and a pinned one leaves the agents at their docked width underneath", () => {
-    expect(frame("expanded", true, 1400)).toMatchObject({ shown: "expanded", width: 1400, agentsRight: 0, resizable: false });
+    expect(frame("expanded", true, 1400)).toMatchObject({ shown: "expanded", width: 1400, agentsRight: 0, resize: null });
     expect(frame("expanded", true, 1400, { pinned: true })).toMatchObject({ width: 1400, agentsRight: 840 });
   });
 
   it("is only as wide as the tool column while no view is open, and says nothing is open only without a tool", () => {
-    expect(frame("open", false, 1400)).toMatchObject({ content: "tools", width: 260, resizable: false });
+    expect(frame("open", false, 1400)).toMatchObject({ content: "tools", width: 260, resize: "tools_share", need: 260 });
     expect(frame("expanded", false, 1400)).toMatchObject({ shown: "open", content: "tools", width: 260 });
-    expect(frame("open", false, 1400, { tools: false })).toMatchObject({ content: "empty", width: 840, resizable: true });
+    expect(frame("open", false, 1400, { tools: false })).toMatchObject({ content: "empty", width: 840, resize: "views_over_share" });
     // Only views expand, so the empty state never covers the agents.
     expect(frame("expanded", false, 1400, { tools: false })).toMatchObject({ shown: "open", content: "empty", width: 840 });
+  });
+
+  it("resizes the tools-only panel to a width of its own, never under the tool column or over the agents' minimum", () => {
+    expect(frame("open", false, 1400, { tools_share: 0.4 })).toMatchObject({ content: "tools", width: 560, resize: "tools_share" });
+    expect(frame("open", false, 1400, { tools_share: 0.4, pinned: true })).toMatchObject({ width: 560, agentsRight: 560 });
+    expect(frame("open", false, 1400, { tools_share: 0.2 }).width).toBe(280);
+    expect(frame("open", false, 1000, { tools_share: 0.2 }).width).toBe(260);
+    expect(frame("open", false, 1000, { tools_share: 0.8 }).width).toBe(776);
+    // The View areas keep their own width beside it.
+    expect(frame("open", true, 1400, { tools_share: 0.4 }).width).toBe(840);
   });
 
   it("places nothing before the body is measured, so no terminal fits to a guess", () => {
@@ -74,7 +84,7 @@ describe("the side panel", () => {
   });
 
   it("takes the whole body in a window too narrow for both, unsaved, and a pinned one floats there", () => {
-    expect(frame("open", true, 707, { pinned: true })).toMatchObject({ shown: "expanded", narrow: true, width: 707, agentsRight: 0, resizable: false, toolsOverlay: true });
+    expect(frame("open", true, 707, { pinned: true })).toMatchObject({ shown: "expanded", narrow: true, width: 707, agentsRight: 0, resize: null, toolsOverlay: true });
     // With no view the tool column is the panel, never an overlay.
     expect(frame("open", false, 400)).toMatchObject({ narrow: true, content: "tools", toolsOverlay: false });
     expect(frame("open", true, 708, { pinned: true })).toMatchObject({ shown: "open", narrow: false, agentsRight: 484 });

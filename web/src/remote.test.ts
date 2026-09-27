@@ -140,6 +140,7 @@ function deviceViews(panel: WorkspaceView["panel"]): WorkspaceView {
     device_id: "studio",
     path: "/home/remote/app",
     panel,
+    tools_share: null,
     pinned: false,
     covered: false,
     tool: "explorer",

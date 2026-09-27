@@ -135,6 +135,9 @@ pub(super) struct WorkspaceViewPayload {
     /// The open panel's width, as a share of the Workspace body's.
     #[serde(default)]
     pub(super) views_over_share: Option<f32>,
+    /// A panel holding only the tools: its width, as a share of the body's.
+    #[serde(default)]
+    pub(super) tools_share: Option<f32>,
     /// A file of the front Workspace to reveal: the column shows the
     /// Explorer with the file's folders unfolded, in the same event, and
     /// nothing is opened. Like any tool shown, it opens a closed panel.
@@ -474,6 +477,9 @@ impl Runtime {
         if let Some(share) = payload.views_over_share {
             entry.views_over_share = workspace_views::clamp_views_over_share(share);
         }
+        if let Some(share) = payload.tools_share {
+            entry.tools_share = Some(workspace_views::clamp_views_over_share(share));
+        }
         let revealed = payload
             .reveal
             .is_some_and(|path| self.unfold_to(&key, &path));
@@ -640,6 +646,7 @@ impl Runtime {
             tool: view.tool,
             tools: view.tools,
             views_over_share: view.views_over_share,
+            tools_share: view.tools_share,
             covered: Some(key) == store.covered.as_ref(),
             resumed: Some(key) == store.resumable.as_ref(),
             layout: self.view_layout_snapshot(key, &view.layout),

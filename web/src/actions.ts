@@ -256,7 +256,7 @@ export function createActions(dispatch: DispatchFn) {
    * `workspace_view` event naming only what changes. The core keeps them per
    * Workspace, so another Workspace is never touched.
    */
-  const setWorkspaceView = (patch: { panel?: PanelState; pinned?: boolean; tool?: Tool; tools?: boolean; views_over_share?: number; reveal?: string }) => {
+  const setWorkspaceView = (patch: { panel?: PanelState; pinned?: boolean; tool?: Tool; tools?: boolean; views_over_share?: number; tools_share?: number; reveal?: string }) => {
     if (!workspaceViewOf(rest())) return diagnostic("workspace_view: no Workspace in front");
     dispatch({ schema_version: 2, kind: "workspace_view", payload: patch });
   };
