@@ -839,8 +839,7 @@ test("splits, moves, resizes, focus and closes run from the palette and menus by
     await expect(divider).toHaveCount(0);
     await expect.poll(async () => Math.round((await boxOf(area(page, 0))).width)).toBe(Math.round(views.width));
 
-    // Closing the last view with no tool shown leaves the panel saying
-    // nothing is open, and its stored state stays what it was (issue 170).
+    // Closing the last view with no tool shown closes the panel (issue 170).
     await paletteCommand(page, "Hide Explorer", "command:tool:explorer");
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     const panelsBefore = stack.events.filter((event) => event.kind === "workspace_view" && "panel" in event.payload).length;
@@ -850,12 +849,11 @@ test("splits, moves, resizes, focus and closes run from the palette and menus by
     await tabTo(page, tab(page, "a.txt"), "Shift+Tab");
     await menuByKeyboard(page, "close_view");
     await expect(page.locator("[data-view-area]")).toHaveCount(0);
-    await expect(page.locator("[data-side-panel]")).toHaveAttribute("data-panel-content", "empty");
-    await expect(page.locator("[data-side-panel]")).toContainText("No file or diff is open in this Workspace.");
-    // Only views expand, so the empty panel is drawn at its width, the agents in reach.
-    await expect(workspace).toHaveAttribute("data-panel", "open");
+    await expect(page.locator("[data-side-panel]")).toHaveCount(0);
+    await expect(workspace).toHaveAttribute("data-panel", "closed");
+    // Core normalizes the panel as part of closing the view, without another dispatch.
     expect(stack.events.filter((event) => event.kind === "workspace_view" && "panel" in event.payload).length).toBe(panelsBefore);
-    await screenshot(page, "s7-keys-empty");
+    await screenshot(page, "s7-keys-closed");
     await paletteCommand(page, "Show Explorer", "command:tool:explorer");
     await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
     expectFrontWorkspaceOnEveryViewEvent(stack);
