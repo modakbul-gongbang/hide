@@ -1447,6 +1447,25 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "browser_open", payload: { url, workspace: { device_id: target.device_id, path: target.path }, ...(areaId ? { area_id: areaId } : {}) } });
     },
 
+    /**
+     * A checkout's pull request (PRD checkout-pr-glyph-card D-02, D-11): a
+     * browser display in the Workspace in front, or the default browser when
+     * the operator asked for it with ⌘, when no Workspace is in front (All
+     * projects, an Overview), or when the checkout is an SSH device's. The
+     * default browser is reached the way a page's own link is: the desktop
+     * host routes `window.open` to the system, and a browser tab opens a tab.
+     */
+    openPullRequest(url: string, deviceId: string, external: boolean) {
+      // The core keeps a Workspace in front while the page shows All projects
+      // or an Overview; a display opened there would land out of sight.
+      const inFront = ui().screen?.kind === "workspace" ? frontViewWorkspace() : null;
+      if (external || deviceId !== "local" || !inFront) {
+        window.open(url, "_blank", "noopener,noreferrer");
+        return;
+      }
+      this.openBrowser(url);
+    },
+
     /** Explorer "Open in Browser" on an HTML file of this machine's checkout. */
     openInBrowser(path: string) {
       const target = frontViewWorkspace();

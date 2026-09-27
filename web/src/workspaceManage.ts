@@ -3,6 +3,7 @@
 // dialogs read out of a task or removal the core reports. The core re-checks
 // every one of these; they decide what the screen offers, not what is allowed.
 
+import { shownPullRequest } from "./projects";
 import { supportsRemotePurpose } from "./remote";
 import type { Checkout, RemoteStatus, TaskOperation, Workspace, WorktreeRemoval } from "./snapshot";
 
@@ -56,7 +57,7 @@ export function branchProblem(name: string): string | null {
 }
 
 export type MenuItem = {
-  id: "pin" | "unpin" | "new_worktree" | "remove_project" | "set_purpose" | "delete_worktree";
+  id: "pin" | "unpin" | "new_worktree" | "remove_project" | "open_pull_request" | "set_purpose" | "delete_worktree";
   label: string;
   /** Why the action is not offered here; the item is drawn disabled with this as its hint. */
   unavailable: string | null;
@@ -119,9 +120,16 @@ export function remotePurposeProblem(workspace: Workspace, remote: RemoteStatus[
   return `Set purpose requires Herdr 0.9.1 or newer on the remote device${version ? `; ${version} is installed` : "; its version is unavailable"}.`;
 }
 
-/** The checkout row's menu: purpose for any checkout its host can store it for, deletion for a linked worktree on any device. */
+/**
+ * The checkout row's menu: its pull request to open while GitHub knows one
+ * (PRD checkout-pr-glyph-card D-07), purpose for any checkout its host can
+ * store it for, deletion for a linked worktree on any device.
+ */
 export function checkoutMenu(checkout: Checkout, purposeProblem: string | null = null): MenuItem[] {
-  const items: MenuItem[] = [{ id: "set_purpose", label: "Set purpose…", unavailable: purposeProblem }];
+  const items: MenuItem[] = [];
+  const pr = shownPullRequest(checkout);
+  if (pr) items.push({ id: "open_pull_request", label: `Open pull request #${pr.number}`, unavailable: null });
+  items.push({ id: "set_purpose", label: "Set purpose…", unavailable: purposeProblem });
   if (checkout.is_worktree) {
     const gate = checkout.worktree?.deletion_gate;
     items.push({

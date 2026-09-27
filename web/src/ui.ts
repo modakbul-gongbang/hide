@@ -181,6 +181,14 @@ type UiStore = {
    * confirmation closes before the sheet behind it.
    */
   escapeLayers: (() => void)[];
+  /**
+   * The closers of the tooltips open on hover or focus (`Hint` and the
+   * checkout card). Not Escape layers: a tooltip must not take the Escape a
+   * focused terminal is about to receive, so its own dismiss closes it. An
+   * Escape the shell consumes never reaches that dismiss, so the shell
+   * closes these itself as it consumes.
+   */
+  tooltips: (() => void)[];
   setScreen: (screen: Screen) => void;
   setProjectView: (view: ProjectView) => void;
   setTasksMode: (mode: TasksMode) => void;
@@ -215,6 +223,8 @@ type UiStore = {
   setHint: (hint: NumberedFamily | null) => void;
   /** Registers an Escape layer and returns its removal. */
   pushEscape: (handler: () => void) => () => void;
+  /** Registers an open tooltip's close and returns its removal. */
+  pushTooltip: (close: () => void) => () => void;
 };
 
 export const useUiStore = create<UiStore>((set, get) => ({
@@ -244,6 +254,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   recordingShortcut: false,
   hint: null,
   escapeLayers: [],
+  tooltips: [],
   // Moving by hand drops an open still waiting for its Workspace, so a late
   // answer does not pull the screen away from where the operator went.
   setScreen: (screen) => set({ screen, opening: null }),
@@ -295,5 +306,9 @@ export const useUiStore = create<UiStore>((set, get) => ({
   pushEscape: (handler) => {
     set({ escapeLayers: [...get().escapeLayers, handler] });
     return () => set({ escapeLayers: get().escapeLayers.filter((layer) => layer !== handler) });
+  },
+  pushTooltip: (close) => {
+    set({ tooltips: [...get().tooltips, close] });
+    return () => set({ tooltips: get().tooltips.filter((tooltip) => tooltip !== close) });
   },
 }));

@@ -26,6 +26,7 @@ import {
   rememberedCliPath,
   rememberedCliValue,
   resolveCli,
+  wellKnownDirs,
   type Attached,
   type CliSource,
   type FailureReason,
@@ -247,7 +248,11 @@ export class DesktopHost {
 
   private childEnvironment(): Record<string, string | undefined> {
     const herdr = this.bundledHerdr();
-    return herdr ? { ...this.env.inherited, HERDR_BIN_PATH: herdr } : this.env.inherited;
+    // Finder supplies only launchd's system PATH. The CLI and any daemon it
+    // starts need the same standard user install dirs we search for `hide`.
+    const inheritedPath = this.env.path || "/usr/bin:/bin:/usr/sbin:/sbin";
+    const searchPath = [...new Set([...inheritedPath.split(":"), ...wellKnownDirs(this.env.home)].filter(Boolean))].join(":");
+    return { ...this.env.inherited, PATH: searchPath, ...(herdr ? { HERDR_BIN_PATH: herdr } : {}) };
   }
 
   /**

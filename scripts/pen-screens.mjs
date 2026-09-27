@@ -1386,7 +1386,7 @@ function buildProjectsSidebar(tokens) {
   // is one line with its age there, and a missing folder has none.
   // Pen draws no ellipsis, so a long name or purpose is written already cut the
   // way the row truncates it.
-  function checkoutRow(id, {name, kind = 'branch', age, purpose, raisedFrom, marks, expanded = false, selected = false}) {
+  function checkoutRow(id, {name, kind = 'branch', age, purpose, raisedFrom, marks, expanded = false, selected = false, hovered = false}) {
     const k = KIND[kind];
     const project = kind === 'folder';
     const agents = Boolean(marks);
@@ -1399,7 +1399,7 @@ function buildProjectsSidebar(tokens) {
     return themedXref(id, 'DLP27', name, {
       width: row, height: num(tokens, secondLine ? '--size-checkout-row-detailed' : project ? '--size-project-row' : '--size-checkout-row'),
       padding: [0, xs, 0, leading],
-      ...(selected ? {fill: '$--secondary'} : {}),
+      ...(selected ? {fill: '$--secondary'} : hovered ? {fill: '$--accent'} : {}),
     }, {
       QetL0: {width: inner},
       VtSRn: {icon: k.icon, fill: k.fill},
@@ -1509,9 +1509,48 @@ function buildProjectsSidebar(tokens) {
         icon(`psb-devc-${s}`, 'chevrons-up-down', {size: 12, fill: '$--muted-foreground'}),
       ]),
     ]);
-    return [frame(`psb-sidebar-${s}`, 'Sidebar', {width, layout: 'vertical', fill: '$--sidebar', clip: true}, [header, list, footer])];
+    return [frame(`psb-sidebar-${s}`, 'Sidebar', {width, layout: 'vertical', fill: '$--sidebar', clip: true}, [header, list, footer]), hoverState(s)];
   }
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent; a checkout without either is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. A folded parent keeps its own-checkout descendants in the badge and draws one C-style line per other checkout, with the R1 server-glyph device chip. A checkout raised by an external root prefixes line two with the parent checkout. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.', build, build);
+
+  // The pull-request row under the pointer with its card beside it (PRD
+  // checkout-pr-glyph-card D-03, D-05): a cut of the list around the row, the
+  // row on the hover wash, and Component / PR hover card to the right at the
+  // row's top, the way the tooltip places it. Every text on the card is the
+  // row's own facts; the card's width is the master's.
+  function hoverState(s) {
+    const rowH = num(tokens, '--size-checkout-row-detailed');
+    const projectH = num(tokens, '--size-project-row');
+    const plainH = num(tokens, '--size-checkout-row');
+    const gap = num(tokens, '--spacing-sm');
+    const cardW = num(tokens, '--size-pr-popover');
+    const rows = [
+      projectRow(`psb-h-p-${s}`, {name: 'herdr-ide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
+      checkoutRow(`psb-h-overview-${s}`, {name: 'Overview', kind: 'overview'}),
+      checkoutRow(`psb-h-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', marks: {question: 1}, purpose: '#155 browser display (WebCon…'}),
+      checkoutRow(`psb-h-c4-${s}`, {name: 'quick/154-search-palette', kind: 'draft', age: '1h', marks: {done: 1}, purpose: '#154 ⌘K search palette UI'}),
+      checkoutRow(`psb-h-c1-${s}`, {name: 'electron-shortcut-bindings', kind: 'open', age: '2h', marks: {working: 1}, purpose: 'Electron desktop host for the we…', hovered: true}),
+      checkoutRow(`psb-h-c5-${s}`, {name: 'design/workspace-ux-prop…', age: '5h', purpose: 'Workspace UX 제안과 상태 소유…'}),
+    ];
+    // The hovered row's top: the project row, the Overview row and two detailed rows above it.
+    const rowTop = projectH + plainH + 2 * rowH;
+    const listH = 2 * xs + projectH + plainH + 4 * rowH;
+    const list = frame(`psb-h-list-${s}`, 'Projects list, cut', {width, layout: 'vertical', padding: [xs, xs], fill: '$--sidebar', cornerRadius: '$--radius-sm', clip: true}, rows);
+    const card = themedXref(`psb-h-card-${s}`, 'pr-card', 'PR hover card', {x: width + gap, y: xs + rowTop}, {
+      'pr-card-badge-label': {content: 'Open', fill: '$--pr-open'},
+      'pr-card-number': {content: '#149'},
+      'pr-card-title': {content: 'Electron desktop host for the web shell'},
+      'pr-card-row-review': {enabled: false},
+      'pr-card-checks': {content: 'Passing', fill: '$--success'},
+      'pr-card-branch': {content: 'electron-shortcut-bindings'},
+      'pr-card-agents-question': {enabled: false},
+      'pr-card-agents-idle': {enabled: false},
+      'pr-card-agents-working-count': {content: '1'},
+      'pr-card-commit': {content: '2h ago'},
+      'pr-card-path': {content: '~/projects/herdr-ide.worktrees/electron-shortcut-bindings'},
+    });
+    return frame(`psb-hover-${s}`, 'Checkout row under the pointer, with its card', {width: width + gap + cardW, height: listH}, [{...list, x: 0, y: 0}, card]);
+  }
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent; a checkout without either is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. A folded parent keeps its own-checkout descendants in the badge and draws one C-style line per other checkout, with the R1 server-glyph device chip. A checkout raised by an external root prefixes line two with the parent checkout. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.', build, build);
 }
 
 // -- assembly ---------------------------------------------------------------------

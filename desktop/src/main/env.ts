@@ -60,7 +60,7 @@ export const ENV_REGISTRY: readonly EnvKey[] = [
     requirement: "optional",
     shape: "colon-separated directories",
     fallback: "empty: the search goes on to the CLI that last attached",
-    note: "Searched for `hide` after the override and the worktree build; an app opened from Finder gets launchd's bare PATH here",
+    note: "Searched for `hide` after the override and the worktree build; every `hide` child gets system dirs when PATH is absent and standard user install dirs appended so a daemon started from Finder can find installed tools such as `gh`",
   },
 ];
 

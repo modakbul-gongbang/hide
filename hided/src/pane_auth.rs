@@ -36,6 +36,11 @@ use crate::state_file::new_token;
 
 const MAX_CAPABILITIES: usize = 64;
 const CAPABILITY_LIFETIME: Duration = Duration::from_secs(8 * 60 * 60);
+/// What a caller can do when its checkout no longer resolves: the same
+/// sentence at bootstrap (CLI), at a refused command (server), and in the
+/// caller's own refusal text.
+pub const CHECKOUT_NEXT_ACTION: &str = "Run the command from a shell inside a registered project checkout, or reconnect Hide, and retry";
+pub const PANE_NEXT_ACTION: &str = "Reconnect the pane and retry";
 const UNCLAIMED_LIFETIME: Duration = Duration::from_secs(30);
 const HERDR_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_PARENT_HOPS: usize = 32;
@@ -66,6 +71,26 @@ pub struct Capability {
     claimed: bool,
     path: PathBuf,
     remote: Option<RemoteCapability>,
+}
+
+impl Capability {
+    /// The refusal for a command whose answer no longer matches this
+    /// credential's context: a pane moved or closed, or a checkout that is
+    /// no longer registered on its device.
+    pub fn changed_refusal(&self) -> (&'static str, &'static str) {
+        match self.binding {
+            Binding::Pane { .. } => ("pane_changed", PANE_NEXT_ACTION),
+            Binding::Checkout => ("checkout_not_registered", CHECKOUT_NEXT_ACTION),
+        }
+    }
+}
+
+/// The next step for a refused command, by the daemon's reason.
+pub fn refusal_next_action(reason: &str) -> &'static str {
+    match reason {
+        "checkout_not_registered" | "caller_unavailable" => CHECKOUT_NEXT_ACTION,
+        _ => PANE_NEXT_ACTION,
+    }
 }
 
 #[derive(Clone)]
@@ -420,10 +445,52 @@ impl Registry {
         }
     }
 
-    pub fn sweep(&self) {
+    /// Drops expired entries, and checkout-bound entries whose checkout no
+    /// longer resolves on its device, so an unregistered project stops
+    /// counting against the 64-reference cap before its lifetime ends.
+    /// The core is asked with the lock released, so a bootstrap or a
+    /// validation never waits behind the sweep's round trips.
+    pub fn sweep(&self, core: &CoreHandle) {
+        let checkouts: Vec<(String, String, String, Context)> = match self.entries.lock() {
+            Ok(entries) => entries
+                .iter()
+                .filter(|(_, entry)| entry.binding == Binding::Checkout && entry_alive(entry))
+                .map(|(token, entry)| {
+                    (
+                        token.clone(),
+                        entry.context.device_id.clone(),
+                        entry.pane_id.clone(),
+                        entry.context.clone(),
+                    )
+                })
+                .collect(),
+            Err(_) => return,
+        };
+        let gone: HashMap<String, &'static str> = checkouts
+            .into_iter()
+            .filter_map(|(token, device_id, caller_id, context)| {
+                match core.workspace_query(&device_id, &caller_id, Query::Info) {
+                    Ok(actual) if actual.context == context => None,
+                    Ok(_) => Some((token, "checkout_not_registered")),
+                    Err(refusal) => Some((token, refusal.reason)),
+                }
+            })
+            .collect();
         if let Ok(mut entries) = self.entries.lock() {
-            entries.retain(|_, entry| {
-                let alive = entry_alive(entry);
+            entries.retain(|token, entry| {
+                let mut alive = entry_alive(entry);
+                if let (true, Some(reason)) = (alive, gone.get(token)) {
+                    note_checkout_capability(
+                        "checkout_capability.refused",
+                        "sweep",
+                        None,
+                        Some(!entry.one_shot),
+                        Some(&entry.context),
+                        Some(reason),
+                        None,
+                    );
+                    alive = false;
+                }
                 if !alive {
                     remove_local_reference(entry);
                 }
@@ -865,7 +932,9 @@ pub async fn serve(
         let accepted = tokio::select! {
             accepted = listener.accept() => accepted,
             _ = sweep.tick() => {
-                registry.sweep();
+                let registry = Arc::clone(&registry);
+                let core = Arc::clone(&core);
+                tokio::task::spawn_blocking(move || registry.sweep(&core));
                 continue;
             }
             _ = shutdown.notified() => break,
@@ -1032,6 +1101,7 @@ mod tests {
     fn bootstrap_retries_do_not_fill_the_registry_when_no_client_claims() {
         let directory = tempfile::tempdir().unwrap();
         let registry = Registry::new(directory.path()).unwrap();
+        let core = bare_core(directory.path());
         let pid = std::process::id() as i32;
         let attestation = Attestation {
             pane_id: "pane".to_owned(),
@@ -1058,7 +1128,7 @@ mod tests {
                 .get_mut(&reference.token)
                 .unwrap()
                 .created = Instant::now() - UNCLAIMED_LIFETIME;
-            registry.sweep();
+            registry.sweep(&core);
             assert!(!path.exists());
         }
         assert!(registry.entries.lock().unwrap().is_empty());
@@ -1190,6 +1260,51 @@ mod tests {
             },
             binding: Binding::Checkout,
         }
+    }
+
+    #[test]
+    fn sweep_drops_a_checkout_capability_whose_checkout_no_longer_resolves() {
+        let directory = tempfile::tempdir().unwrap();
+        let registry = Registry::new(directory.path()).unwrap();
+        let core = bare_core(directory.path());
+        let pid = std::process::id() as i32;
+        let gone = checkout_attestation(&format!("{:032x}", 3), "/srv/gone");
+        let (path, created) = registry
+            .issue(&gone, &format!("{:032x}", 3), 12345, None)
+            .unwrap();
+        assert!(created);
+        let reference: Reference = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        registry.claim(&reference.token).unwrap();
+        let pane = Attestation {
+            pane_id: "w1:p1".to_owned(),
+            context: Context {
+                device_id: "local".to_owned(),
+                workspace_id: "workspace".to_owned(),
+                checkout_id: "checkout".to_owned(),
+                checkout_path: "/srv/pane".to_owned(),
+            },
+            binding: Binding::Pane {
+                terminal_id: "terminal".to_owned(),
+                shell_pid: pid,
+                shell_started: process_start(pid).unwrap(),
+            },
+        };
+        let (pane_path, _) = registry
+            .issue(&pane, &format!("{:032x}", 4), 12345, None)
+            .unwrap();
+        assert_eq!(registry.entries.lock().unwrap().len(), 2);
+        // The bare core registers no checkout, so the checkout-bound entry is
+        // what an unregistered project looks like; the pane entry is not
+        // re-resolved by the sweep and stays until its shell ends.
+        registry.sweep(&core);
+        assert_eq!(registry.entries.lock().unwrap().len(), 1);
+        assert!(!path.exists());
+        assert!(pane_path.exists());
+        assert_eq!(
+            registry.validate(&reference.token, None, &core).err(),
+            Some("credential_expired")
+        );
+        core.shutdown();
     }
 
     #[test]

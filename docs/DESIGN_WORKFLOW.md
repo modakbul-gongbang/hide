@@ -170,7 +170,8 @@ Its web files are `web/src/entry-menu.tsx` and `web/src/DevicePicker.tsx`.
 Projects Sidebar is `Screen / Projects Sidebar`.
 It draws the sidebar's Projects tab as the scope picker: the All projects row on top, pinned and activity-ordered projects with the row of the scope on screen selected, a Git project’s first Overview child as a checkout-row master instance with a layout-dashboard glyph and empty trailing slots, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds.
 The Overview child owns selection on Overview; a checkout row opens and unfolds, then folds on activation while already selected and unfolded.
-Its web files are `web/src/sidebar.tsx` and `web/src/projects.ts`.
+Beside each theme's sidebar it draws a pull-request row under the pointer with its card (`Component / PR hover card`) opened to the right, the state the row's tooltip has become.
+Its web files are `web/src/sidebar.tsx`, `web/src/projects.ts` and `web/src/components/pr-card.tsx`.
 
 ## How to add a token
 
