@@ -900,7 +900,28 @@ function buildWorkspace(tokens) {
       : frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0}, [agentColumn(key, 2)]);
     return frame(`ws-wrap-${key}`, open ? 'Side panel open' : 'Side panel closed, two views open', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [sidebar, main]);
   }
-  const build = suffix => [workspace(`${suffix}o`, true), workspace(`${suffix}c`, false)];
+  function newTab(key, changed) {
+    const choice = (name, glyph, shortcut = '') => frame(`ws-newtab-${name}-${key}`, name, {width: 'fill_container', height: num(tokens, '--size-control-lg'), layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: [0, '$--spacing-lg'], fill: '$--secondary', cornerRadius: '$--radius-sm'}, [
+      icon(`ws-newtab-${name}-i-${key}`, glyph, {size: num(tokens, '--size-icon'), fill: '$--subtle-foreground'}),
+      text(`ws-newtab-${name}-t-${key}`, name, {width: 'fill_container', size: '$--text-body', weight: '500'}),
+      ...(shortcut ? [themedXref(`ws-newtab-kbd-${key}`, 'kbd-m', shortcut, {}, {'kbd-t': {content: shortcut}})] : []),
+    ]);
+    return frame(`ws-newtab-${key}`, changed ? 'New tab, checkout has changes' : 'New tab, clean checkout', {width: 480, height: 360, layout: 'vertical', gap: 0, fill: '$--card', clip: true}, [
+      frame(`ws-newtab-tabs-${key}`, 'View tabs', {width: 'fill_container', height: ROW, layout: 'horizontal', alignItems: 'center', ...rule}, [
+        themedXref(`ws-newtab-tab-${key}`, 'view-tab', 'New tab', {fill: '$--card', stroke: '$--primary', strokeWidth: {bottom: '$--size-tab-indicator'}, strokeAlignment: 'inner'}, {'view-tab-mark': {icon: 'globe', fill: '$--subtle-foreground'}, 'view-tab-title': {content: 'New tab', fill: '$--foreground'}, 'view-tab-close': {enabled: true}}),
+        sidePanelButton(`ws-newtab-plus-${key}`, 'plus'),
+      ]),
+      frame(`ws-newtab-address-row-${key}`, 'Address row', {width: 'fill_container', height: ROW, layout: 'horizontal', gap: '$--spacing-xs', padding: [0, '$--spacing-sm'], alignItems: 'center', ...rule}, [
+        ...['arrow-left', 'arrow-right', 'rotate-cw'].map((glyph, n) => icon(`ws-newtab-nav${n}-${key}`, glyph, {size: num(tokens, '--size-icon'), fill: '$--muted-foreground', opacity: num(tokens, '--opacity-disabled')})),
+        frame(`ws-newtab-address-${key}`, 'Empty focused address', {width: 'fill_container', height: num(tokens, '--size-control-sm'), layout: 'horizontal', alignItems: 'center', padding: [0, '$--spacing-sm'], fill: '$--background', cornerRadius: '$--radius-sm', stroke: '$--ring', strokeWidth: 1}, [text(`ws-newtab-placeholder-${key}`, 'Enter a URL', {mono: true, size: '$--text-caption', fill: '$--muted-foreground'})]),
+      ]),
+      frame(`ws-newtab-body-${key}`, 'Open', {width: 'fill_container', layout: 'vertical', gap: '$--spacing-sm', padding: '$--spacing-xl'}, [
+        text(`ws-newtab-heading-${key}`, 'Open', {size: '$--text-body', weight: '500', fill: '$--muted-foreground'}),
+        choice('File', 'file-search', '⌘P'), ...(changed ? [choice('Diff', 'git-compare-arrows')] : []),
+      ]),
+    ]);
+  }
+  const build = suffix => [workspace(`${suffix}o`, true), workspace(`${suffix}c`, false), newTab(`${suffix}n`, true), newTab(`${suffix}e`, false)];
   return screenSheet('screen-workspace', 'Screen / Workspace', 'web/src/WorkspaceScreen.tsx, TabBar.tsx, ViewAreas.tsx, Tools.tsx: the Workspace with its side panel (Component / Side panel, issue 170) open at full height over the agent column, then closed with two views still open. The toolbar spans only the agent column and holds no tool toggles; row 1 of the panel holds the area tabs and their New tab, then the tool-column toggle, Expand, Pin and the panel toggle, which the toolbar carries with the open-view count while the panel is closed; row 2 holds the document header and the Explorer and History tool tabs. A Korean file name verifies B11 wrapping.', build, build);
 }
 

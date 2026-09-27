@@ -2350,3 +2350,64 @@ fn a_checkout_focus_naming_a_display_brings_it_forward_on_that_display() {
     assert_eq!(active.as_deref(), Some(a.as_str()));
     drop(other);
 }
+
+#[test]
+fn empty_browser_tabs_are_distinct_replace_in_place_and_close_without_recovery() {
+    let (mut runtime, checkout, directory) = views_runtime("new-tab");
+    let path = directory.join("a.txt");
+    std::fs::write(&path, "hello").unwrap();
+    browser_open(&mut runtime, serde_json::json!({"url": ""}));
+    let first = browser_displays(&mut runtime)[0].clone();
+    assert_eq!(first.label, "New tab");
+    assert_eq!(first.url, None);
+    assert!(
+        runtime.changes_request().is_some(),
+        "new tab needs Git even with tools hidden"
+    );
+    browser_open(&mut runtime, serde_json::json!({"url": ""}));
+    let pages = browser_displays(&mut runtime);
+    assert_eq!(pages.len(), 2);
+    let second = pages[1].id.clone();
+    let before = runtime.snapshot.recent_closed.clone();
+    act(
+        &mut runtime,
+        serde_json::json!({"action":"close", "display_id": second}),
+    );
+    assert_eq!(runtime.snapshot.recent_closed, before);
+    open(&mut runtime, &checkout, &path, true, false);
+    let layout = tree(&mut runtime);
+    let displays = &areas(&layout)[0].2;
+    assert_eq!(displays.len(), 1);
+    assert_eq!(displays[0].id, first.id);
+    assert_eq!(displays[0].kind, crate::view_layout::DisplayKind::File);
+    assert!(!displays[0].preview);
+    assert_eq!(runtime.snapshot.recent_closed, before);
+}
+
+#[test]
+fn empty_browser_open_targets_the_named_area_and_navigation_keeps_its_id() {
+    let (mut runtime, checkout, directory) = views_runtime("new-tab-area");
+    let file = directory.join("a.txt");
+    std::fs::write(&file, "hello").unwrap();
+    open(&mut runtime, &checkout, &file, false, false);
+    open(&mut runtime, &checkout, &file, false, true);
+    let layout = tree(&mut runtime);
+    let original = areas(&layout)
+        .into_iter()
+        .find(|(id, _, _)| *id != layout.active_area)
+        .unwrap()
+        .0;
+    browser_open(
+        &mut runtime,
+        serde_json::json!({"url":"", "area_id":original}),
+    );
+    let page = browser_displays(&mut runtime)[0].clone();
+    assert_eq!(tree(&mut runtime).active_area, original);
+    act(
+        &mut runtime,
+        serde_json::json!({"action":"navigate", "display_id":page.id, "url":"https://example.com"}),
+    );
+    let navigated = browser_displays(&mut runtime)[0].clone();
+    assert_eq!(navigated.id, page.id);
+    assert_eq!(navigated.url.as_deref(), Some("https://example.com"));
+}

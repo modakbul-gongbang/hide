@@ -3,6 +3,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AreaEmpty } from "./AreaEmpty";
 import { addressShown, addressUrl, hostKey, notePageState, parseWorkspaceKey, registerBrowserSlot, syncBrowserFront, useBrowserStore } from "./browserViews";
+import { NewTabBody } from "./components/new-tab-body";
+import { changedFiles } from "./newTab";
+import { useUiStore } from "./ui";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Hint } from "./components/ui/tooltip";
@@ -22,6 +25,7 @@ import { workspaceViewOf } from "./workspace";
 export function BrowserDisplay({ display, workspace, actions }: { display: ViewDisplaySnapshot; workspace: ViewWorkspace; actions: Actions }) {
   const bridge = browserBridge();
   const url = display.url ?? "";
+  if (!url) return <NewTab display={display} actions={actions} />;
   if (!bridge) {
     const web = /^https?:/i.test(url);
     return (
@@ -42,6 +46,22 @@ export function BrowserDisplay({ display, workspace, actions }: { display: ViewD
     );
   }
   return <HostedPage display={display} workspace={workspaceKey(workspace)} actions={actions} />;
+}
+
+function NewTab({ display, actions }: { display: ViewDisplaySnapshot; actions: Actions }) {
+  const root = useShellStore((s) => s.rest?.navigator?.changes_root_path ?? null);
+  const changes = useShellStore((s) => s.changes);
+  return (
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-browser-display={display.id}>
+      <div className="flex h-(--size-tab-strip) shrink-0 items-center gap-xs border-b border-border px-sm" data-browser-toolbar={display.id}>
+        <Hint label="Back"><Button variant="ghost" size="icon-sm" disabled><ArrowLeftIcon /></Button></Hint>
+        <Hint label="Forward"><Button variant="ghost" size="icon-sm" disabled><ArrowRightIcon /></Button></Hint>
+        <Hint label="Reload"><Button variant="ghost" size="icon-sm" disabled><RotateCwIcon /></Button></Hint>
+        <AddressField address="" autoFocus onSubmit={(url) => actions.navigateBrowser(display.id, url)} />
+      </div>
+      <NewTabBody hasChanges={changedFiles(changes, root).length > 0} onFile={() => actions.openFilePalette()} onDiff={() => useUiStore.getState().openOverlay("diff_palette")} />
+    </div>
+  );
 }
 
 function HostedPage({ display, workspace, actions }: { display: ViewDisplaySnapshot; workspace: string; actions: Actions }) {
@@ -102,7 +122,7 @@ function HostedPage({ display, workspace, actions }: { display: ViewDisplaySnaps
  * narrow area still shows the host; focusing it shows the whole address
  * selected. Return loads what was typed, Escape puts the page's address back.
  */
-function AddressField({ address, onSubmit }: { address: string; onSubmit: (url: string) => void }) {
+function AddressField({ address, onSubmit, autoFocus = false }: { address: string; onSubmit: (url: string) => void; autoFocus?: boolean }) {
   const [draft, setDraft] = useState<string | null>(null);
   const field = useRef<HTMLInputElement>(null);
   // Focus swaps the shown address for the whole one, which drops any
@@ -120,6 +140,8 @@ function AddressField({ address, onSubmit }: { address: string; onSubmit: (url: 
       mono
       className="h-(--size-control-sm) flex-1 text-caption"
       aria-label="Page address"
+      placeholder="Enter a URL"
+      autoFocus={autoFocus}
       spellCheck={false}
       autoComplete="off"
       value={draft ?? addressShown(address)}

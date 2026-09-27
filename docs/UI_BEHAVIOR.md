@@ -128,8 +128,14 @@ A Workspace stored before the side panel, with a layout instead of a panel state
 
 ### Browser displays
 
+View 영역의 새 탭은 display가 될 수 있는 것만 제안한다. tool과 pane은 아니다.
+The View strip’s + and New tab menu item open a distinct browser display in that area with no address and the address field focused.
+Its body shows Open with File (⌘P), opening the file palette, and Diff only while the checkout has changes, opening a palette of changed files.
+Picking either replaces that empty tab in place; entering a URL navigates the same tab, and closing an untouched tab creates no recovery entry.
+The new-tab page offers no tools or panes; ⌘P remains the file palette everywhere.
+
 A web page is a view like a file: it opens in the active area, has a tab, splits, moves, and closes like one, and comes back after a restart at the address it last showed.
-Its tab carries a globe mark and the page's title, else its host, else a local file's name; its tooltip and accessible name carry `Page`, the title, and the full address.
+A page with an address carries a globe mark and the page's title, else its host, else a local file's name; its tooltip and accessible name carry `Page`, the title, and the full address.
 It opens from pane-scoped `hide browser open` in a connected Herdr pane, from Open in Browser on an HTML file in the Explorer's menu (listed after Open to the side), from a page that asks for a new window, and from the address field.
 On a connected SSH device, the native page uses that device's localhost or consented checkout resources; a route failure appears in the page's existing failure state.
 Opening an address the Workspace already shows moves to that view and loads it again instead of adding a second one.
