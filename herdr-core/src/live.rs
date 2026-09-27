@@ -17,9 +17,9 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
-use crate::ffi::ChangeNotifier;
 use crate::find::PaneFindOptions;
 use crate::fork::ForkRequest;
+use crate::handle::ChangeNotifier;
 use crate::model::{
     EditorDocumentSnapshot, PaneLayoutDirection, PaneLayoutNodeSnapshot, PaneLayoutSnapshot,
     WorkspaceRegistration, WorkspaceSnapshot,

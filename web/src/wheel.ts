@@ -1,5 +1,5 @@
-// The wheel policy behind pane scrolling (PRD S2 B19), mirroring the Swift
-// shell's PaneScrollPolicy: whole rows per event with the pixel remainder
+// The wheel policy behind pane scrolling (PRD S2 B19): whole rows per
+// event with the pixel remainder
 // carried, and Herdr's crossterm modifier bitset.
 
 /** The crossterm modifier bitset Herdr documents for terminal.scroll, and the core reads for a click. */

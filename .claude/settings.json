@@ -6,8 +6,6 @@
       "Bash(cargo build:*)",
       "Bash(cargo fmt:*)",
       "Bash(cargo clippy:*)",
-      "Bash(swift build:*)",
-      "Bash(swift test:*)",
       "Bash(bash scripts/check-:*)",
       "Bash(zsh scripts/check-:*)",
       "Bash(node scripts/check-:*)",

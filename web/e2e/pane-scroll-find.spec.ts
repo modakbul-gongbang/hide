@@ -2,8 +2,8 @@
 // the side panel narrowing to its Explorer when its last view closes (PRD
 // web-pane-scroll-find-areas, issue 170),
 // on an isolated pinned Herdr. The other client is a plain `herdr terminal
-// session control` started before hided, holding control the way the Swift
-// shell does on the operator's server; hided then falls back to observing.
+// session control` started before hided, holding control the way another
+// client does on the operator's server; hided then falls back to observing.
 
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";

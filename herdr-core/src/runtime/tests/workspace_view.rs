@@ -3,8 +3,8 @@ use crate::workspace_views::{PanelState, Tool};
 
 // PRD S6: a shell with separate Agent and View areas keeps each Workspace's
 // document beside its terminals, its layout and tools, and brings them back
-// after a restart; the Swift shell keeps its document-in-place-of-terminal
-// rule (Risks: Swift wire).
+// after a restart; a shell without View areas keeps its
+// document-in-place-of-terminal rule (Risks: older wire).
 
 pub(super) fn views_path(name: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -91,7 +91,7 @@ fn with_tabs(runtime: &mut Runtime, directory: &Path) {
 }
 
 /// D-04, B8: choosing another Agent tab leaves the Workspace's document in
-/// its View area; the Swift shell's terminal still takes the canvas back.
+/// its View area; without View areas the terminal still takes the canvas back.
 #[test]
 fn a_terminal_tab_choice_keeps_the_workspace_document_only_with_separate_areas() {
     for separate in [true, false] {

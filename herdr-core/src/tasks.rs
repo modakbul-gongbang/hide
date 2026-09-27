@@ -4,8 +4,8 @@
 //! the one adapter today. The source keeps the authority: Hide reads and
 //! opens a task, it never edits one.
 //!
-//! Every value is additive on the wire and none is a string enum the Swift
-//! shell decodes, so the frozen shell reads the snapshot exactly as before.
+//! Every value is additive on the wire and none is a string enum an older
+//! reader decodes, so such a reader takes the snapshot exactly as before.
 
 use serde::Serialize;
 

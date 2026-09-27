@@ -1,24 +1,136 @@
-// Packages dist/ as an unsigned local hide.app for this Mac (desktop PRD
-// D-05): no signing, notarization or installer. The app finds the `hide`
-// CLI through HIDE_CLI_PATH or the login shell's PATH, never inside itself.
+// Packages the release hide.app: the Electron host with the release daemon,
+// the hide CLI, the hook and device helpers and the pinned Herdr binary in
+// its Contents/Resources, ad-hoc signed, zipped beside a SHA-256 checksum
+// (the Electron release app PRD, D-03 and D-08).
+//
+// The CLI finds `hided` beside its own file and the daemon offers the device
+// helper from its own directory, so all of them ship flat in Resources. A
+// binary that is missing or cannot run stops the build here, by name, before
+// any app exists (B12); nothing is substituted.
 
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { packager } from "@electron/packager";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const repo = path.resolve(root, "..");
+const out = path.join(root, "out");
+const resources = path.join(root, "resources");
 
-const [appPath] = await packager({
+/** Runs a tool in the repository; its stdout is the answer, unless `stdio` shows it instead. */
+const run = (file, args, options = {}) => execFileSync(file, args, { cwd: repo, stdio: ["ignore", "pipe", "inherit"], encoding: "utf8", ...options })?.trim() ?? "";
+
+// The app version comes from the release tag (release.yml passes
+// HIDE_VERSION) or, for a local build, from the nearest tag; a placeholder
+// would ship an app that reports a version nothing was released under.
+function resolveVersion() {
+  let version = process.env.HIDE_VERSION;
+  if (!version) {
+    try {
+      version = run("git", ["describe", "--tags", "--match", "v[0-9]*", "--dirty"]);
+    } catch {
+      version = "";
+    }
+  }
+  version = version.replace(/^v/, "");
+  if (!/^[0-9]/.test(version)) throw new Error(`HIDE_VERSION is unset and no v<version> tag describes this tree (got '${version || "nothing"}')`);
+  return version;
+}
+
+const version = resolveVersion();
+const arch = process.arch;
+const helperArch = { arm64: "aarch64", x64: "x86_64" }[arch];
+if (!helperArch) throw new Error(`hide-host-helper has no package name for the ${arch} architecture`);
+
+// A failed run leaves no app or archive behind, stale or otherwise (B12).
+fs.rmSync(path.join(out, `hide-darwin-${arch}`), { recursive: true, force: true });
+fs.mkdirSync(out, { recursive: true });
+for (const entry of fs.readdirSync(out)) {
+  if (/^hide-v.*-macos-.*\.zip(\.sha256)?$/.test(entry)) fs.rmSync(path.join(out, entry));
+}
+
+// Release hided embeds web/dist, so the web shell is built first; the cargo
+// wrapper reuses the machine's toolchain and keeps output in this worktree.
+run("pnpm", ["--dir", "web", "build"], { stdio: "inherit" });
+run("bash", ["scripts/verify-cargo.sh", "release"], { stdio: "inherit" });
+const herdr = run("zsh", ["scripts/fetch-herdr-runtime.sh"]);
+
+const release = path.join(repo, "target", "release");
+const shipped = [
+  ["hided", path.join(release, "hided")],
+  ["hide", path.join(release, "hide")],
+  ["hide-agent-hooks", path.join(release, "hide-agent-hooks")],
+  [`hide-host-helper-macos-${helperArch}`, path.join(release, "hide-host-helper")],
+  ["herdr", herdr],
+];
+const missing = shipped.filter(([, source]) => {
+  try {
+    fs.accessSync(source, fs.constants.X_OK);
+    return !fs.statSync(source).isFile();
+  } catch {
+    return true;
+  }
+});
+if (missing.length > 0) {
+  throw new Error(`cannot package hide.app: not an executable file: ${missing.map(([name, source]) => `${name} (${source})`).join(", ")}`);
+}
+
+// Staged under out/ so a name inside the bundle can differ from the build's.
+const staged = path.join(out, "resources");
+fs.rmSync(staged, { recursive: true, force: true });
+fs.mkdirSync(staged, { recursive: true });
+const extraResource = shipped.map(([name, source]) => {
+  const target = path.join(staged, name);
+  fs.copyFileSync(source, target);
+  fs.chmodSync(target, 0o755);
+  return target;
+});
+const notices = path.join(resources, "THIRD_PARTY_NOTICES");
+if (!fs.existsSync(notices)) throw new Error(`third-party notices are missing: ${notices}`);
+extraResource.push(notices);
+
+const [outputDir] = await packager({
   dir: root,
-  out: path.join(root, "out"),
+  out,
   name: "hide",
   appBundleId: "me.grab.hide.desktop",
+  appVersion: version,
+  // CFBundleVersion must be a dotted integer; the numeric prefix is that.
+  buildVersion: /^[0-9.]+/.exec(version)[0],
+  icon: path.join(resources, "hide.icns"),
   platform: "darwin",
-  arch: process.arch,
+  arch,
   overwrite: true,
   asar: true,
   prune: true,
+  extraResource,
   // Only the bundles and the status page ship; sources, tests and tooling do not.
   ignore: (file) => file !== "" && file !== "/package.json" && !file.startsWith("/dist"),
 });
-console.log(appPath);
+
+// The packager answers with the per-platform directory; the bundle is inside it.
+const appPath = path.join(outputDir, "hide.app");
+const bundledResources = path.join(appPath, "Contents", "Resources");
+for (const [name] of shipped) {
+  const file = path.join(bundledResources, name);
+  fs.accessSync(file, fs.constants.X_OK);
+  if (!fs.statSync(file).isFile()) throw new Error(`${name} did not land as a file in ${bundledResources}`);
+}
+
+run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", "--timestamp=none", appPath], { stdio: "inherit" });
+run("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=2", appPath], { stdio: "inherit" });
+
+const archiveName = `hide-v${version}-macos-${arch}.zip`;
+const archive = path.join(out, archiveName);
+fs.rmSync(archive, { force: true });
+run("/usr/bin/ditto", ["-c", "-k", "--keepParent", appPath, archive]);
+const digest = createHash("sha256").update(fs.readFileSync(archive)).digest("hex");
+fs.writeFileSync(`${archive}.sha256`, `${digest}  ${archiveName}\n`);
+
+console.log(`bundle=${appPath}`);
+console.log(`hide_version=${version}`);
+console.log(`archive=${archive}`);
+console.log(`archive_sha256=${digest}`);

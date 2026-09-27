@@ -1,6 +1,6 @@
 // Terminal attachments (PRD B14, B15, D-02). The browser reads a dropped
 // file's bytes or a pasted clipboard image, but it cannot name a path, so the
-// bytes go to hided, which stages them and runs the Swift shell's
+// bytes go to hided, which stages them and runs the core's
 // `terminal_attachment` flow. The caps are hided's and the core's; a refusal
 // is one line over the pane, and hided's reason codes become that line here.
 

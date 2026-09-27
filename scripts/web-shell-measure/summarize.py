@@ -10,8 +10,8 @@ import sys
 from pathlib import Path
 
 BUDGET_MS = 16.7
-SWIFT_BASELINE_P95_MS = 6.228  # S0 REPORT, median of three Swift trials; reused, not re-measured
-ECHO_THRESHOLD_MS = SWIFT_BASELINE_P95_MS + 5.0
+S0_BASELINE_P95_MS = 6.228  # S0 REPORT, median of three trials of the native shell the web replaced; reused, not re-measured
+ECHO_THRESHOLD_MS = S0_BASELINE_P95_MS + 5.0
 
 
 def percentile(values, fraction):
@@ -39,7 +39,7 @@ def echo(paths):
     return {
         "trials": trials,
         "median_trial_p95_ms": median_p95,
-        "swift_baseline_p95_ms": SWIFT_BASELINE_P95_MS,
+        "s0_baseline_p95_ms": S0_BASELINE_P95_MS,
         "threshold_ms": ECHO_THRESHOLD_MS,
         "pass": median_p95 is not None and median_p95 <= ECHO_THRESHOLD_MS,
     }

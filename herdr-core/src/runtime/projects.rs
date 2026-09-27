@@ -2241,7 +2241,7 @@ impl Runtime {
         // tick while nothing is driven. Its list is still the newest, so only
         // the row and its diff stay as they are. The closed view's empty
         // projection is taken whole, so its diff text leaves the wire, and
-        // the Swift shell's reading is left as it was.
+        // an older client's reading is left as it was.
         if self.separate_view_areas()
             && answer.key.is_some()
             && answer.selection != self.changes_selection()

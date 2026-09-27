@@ -6,23 +6,23 @@
 //! worker, a device's is its helper's `Call::Index`. The list is capped at
 //! `hide_host::index::INDEX_CAP` and the palette says when it is truncated.
 //!
-//! Ranking mirrors the Swift scorer (`WorkspaceFileSearchIndex.fuzzyScore`):
+//! Ranking is the web shell's (`web/src/search.ts`, `fuzzyScore`):
 //! the query's characters must appear in order, an earlier match scores higher,
 //! adjacent and word-boundary matches score higher, and a shorter path wins a
-//! tie. The result limit is the Swift sheet's 80.
+//! tie. The result limit is the palette's 80.
 
 use hide_host::index::Walked;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-/// Matches the palette shows, the Swift sheet's limit.
+/// Matches the palette shows.
 pub const RESULT_LIMIT: usize = 80;
 
 /// The fuzzy score of `query` against `candidate`, or `None` when the query's
 /// characters are not found in order. `candidate` is lowercased by the caller
-/// and `query` is already trimmed and lowercased, exactly as Swift prepares
-/// them, so the two scorers agree.
+/// and `query` is already trimmed and lowercased, exactly as the web shell
+/// prepares them, so the two scorers agree.
 pub fn fuzzy_score(candidate: &str, query: &str) -> Option<i64> {
     if query.is_empty() {
         return Some(0);
@@ -49,7 +49,7 @@ pub fn fuzzy_score(candidate: &str, query: &str) -> Option<i64> {
 }
 
 /// The ranked matches for `query`, best first. An empty query lists the index
-/// as it is (the walk's natural order), which is what the Swift sheet does.
+/// as it is (the walk's natural order), which is what the palette shows.
 pub fn rank(paths: &[String], query: &str, limit: usize) -> Vec<(String, i64)> {
     let needle = query.trim().to_lowercase();
     if needle.is_empty() {
@@ -242,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn the_scorer_mirrors_the_swift_one() {
+    fn the_scorer_agrees_with_the_web_shells() {
         // The characters have to appear in order.
         assert_eq!(fuzzy_score("src/main.rs", "nope"), None);
         assert!(fuzzy_score("src/main.rs", "smr").is_some());

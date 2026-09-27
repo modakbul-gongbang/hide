@@ -73,10 +73,10 @@ The flag is only ever set on a row with no demand of its own that is not working
 Only a lineage root waits: a delegated middle row keeps its own mark, because its group is already Working or Seen by delegation and its parent's badge already counts the grandchild.
 
 `apply_lineage` decides it on the same pass that sums `descendant_counts`, and publishes it as the additive `waiting_on_descendants` flag beside `group: working`; the row's mark stays the hollow ring `○`, its status word is `Waiting`, and it is not emphasized.
-No new group value reaches the wire, so a decoder that does not know the flag, such as the frozen Swift shell, draws an ordinary Working row.
+No new group value reaches the wire, so a decoder that does not know the flag draws an ordinary Working row.
 The web row draws the ring in the working color from the flag, and the pet's Working badge and the Workspace representative count the row in Working because both read `group_of`, which reads the flag.
 
-Regression owners: `a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet`, `a_root_waiting_on_its_children_counts_as_working_not_done`, the Swift `aRootWaitingOnItsChildrenDecodesAsAnOrdinaryWorkingRow`, and the web `agentRow.test.ts`.
+Regression owners: `a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet`, `a_root_waiting_on_its_children_counts_as_working_not_done`, and the web `agentRow.test.ts`.
 
 ## Herdr token contract: both forms mean the same demand
 
@@ -142,7 +142,7 @@ The badge is drawn while the row's descendants are folded away and leaves when t
 Descendants are folded by default: `expanded_agent_pane_ids` in the persisted UI state names the panes the operator opened, it lives as long as the pane id does, and an older store's collapsed set is ignored rather than migrated, so the first launch after the change starts every parent folded.
 The web shell folds a parent by this one set wherever it draws the parent, in Agents and under its checkout in Projects, and counts the badge over every live descendant of the parent's device, so a descendant in another checkout is counted on the badge and still drawn as a root in its own checkout.
 
-Regression owners: `the_descendant_badge_sums_every_live_descendant_and_skips_ready_and_unknown_ones`, `lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappearance`, `the_snapshot_carries_no_stall_notice_and_ownership_is_operator_or_delegated`, and the Swift `DelegatedRowPresentationTests`.
+Regression owners: `the_descendant_badge_sums_every_live_descendant_and_skips_ready_and_unknown_ones`, `lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappearance`, and `the_snapshot_carries_no_stall_notice_and_ownership_is_operator_or_delegated`.
 
 Order within the whole list is one function, `sort_agents`: group order first, then most recent activity descending, then snapshot order.
 The label plugin's `sort_rank` token is not read.
@@ -237,7 +237,7 @@ A Workspace without nested agent rows shows no chevron and clicking its row open
 Select an agent to focus its pane; expanding or collapsing a populated Workspace only changes the tree.
 Collapsing does not change the selected pane, tab, agent read state, running processes, or aggregated status.
 `collapsed_checkout_ids` persists across launches.
-The web shell starts every checkout closed instead and keeps the ones the operator opened in `expanded_checkout_ids`; a `ui_state_update` without that set, as the Swift shell sends, leaves it unchanged, and each shell ignores the other's set.
+The web shell starts every checkout closed instead and keeps the ones the operator opened in `expanded_checkout_ids`; a `ui_state_update` without that set leaves it unchanged, and the legacy `collapsed_checkout_ids` field a client could send instead is kept in the schema but ignored by the web shell.
 Raised Needs You and Done rows remain available, while number shortcuts skip hidden tree rows.
 In the web shell the fold controls of a project, a checkout and a parent agent all sit on the right of their row in slots kept at rest; a folded control is always shown and an unfolded one appears under the pointer, with focus inside the row, while the row's menu is open, or on an input with no hover.
 The body of each row navigates (a project to its Overview, a checkout to its Workspace, an agent to its pane) and a fold never does: folding changes no screen, pane, tab, read state, group or process.
@@ -246,8 +246,7 @@ The body of each row navigates (a project to its Overview, a checkout to its Wor
 
 Core status tests own the Done mark, representative priority, unique-pane counts, cross-checkout ownership, and unchanged read semantics.
 Core close tests own the separation between work confirmation and unknown-status blocking, including local and remote close refusal.
-Swift presentation tests own fixed semantic colors and the shared disconnected override.
-Native verification covers mixed states, Done-to-Idle acknowledgment, right-side disclosure, unchanged terminal selection on collapse, empty and missing workspaces, and disconnect/recovery.
+Manual acceptance in the desktop app covers fixed semantic colors and the shared disconnected override, mixed states, Done-to-Idle acknowledgment, right-side disclosure, unchanged terminal selection on collapse, empty and missing workspaces, and disconnect/recovery.
 Run evidence belongs under `agents/runs/`, never in `docs/`.
 
 ## Pet pose priority

@@ -2,7 +2,7 @@
 //! history and the one session read beside it, for the web shell's Project
 //! Sessions screen.
 //!
-//! The Swift right panel's Sessions follow the focused checkout and share
+//! The right panel's Sessions follow the focused checkout and share
 //! their reads with Project Memory (`memory.rs`): a refresh there cancels
 //! another checkout's analysis, writes Memory counts and schedules a due
 //! poll. A named Project is kept out of all of that. It reuses the same pure
@@ -544,7 +544,7 @@ pub(super) fn settle_history(
 }
 
 /// Why one session cannot be read, in words. The catalog reports codes that
-/// the Swift panel keeps showing as they are; this screen says what they mean.
+/// the right panel keeps showing as they are; this screen says what they mean.
 fn session_reason(reason: &str) -> String {
     match reason {
         "session_missing" => "The session file is missing.".to_owned(),

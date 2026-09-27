@@ -13,14 +13,21 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
-      - name: Show the Swift toolchain
-        run: swift --version
-      - name: Test the core
-        run: cargo test --locked --manifest-path herdr-core/Cargo.toml
-      - name: Build the core archive the shell links
-        run: cargo build --release --locked -p herdr-core
-      - name: Test the shell
-        run: swift test --package-path macos
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Test the workspace
+        run: bash scripts/verify-cargo.sh test
+      - name: Typecheck, lint, unit test and build the web shell and the desktop app
+        run: bash scripts/verify-web.sh
 
   macos-arm64:
     # A tag builds a release only from a tree both suites passed.
@@ -28,7 +35,10 @@ jobs:
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v4
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+      - uses: pnpm/action-setup@v6
         with:
           version: 10
       - uses: actions/setup-node@v4
@@ -37,24 +47,20 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
-      - name: Set up Swift 6 toolchain
-        uses: swift-actions/setup-swift@v3
-        with:
-          swift-version: "6.0.3"
-      - name: Show Swift toolchain
-        run: swift --version
-      - name: Build signed ad-hoc bundle and checksums
-        run: HIDE_VERSION="${GITHUB_REF_NAME#v}" ./scripts/build-app.sh
-      - name: Verify release archive
+      - name: Package the ad-hoc signed app and its checksum
+        # The version is the tag; the packager builds the release binaries,
+        # fetches the pinned Herdr and refuses when any of them cannot run.
+        run: HIDE_VERSION="${GITHUB_REF_NAME#v}" pnpm --dir desktop package
+      - name: Verify the release archive
         run: |
-          test -s dist/*.zip
-          test -s dist/*.zip.sha256
-          (cd dist && shasum -a 256 -c ./*.zip.sha256)
+          test -s desktop/out/*.zip
+          test -s desktop/out/*.zip.sha256
+          (cd desktop/out && shasum -a 256 -c ./*.zip.sha256)
       - name: Create draft release
         uses: softprops/action-gh-release@v3
         with:
           draft: true
           prerelease: false
           files: |
-            dist/*.zip
-            dist/*.zip.sha256
+            desktop/out/*.zip
+            desktop/out/*.zip.sha256

@@ -756,7 +756,7 @@ async fn explorer_paths_are_checked_against_the_registered_checkout() {
 }
 
 #[tokio::test]
-async fn the_explorer_listing_shows_a_checkout_folder_in_the_swift_order() {
+async fn the_explorer_listing_shows_a_checkout_folder_in_the_explorer_order() {
     let (dir, env) = test_env(true);
     let home = dir.path().canonicalize().unwrap();
     let checkout = home.join("projects/alpha");

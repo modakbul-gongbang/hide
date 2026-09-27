@@ -15,8 +15,8 @@
 //! no tab, so the reconcile never removes or binds one, and its address and
 //! title are what the desktop host reports of the page (`browser_state`).
 //!
-//! Inert without `CoreOptions::workspace_views_path`: the Swift shell keeps
-//! one canvas and one preview slot per checkout.
+//! Inert without `CoreOptions::workspace_views_path`: a shell that passes
+//! none keeps one canvas and one preview slot per checkout.
 
 use serde::Deserialize;
 

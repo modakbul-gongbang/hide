@@ -1,5 +1,5 @@
 // The desktop app's keys end to end: the operator's macOS pane chords, which
-// hided brings across from the Swift app's state once, and the held-modifier
+// hided brings across from the removed native app's state once, and the held-modifier
 // cycles, whose commit waits for the modifier's release. A private Herdr
 // server for this file, a private hided and Electron app per test.
 
@@ -48,12 +48,12 @@ async function exactlyOnce(sent: Map<string, number>, kind: string, expected: nu
 }
 
 test("pane chords: the macOS app's set comes across, runs once, and Settings edits it", async () => {
-  // The operator's Swift state on the day of the decision, with the fields
-  // the Swift shell keeps around the one hided reads.
-  const swiftState = path.join(run.env.HOME!, "Library", "Application Support", "hide", "state.json");
-  fs.mkdirSync(path.dirname(swiftState), { recursive: true });
+  // The operator's native-app state on the day of the decision, with the fields
+  // that app kept around the one hided reads.
+  const nativeState = path.join(run.env.HOME!, "Library", "Application Support", "hide", "state.json");
+  fs.mkdirSync(path.dirname(nativeState), { recursive: true });
   fs.writeFileSync(
-    swiftState,
+    nativeState,
     JSON.stringify({
       schema_version: 1,
       expanded_paths: [],
@@ -96,7 +96,7 @@ test("pane chords: the macOS app's set comes across, runs once, and Settings edi
   await page.keyboard.press("Escape");
   await expect(sheet).toHaveCount(0);
 
-  // Settings > Shortcuts edits the same set, in the Swift app's form.
+  // Settings > Shortcuts edits the same set, in the macOS set's text form.
   await page.locator("[data-open-settings]").click();
   await page.locator('[data-settings-tab="shortcuts"]').click();
   await expect(page.locator('[data-shortcut-effective="toggle_zoom"]')).toHaveText("⇧⌘↩");

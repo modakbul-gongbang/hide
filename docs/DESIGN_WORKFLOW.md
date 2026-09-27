@@ -15,7 +15,7 @@ Three files each own one kind of truth, and none of them restates another's valu
 - **Numeric authority** is [design/tokens.json](../design/tokens.json): shadcn-named tokens (`--background`, `--foreground`, `--card`, `--popover`, `--primary`/`--primary-foreground`, `--secondary`, `--muted`/`--muted-foreground`, `--accent`, `--destructive`, `--border`, `--input`, `--ring`, `--sidebar-*`, and the four `--accent-choice-*` picks) each carrying a Dark value and a Light value, plus aliases.
   `node scripts/gen-tokens.mjs` writes `web/src/tokens.css` (Tailwind v4 `@theme`, `:root`/`.light`, `.dark`) and `web/src/generated/accents.ts`.
   `node scripts/gen-pen.mjs` writes the same values into `design/hide-ui.lib.pen` as Pen variables on a `Mode` (Light/Dark) theme axis.
-  `tokens.json` is web-only: it no longer generates or updates `HideTheme.swift`, which is frozen for the remaining Swift-shell coexistence period (macos/AGENTS.md).
+  `tokens.json` is web-only: it generates `web/src/tokens.css` and nothing else.
 - **Code authority** is `web/src/components/ui` for shadcn parts (one file per part, matching the gallery and the Pen `System /` sheets) and `web/src/components` for hide composites such as `entry-menu.tsx` and `settings-rows.tsx`, matching `Component /` sheets.
 
 Screen designs are committed separately from the library, in [design/hide-screens.pen](../design/hide-screens.pen), as `Screen / <Area>` sheets (each with Light and Dark frames), importing the library rather than redrawing its masters.

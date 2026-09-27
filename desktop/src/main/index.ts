@@ -10,7 +10,7 @@ import { menuBindings, menuTemplate } from "./menu";
 
 const env = loadEnv(process.env);
 // Pinned before anything reads it: the single-instance lock, web storage and
-// the log live here, apart from the Swift app's own folders.
+// the log live here, apart from the folders the removed native app used.
 app.setPath("userData", env.userDataDir ?? path.join(app.getPath("appData"), "hide-desktop"));
 app.setAppLogsPath(path.join(app.getPath("userData"), "logs"));
 

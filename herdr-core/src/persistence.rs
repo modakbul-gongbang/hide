@@ -56,7 +56,7 @@ struct StoredUiState {
     selected_pane_id: Option<String>,
     #[serde(default)]
     shortcut_bindings: BTreeMap<String, String>,
-    /// Absent in a store written before the Swift import existed, which loads
+    /// Absent in a store written before the shortcut import existed, which loads
     /// as not imported and so imports once.
     #[serde(default)]
     shortcut_bindings_imported: bool,
@@ -129,46 +129,48 @@ pub enum LoadDisposition {
     Corrupt,
 }
 
-/// What the Swift app's state file holds for `shortcut_bindings`.
+/// What the removed native app's state file holds for `shortcut_bindings`.
 #[derive(Debug, PartialEq)]
-pub enum SwiftShortcuts {
-    /// No file: the Swift app never saved state under this account.
+pub enum NativeAppShortcuts {
+    /// No file: that app never saved state under this account.
     Missing,
     Found(BTreeMap<String, String>),
     /// The file is there but its bindings could not be read.
     Unreadable,
 }
 
-/// A Swift state file larger than this is not read: the import is one field
-/// of a file the Swift shell owns, never a reason to load an unbounded one.
-const SWIFT_STATE_READ_CAP: u64 = 8 * 1024 * 1024;
+/// A state file larger than this is not read: the import is one field of a
+/// file another app wrote, never a reason to load an unbounded one.
+const NATIVE_APP_STATE_READ_CAP: u64 = 8 * 1024 * 1024;
 
 #[derive(Deserialize)]
-struct SwiftShortcutFields {
+struct NativeAppShortcutFields {
     #[serde(default)]
     shortcut_bindings: BTreeMap<String, String>,
 }
 
-/// Reads only `shortcut_bindings` from the Swift app's state file; the rest of
-/// that file is the Swift shell's, and the core takes nothing else from it.
-pub fn read_swift_shortcuts(path: &Path) -> SwiftShortcuts {
+/// Reads only `shortcut_bindings` from the removed native app's state file;
+/// the rest of that file was that app's, and the core takes nothing else from it.
+pub fn read_native_app_shortcuts(path: &Path) -> NativeAppShortcuts {
     let bytes = match fs::metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return SwiftShortcuts::Missing;
+            return NativeAppShortcuts::Missing;
         }
-        Err(_) => return SwiftShortcuts::Unreadable,
-        Ok(metadata) if metadata.len() > SWIFT_STATE_READ_CAP => return SwiftShortcuts::Unreadable,
+        Err(_) => return NativeAppShortcuts::Unreadable,
+        Ok(metadata) if metadata.len() > NATIVE_APP_STATE_READ_CAP => {
+            return NativeAppShortcuts::Unreadable;
+        }
         Ok(_) => match fs::read(path) {
             Ok(bytes) => bytes,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return SwiftShortcuts::Missing;
+                return NativeAppShortcuts::Missing;
             }
-            Err(_) => return SwiftShortcuts::Unreadable,
+            Err(_) => return NativeAppShortcuts::Unreadable,
         },
     };
-    match serde_json::from_slice::<SwiftShortcutFields>(&bytes) {
-        Ok(fields) => SwiftShortcuts::Found(fields.shortcut_bindings),
-        Err(_) => SwiftShortcuts::Unreadable,
+    match serde_json::from_slice::<NativeAppShortcutFields>(&bytes) {
+        Ok(fields) => NativeAppShortcuts::Found(fields.shortcut_bindings),
+        Err(_) => NativeAppShortcuts::Unreadable,
     }
 }
 
@@ -555,29 +557,37 @@ mod tests {
     }
 
     #[test]
-    fn swift_shortcuts_read_only_the_bindings_field() {
-        let root =
-            std::env::temp_dir().join(format!("herdr-core-swift-shortcuts-{}", std::process::id()));
+    fn native_app_shortcuts_read_only_the_bindings_field() {
+        let root = std::env::temp_dir().join(format!(
+            "herdr-core-native-app-shortcuts-{}",
+            std::process::id()
+        ));
         fs::create_dir_all(&root).unwrap();
         let path = root.join("state.json");
-        assert_eq!(read_swift_shortcuts(&path), SwiftShortcuts::Missing);
+        assert_eq!(
+            read_native_app_shortcuts(&path),
+            NativeAppShortcuts::Missing
+        );
 
-        // A Swift store carries fields the core's own schema would refuse.
+        // That store carries fields the core's own schema would refuse.
         fs::write(
             &path,
             br#"{"schema_version":7,"pet_visible":"yes","shortcut_bindings":{"toggle_zoom":"command+shift+return"}}"#,
         )
         .unwrap();
         assert_eq!(
-            read_swift_shortcuts(&path),
-            SwiftShortcuts::Found(BTreeMap::from([(
+            read_native_app_shortcuts(&path),
+            NativeAppShortcuts::Found(BTreeMap::from([(
                 "toggle_zoom".to_owned(),
                 "command+shift+return".to_owned()
             )]))
         );
 
         fs::write(&path, br#"{"shortcut_bindings":["not","a","map"]}"#).unwrap();
-        assert_eq!(read_swift_shortcuts(&path), SwiftShortcuts::Unreadable);
+        assert_eq!(
+            read_native_app_shortcuts(&path),
+            NativeAppShortcuts::Unreadable
+        );
         let _ = fs::remove_file(path);
         let _ = fs::remove_dir(root);
     }

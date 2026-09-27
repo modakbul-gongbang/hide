@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The cargo entrypoint for verification, as plain argv.
 #
-# Usage: verify-cargo.sh test [cargo test arguments...] | lint | build | cli
+# Usage: verify-cargo.sh test [cargo test arguments...] | lint | release | cli
 #
 # The PRD harness runs each verify command with execvp and no shell, so an
 # `ENV=value cargo ...` binding fails with ENOENT at verify time rather than at
@@ -13,10 +13,10 @@
 #     "lint": "bash scripts/verify-cargo.sh lint"
 #
 # Every build lands in the worktree's own `target/`, whatever CARGO_TARGET_DIR
-# the caller carries: SwiftPM links `target/release/libherdr_core.a` from that
-# fixed path, and a build directory shared between worktrees reads the other
-# checkout's artifacts as fresh. `git worktree remove` takes the cache with the
-# work. See docs/BUILD.md.
+# the caller carries: the desktop packager reads the release binaries from
+# `target/release/` at that fixed path, and a build directory shared between
+# worktrees reads the other checkout's artifacts as fresh. `git worktree
+# remove` takes the cache with the work. See docs/BUILD.md.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -34,14 +34,16 @@ case "${1:-}" in
         cargo fmt --all --check
         exec cargo clippy --locked --workspace --all-targets -- -D warnings
         ;;
-    build)
-        exec cargo build --release --locked -p herdr-core
+    release)
+        # The binaries the packaged app ships; release hided embeds web/dist,
+        # so `pnpm --dir web build` runs first (desktop/scripts/package.mjs).
+        exec cargo build --release --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks
         ;;
     cli)
         exec cargo build --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks
         ;;
     *)
-        printf 'usage: %s test [cargo test arguments...]|lint|build|cli\n' "$0" >&2
+        printf 'usage: %s test [cargo test arguments...]|lint|release|cli\n' "$0" >&2
         exit 2
         ;;
 esac

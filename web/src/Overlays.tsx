@@ -87,7 +87,7 @@ function KindMark({ item }: { item: CycleItem }) {
   return displayMark({ kind: item.kind, label: item.title });
 }
 
-/** The Swift consequence sheet: Keep open, or stop the work and close. */
+/** The consequence sheet: Keep open, or stop the work and close. */
 export function ConfirmClose({ actions }: { actions: Actions }) {
   const pending = useUiStore((s) => s.pendingClose);
   return (

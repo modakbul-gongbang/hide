@@ -20,7 +20,7 @@ import { drawnViews } from "./viewFocus";
 // to the side" is ⌘P's list whose pick opens beside (S7 B4). The screens
 // already rank and filter their own entries, so `shouldFilter` stays off and
 // cmdk is used only for the list's selection and keyboard behavior. ⌘K draws
-// its ranked entries under the Swift search view's headers (issue 154).
+// its ranked entries under the search view's headers (issue 154).
 
 export function Palette({ actions }: { actions: Actions }) {
   const overlay = useUiStore((s) => s.overlay);

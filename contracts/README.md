@@ -1,6 +1,6 @@
 # Herdr API contract
 
-`herdr-api.schema.json` is what the pinned Herdr binary answers to `herdr api schema --json`, written by `scripts/bump-herdr.sh` in the same run that moves the pin in `macos/Sources/HerdrMacOS/Resources/herdr-bundle.json`.
+`herdr-api.schema.json` is what the pinned Herdr binary answers to `herdr api schema --json`, written by `scripts/bump-herdr.sh` in the same run that moves the pin recorded in `contracts/herdr-bundle.json`.
 Herdr owns the schema and the protocol revision; `herdr-core/build.rs` derives `HERDR_PROTOCOL_REVISION` from this file, so no protocol number is maintained by hand anywhere in this repository.
 
 <!-- herdr-provenance:start -->
@@ -27,12 +27,13 @@ Before launching the IDE against a local runtime, verify that the contract, the 
 # Snapshot wire enums
 
 `snapshot-wire-enums.json` lists, for every string enum the core serializes into the shell snapshot, the exact values it emits.
-The core is the writer of those strings and the shell decodes them strictly, so a value one side does not know fails the whole snapshot decode and freezes the shell on its last good frame.
-`herdr-core/src/model.rs` tests that every variant of each enum serializes to the listed value and nothing else; `SnapshotWireEnumTests` in the shell tests that each listed value decodes and that the Swift enum has no extra case.
-Add the variant to this file in the same change as the Rust variant and the Swift case; either test fails until all three agree.
+The core is the writer of those strings.
+`herdr-core/src/model.rs`'s `wire_enum_tests` pins the writing side: it fails to compile until a new variant is matched there, and then fails the test until that variant is added to this file.
 
-`workspace_view.panel` (`closed`, `open`, `expanded`) is not listed: the core writes `workspace_view` only for a shell with separate View areas, which today is the web shell, and omits it from the Swift snapshot, so no strict decoder reads it.
-The View area tree inside it (PRD S7) takes the same exception for the same reason: a split's `axis` (`row`, `column`), a display's `kind` (`file`, `diff`) and a display's `state` (`open`, `opening`, `waiting`, `unavailable`).
-List them here, with Swift cases, in the change that lets the Swift shell draw separate areas.
+Nothing in this repository checks an incoming wire value against this file from the reading side.
+The web shell (`web/src/snapshot.ts`) types these fields with TypeScript, which is a compile-time check only and does not reject an unrecognized value at runtime; a field the core stops emitting, or emits a new value for, is not caught by a test today.
 
-`ui_state.theme` (`system`, `light`, `dark`) is not listed either: only the web shell reads it, the frozen Swift shell's decoder has no field for it and so never decodes the value, and the web shell reads a value it does not know as Dark rather than failing the snapshot.
+`workspace_view.panel` (`closed`, `open`, `expanded`) is not listed here.
+Neither is the View area layout inside it: a split's `axis` (`row`, `column`), a display's `kind` (`file`, `diff`, `browser`), and a display's `state` (`open`, `opening`, `waiting`, `unavailable`).
+Neither is `ui_state.theme` (`system`, `light`, `dark`); the web shell reads a value it does not know as Dark rather than failing.
+List an enum here, with a Rust-side pin and a reading-side check for it, in the change that adds one.
