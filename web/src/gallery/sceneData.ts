@@ -97,6 +97,7 @@ function checkout(spec: CheckoutSpec, nowSeconds: number): Checkout {
     branch: spec.branch,
     purpose: spec.purpose ? { text: spec.purpose, origin: "operator" } : null,
     is_worktree: !spec.primary && !spec.folder,
+    is_primary: spec.primary === true,
     exists: spec.exists ?? true,
     has_panes: panes.length > 0,
     agent_summary: counted
