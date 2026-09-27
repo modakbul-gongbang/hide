@@ -10,6 +10,7 @@ import {
   parseStatus,
   rememberedCliPath,
   rememberedCliValue,
+  REMEMBERED_SOURCES,
   resolveCli,
   type CliSearch,
   type FileProbe,
@@ -34,7 +35,7 @@ const result = (stdout: string, extra: Partial<ChildResult> = {}): ChildResult =
 });
 
 describe("resolveCli (B2)", () => {
-  const input: CliSearch = { override: null, worktreeRoot: "/w", searchPath: "/usr/local/bin:/opt/bin", remembered: null, loginPath: null, home: "/h" };
+  const input: CliSearch = { override: null, worktreeRoot: "/w", bundledDir: null, searchPath: "/usr/local/bin:/opt/bin", remembered: null, loginPath: null, home: "/h" };
   const packaged: CliSearch = { ...input, worktreeRoot: null, searchPath: "/usr/bin:/bin" };
   const login = (answer: string | null) => {
     const asked = { count: 0 };
@@ -56,6 +57,18 @@ describe("resolveCli (B2)", () => {
     const resolved = await resolveCli(input, probe({ "/opt/bin/hide": 1 }));
     expect(resolved.found).toEqual({ path: "/opt/bin/hide", source: "path" });
     expect(resolved.tried).toEqual(["/w/target/debug/hide", "/w/target/release/hide", "/usr/local/bin/hide", "/opt/bin/hide"]);
+  });
+
+  it("takes the CLI the app ships after the worktree build and before PATH, and never remembers it", async () => {
+    const shipped: CliSearch = { ...packaged, bundledDir: "/App.app/Contents/Resources", ...login("/l") };
+    const bundled = await resolveCli(shipped, probe({ "/App.app/Contents/Resources/hide": 1, "/usr/bin/hide": 1, "/l/hide": 1 }));
+    expect(bundled).toEqual({ found: { path: "/App.app/Contents/Resources/hide", source: "bundled" }, tried: ["/App.app/Contents/Resources/hide"] });
+    expect(REMEMBERED_SOURCES.has("bundled")).toBe(false);
+    const build = await resolveCli({ ...shipped, worktreeRoot: "/w" }, probe({ "/w/target/debug/hide": 1, "/App.app/Contents/Resources/hide": 1 }));
+    expect(build.found).toEqual({ path: "/w/target/debug/hide", source: "worktree" });
+    // A bundle whose CLI cannot run is logged as tried and the search goes on (D-07), so a missing bundle still reaches an installed CLI.
+    const broken = await resolveCli(shipped, probe({ "/usr/bin/hide": 1 }));
+    expect(broken).toEqual({ found: { path: "/usr/bin/hide", source: "path" }, tried: ["/App.app/Contents/Resources/hide", "/usr/bin/hide"] });
   });
 
   it("prefers PATH to the remembered CLI, and the remembered CLI to asking the login shell", async () => {

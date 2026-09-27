@@ -6,7 +6,7 @@
 import path from "node:path";
 import type { ChildResult } from "./spawn";
 
-export type CliSource = "env" | "worktree" | "path" | "remembered" | "login" | "well-known";
+export type CliSource = "env" | "worktree" | "bundled" | "path" | "remembered" | "login" | "well-known";
 
 export type ResolvedCli = {
   found: { path: string; source: CliSource } | null;
@@ -23,6 +23,8 @@ export type CliSearch = {
   override: string | null;
   /** This worktree's root when run unpackaged; null when packaged. */
   worktreeRoot: string | null;
+  /** The packaged app's own `Contents/Resources`, where `hide` and `hided` ship side by side; null when unpackaged. */
+  bundledDir: string | null;
   /** This process's PATH: the terminal's for `pnpm dev`, launchd's bare one for an app opened from Finder. */
   searchPath: string;
   /** The last CLI that attached, read back from the profile. */
@@ -32,12 +34,12 @@ export type CliSearch = {
   home: string;
 };
 
-/** Where the CLI is looked for last: the Swift app's own fallback list (`RuntimeEnvironment.swift`). */
+/** Where the CLI is looked for last: the directories a hand-installed `hide` lands in. */
 export function wellKnownDirs(home: string): string[] {
   return [path.join(home, ".local", "bin"), "/opt/homebrew/bin", "/usr/local/bin"];
 }
 
-/** Finds worth remembering once they attach; an override or a worktree build is not the operator's installed CLI. */
+/** Finds worth remembering once they attach; an override, a worktree build or the app's own bundled CLI is not the operator's installed CLI. */
 export const REMEMBERED_SOURCES: ReadonlySet<CliSource> = new Set(["path", "login", "well-known"]);
 
 function inDirs(searchPath: string): string[] {
@@ -49,13 +51,15 @@ function inDirs(searchPath: string): string[] {
 
 /**
  * B2's order: the override, then (unpackaged) this worktree's newest build,
- * then PATH, the CLI that last attached, the login shell's PATH, and the
- * usual install directories. An app opened from Finder gets launchd's PATH,
- * not the operator's, so everything after PATH exists for it; the login shell
- * is the slow step, which the remembered path spares every launch after the
- * first. An override that is set but unusable ends the search: it names what
- * the operator asked for, and quietly using another binary would hide the
- * mistake.
+ * then (packaged) the CLI the app ships in its own Resources, then PATH, the
+ * CLI that last attached, the login shell's PATH, and the usual install
+ * directories. An app opened from Finder gets launchd's PATH, not the
+ * operator's, so a packaged app normally stops at its bundled CLI and the
+ * steps after PATH exist for an app whose bundle is missing it; the login
+ * shell is the slow step, which the remembered path spares every launch
+ * after the first. An override that is set but unusable ends the search: it
+ * names what the operator asked for, and quietly using another binary would
+ * hide the mistake.
  */
 export async function resolveCli(input: CliSearch, probe: FileProbe): Promise<ResolvedCli> {
   const tried: string[] = [];
@@ -72,6 +76,11 @@ export async function resolveCli(input: CliSearch, probe: FileProbe): Promise<Re
       .map((file) => ({ file, mtime: probe.mtimeMs(file) ?? 0 }))
       .sort((a, b) => b.mtime - a.mtime)[0];
     if (newest) return done(newest.file, "worktree");
+  }
+  if (input.bundledDir) {
+    const bundled = path.join(input.bundledDir, "hide");
+    tried.push(bundled);
+    if (probe.isExecutable(bundled)) return done(bundled, "bundled");
   }
   const first = (files: string[]): string | null => {
     for (const file of files) {

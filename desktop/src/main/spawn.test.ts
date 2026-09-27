@@ -7,6 +7,11 @@ describe("the child runner", () => {
     expect(result).toMatchObject({ code: 3, stdout: "out\n", stderr: "err\n", timedOut: false, spawnError: null });
   });
 
+  it("gives a child the environment it is handed, whole", async () => {
+    const result = await new ChildRunner().run("/bin/sh", ["-c", 'printf "%s|%s" "$HERDR_BIN_PATH" "$HOME"'], 5_000, { HERDR_BIN_PATH: "/r/herdr", PATH: "/usr/bin:/bin" });
+    expect(result.stdout).toBe("/r/herdr|");
+  });
+
   it("kills a child past its timeout", async () => {
     const started = Date.now();
     const result = await new ChildRunner().run("/bin/sleep", ["10"], 200);

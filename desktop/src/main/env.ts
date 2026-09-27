@@ -4,7 +4,9 @@
 //
 // The daemon's own keys (HIDE_STATE_DIR, HERDR_SOCKET_PATH, ...) are not
 // read here: the `hide` CLI inherits this process's environment and
-// `hided/src/env.rs` owns them. HOME is read by both.
+// `hided/src/env.rs` owns them. HOME and HERDR_BIN_PATH are read by both:
+// the host reads HERDR_BIN_PATH only to know whether it may name the Herdr
+// it bundles.
 
 import os from "node:os";
 import path from "node:path";
@@ -33,6 +35,13 @@ export const ENV_REGISTRY: readonly EnvKey[] = [
     note: "Isolates window state, the single-instance lock, web storage and the host log for a QA or e2e instance; without it the operator's desktop profile is used",
   },
   {
+    key: "HERDR_BIN_PATH",
+    requirement: "optional",
+    shape: "absolute path of the herdr binary",
+    fallback: "a packaged app passes its own Contents/Resources/herdr to every `hide` child; unpackaged, nothing is added and hided resolves herdr from PATH",
+    note: "Names the Herdr a daemon this host starts attaches pane terminals with; when set it is passed through unchanged, so an isolated e2e or a development server keeps its own binary",
+  },
+  {
     key: "SHELL",
     requirement: "optional",
     shape: "absolute path of the login shell",
@@ -58,9 +67,12 @@ export const ENV_REGISTRY: readonly EnvKey[] = [
 export type DesktopEnv = {
   cliPath: string | null;
   userDataDir: string | null;
+  herdrBinPath: string | null;
   shell: string;
   home: string;
   path: string;
+  /** What every `hide` child inherits unchanged; hided's own keys travel in it and `hided/src/env.rs` owns them. */
+  inherited: Record<string, string | undefined>;
 };
 
 export type EnvProblem = { key: string; kind: string };
@@ -80,9 +92,11 @@ export function loadEnv(source: Record<string, string | undefined>): DesktopEnv 
   const env: DesktopEnv = {
     cliPath: absolute("HIDE_CLI_PATH"),
     userDataDir: absolute("HIDE_DESKTOP_USER_DATA_DIR"),
+    herdrBinPath: absolute("HERDR_BIN_PATH"),
     shell: absolute("SHELL") ?? "/bin/zsh",
     home: absolute("HOME") ?? os.userInfo().homedir,
     path: source.PATH ?? "",
+    inherited: source,
   };
   if (problems.length > 0) {
     throw new Error(`desktop environment is not usable: ${problems.map((problem) => `${problem.key}: ${problem.kind}`).join("; ")}`);
