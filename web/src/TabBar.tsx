@@ -7,9 +7,12 @@ import { AgentMark } from "./AgentMark";
 import { EntryContextMenu, type MenuEntry } from "./components/entry-menu";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
+import { Keycap } from "./components/ui/keycap";
 import { Hint, Tooltip, TooltipTrigger, TooltipContent } from "./components/ui/tooltip";
 import type { AsyncOperation, Checkout, StripTab } from "./snapshot";
+import { numberOf, numberedTabs } from "./numbering";
 import { useShellStore } from "./store";
+import { useUiStore } from "./ui";
 import { agentEntries } from "./workspace";
 import { hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
@@ -19,8 +22,10 @@ import { displayCommand } from "./shortcuts";
 // own. A drag that lands sends one `reorder_tab` with the strip index of the
 // tab it landed on, and the bar redraws in the core's order; nothing moves
 // until the snapshot says so. Every tab carries its agent's mark and its full
-// identity in the tooltip and the accessible name. The View areas' tab bars
-// are `ViewAreas.tsx`'s.
+// identity in the tooltip and the accessible name. While a ⌘ hold reveals
+// the numbers (PRD electron-digit-shortcuts-hints B5), each of the first
+// nine tabs floats its digit at its top right, over the layout rather than
+// in it. The View areas' tab bars are `ViewAreas.tsx`'s.
 
 const NONE: AsyncOperation[] = [];
 
@@ -81,6 +86,8 @@ export function AgentTabBar({ checkout, activeTabId, device = false, actions }: 
   const [renaming, setRenaming] = useState<string | null>(null);
   const drag = useTabDrag(actions, checkout.strip);
   const entries = agentEntries(checkout);
+  const numbered = useUiStore((s) => s.hint === "tabs");
+  const numbers = numbered ? numberedTabs(checkout) : null;
   return (
     <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch overflow-x-auto bg-card" role="tablist" aria-label="Agent tabs" data-tab-bar={checkout.id} data-agent-tab-bar="true" data-remote-tab-bar={device ? "true" : undefined}>
       {entries.map((entry) => {
@@ -103,6 +110,7 @@ export function AgentTabBar({ checkout, activeTabId, device = false, actions }: 
               identity={identity}
               mark={<>{agent ? <StatusMark symbol={agent.symbol} className={markTone(agent)} data-tab-status={agent.status_label} /> : null}<AgentMark kind={agent?.agent_kind} /></>}
               active={entry.source_id === activeTabId}
+              number={numbers ? numberOf(numbers, entry.source_id) : null}
               closing={closingSuffix(entry.source_id, "tab.close", operations)}
               closeLabel={`Close tab ${entry.label}`}
               onSelect={() => actions.focusTab(entry.source_id, true)}
@@ -208,6 +216,7 @@ const TabButton = memo(function TabButton({
   editor,
   mark,
   active,
+  number,
   closing,
   closeLabel,
   dragging,
@@ -224,6 +233,8 @@ const TabButton = memo(function TabButton({
   editor: React.ReactNode;
   mark: React.ReactNode;
   active: boolean;
+  /** The digit a ⌘ hold shows on this tab, or null while none shows. */
+  number: number | null;
   closing: boolean;
   closeLabel: string;
   dragging: boolean;
@@ -273,7 +284,7 @@ const TabButton = memo(function TabButton({
         <Button
           variant="ghost"
           size="icon-sm"
-          className={`shrink-0 hover:bg-popover hover:text-foreground focus-visible:visible group-hover:visible ${active ? "visible" : "invisible"}`}
+          className={`shrink-0 hover:bg-popover hover:text-foreground ${number !== null ? "invisible" : `focus-visible:visible group-hover:visible ${active ? "visible" : "invisible"}`}`}
           aria-label={closeLabel}
           onClick={(event) => {
             event.stopPropagation();
@@ -284,6 +295,8 @@ const TabButton = memo(function TabButton({
         </Button>
       </Hint>
       {active ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-primary" /> : null}
+      {/* The digit takes the close control's corner for the length of the hold; the control keeps its space and comes back with the release. */}
+      {number !== null ? <Keycap number={number} /> : null}
     </div>
     </Hint>
   );

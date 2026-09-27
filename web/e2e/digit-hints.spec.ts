@@ -1,0 +1,68 @@
+// The browser host has no numbered chords (PRD electron-digit-shortcuts-hints
+// B3, D-09): holding ⌘ or ⌥ shows no keycap, ⌘2 with a second tab present
+// sends nothing, and the ⌘/ sheet lists both families as not on this host.
+
+import { expect, test } from "@playwright/test";
+import path from "node:path";
+import { startHerdr } from "./herdr-fixture";
+import { startHided, type Daemon } from "./hided-fixture";
+import { countSent, enterWorkspace, screenshot } from "./wire";
+
+test.describe.configure({ timeout: 120_000 });
+
+test("no keycap on a ⌘ or ⌥ hold, no tab on ⌘2, and the sheet says so", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  const made = herdr.run([
+    "tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "second", "--env", `PATH=${herdr.fixturePath}`, "--no-focus",
+  ]) as { result: { tab: { tab_id: string } } };
+  try {
+    daemon = await startHided(herdr, "digit-hints");
+    const sent = countSent(page);
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await enterWorkspace(page, "fixture");
+    const canvas = page.locator("[data-canvas]").first();
+    await expect(page.locator(`[data-tab="${made.result.tab.tab_id}"]`)).toBeVisible();
+    await expect(canvas).toHaveAttribute("data-canvas", herdr.tab);
+    await page.locator("[data-pane-view] .xterm-helper-textarea").first().focus();
+
+    // B3: a hold reveals nothing here, on either modifier.
+    await page.keyboard.down("Meta");
+    await page.waitForTimeout(500);
+    await expect(page.locator("[data-keycap]")).toHaveCount(0);
+    await page.keyboard.up("Meta");
+    await page.keyboard.down("Alt");
+    await page.waitForTimeout(500);
+    await expect(page.locator("[data-keycap]")).toHaveCount(0);
+    await screenshot(page, "digit-hints-browser-alt-hold");
+    await page.keyboard.up("Alt");
+
+    // B3: ⌘2 is not a chord of this host, so the second tab stays where it is.
+    const focused = sent.get("focus_tab") ?? 0;
+    await page.keyboard.press("Meta+Digit2");
+    await page.keyboard.press("Alt+Digit2");
+    await page.waitForTimeout(600);
+    expect(sent.get("focus_tab") ?? 0).toBe(focused);
+    expect(sent.get("focus_pane") ?? 0).toBe(0);
+    await expect(canvas).toHaveAttribute("data-canvas", herdr.tab);
+
+    // B3, B4: the sheet names both families, without a chord.
+    await page.keyboard.press("Meta+Slash");
+    const sheet = page.locator("[data-shortcut-sheet]");
+    await expect(sheet).toBeVisible();
+    await expect(sheet.locator('[data-shortcut="select_tab_1"]')).toContainText("Select tab 1-9");
+    await expect(sheet.locator('[data-shortcut-absent="select_tab_1"]')).toHaveText("not on this host");
+    await expect(sheet.locator('[data-shortcut="select_tab_1"] kbd')).toHaveText("-");
+    await expect(sheet.locator('[data-shortcut="select_agent_1"]')).toContainText("Select agent 1-9");
+    await expect(sheet.locator('[data-shortcut-absent="select_agent_1"]')).toHaveText("not on this host");
+    await expect(sheet.locator('[data-shortcut="select_tab_2"]')).toHaveCount(0);
+    await screenshot(page, "digit-hints-browser-sheet");
+    await page.keyboard.press("Escape");
+    await expect(sheet).toHaveCount(0);
+  } finally {
+    herdr.run(["tab", "close", made.result.tab.tab_id]);
+    daemon?.stop();
+    herdr.stop();
+  }
+});

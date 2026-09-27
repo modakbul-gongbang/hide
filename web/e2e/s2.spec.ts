@@ -332,8 +332,10 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await page.keyboard.press("Meta+Slash");
     await expect(page.locator("[data-shortcut-sheet]")).toBeVisible();
     // The S5 Settings row (⌥, in place of Chrome's ⌘,) is the eighth move;
-    // Toggle Explorer (issue 170) is the 28th row.
-    await expect(page.locator("[data-shortcut]")).toHaveCount(28);
+    // Toggle Explorer (issue 170) is the 28th row, and the two numbered
+    // families (Select tab 1-9, Select agent 1-9) fold into one row each,
+    // absent on this host and never a Chrome move (electron-digit-shortcuts-hints B3).
+    await expect(page.locator("[data-shortcut]")).toHaveCount(30);
     await expect(page.locator("[data-shortcut-sheet]").getByText("moved for Chrome")).toHaveCount(8);
     await screenshot(page, "s2-shortcut-sheet");
     await page.keyboard.press("Escape");
