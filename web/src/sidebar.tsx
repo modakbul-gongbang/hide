@@ -22,14 +22,15 @@ import { SearchField } from "./components/search-field";
 import { Hint } from "./components/ui/tooltip";
 import { DevicePicker } from "./DevicePicker";
 import { NewWorkspace } from "./NewWorkspace";
-import { badgeWords, directChildren, sectionCount, sectionTree, unfoldedRows } from "./agentRow";
+import { badgeWords, directChildren, unfoldedRows } from "./agentRow";
 import { Badge } from "./components/ui/badge";
 import { cn } from "./lib/utils";
+import { numberOf, numberedAgents } from "./numbering";
 import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow } from "./components/sidebar-agent-row";
 import { StatusBadge } from "./components/status-badge";
 import { WeeklyUsage } from "./components/weekly-usage";
-import { agentPlaces, agentSections, allAgents, allProjectsCount, liveDescendantCounts, type ListedAgent } from "./navigation";
+import { agentListRows, agentPlaces, agentTree, allAgents, allProjectsCount, liveDescendantCounts } from "./navigation";
 import {
   activeCheckouts,
   checkoutPresentation,
@@ -137,6 +138,11 @@ function AgentList({ actions }: { actions: Actions }) {
   const tree = useMemo(() => agentTree(listed), [listed]);
   const placeOf = useMemo(() => agentPlaces(workspaces, remote, devices), [workspaces, remote, devices]);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
+  // An ⌥ hold numbers the drawn rows top to bottom (PRD
+  // electron-digit-shortcuts-hints B5); the numbers exist only while it
+  // shows, so the memoized rows are untouched by an unrevealed hold.
+  const numbered = useUiStore((s) => s.hint === "agents");
+  const numbers = useMemo(() => (numbered ? numberedAgents(agentListRows(tree)) : null), [numbered, tree]);
   // Before the first snapshot nothing is known, so an empty list would be a claim.
   if (!loaded) return <ListLoading />;
   if (tree.sections.length === 0) {
@@ -163,6 +169,7 @@ function AgentList({ actions }: { actions: Actions }) {
                 onOpen={actions.openAgent}
                 onToggleTree={actions.toggleAgentTree}
                 inset="var(--spacing-xs)"
+                number={numbers ? numberOf(numbers, row.agent.pane_id) : null}
               />
             ))}
           </ul>
@@ -170,36 +177,6 @@ function AgentList({ actions }: { actions: Actions }) {
       ))}
     </ul>
   );
-}
-
-/**
- * The sections and the rows each draws, from one index per device: pane ids
- * are scoped to the device that reported them, so a lineage never crosses
- * devices.
- */
-function agentTree(listed: ListedAgent[]) {
-  const byDevice = new Map<string | null, AgentRow[]>();
-  for (const { agent, device } of listed) {
-    const rows = byDevice.get(device) ?? [];
-    rows.push(agent);
-    byDevice.set(device, rows);
-  }
-  const index = new Map([...byDevice].map(([device, rows]) => [device, new Map(rows.map((row) => [row.pane_id, row]))]));
-  const counts = new Map([...byDevice].map(([device, rows]) => [device, liveDescendantCounts(rows)]));
-  const deviceOf = new Map(listed.map((row) => [row.agent, row.device]));
-  const lookup = (device: string | null, paneId: string) => index.get(device)?.get(paneId);
-  const descendantsOf = (device: string | null, paneId: string) => counts.get(device)?.get(paneId) ?? 0;
-  const sections = agentSections(listed.map((row) => row.agent))
-    .map((section) => {
-      const roots = section.agents.filter((agent) => !agent.delegated);
-      const rows = sectionTree(roots.map((agent) => ({ agent, device: deviceOf.get(agent) ?? null })), lookup, descendantsOf);
-      return { group: section.group, label: section.label, rows, count: sectionCount(rows) };
-    })
-    .filter((section) => section.rows.length > 0);
-  return {
-    sections,
-    children: (device: string | null, agent: AgentRow) => directChildren(agent, (paneId) => lookup(device, paneId)),
-  };
 }
 
 /** The first snapshot has not arrived: neither an empty list nor a zero is known yet. */
