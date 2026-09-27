@@ -118,6 +118,11 @@ impl ApiStream for UnixStream {
         let deadline = std::time::Instant::now() + timeout;
         let mut bytes = Vec::new();
         loop {
+            if std::time::Instant::now() >= deadline {
+                return Err(ApiError::Transport(
+                    "subscription acknowledgement timed out".to_owned(),
+                ));
+            }
             let mut byte = [0_u8; 1];
             match self.read(&mut byte) {
                 Ok(0) => {
@@ -137,11 +142,6 @@ impl ApiStream for UnixStream {
                     }
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
-                    if std::time::Instant::now() >= deadline {
-                        return Err(ApiError::Transport(
-                            "subscription acknowledgement timed out".to_owned(),
-                        ));
-                    }
                     std::thread::sleep(Duration::from_millis(2));
                 }
                 Err(error) => {
