@@ -227,6 +227,7 @@ pub(crate) fn group(
                 path: checkout_root,
                 branch: facts.branch.clone(),
                 is_worktree: facts.linked_worktree,
+                is_primary: !facts.linked_worktree && facts.kind == ProjectKind::Git,
                 exists: true,
                 has_panes: !tabs.is_empty(),
                 purpose: if index == 0 {
@@ -393,6 +394,8 @@ pub(crate) fn apply_registrations(
                 path: registration.path.clone(),
                 branch,
                 exists: true,
+                is_primary: known
+                    .is_some_and(|facts| facts.kind == ProjectKind::Git && !facts.linked_worktree),
                 ..CheckoutSnapshot::default()
             }],
             inactive_checkouts: Default::default(),

@@ -33,6 +33,18 @@ The shell decodes it strictly: one string value it does not know fails the whole
 The string enums the core serializes into the snapshot are therefore pinned in `contracts/snapshot-wire-enums.json`; `model.rs` tests that each variant emits the listed value and `SnapshotWireEnumTests` that each listed value decodes, so a variant added on one side fails a suite before it can reach a running shell (a `PullRequestTitle` origin once shipped as `pull_request_title` against a shell that read `pr_title`).
 The bridge publishes `bridgeError` only on change and names the coding path in it, because a repeated failure republished every notification rebuilt every view observing the bridge at the notification rate.
 
+## Stored primary checkout
+
+A local registered project stores `primary_checkout_id` on its `WorkspaceRegistration` in `core-state.json`.
+An absent choice keeps the root default for existing registrations; a stored choice remains stored while its checkout is unavailable.
+The single `set_primary_checkout` event carries `{workspace_id, checkout_id}` and accepts only an existing checkout of that registered local Git project.
+Missing projects or checkouts, plain folders and remote registrations are refused with a diagnostic, without changing the selection or presenting an alert.
+The catalog projects `CheckoutSnapshot.is_primary` after assigning registration identities and adding Git worktrees; sorting and inactive folding consume that flag, and the web reads it for the house glyph rather than comparing paths.
+A change updates the accepted catalog immediately, so stale worker results cannot restore the old choice, then uses the existing coalesced off-lock UI save.
+An unchanged choice publishes and saves nothing; there is no additional worker, subprocess, timer or queue.
+Checkout fields remain in the hand-maintained `web/src/snapshot.ts` shape; the WebSocket frame generator does not generate this part of the core snapshot.
+SSH catalogs currently read Herdr and the device helper, not another hided core's registrations, so they retain the remote root default and do not synchronize a primary choice stored by another daemon.
+
 ## Project sessions and Memory
 
 `hide-project` is the single durable identity boundary for session discovery, Memory storage, core projection, and hook retrieval.

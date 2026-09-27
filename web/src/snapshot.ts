@@ -260,6 +260,8 @@ export type Checkout = {
   branch: string | null;
   purpose: Purpose | null;
   is_worktree: boolean;
+  /** Core-owned home choice; absent in snapshots from older daemons. */
+  is_primary?: boolean;
   exists: boolean;
   /** A checkout Hide opened outside every registered project. */
   temporary?: boolean;
@@ -390,6 +392,7 @@ export type ExplorerOperation = {
 };
 
 export type WorkspaceRegistration = {
+  primary_checkout_id?: string | null;
   id: string;
   label: string;
   path: string;

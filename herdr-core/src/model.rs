@@ -909,6 +909,8 @@ pub struct CheckoutSnapshot {
     /// description, representative agent title, pull-request title.
     pub purpose: Option<CheckoutPurposeSnapshot>,
     pub is_worktree: bool,
+    /// The core-owned home choice, independent of the Git main worktree.
+    pub is_primary: bool,
     pub exists: bool,
     pub temporary: bool,
     /// Whether Herdr has a pane here. A worktree earns a row from git rather
@@ -2154,6 +2156,9 @@ impl Default for UiStateSnapshot {
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WorkspaceRegistration {
+    /// None preserves the root default for registrations written before this choice existed.
+    #[serde(default)]
+    pub primary_checkout_id: Option<String>,
     pub id: String,
     pub label: String,
     pub path: String,

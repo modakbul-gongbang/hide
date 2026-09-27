@@ -370,6 +370,7 @@ fn removing_the_selected_device_keeps_the_local_tabs_and_keyboard() {
 fn a_device_project_at_this_machines_path_does_not_hold_up_its_add_or_removal() {
     let mut runtime = runtime_with_home();
     let registration = |id: &str, device: &str| crate::model::WorkspaceRegistration {
+        primary_checkout_id: None,
         id: id.to_owned(),
         label: "same".to_owned(),
         path: "/work/same".to_owned(),

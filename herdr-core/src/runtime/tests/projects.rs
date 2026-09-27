@@ -425,6 +425,7 @@ fn a_stale_precomputed_catalog_keeps_the_last_accepted_one() {
 
     let stale = session_sync::PrecomputedCatalog {
         registrations: vec![WorkspaceRegistration {
+            primary_checkout_id: None,
             id: "workspace:stale".to_owned(),
             label: "stale".to_owned(),
             path: cwd.clone(),
@@ -904,6 +905,7 @@ fn workspace_creation_failures_retire_inflight_and_keep_partial_registration_vis
 
     let partial_path = "/tmp/hide-workspace-partial";
     let registration = WorkspaceRegistration {
+        primary_checkout_id: None,
         id: "workspace:partial".to_owned(),
         label: "Partial".to_owned(),
         path: partial_path.to_owned(),
@@ -1634,6 +1636,7 @@ fn inactive_fold_events_toggle_project_path_and_device_state_independently() {
         label: id.to_owned(),
         path: checkout_path.to_owned(),
         is_worktree,
+        is_primary: !is_worktree,
         worktree: Some(crate::model::WorktreeSnapshot {
             merged: Some(true),
             ..Default::default()
@@ -1901,6 +1904,7 @@ fn a_registration_herdr_already_has_a_workspace_for_is_listed_once() {
         cwds: vec![checkout_path.to_owned()],
     }];
     let registrations = vec![WorkspaceRegistration {
+        primary_checkout_id: None,
         id: workspace::workspace_id_for_path(Path::new(checkout_path)),
         label: "Duplicate".to_owned(),
         path: checkout_path.to_owned(),
@@ -2008,6 +2012,7 @@ fn closing_the_last_projected_pane_leaves_an_empty_checkout_without_an_error() {
     let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
     let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
     let registration = WorkspaceRegistration {
+        primary_checkout_id: None,
         id: workspace_id.clone(),
         label: "Last pane".to_owned(),
         path: checkout_path.to_owned(),
@@ -2086,6 +2091,7 @@ fn a_foreign_stale_projection_is_not_mistaken_for_checkout_pane_retirement() {
     let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
     let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
     let registration = WorkspaceRegistration {
+        primary_checkout_id: None,
         id: workspace_id.clone(),
         label: "Focused checkout".to_owned(),
         path: checkout_path.to_owned(),
@@ -2634,4 +2640,231 @@ fn a_worktree_creation_naming_an_unknown_agent_is_refused() {
         Some("worktree.create_unknown_agent")
     );
     assert!(runtime.snapshot().task_operation.is_none());
+}
+
+/// The saved home choice is independent of Git's main worktree and focus.
+#[test]
+fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path().canonicalize().unwrap();
+    let repo = root.join("repo");
+    let linked = root.join("linked");
+    std::fs::create_dir(&repo).unwrap();
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&[
+        "-c",
+        "user.name=Fixture",
+        "-c",
+        "user.email=fixture@example.invalid",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "Initial",
+    ]);
+    git(&[
+        "worktree",
+        "add",
+        "-q",
+        "-b",
+        "home",
+        linked.to_str().unwrap(),
+    ]);
+    let registration = workspace::registration(repo.to_str().unwrap(), "Project", "local").unwrap();
+    let main_id = workspace::checkout_id_for_path(&registration.id, &repo);
+    let linked_id = workspace::checkout_id_for_path(&registration.id, &linked);
+    let worktrees = crate::model::WorktreeCatalogSnapshot {
+        projects: vec![crate::model::ProjectWorktreesSnapshot {
+            root_path: repo.to_string_lossy().into_owned(),
+            worktrees: vec![
+                crate::model::WorktreeSnapshot {
+                    path: repo.to_string_lossy().into_owned(),
+                    is_main: true,
+                    ..Default::default()
+                },
+                crate::model::WorktreeSnapshot {
+                    path: linked.to_string_lossy().into_owned(),
+                    is_main: false,
+                    merged: Some(true),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }],
+    };
+    let state_path = root.join("state.json");
+    let boot = || {
+        Runtime::new(
+            CoreOptions {
+                schema_version: SCHEMA_VERSION,
+                app_state_path: state_path.to_string_lossy().into_owned(),
+                herdr_socket_path: None,
+                herdr_bin_path: None,
+                host_helper_dir: None,
+                host_helper_root: None,
+                workspace_views_path: None,
+                shortcut_import_path: None,
+            },
+            environment::EnvironmentReport {
+                statuses: vec![],
+                herdr_socket_path_override: None,
+                home_path: None,
+                codex_home: None,
+            },
+        )
+    };
+    let set = |id: &str| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": "set_primary_checkout",
+            "payload": { "workspace_id": registration.id, "checkout_id": id }
+        }))
+        .unwrap()
+    };
+    let mut runtime = boot();
+    runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
+    runtime.ingest_worktrees(worktrees.clone());
+    runtime.rebuild_catalog();
+    assert_eq!(
+        runtime.snapshot.navigator.workspaces[0].checkouts[0].id,
+        main_id
+    );
+    assert!(runtime.snapshot.navigator.workspaces[0].checkouts[0].is_primary);
+    assert!(
+        !runtime.dispatch_json(&set(&main_id)),
+        "the default home is already selected"
+    );
+    let focus = runtime.snapshot.navigator.focused_checkout_id.clone();
+    assert!(runtime.dispatch_json(&set(&linked_id)));
+    assert_eq!(runtime.snapshot.navigator.focused_checkout_id, focus);
+    let project = &runtime.snapshot.navigator.workspaces[0];
+    assert_eq!(project.checkouts[0].id, linked_id);
+    assert!(project.checkouts[0].is_primary);
+    assert!(!project.checkouts[1].is_primary);
+    assert!(
+        !project.inactive_checkouts.checkout_ids.contains(&linked_id),
+        "even a settled home stays visible"
+    );
+    let snapshot = serde_json::to_value(runtime.snapshot()).unwrap();
+    assert_eq!(
+        snapshot["navigator"]["workspaces"][0]["checkouts"][0]["is_primary"],
+        true
+    );
+    let before = std::fs::read(&state_path).unwrap();
+    assert!(!runtime.dispatch_json(&set(&linked_id)));
+    assert_eq!(std::fs::read(&state_path).unwrap(), before);
+    runtime.rebuild_catalog();
+    assert!(
+        runtime.snapshot.navigator.workspaces[0]
+            .checkouts
+            .iter()
+            .find(|c| c.id == linked_id)
+            .unwrap()
+            .is_primary
+    );
+    drop(runtime);
+    let mut restored = boot();
+    assert_eq!(
+        restored.snapshot.ui_state.workspace_registrations[0]
+            .primary_checkout_id
+            .as_deref(),
+        Some(linked_id.as_str())
+    );
+    restored.ingest_worktrees(worktrees);
+    restored.rebuild_catalog();
+    assert!(
+        restored.snapshot.navigator.workspaces[0]
+            .checkouts
+            .iter()
+            .find(|c| c.id == linked_id)
+            .unwrap()
+            .is_primary
+    );
+    assert!(restored.dispatch_json(&set(&main_id)));
+    assert!(restored.snapshot.navigator.workspaces[0].checkouts[0].is_primary);
+    assert_eq!(
+        restored.snapshot.navigator.workspaces[0].checkouts[0].id,
+        main_id
+    );
+}
+
+#[test]
+fn primary_checkout_refuses_missing_plain_folder_and_remote_targets() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut runtime = runtime();
+    let registration =
+        workspace::registration(dir.path().to_str().unwrap(), "Folder", "local").unwrap();
+    runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
+    runtime.rebuild_catalog();
+    let checkout_id = runtime.snapshot.navigator.workspaces[0].checkouts[0]
+        .id
+        .clone();
+    let event = |workspace_id: &str, checkout_id: &str| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": "set_primary_checkout",
+            "payload": {"workspace_id": workspace_id, "checkout_id": checkout_id}
+        }))
+        .unwrap()
+    };
+    let assert_refusal =
+        |runtime: &mut Runtime, workspace_id: &str, checkout_id: &str, kind: &str| {
+            let registrations = runtime.snapshot.ui_state.workspace_registrations.clone();
+            let navigator = runtime.snapshot.navigator.clone();
+            assert!(runtime.dispatch_json(&event(workspace_id, checkout_id)));
+            assert_eq!(
+                runtime.snapshot.ui_state.workspace_registrations,
+                registrations
+            );
+            assert_eq!(runtime.snapshot.navigator, navigator);
+            assert_eq!(
+                runtime.snapshot.status.diagnostics.last().unwrap().kind,
+                kind
+            );
+            assert!(runtime.snapshot.status.last_error.is_none());
+        };
+    assert_refusal(
+        &mut runtime,
+        &registration.id,
+        &checkout_id,
+        "workspace.primary_plain_folder",
+    );
+    assert_refusal(
+        &mut runtime,
+        "absent",
+        &checkout_id,
+        "workspace.primary_unregistered",
+    );
+    runtime.snapshot.navigator.workspaces[0].is_git = true;
+    assert_refusal(
+        &mut runtime,
+        &registration.id,
+        "other-project-checkout",
+        "workspace.primary_missing_checkout",
+    );
+    runtime.snapshot.navigator.workspaces[0].checkouts[0].exists = false;
+    assert_refusal(
+        &mut runtime,
+        &registration.id,
+        &checkout_id,
+        "workspace.primary_missing_checkout",
+    );
+    runtime.snapshot.ui_state.workspace_registrations[0].device_id = "device".to_owned();
+    assert_refusal(
+        &mut runtime,
+        &registration.id,
+        &checkout_id,
+        "workspace.primary_remote_read_only",
+    );
 }
