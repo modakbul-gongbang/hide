@@ -3,11 +3,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import test from "node:test";
 import { createFakeRemote } from "../helpers/fake-remote.mjs";
 import { hq } from "../helpers/hcoord-hq.mjs";
 
 const CLI = path.resolve(import.meta.dirname, "../../dist/hcoord/cli.js");
+const require = createRequire(import.meta.url);
+const { remoteCallAsync } = require("../../dist/hcoord/remote.js");
 
 /** An agent's view of hcoord on a remote host: its own HOME and outbox. */
 function remoteAgent(fake, host) {
@@ -31,6 +34,28 @@ async function setup(t) {
   const parent = coordinator.ok("agent", "register", "--machine", "local", "--session", "s-parent", "--instance", "i-parent", "--pane", "parent-pane", "--name", "parent");
   return { fake, coordinator, parent };
 }
+
+test("an asynchronous remote call kills SSH when stderr crosses its cumulative cap", async (t) => {
+  const fake = createFakeRemote(CLI);
+  t.after(() => fake.cleanup());
+  fake.addMachine("mini", "mini-ssh");
+  fake.flag("mini", "stderr-flood");
+  const originalPath = process.env.PATH;
+  const originalRoot = process.env.FAKE_REMOTE_ROOT;
+  process.env.PATH = fake.env().PATH;
+  process.env.FAKE_REMOTE_ROOT = fake.root;
+  t.after(() => {
+    if (originalPath === undefined) delete process.env.PATH; else process.env.PATH = originalPath;
+    if (originalRoot === undefined) delete process.env.FAKE_REMOTE_ROOT; else process.env.FAKE_REMOTE_ROOT = originalRoot;
+  });
+
+  const started = Date.now();
+  const result = await remoteCallAsync("mini-ssh", ["take", "--limit", "1"]);
+
+  assert.equal(result.status, null);
+  assert.ok(Buffer.byteLength(result.stderr) <= 16 * 1024 * 1024);
+  assert.ok(Date.now() - started < 5_000, "the overflowing SSH process is killed promptly");
+});
 
 test("a saved Herdr machine name registers a remote agent with the existing command and binds its HQ", async (t) => {
   const { fake, coordinator, parent } = await setup(t);

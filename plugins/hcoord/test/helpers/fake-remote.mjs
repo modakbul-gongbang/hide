@@ -95,6 +95,11 @@ const hostDir = path.join(root, "h", machine.label);
 fs.appendFileSync(path.join(hostDir, "ssh.jsonl"), JSON.stringify(command) + "\n");
 if (fs.existsSync(path.join(hostDir, "down"))) { process.stderr.write("ssh: connect to host " + target + " port 22: Operation timed out\n"); process.exit(255); }
 if (fs.existsSync(path.join(hostDir, "auth-denied"))) { process.stderr.write(target + ": Permission denied (publickey).\n"); process.exit(255); }
+if (fs.existsSync(path.join(hostDir, "stderr-flood"))) {
+  const block = Buffer.alloc(64 * 1024, "x");
+  for (let written = 0; written < 17 * 1024 * 1024; written += block.length) fs.writeSync(2, block);
+  process.exit(19);
+}
 const env = { PATH: path.dirname(process.execPath) + ":" + path.join(root, "bin") + ":/usr/bin:/bin", HOME: path.join(hostDir, "home"), FAKE_REMOTE_ROOT: root, FAKE_REMOTE_HOST: machine.label };
 const result = spawnSync("/bin/sh", ["-c", command], { env, encoding: "utf8", input: "" });
 process.stdout.write(result.stdout); process.stderr.write(result.stderr); process.exit(result.status ?? 255);

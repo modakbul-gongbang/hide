@@ -169,12 +169,28 @@ export function remoteCall(machine: string, argv: string[]): Record<string, unkn
 export function remoteCallAsync(target: string, argv: string[], signal?: AbortSignal): Promise<Raw> {
   return new Promise((resolve) => {
     const child = spawn("ssh", sshArgs(target, argv), { stdio: ["ignore", "pipe", "pipe"], signal, killSignal: "SIGKILL" });
-    let stdout = "", stderr = "", done = false;
+    let stdout = "", stderr = "", stdoutBytes = 0, stderrBytes = 0, done = false;
     const finish = (status: number | null): void => { if (done) return; done = true; clearTimeout(timer); resolve({ status, stdout, stderr }); };
-    const timer = setTimeout(() => { child.kill("SIGKILL"); finish(null); }, REMOTE_CALL_TIMEOUT_MS);
-    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); if (stdout.length > REMOTE_OUTPUT_BYTES) { child.kill("SIGKILL"); finish(null); } });
-    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8").slice(0, 4096); });
-    child.on("error", (error) => { stderr += String(error); finish(null); });
+    const stop = (): void => { if (done) return; child.kill("SIGKILL"); finish(null); };
+    const timer = setTimeout(stop, REMOTE_CALL_TIMEOUT_MS);
+    child.stdout.on("data", (chunk: Buffer) => {
+      if (done) return;
+      stdoutBytes += chunk.byteLength;
+      if (stdoutBytes > REMOTE_OUTPUT_BYTES) { stop(); return; }
+      stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      if (done) return;
+      stderrBytes += chunk.byteLength;
+      if (stderrBytes > REMOTE_OUTPUT_BYTES) { stop(); return; }
+      stderr += chunk.toString("utf8");
+    });
+    child.on("error", (error) => {
+      if (done) return;
+      const message = String(error);
+      if (stderrBytes + Buffer.byteLength(message) <= REMOTE_OUTPUT_BYTES) stderr += message;
+      finish(null);
+    });
     child.on("close", (code) => finish(code));
   });
 }
