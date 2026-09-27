@@ -854,7 +854,7 @@ export function createActions(dispatch: DispatchFn) {
         (deviceId === "local" ? rest()?.navigator?.workspaces : rest()?.status?.remote?.find((row) => row.target_id === deviceId)?.session?.workspaces)
           ?.flatMap((row) => row.checkouts)
           .find((row) => row.id === checkoutId)?.path ?? null;
-      beginOpening({ checkoutId, deviceId, path });
+      beginOpening({ checkoutId, deviceId, path, workspaceId, expanded });
       const front = rest()?.navigator?.focused_device_id ?? "local";
       if (front === deviceId) return focusCheckout(workspaceId, checkoutId, expanded);
       if (deviceId === "local") {

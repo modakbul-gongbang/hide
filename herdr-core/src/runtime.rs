@@ -1598,7 +1598,6 @@ impl Runtime {
         // A stale sidebar row has no action left to offer. Reject the whole
         // open/disclosure intent before focus, persistence or visit effects.
         if let Event::FocusCheckout(payload) = &event
-            && payload.expanded.is_some()
             && !self.snapshot.navigator.workspaces.iter().any(|workspace| {
                 workspace.id == payload.workspace_id
                     && workspace
