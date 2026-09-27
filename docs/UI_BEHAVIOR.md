@@ -28,7 +28,8 @@ Everything inside it sits on `--card`: the tabs, the document header, the editor
 The pane header actions and the right part of an agent's lines under an open panel stay under it; Pin is the remedy.
 Pin docks the panel instead: the agents end at its left edge and their terminals resize once to fit, and Unpin gives them the body's width back.
 Pin is not a fourth state: it is stored per Workspace with the width, and a pinned panel still closes, opens, and expands, its agents keeping their docked width under an expanded panel so expanding and restoring resize nothing.
-The gap on the panel's left is its resize grip, a divider like the others: an accent line in it on hover and keyboard focus, a guide line while dragging that lands once on release, one step per arrow key while focused, and neither the panel nor the agents to its left narrower than the area minimum; the width is the Workspace's share of the body and survives a restart.
+The gap on the panel's left is its resize grip (`Component / Side panel grip`): nothing at rest, and on hover, keyboard focus and while dragging a hairline centred in the gap with a small ⇆ pill at its middle that overlaps the card's edge; the grip travels with the pointer as the guide and lands once on release, one step per arrow key while focused, and neither the panel nor the agents to its left narrower than the area minimum.
+Every panel that has a width resizes this way, floating or pinned, the tools-only panel included; the tools-only panel keeps a width of its own, the tool column's until it is first resized, and both widths are the Workspace's shares of the body and survive a restart.
 The agents left of the panel are live: clicking a pane or a tab there focuses it and typing goes to it while the panel stays up, and chords such as ⌘F and ⌥W act where the keyboard is, the panel's View area or the pane.
 While an expanded panel covers them, the agents take no pointer or keyboard, so Tab never walks into a terminal out of sight.
 
@@ -37,6 +38,7 @@ Its second row is level with the agents' tab strip: the active document's header
 The tool column holds one tool at a time, with no title row and no close: a tab swaps the tool, and the column's toggle hides and shows it, keeping the tool it held.
 With stacked View areas each area keeps its own tab strip, and the first row holds the top area's tabs and the panel actions.
 With no view open and the tools shown, the panel is only the tool column, including after the last view closes, and its first row holds the tool tabs, Pin, and the panel toggle, so the tools alone can be pinned beside the agents.
+⌘E shows the panel on the Explorer with the tool column visible, opening a closed panel and swapping History out, and hides the column when the Explorer already shows; the sidebar's Agents/Projects switch has no default chord and can be bound in Settings, Shortcuts.
 With the tools hidden too, the panel keeps its width, its first row holds New tab, the tool column's toggle, Pin, and the panel toggle, and its body only says that no file or diff is open and that ⌘P opens a file.
 Only views expand: an expanded panel with no view open is drawn at its width, so the agents stay in reach.
 

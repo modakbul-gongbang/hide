@@ -116,6 +116,51 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await panel.locator('[data-tool-tab="explorer"]').click();
     await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
 
+    // The tools-only panel resizes like the others (issue 170, "Follow-ups
+    // from the review"): its gap shows the grip on hover and while dragging,
+    // and a release stores a width of its own.
+    const toolsEdge = panel.locator("[data-panel-edge]");
+    const grip = toolsEdge.locator("[data-panel-grip]");
+    const opacity = () => grip.evaluate((element) => getComputedStyle(element).opacity);
+    expect(await opacity()).toBe("0");
+    const toolsEdgeBox = (await toolsEdge.boundingBox())!;
+    const bodyAtTools = (await body.boundingBox())!;
+    await page.mouse.move(toolsEdgeBox.x + toolsEdgeBox.width / 2, toolsEdgeBox.y + 200);
+    await expect.poll(opacity).toBe("1");
+    await page.mouse.down();
+    await page.mouse.move(bodyAtTools.x + bodyAtTools.width - 500, toolsEdgeBox.y + 200, { steps: 8 });
+    await expect(page.locator("[data-panel-guide] [data-panel-grip]")).toBeVisible();
+    await page.mouse.up();
+    await expect(page.locator("[data-panel-guide]")).toHaveCount(0);
+    expect(last.get("workspace_view")).toEqual({ tools_share: expect.any(Number) });
+    await expect.poll(async () => (await panel.boundingBox())!.width).toBeCloseTo(500, -1);
+    await page.mouse.move(bodyAtTools.x + 40, bodyAtTools.y + 40);
+
+    // ⌘E hides the column while the Explorer shows, shows it again on the
+    // Explorer at the tools-only width it keeps, swaps History for it, and
+    // opens a closed panel on it.
+    await page.keyboard.press("Meta+KeyE");
+    expect(last.get("workspace_view")).toEqual({ tools: false });
+    await expect(panel).toHaveAttribute("data-panel-content", "empty");
+    await page.keyboard.press("Meta+KeyE");
+    expect(last.get("workspace_view")).toEqual({ tool: "explorer" });
+    await expect(panel).toHaveAttribute("data-panel-content", "tools");
+    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
+    await expect.poll(async () => (await panel.boundingBox())!.width).toBeCloseTo(500, -1);
+    await panel.locator('[data-tool-tab="changes"]').click();
+    await expect(page.locator('[data-tool="changes"]')).toBeVisible();
+    await page.keyboard.press("Meta+KeyE");
+    expect(last.get("workspace_view")).toEqual({ tool: "explorer" });
+    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
+    await page.keyboard.press("Meta+Shift+KeyB");
+    await expect(workspace).toHaveAttribute("data-panel", "closed");
+    await page.keyboard.press("Meta+KeyE");
+    expect(last.get("workspace_view")).toEqual({ tool: "explorer" });
+    await expect(workspace).toHaveAttribute("data-panel", "open");
+    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
+    // The sidebar switch keeps no chord of its own.
+    await expect(page.locator("[data-sidebar]")).toHaveAttribute("data-sidebar", "agents");
+
     // A file opened from the Explorer widens the panel to its stored width,
     // over agents that keep the body's width underneath, so no terminal
     // resizes; the agents left of the panel stay live (issue 170).
