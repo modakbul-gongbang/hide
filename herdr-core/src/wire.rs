@@ -306,11 +306,11 @@ record_conversions!(ev);
 /// it was spawned from. It is the only lineage there is: Herdr records none,
 /// so an agent is a child exactly when its spawner said so.
 ///
-/// Hide's own fork writes it, and so does an orchestrator that starts a child
-/// with `agent.start` (sasu's implementor); both declare it afterwards with
+/// hcoord is the sole writer, including for a child created by Hide's Fork.
+/// It declares the token after both executions exist with
 /// `pane.report_metadata`, the same display-only channel the label plugin and
 /// the hook helper already use. The value is the parent's pane id, it dies
-/// with the pane, and it is read here and nowhere else.
+/// with the pane, and Hide reads it here and nowhere else.
 pub(crate) const PARENT_PANE_TOKEN: &str = "parent_pane";
 
 /// Stable machine identity paired with `parent_pane` for cross-device
