@@ -132,6 +132,7 @@ impl Runtime {
             && !section_visible(RightPanelSection::Explorer)
             && self.active_diff_tab().is_none()
             && self.visible_view_diffs().is_empty()
+            && !self.new_tab_visible()
         {
             return None;
         }

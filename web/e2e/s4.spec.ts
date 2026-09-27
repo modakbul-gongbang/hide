@@ -149,6 +149,17 @@ test("registered subfolder History opens inside patches and hides sibling change
     await expect(page.locator('[data-patch-view] .cm-content')).toContainText("+inside working");
     await page.locator('[data-history-group="committed"][data-history-path="branch.txt"]').click();
     await expect(page.locator('[data-patch-view] .cm-content')).toContainText("+inside committed");
+
+    await page.locator('[data-view-new-tab]').click();
+    const diff = page.locator('[data-new-tab-page]').getByRole("button", { name: "Diff", exact: true });
+    await expect(diff).toBeVisible();
+    const emptyId = await page.locator('[data-browser-display]').getAttribute("data-browser-display");
+    await diff.click();
+    await expect(page.locator('[data-palette-row$="/registered/inside.txt"]')).toBeVisible();
+    await expect(page.locator('[data-palette-row$="/outside.txt"]')).toHaveCount(0);
+    await page.locator('[data-palette-row$="/registered/inside.txt"]').click();
+    await expect(page.locator(`[role="tab"][data-display="${emptyId}"]`)).toHaveAttribute("data-tab-kind", "diff");
+    await expect(page.locator('[data-patch-view] .cm-content')).toContainText("+inside working");
   } finally {
     daemon?.stop();
     herdr.stop();

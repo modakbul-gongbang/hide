@@ -18,7 +18,7 @@ import { hostRegistry, matchHost, REGISTRY, storedBindings, type CommandId } fro
 import { editorFor, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type Cycle } from "./ui";
-import { drawnViews, viewAreaInUse } from "./viewFocus";
+import { drawnViews, installKeyboardOwner, keyboardOwner } from "./viewFocus";
 
 /**
  * Recent Panels: every surface this machine holds, most recent first, so
@@ -80,7 +80,7 @@ export function projectCycle(rest: SnapshotRest | null): Cycle | null {
  */
 export function observeRecent(rest: SnapshotRest | null, moved: boolean) {
   const local = remoteContext(rest) === null;
-  observeSurfaces(rest, local && moved ? currentSurface(rest, viewAreaInUse(rest)) : null);
+  observeSurfaces(rest, local && moved ? currentSurface(rest, keyboardOwner().kind === "view") : null);
   if (local && moved) observeProject(rest?.navigator?.focused_workspace_id);
 }
 
@@ -105,6 +105,7 @@ function advance(cycle: Cycle, backward: boolean): Cycle {
 export function installKeyboard(actions: Actions): () => void {
   const ui = () => useUiStore.getState();
   const host = hostKind();
+  const removeKeyboardOwner = installKeyboardOwner();
   // The modifier whose release commits the running cycle: ⌥ for the ⌥ family,
   // ⌃ for the desktop app's ⌃Tab.
   let cycleRelease = "Alt";
@@ -114,7 +115,7 @@ export function installKeyboard(actions: Actions): () => void {
       case "new_tab":
         return actions.createTab();
       case "close_tab":
-        return actions.closeTab();
+        return actions.closeFocused();
       case "reopen_closed_tab":
         return actions.reopenClosed();
       case "new_workspace":
@@ -152,8 +153,8 @@ export function installKeyboard(actions: Actions): () => void {
         // View area they are in finds in its document, anywhere else the
         // focused terminal pane's find bar opens, even with an editor open
         // beside it.
-        const { editor, rest } = useShellStore.getState();
-        if (editorFor(editor) && drawnViews() && viewAreaInUse(rest)) return actions.requestEditorFind();
+        const { editor } = useShellStore.getState();
+        if (editorFor(editor) && drawnViews() && keyboardOwner().kind === "view") return actions.requestEditorFind();
         return actions.openFind();
       }
       case "save_file":
@@ -297,6 +298,7 @@ export function installKeyboard(actions: Actions): () => void {
   window.addEventListener("keyup", onKeyUp, true);
   window.addEventListener("blur", onBlur);
   return () => {
+    removeKeyboardOwner();
     unsubscribeMenu?.();
     unsubscribeBindings?.();
     window.removeEventListener("keydown", onKeyDown, true);

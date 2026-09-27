@@ -2,9 +2,22 @@ import { StrictMode } from "react";
 import type { Root } from "react-dom/client";
 import { Gallery, GalleryFrame } from "./Gallery";
 import { GALLERY, type Section } from "./manifest";
+import { sceneParams, SidebarScene } from "./SidebarScene";
 
 export function mountGallery(root: Root) {
   const params = new URLSearchParams(window.location.search);
+  const scene = params.get("scene");
+  if (scene !== null) {
+    // A scene seeds the app's own stores, so it is one document per scene.
+    if (scene !== "projects-sidebar") throw new Error(`Unknown gallery scene ${scene}`);
+    document.title = "hide · Projects sidebar scene";
+    root.render(
+      <StrictMode>
+        <SidebarScene {...sceneParams(params)} />
+      </StrictMode>,
+    );
+    return;
+  }
   const frame = params.get("frame");
   const theme = params.get("theme") === "light" ? "light" : "dark";
   if (frame) {
