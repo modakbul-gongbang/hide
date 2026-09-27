@@ -1,15 +1,17 @@
 // The Project Overview board on an isolated pinned Herdr and hided (PRD
-// web-project-overview, task-agents-views): a Git project with a primary
-// checkout and four worktrees at different stages whose issues a fake `gh`
-// answers, a folder project with agents, and a project with no agent at all.
-// It enters by the project name and by ⌘⇧H (B1), reads the header facts (B2),
-// the ad hoc strip and the five columns with the backlog and Done folded, a
-// task card headed by its issue and an untracked one by its branch, Start
-// agent on hover, a needs-you card raised in its own column, opens a checkout
-// from a card header and a pane from an agent row, switches to the Agents
-// board, the All projects boards with a project that has no source, and draws
-// the folder and empty states. The sidebar is the scope picker: All projects
-// on top, the project row marked on its Overview, and the view kept from one
+// web-project-overview, task-agents-views, and the issue-first rework of
+// 2026-09-28): a Git project with a primary checkout and four worktrees at
+// different stages whose issues a fake `gh` answers, a folder project with
+// agents, and a project with no agent at all. It enters by the project name
+// and by ⌘⇧H (B1), reads the header facts (B2), the Backlog, In progress and
+// Done columns, a task card headed by its issue and a worktree with none by
+// its branch with 이슈 연결 on hover, a needs-you card raised in its own
+// column and counted on the Agents tab, the List mode, opens a checkout from a
+// card header and a pane from an agent row, the Agents inbox, the All
+// projects boards, a Local issue made with C in a folder project and closed
+// again, Settings › Issues, and an issue started into a worktree that lands
+// linked in In progress. The sidebar is the scope picker: All projects on
+// top, the project row marked on its Overview, and the view kept from one
 // project to the next, Sessions included. Light and Dark captures land in
 // HIDE_E2E_SCREENSHOT_DIR.
 
@@ -81,6 +83,7 @@ case "$1 $2" in
   "pr list") echo '[]' ;;
   "repo view") echo '{"nameWithOwner":"acme/repo"}' ;;
   "issue list") echo '${issues}' ;;
+  "issue view") echo '{"body":"그래프 뷰의 본문"}' ;;
   "api graphql") echo '${dependencies}' ;;
   *) echo "unsupported: $*" >&2; exit 1 ;;
 esac
@@ -180,11 +183,11 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await expect(page.locator('[data-stat="open-prs"]')).toHaveText("0 open PRs", { timeout: 20_000 });
     await expect(page.locator('[data-stat="disk"]')).toHaveText(/^\d+(\.\d)? (B|KB|MB|GB)$/, { timeout: 30_000 });
     await expect(page.locator('[data-stat="merged"]')).toHaveText("1 merged → 정리", { timeout: 20_000 });
+    await expect(page.locator('[data-stat="open-issues"]')).toHaveText(/^2 open issues\s*· GitHub$/, { timeout: 20_000 });
 
-    // The primary checkout is on the ad hoc strip; each worktree in its Git column (B4, B5).
-    const adhoc = page.locator("[data-overview-adhoc]");
-    await expect(adhoc.locator("[data-overview-card]")).toHaveCount(1);
-    await expect(adhoc.locator(`[data-agent-open="${mainPane}"]`)).toBeVisible();
+    // The primary checkout works on no issue, so it is on the Agents inbox
+    // only; each worktree is in its Git column (B4, B5).
+    await expect(page.locator(`[data-overview-columns="tasks"] [data-agent-open="${mainPane}"]`)).toHaveCount(0);
     const column = (id: string) => page.locator(`[data-overview-column="${id}"]`);
     await expect(column("working").locator("[data-overview-card]")).toHaveCount(3, { timeout: 20_000 });
     // The open issue no checkout works on is the backlog; the one a worktree
@@ -198,24 +201,28 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     const linked = column("working").locator('[data-overview-card][data-task-key="github:acme/repo#2"]');
     await expect(linked).toContainText("태스크 출처 어댑터");
     await expect(linked.locator("[data-task-id]")).toHaveAttribute("href", "https://github.com/acme/repo/issues/2");
-    await expect(linked.locator("[data-no-task]")).toHaveCount(0);
+    await expect(linked.locator("[data-card-link]")).toHaveCount(0);
     // The asking agent's card carries the halo and leads 작업 중 without leaving it (B7).
     const asking = column("working").locator("[data-overview-card]").first();
     await expect(asking).toHaveAttribute("data-needs-you", "true", { timeout: 20_000 });
     // Its row carries the question on a second line (B8).
     await expect(asking.locator(`[data-pane="${askingPane}"] [data-agent-line="request"]`)).toContainText("Done 그룹 회색 링을 바꿔도 될까요?");
-    // The waiting band under the header names it too, where it works and
-    // what it asks, and leads with it (task-agents-views D-11, B10).
-    const band = overview.locator("[data-waiting-band]");
-    const bandRow = band.locator(`[data-waiting-row="${askingPane}"]`);
-    await expect(band.locator("[data-waiting-row]").first()).toHaveAttribute("data-waiting-row", askingPane);
-    await expect(bandRow.locator("[data-waiting-where]")).toHaveText("prd/asking");
-    await expect(bandRow.locator("[data-waiting-line]")).toHaveText("Done 그룹 회색 링을 바꿔도 될까요?");
+    // No band under the header: the Agents tab counts what waits on the operator.
+    await expect(overview.locator("[data-waiting-band]")).toHaveCount(0);
+    await expect(overview.locator('[data-overview-tab="agents"] [data-agents-waiting]')).toBeVisible();
     const working = column("working").locator("[data-overview-card]", { hasText: "prd/web-overview-with-a-long-branch-name" });
-    // An untracked checkout is titled by its branch and says it has no task (D-07).
+    // A worktree with no issue leads with its branch and offers 이슈 연결 on hover (D-07).
     await expect(working.locator('[data-fact="files"]')).toHaveText("1 files");
     await expect(working.locator('[data-fact="ahead"]')).toHaveText("↑1");
-    await expect(working.locator("[data-no-task]")).toBeVisible();
+    await expect(working.locator("[data-card-branch]")).toHaveText("prd/web-overview-with-a-long-branch-name");
+    await working.hover();
+    await expect(working.locator("[data-card-link]")).toBeVisible();
+    await working.locator("[data-card-link]").click();
+    await expect(page.locator("[data-link-issue]")).toBeVisible();
+    await expect(page.locator("[data-link-issue-item]")).toHaveCount(2);
+    await screenshot(page, "overview-link-issue-dark");
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-link-issue]")).toHaveCount(0);
     // Done starts folded to one line per card until opened; the merged fact opens it.
     await expect(column("done")).toHaveAttribute("data-collapsed", "true");
     await expect(column("done").locator("[data-overview-collapsed-names]")).toContainText("prd/shipped", { timeout: 20_000 });
@@ -250,38 +257,46 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await expect(graph.locator("[data-dependency-edge]")).toHaveCount(1);
     await expect(graph.locator("[data-dependency-edge]")).toHaveAttribute("d", /^M \S+ \S+ C /);
     await expect(page.locator("[data-dependency-unrelated]")).toHaveCount(0);
-    await expect(page.locator("[data-tasks-dependencies] [data-no-task]")).toHaveCount(0);
+    await expect(page.locator("[data-tasks-dependencies] [data-overview-card]:not([data-task-key])")).toHaveCount(0);
     for (const theme of ["dark", "light"] as const) {
       await chooseTheme(page, theme);
       await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
       await screenshot(page, `overview-dependencies-${theme}`);
     }
     // The mode is the page's: All projects opens on it too, with each card's
-    // project above its title and a project without a source saying it has
-    // nothing to draw (B9, D-10).
+    // project beside its id (B9, D-10).
     await page.locator("[data-go-main]").click();
     const mainScreen = page.locator("[data-main-screen]");
     await expect(mainScreen.locator("[data-tasks-mode]")).toHaveAttribute("data-tasks-mode", "dependencies");
     await expect(mainScreen.locator("[data-dependency-edge]")).toHaveCount(1);
     await expect(mainScreen.locator('[data-dependency-layer="0"] [data-card-project]')).toHaveText("repo");
-    await expect(mainScreen.locator("[data-unconnected-project]")).toContainText("의존 관계를 그릴 태스크가 없음");
     await chooseTheme(page, "light");
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
     await screenshot(page, "all-projects-dependencies-light");
-    await page.locator('[data-tasks-mode-item="board"]').click();
+    // The List mode: the same tasks one row each, the moving work first, and a
+    // row waiting on the operator unfolded to its agents.
+    await page.locator('[data-tasks-mode-item="list"]').click();
     await repoRow.click();
     await expect(overview).toHaveAttribute("data-overview-view", "tasks");
+    const list = page.locator("[data-tasks-list]");
+    await expect(list.locator("[data-list-group]").first()).toHaveAttribute("data-list-group", "working");
+    await expect(list.locator('[data-list-row][data-needs-you="true"]').first()).toContainText("Done 그룹 회색 링을 바꿔도 될까요?");
+    for (const theme of ["dark", "light"] as const) {
+      await chooseTheme(page, theme);
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await screenshot(page, `overview-list-${theme}`);
+    }
+    await page.locator('[data-tasks-mode-item="board"]').click();
     await expect(page.locator('[data-overview-columns="tasks"]')).toBeVisible();
 
-    // The Agents board: a card per agent in lifecycle columns, each naming its
-    // checkout and its task, or that it has none (B11).
+    // The Agents inbox: the agents waiting on the operator first, each naming
+    // its issue or, with none, its checkout (B11).
     await page.locator('[data-overview-tab="agents"]').click();
     await expect(overview).toHaveAttribute("data-overview-view", "agents");
-    await expect(page.locator('[data-overview-columns="agents"] [data-overview-column]')).toHaveCount(3);
-    const askingCard = page.locator('[data-overview-column="active"]').locator(`[data-overview-root="${askingPane}"]`);
+    await expect(page.locator("[data-inbox-group]").first()).toHaveAttribute("data-inbox-group", "needs");
+    const askingCard = page.locator('[data-inbox-group="needs"]').locator(`[data-overview-root="${askingPane}"]`);
     await expect(askingCard).toBeVisible();
     await expect(askingCard).toContainText("prd/asking");
-    await expect(askingCard).toContainText("태스크 없음");
     for (const theme of ["dark", "light"] as const) {
       await chooseTheme(page, theme);
       await screenshot(page, `overview-agents-${theme}`);
@@ -308,8 +323,7 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await expect(page.locator('[data-main-stats] [data-stat="projects"]')).toHaveText("3 projects");
     await expect(page.locator('[data-main-stats] [data-stat="merged"]')).toHaveText("1 merged");
     // All projects has no Sessions, so it opens on its first view, Tasks: every
-    // project's tasks on one board, and a project with agents and no task
-    // source gathered below it (D-01, B15).
+    // project's tasks on one board (D-01, B15).
     const main = page.locator("[data-main-screen]");
     await expect(main).toHaveAttribute("data-main-view", "tasks");
     // The page's view is still Sessions, so the project opens on it again.
@@ -318,9 +332,9 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await allProjects.click();
     await expect(main).toHaveAttribute("data-main-view", "tasks");
     await expect(main.locator('[data-overview-column="backlog"] [data-overview-card]')).toHaveCount(1, { timeout: 20_000 });
-    await expect(main.locator("[data-unconnected-project]")).toHaveCount(1);
-    await expect(main.locator(`[data-waiting-row="${askingPane}"] [data-waiting-where]`)).toHaveText("repo · prd/asking");
-    await expect(main.locator("[data-unconnected-project]")).toContainText("fixture · 태스크 출처 연결 안 됨");
+    await expect(main.locator('[data-overview-column="backlog"] [data-card-project]')).toHaveText("repo");
+    await expect(main.locator("[data-unconnected-project]")).toHaveCount(0);
+    await expect(main.locator('[data-main-tab="agents"] [data-agents-waiting]')).toBeVisible();
     for (const theme of ["dark", "light"] as const) {
       await chooseTheme(page, theme);
       await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
@@ -356,39 +370,65 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await page.keyboard.press("Escape");
     await expect(workspace).toBeVisible();
 
-    // An agent row opens its pane (B8).
+    // An agent row opens its pane (B8); the primary checkout's agent works on
+    // no issue, so its row is on the Agents inbox.
     await page.keyboard.press("Meta+Shift+KeyH");
     await expect(overview).toBeVisible();
+    await page.locator('[data-overview-tab="agents"]').click();
     await page.locator(`[data-overview-screen] [data-agent-open="${mainPane}"]`).click();
     await expect(workspace).toBeVisible();
     await expect(page.locator(`[data-pane-view="${mainPane}"]`)).toHaveAttribute("data-focused", "true");
 
-    // A waiting band row opens the asking agent's pane, where it is answered (B10).
+    // An Agents inbox row opens the asking agent's pane, where it is answered (B10).
     await page.keyboard.press("Meta+Shift+KeyH");
     await expect(overview).toBeVisible();
-    await page.locator(`[data-waiting-row="${askingPane}"]`).click();
+    await page.locator('[data-overview-tab="agents"]').click();
+    await page.locator(`[data-agent-open="${askingPane}"]`).click();
     await expect(workspace).toBeVisible();
     await expect(page.locator(`[data-pane-view="${askingPane}"]`)).toHaveAttribute("data-focused", "true");
 
-    // A folder with agents shows only the ad hoc strip (B10). Its sidebar
-    // row opens its checkout, so its Overview is reached from All projects.
+    // A folder's issues are Local ones kept by Hide. Its agents work on no
+    // issue, so its board is the empty Backlog; C makes an issue, 만들고 바로
+    // 시작 goes on to the Start dialog with its first prompt, and the card's
+    // menu closes the issue again. Its sidebar row opens its checkout, so its
+    // Overview is reached from All projects.
     await page.locator("[data-go-main]").click();
     await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: /^fixture/ }).click();
-    await expect(overview).toHaveAttribute("data-overview-state", "adhoc");
-    await expect(page.locator("[data-overview-adhoc] [data-agent-open]")).toHaveCount(2);
-    await expect(page.locator("[data-overview-column]")).toHaveCount(0);
-    await screenshot(page, "overview-folder-light");
+    await page.locator('[data-overview-tab="tasks"]').click();
+    await expect(overview).toHaveAttribute("data-overview-state", "empty");
+    await expect(page.locator('[data-overview-column="backlog"] [data-backlog-empty]')).toBeVisible();
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.keyboard.press("c");
+    const newIssue = page.locator("[data-new-issue]");
+    await expect(newIssue).toBeVisible();
+    await expect(newIssue.locator("[data-new-issue-project]")).toContainText("fixture · Local");
+    await newIssue.locator("[data-new-issue-title]").fill("폴더 이슈");
+    await newIssue.locator("[data-new-issue-body]").fill("폴더에서 할 일");
+    await newIssue.locator("[data-new-issue-start]").click();
+    await screenshot(page, "new-issue-light");
+    await newIssue.locator("[data-new-issue-create]").click();
+    const start = page.locator("[data-start-issue]");
+    await expect(start).toBeVisible();
+    await expect(start.locator("[data-start-name]")).toHaveCount(0);
+    await expect(start.locator("[data-start-prompt]")).toHaveValue("로컬 이슈 L-1를 해결해줘: 폴더 이슈\n\n폴더에서 할 일");
+    await page.getByRole("button", { name: "취소" }).click();
+    const localCard = page.locator('[data-overview-column="backlog"] [data-overview-card]');
+    await expect(localCard).toHaveCount(1);
+    await expect(localCard.locator("[data-task-id]")).toHaveText("L-1");
+    await screenshot(page, "overview-local-issue-light");
+    await localCard.hover();
+    await localCard.locator("[data-card-menu]").click();
+    await page.locator('[data-card-issue-open="close"]').click();
+    await expect(page.locator('[data-overview-column="backlog"] [data-overview-card]')).toHaveCount(0);
 
-    // A project with no task source and no agent is the empty state: one
-    // sentence and the way to connect a source (B14); New agent on a folder
-    // opens its Workspace.
+    // A project with no agent and no issue is the empty Backlog with the way
+    // to make the first issue (B14); New agent on a folder opens its Workspace.
     await page.locator("[data-go-main]").click();
     await page.locator("[data-main-project]", { hasText: /^quiet/ }).click();
     await expect(overview).toHaveAttribute("data-overview-state", "empty");
-    // Nothing waits here, so there is no band at all (B10).
     await expect(page.locator("[data-waiting-band]")).toHaveCount(0);
-    await expect(page.locator("[data-overview-empty] [data-connect-source]")).toBeVisible();
+    await expect(page.locator("[data-backlog-empty-new]")).toBeVisible();
     await screenshot(page, "overview-empty-light");
     await page.locator("[data-overview-new-agent]").click();
     await expect(workspace).toBeVisible();
@@ -408,12 +448,44 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await expect(page.locator("[data-new-worktree]")).toHaveCount(0);
     await expect(overview).toBeVisible();
 
+    // Settings › Issues: the sources, each project's source, and how work starts.
+    await page.keyboard.press("Alt+Comma");
+    await page.locator('[data-settings-tab="issues"]').click();
+    await expect(page.locator("[data-settings-issues]")).toBeVisible();
+    await expect(page.getByRole("combobox", { name: "repo 이슈 출처" })).toHaveText("자동 (GitHub)");
+    await expect(page.getByRole("combobox", { name: "quiet 이슈 출처" })).toHaveText("자동 (Local)");
+    await screenshot(page, "settings-issues-light");
+    await chooseTheme(page, "dark");
+    await page.keyboard.press("Alt+Comma");
+    await page.locator('[data-settings-tab="issues"]').click();
+    await screenshot(page, "settings-issues-dark");
+    await page.keyboard.press("Escape");
+
+    // 시작 on the backlog issue: the Start dialog names the worktree for the
+    // issue and fills the first prompt from its body; the worktree it makes is
+    // linked to the issue, so the card moves from Backlog to In progress.
+    const backlogCard = column("backlog").locator('[data-overview-card][data-task-key="github:acme/repo#3"]');
+    await backlogCard.hover();
+    await backlogCard.locator("[data-card-start]").click();
+    await expect(start).toBeVisible();
+    await expect(start.locator("[data-start-name]")).toHaveValue(/^3-/);
+    await expect(start.locator("[data-start-prompt]")).toHaveValue("Issue #3를 해결해줘: Graph 뷰\n\n그래프 뷰의 본문\n\n완료되면 이 이슈를 닫는 PR을 열어줘 (PR 본문에 Closes #3).");
+    await screenshot(page, "start-issue-dark");
+    await start.locator("[data-start-name]").fill("3-graph-view");
+    await start.locator('[data-start-agent="terminal"]').click();
+    await start.locator('[data-start-submit="start"]').click();
+    await expect(start).toHaveCount(0, { timeout: 30_000 });
+    await page.keyboard.press("Meta+Shift+KeyH");
+    await expect(overview).toBeVisible();
+    await expect(column("backlog").locator("[data-overview-card]")).toHaveCount(0, { timeout: 30_000 });
+    await expect(column("working").locator('[data-overview-card][data-task-key="github:acme/repo#3"]')).toContainText("3-graph-view", { timeout: 30_000 });
+
     // While hided is down the board keeps the last snapshot and only the
     // connection line says so; nothing on the board turns into a banner (B11).
     const restarting = daemon.restart();
     await expect(page.locator("[data-connection]")).toBeVisible({ timeout: 10_000 });
     await expect(overview).toHaveAttribute("data-overview-state", "board");
-    await expect(column("working").locator("[data-overview-card]")).toHaveCount(3);
+    await expect(column("working").locator("[data-overview-card]")).toHaveCount(4);
     await expect(overview.locator('[role="alert"]')).toHaveCount(0);
     daemon = await restarting;
   } finally {

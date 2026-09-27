@@ -605,8 +605,9 @@ function IssuesTab({ actions }: { actions: Actions }) {
   const sourceError = useErrorSince(sourceAt, ["issue_source."]);
   const [settingsAt, setSettingsAt] = useState<number | null>(null);
   const settingsError = useErrorSince(settingsAt, ["issue_settings."]);
-  // A device's projects keep their issues on that device, so only this Mac's are listed.
-  const projects = (workspaces ?? []).filter((workspace) => workspace.registered && !workspace.temporary && !workspace.remote_target_id);
+  // The projects the boards draw issues for: this Mac's, each with its source;
+  // a device's projects keep their issues on that device.
+  const projects = (workspaces ?? []).filter((workspace) => !workspace.remote_target_id && workspace.tasks?.source != null);
   const access = githubAccess(projects);
   const accessLine = access ? githubAccessLine(access) : null;
   const change = (patch: Partial<IssueSettings>) => {
@@ -633,10 +634,10 @@ function IssuesTab({ actions }: { actions: Actions }) {
       </Group>
       <Group
         title="프로젝트별 출처"
-        note="한 프로젝트는 출처 하나. 바꿔도 이미 있는 이슈는 옮기지 않고, 연결된 워크트리는 그대로 둔다."
+        note="한 프로젝트는 출처 하나입니다. 바꿔도 이미 있는 이슈는 옮기지 않고, 연결된 워크트리는 그대로 둡니다."
         data-settings-group="project-issue-sources"
       >
-        {projects.length === 0 ? <Row label={<Note>등록된 프로젝트가 없다.</Note>} /> : null}
+        {projects.length === 0 ? <Row label={<Note>이 Mac의 프로젝트가 없습니다.</Note>} /> : null}
         {projects.map((workspace) => {
           const { value, options } = issueSourceChoices(workspace, stored?.[workspace.path]);
           const failure = workspace.tasks?.source?.failure ?? null;

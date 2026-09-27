@@ -451,7 +451,7 @@ export function LinkIssuePopover({ workspaceId, checkout, actions, children }: {
       <PopoverTrigger asChild>{children}</PopoverTrigger>
       <PopoverContent align="start" className="w-(--size-pr-popover) p-none" data-link-issue={checkout.id}>
         <Command loop>
-          <CommandInput value={query} onValueChange={setQuery} placeholder={`${checkout.branch ?? checkout.label}에 연결할 이슈`} data-link-issue-query="true" />
+          <CommandInput value={query} onValueChange={setQuery} placeholder="연결할 이슈 찾기" aria-label={`${checkout.branch ?? checkout.label}에 연결할 이슈`} data-link-issue-query="true" />
           <CommandList className="max-h-(--size-relationship-list-max)">
             <CommandEmpty>맞는 열린 이슈가 없습니다</CommandEmpty>
             <CommandGroup>
