@@ -14,6 +14,7 @@ import { Input } from "./components/ui/input";
 import { RadioGroup, RadioGroupItem } from "./components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Note, Status } from "./components/settings-rows";
+import { NewIssueDialog, StartIssueDialog } from "./IssueDialogs";
 import type { Checkout, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -84,6 +85,23 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
     );
   }
   if (dialog.kind === "new_worktree") return <NewWorktreeDialog actions={actions} workspace={target.workspace} onClose={close} />;
+  if (dialog.kind === "new_issue") return <NewIssueDialog key={dialog.workspaceId} actions={actions} workspace={target.workspace} onClose={close} />;
+  if (dialog.kind === "start_issue") {
+    const task = target.workspace.tasks?.tasks.find((row) => row.key === dialog.taskKey);
+    if (task) return <StartIssueDialog key={task.key} actions={actions} workspace={target.workspace} task={task} onClose={close} />;
+    return (
+      <Dialog open onOpenChange={(next) => { if (!next) close(); }}>
+        <DialogContent aria-label="Unavailable">
+          <DialogBody>
+            <Note tone="warn">그 이슈가 이제 목록에 없습니다. 아무것도 바뀌지 않았습니다.</Note>
+          </DialogBody>
+          <DialogFooter>
+            <Button onClick={close}>닫기</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
   if (dialog.kind === "remove_project") return <RemoveProjectDialog actions={actions} workspace={target.workspace} onClose={close} />;
   if (dialog.kind === "purpose" && target.checkout) return <PurposeDialog actions={actions} checkout={target.checkout} deviceLabel={deviceLabel(target.workspace)} onClose={close} />;
   if (dialog.kind === "delete_worktree" && target.checkout) return <DeleteWorktreeDialog actions={actions} deviceId={target.workspace.device_id} checkout={target.checkout} onClose={close} />;

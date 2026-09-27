@@ -140,16 +140,18 @@ export type ProjectIssues = { repository: string | null; issues: Issue[]; overfl
 /**
  * One task of a project's source, in the core's source-neutral shape
  * (`TaskSnapshot`, PRD task-agents-views D-14). The web reads no source's own
- * shape: `source` is `github` today, and a later source is drawn the same way.
+ * shape: `source` is `github` or `local`, and a later source is drawn the same way.
  */
 export type Task = {
   key: string;
   source: string;
-  /** The id the source shows (`#N`, `owner/repo#N` for another repository), or null when it has none. */
+  /** The id the source shows (`#N`, `owner/repo#N` for another repository, `L-N` for a local issue), or null when it has none. */
   id: string | null;
   url: string | null;
   title: string;
   open: boolean;
+  /** When the source last changed it, for the backlog's order and age. */
+  updated_at_unix_ms?: number | null;
   /** The open tasks this one waits on, possibly of another project (`TaskRefSnapshot`). */
   blocked_by?: TaskRef[];
 };
@@ -167,14 +169,29 @@ export type TaskSource = {
   /** The last read failed; the tasks are the answer before it. */
   failure: string | null;
   last_read_at_unix_ms: number | null;
+  /** The operator chose this source in Settings › Issues rather than the default. */
+  chosen?: boolean;
 };
 
-/** A project's tasks (`ProjectTasksSnapshot`); `source` is null while none is connected. */
+/** A project's tasks (`ProjectTasksSnapshot`); `source` is null only for a device's project. */
 export type ProjectTasks = {
   source: TaskSource | null;
-  unconnected_reason: string | null;
   tasks: Task[];
   overflow: boolean;
+};
+
+/** How starting work from an issue behaves (`IssueSettingsSnapshot`, Settings › Issues). */
+export type IssueSettings = {
+  ai_worktree_name: boolean;
+  default_agent: "claude" | "codex" | "terminal";
+  closes_instruction: boolean;
+};
+
+/** The Overview's issue work in flight (`IssueWorkSnapshot`), one slot each. */
+export type IssueWork = {
+  create: { id: number; workspace_id: string; phase: "working" | "ready" | "failed"; task_key: string | null; message: string | null } | null;
+  detail: { task_key: string; phase: "reading" | "ready" | "failed"; body: string | null; message: string | null } | null;
+  name: { request_id: string; phase: "working" | "ready" | "failed"; name: string | null; message: string | null } | null;
 };
 
 export type Purpose = { text: string; origin: string };
@@ -831,6 +848,7 @@ export type SnapshotRest = {
   };
   connection?: { kind: string; state: string; target_id: string | null };
   task_operation?: TaskOperation | null;
+  issue_work?: IssueWork;
   worktree_removal?: WorktreeRemoval | null;
   tab?: Tab;
   zoomed?: string | null;
@@ -864,6 +882,9 @@ export type SnapshotRest = {
     browser_shortcut_bindings?: Record<string, string>;
     /** Sleep idle agents after this many hours; null or absent is Never (PRD agent-sleep). */
     agent_sleep_after_hours?: number | null;
+    /** Each local project's chosen issue source (`github` or `local`) by path; absent is the default. */
+    project_issue_sources?: Record<string, string>;
+    issue_settings?: IssueSettings;
     [key: string]: unknown;
   };
   status?: {

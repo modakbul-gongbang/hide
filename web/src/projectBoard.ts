@@ -1,34 +1,33 @@
-// The Overview's Tasks and Agents boards (PRD task-agents-views D-03..D-13)
-// as pure functions over the snapshot, for one Project or for All projects.
-// A card is a task: a task of the project's source with the checkout that
-// works on it, a checkout with no task (an untracked one), or an open task no
-// checkout works on (the backlog). Git decides the stage; agents and the
-// task's own state never move it. Every value drawn is one the snapshot
-// carries, and a count the source has not answered for is left out rather
-// than drawn as zero (design 10).
+// The Overview's Tasks and Agents views (PRD task-agents-views, reworked by
+// the issue-first Overview of 2026-09-28) as pure functions over the
+// snapshot, for one Project or for All projects. Work starts from an issue:
+// a card is an issue with the checkout and agents working on it and the pull
+// request they opened, a checkout with no issue yet (which can be linked to
+// one), or an open issue nobody works on (the backlog, which can be started).
+// Git decides the stage; agents and the issue's own state never move it.
+// Every value drawn is one the snapshot carries, and a count the source has
+// not answered for is left out rather than drawn as zero (design 10).
 
 import type { AgentRow, Checkout, PullRequest, Task, Workspace } from "./snapshot";
 
-export type Stage = "backlog" | "ready" | "working" | "review" | "done";
+export type Stage = "backlog" | "working" | "review" | "done";
 
 export const STAGES: readonly { stage: Stage; label: string }[] = [
   { stage: "backlog", label: "백로그" },
-  { stage: "ready", label: "준비" },
   { stage: "working", label: "진행 중" },
   { stage: "review", label: "리뷰" },
   { stage: "done", label: "완료" },
 ];
 
-/** A checkout's stage: only a task nobody works on is in the backlog. */
+/** A checkout's stage: only an issue nobody works on is in the backlog. */
 export type GitStage = Exclude<Stage, "backlog">;
 
-/** A checkout's Git stage: merged, then an open pull request, then local work, else ready. Agents and the task's state never move it. */
+/** A checkout's Git stage: merged, then an open pull request, else work in progress. Agents and the issue's state never move it. */
 export function stageOf(checkout: Checkout): GitStage {
   const pr = checkout.pull_request;
   if (checkout.worktree?.merged === true || pr?.badge === "merged") return "done";
   if (pr && pr.badge !== "closed") return "review";
-  if ((checkout.changed_file_count ?? 0) > 0 || (checkout.ahead ?? 0) > 0) return "working";
-  return "ready";
+  return "working";
 }
 
 export type BoardRow = {
@@ -46,12 +45,14 @@ export type PrChip = {
   url: string;
   tone: PrTone;
   checks: "passing" | "failed" | "pending" | null;
+  /** The review GitHub asks for, on an open pull request only. */
+  review: "review_required" | "changes_requested" | "approved" | null;
 };
 
 export function prChip(pr: PullRequest): PrChip {
   const tone: PrTone = pr.badge === "merged" ? "merged" : pr.badge === "closed" ? "closed" : pr.is_draft ? "draft" : "open";
   const checks = pr.checks === "passing" || pr.checks === "failed" || pr.checks === "pending" ? pr.checks : null;
-  return { number: pr.number, url: pr.url, tone, checks };
+  return { number: pr.number, url: pr.url, tone, checks, review: tone === "open" ? pr.review : null };
 }
 
 /** The delivery facts a card states (D-04), each only when the snapshot has it and it is above zero. */
@@ -71,14 +72,17 @@ export type BoardPlace = { projectId: string; projectLabel: string };
 export type TaskCard = {
   id: string;
   place: BoardPlace;
-  /** The checkout the card opens, or null for a backlog task. */
+  /** The Project's name beside the id, on All projects only. */
+  project: string | null;
+  /** The checkout the card opens, or null for a backlog issue. */
   checkout: Checkout | null;
-  /** The task, or null for an untracked checkout. */
+  /** The issue, or null for a checkout no issue is linked to. */
   task: Task | null;
-  /** The column, or null for a card on the ad hoc strip. */
-  stage: Stage | null;
-  /** The task's title, else the checkout's branch. */
+  stage: Stage;
+  /** The issue's title, else the checkout's purpose, else its branch. */
   title: string;
+  /** The checkout's branch, the card's first line when there is no issue. */
+  branch: string | null;
   facts: Facts;
   /** Every agent working in the checkout, each lineage root first. */
   rows: BoardRow[];
@@ -89,27 +93,48 @@ export type TaskCard = {
   needsYou: boolean;
   /** A row reports an error; the halo is drawn in danger instead of warning. */
   error: boolean;
-  /** A ready card with no agent on this machine: hover or focus offers Start agent (D-05). */
+  /** An open backlog issue of a project on this Mac: hover or focus offers 시작, which opens the Start dialog. */
   canStart: boolean;
-  /** The id's tooltip: where the task comes from and the branch working on it (D-05). */
+  /** A linked worktree on this Mac with no issue: hover or focus offers 이슈 연결. */
+  canLink: boolean;
+  /** A worktree with no issue and no agent; the column folds these into one line. */
+  idle: boolean;
+  /** The id's tooltip: where the issue comes from and the branch working on it (D-05). */
   idHelp: string;
   /** Why the card's source could not be read, drawn as a small mark with this tooltip (D-13). */
   sourceFailure: string | null;
   /** The open tasks this one waits on, the lock line (D-04): each by its id, else its title when the scope has it. */
   blockedBy: Blocker[];
+  /** When the issue last changed, or null; the backlog's order. */
+  updatedAt: number | null;
 };
 
 export type Blocker = { key: string; label: string };
 
-export type AgentColumn = "active" | "done" | "seen";
+/**
+ * The Agents view's groups, top to bottom: the ones waiting on the operator
+ * first, and last the resting ones whose worktree is merged, which are there
+ * only to be closed.
+ */
+export type AgentGroup = "needs" | "working" | "resting" | "cleanup";
 
-export const AGENT_COLUMNS: readonly { column: AgentColumn; label: string; groups: readonly string[] }[] = [
-  { column: "active", label: "진행 중", groups: ["working", "needs_you"] },
-  { column: "done", label: "내 확인 대기", groups: ["done"] },
-  { column: "seen", label: "끝", groups: ["seen"] },
+export const INBOX_GROUPS: readonly { group: AgentGroup; label: string }[] = [
+  { group: "needs", label: "내 차례" },
+  { group: "working", label: "실행 중" },
+  { group: "resting", label: "쉬는 중" },
+  { group: "cleanup", label: "정리할 것" },
 ];
 
-/** One agent on the Agents board (D-12). */
+/** The group a lineage sits in, by its root. */
+function inboxGroup(root: AgentCard): AgentGroup {
+  const group = root.agent.group;
+  if (group === "needs_you" || group === "done") return "needs";
+  if (group === "working") return "working";
+  const checkout = root.checkout;
+  return checkout?.is_worktree && stageOf(checkout) === "done" ? "cleanup" : "resting";
+}
+
+/** One agent on the Agents view (D-12). */
 export type AgentCard = {
   agent: AgentRow;
   /** 0 for a root, one more per delegation step; a delegated agent sits under its parent. */
@@ -121,7 +146,7 @@ export type AgentCard = {
   /** The checkout, and on All projects its Project before it. */
   where: string | null;
   task: Task | null;
-  /** The task chip's tooltip: title, branch, and the pull request, the one place a PR shows here. */
+  /** The task chip's tooltip: title, branch, and the pull request. */
   taskHelp: string | null;
 };
 
@@ -130,22 +155,23 @@ export type BoardProject = { workspace: Workspace; agents: AgentRow[]; device: s
 
 export type BoardScope = "project" | "all";
 
-/** A Project with agents and no task source, gathered under All projects' board (D-10). */
-export type Unconnected = { place: BoardPlace; agents: number; reason: string | null };
+/** How the scope's issue sources stand, for the backlog's header and the facts line. */
+export type SourceState = {
+  /** A source is still answering its first read. */
+  reading: boolean;
+  /** That a source could not be read (the first one), for a mark beside 백로그; the reason is in the diagnostic log (design 13). */
+  failure: string | null;
+  /** Open issues across the scope, once every source has answered. */
+  openIssues: number | null;
+  /** The one source label when the scope has one (`GitHub`, `Local`). */
+  label: string | null;
+};
 
 export type TasksBoard = {
-  /** Nothing to draw: no source and no agent (B14). */
-  empty: boolean;
-  /** Whether the stage columns are drawn: a Git project is in scope. */
-  columns: boolean;
   cards: TaskCard[];
-  /** Checkouts that are not linked worktrees (the primary checkout, a folder), while an agent works in them. */
-  adHoc: TaskCard[];
-  unconnected: Unconnected[];
   /** A source listed more than the core keeps, so the backlog may hold more than it shows. */
   overflow: boolean;
-  /** Why no source is connected, for the empty state's connect control. */
-  unconnectedReason: string | null;
+  source: SourceState;
 };
 
 export type AgentsBoard = { cards: AgentCard[] };
@@ -227,7 +253,7 @@ function place(workspace: Workspace): BoardPlace {
   return { projectId: workspace.id, projectLabel: workspace.label };
 }
 
-function facts(checkout: Checkout | null, stage: Stage | null): Facts {
+function facts(checkout: Checkout | null, stage: Stage): Facts {
   const working = stage === "working";
   const files = checkout?.changed_file_count ?? 0;
   const ahead = checkout?.ahead ?? 0;
@@ -240,7 +266,7 @@ function facts(checkout: Checkout | null, stage: Stage | null): Facts {
   };
 }
 
-/** The sentence a failed source read carries on its cards, with its age (B13). */
+/** The sentence a failed source read carries, with its age (B13). */
 function sourceFailure(workspace: Workspace, now: number): string | null {
   const source = workspace.tasks?.source;
   if (!source?.failure) return null;
@@ -248,36 +274,34 @@ function sourceFailure(workspace: Workspace, now: number): string | null {
   return [`${source.label} 읽기 실패`, age === null ? "마지막으로 확인한 상태" : `${age}분 전에 확인한 상태`, "자세한 오류는 진단 로그"].join(" · ");
 }
 
-function card(
-  id: string,
-  workspace: Workspace,
-  scope: BoardScope,
-  checkout: Checkout | null,
-  task: Task | null,
-  stage: Stage | null,
-  rows: BoardRow[],
-  now: number,
-): TaskCard {
+function card(id: string, workspace: Workspace, scope: BoardScope, checkout: Checkout | null, task: Task | null, stage: Stage, rows: BoardRow[], now: number): TaskCard {
   const { shown, more } = shownAgents(rows);
   const branch = checkout?.branch ?? checkout?.label ?? null;
   const sourceLabel = task ? (workspace.tasks?.source?.label ?? task.source) : null;
+  const local = !workspace.remote_target_id;
+  const linkable = checkout !== null && checkout.is_worktree && workspace.is_git === true && local && workspace.tasks?.source != null;
   return {
     id,
     place: place(workspace),
+    project: scope === "all" ? workspace.label : null,
     checkout,
     task,
     stage,
-    title: task?.title ?? branch ?? "",
+    title: task?.title ?? checkout?.purpose?.text ?? branch ?? "",
+    branch,
     facts: facts(checkout, stage),
     rows,
     shown,
     more,
-    needsYou: rows.some((row) => row.agent.group === "needs_you"),
+    needsYou: rows.some((row) => row.agent.group === "needs_you" || (row.depth === 0 && row.agent.group === "done")),
     error: rows.some((row) => row.agent.demand === "error"),
-    canStart: stage === "ready" && rows.length === 0 && checkout !== null && !workspace.remote_target_id,
+    canStart: task !== null && task.open && checkout === null && local,
+    canLink: task === null && linkable,
+    idle: task === null && rows.length === 0 && stage === "working",
     idHelp: [sourceLabel, scope === "all" ? workspace.label : null, branch].filter(Boolean).join(" · "),
     sourceFailure: task ? sourceFailure(workspace, now) : null,
     blockedBy: [],
+    updatedAt: task?.updated_at_unix_ms ?? null,
   };
 }
 
@@ -288,46 +312,46 @@ function nameBlockers(cards: TaskCard[], titles: Map<string, string>) {
   }
 }
 
-/** The Tasks board for one Project or for All projects (D-03, D-07, D-10). */
+/**
+ * The Tasks board for one Project or for All projects. Every linked
+ * worktree is a card in its Git stage; the primary checkout or a folder is a
+ * card only while an agent works there on a linked issue (an agent there with
+ * no issue is on the Agents view, not a task); every open issue no checkout
+ * works on is in the backlog, most recently changed first.
+ */
 export function buildTasks(projects: readonly BoardProject[], scope: BoardScope, now: number): TasksBoard {
   const cards: TaskCard[] = [];
-  const adHoc: TaskCard[] = [];
-  const unconnected: Unconnected[] = [];
+  const backlog: TaskCard[] = [];
   let overflow = false;
-  let connected = false;
-  let agentsAnywhere = false;
-  let unconnectedReason: string | null = null;
+  let reading = false;
+  let failure: string | null = null;
+  let openIssues = 0;
+  const labels = new Set<string>();
   const titles = new Map<string, string>();
   for (const { workspace, agents } of projects) {
     const { checkoutRows } = lineage(workspace, agents);
     for (const task of workspace.tasks?.tasks ?? []) titles.set(task.key, task.title);
     const source = workspace.tasks?.source ?? null;
-    const tasks = new Map((workspace.tasks?.tasks ?? []).map((task) => [task.key, task]));
-    const working = workspace.checkouts.reduce((total, checkout) => total + checkoutRows(checkout).length, 0);
-    agentsAnywhere ||= working > 0;
-    connected ||= source !== null;
-    overflow ||= workspace.tasks?.overflow ?? false;
-    unconnectedReason ??= workspace.tasks?.unconnected_reason ?? null;
-    // All projects gathers a Project with no source under the board rather
-    // than spreading its untracked checkouts through the columns (D-10).
-    if (scope === "all" && source === null) {
-      if (working > 0) unconnected.push({ place: place(workspace), agents: working, reason: workspace.tasks?.unconnected_reason ?? null });
-      continue;
+    if (source) {
+      labels.add(source.label);
+      reading ||= source.reading;
+      failure ??= source.failure ? [scope === "all" ? workspace.label : null, `${source.label} 읽기 실패`, "자세한 오류는 진단 로그"].filter(Boolean).join(" · ") : null;
     }
+    const tasks = new Map((workspace.tasks?.tasks ?? []).map((task) => [task.key, task]));
+    overflow ||= workspace.tasks?.overflow ?? false;
     const git = workspace.is_git === true;
     const worked = new Set<string>();
     for (const checkout of workspace.checkouts) {
       const rows = checkoutRows(checkout);
       const task = checkout.task_key ? (tasks.get(checkout.task_key) ?? null) : null;
+      if (task) worked.add(task.key);
       if (!(checkout.is_worktree && git)) {
-        if (task) worked.add(task.key);
-        if (rows.length > 0) adHoc.push(card(`checkout:${checkout.id}`, workspace, scope, checkout, task, null, rows, now));
+        if (task && rows.length > 0) cards.push(card(`checkout:${checkout.id}`, workspace, scope, checkout, task, "working", rows, now));
         continue;
       }
       const stage = stageOf(checkout);
-      if (task) worked.add(task.key);
       cards.push(card(`checkout:${checkout.id}`, workspace, scope, checkout, task, stage, rows, now));
-      // Another task the same pull request closes shows that pull request too (D-07).
+      // Another issue the same pull request closes shows that pull request too (D-07).
       for (const key of checkout.closes_task_keys ?? []) {
         const closed = tasks.get(key);
         if (!closed || worked.has(key)) continue;
@@ -336,20 +360,19 @@ export function buildTasks(projects: readonly BoardProject[], scope: BoardScope,
       }
     }
     for (const task of tasks.values()) {
-      if (!task.open || worked.has(task.key)) continue;
-      cards.push(card(`task:${workspace.id}:${task.key}`, workspace, scope, null, task, "backlog", [], now));
+      if (!task.open) continue;
+      openIssues += 1;
+      if (worked.has(task.key)) continue;
+      backlog.push(card(`task:${workspace.id}:${task.key}`, workspace, scope, null, task, "backlog", [], now));
     }
   }
-  nameBlockers(cards, titles);
-  nameBlockers(adHoc, titles);
+  backlog.sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+  const all = [...cards, ...backlog];
+  nameBlockers(all, titles);
   return {
-    empty: !connected && !agentsAnywhere,
-    columns: projects.some(({ workspace }) => workspace.is_git === true),
-    cards: prioritized(cards),
-    adHoc: prioritized(adHoc),
-    unconnected,
+    cards: prioritized(all),
     overflow,
-    unconnectedReason,
+    source: { reading, failure, openIssues: reading ? null : openIssues, label: labels.size === 1 ? ([...labels][0] ?? null) : null },
   };
 }
 
@@ -467,50 +490,27 @@ export function buildAgents(projects: readonly BoardProject[], scope: BoardScope
 }
 
 /**
- * The cards of one Agents column: each root by its own group, and its
+ * The agents of one Agents group: each root by its own group, and its
  * descendants with it, since a delegated agent is only ever Working or Seen
  * and reads under the parent it answers to.
  */
-export function agentColumnCards(board: AgentsBoard, column: AgentColumn): AgentCard[] {
-  const groups = AGENT_COLUMNS.find((row) => row.column === column)?.groups ?? [];
-  const cards: AgentCard[] = [];
-  let rootIn = false;
+export function agentGroupCards(board: AgentsBoard, group: AgentGroup): AgentCard[] {
+  const lineages: { root: AgentCard; cards: AgentCard[] }[] = [];
   for (const value of board.cards) {
-    if (value.depth === 0) rootIn = groups.includes(value.agent.group);
-    if (rootIn) cards.push(value);
+    const last = lineages.at(-1);
+    if (value.depth === 0 || !last) lineages.push({ root: value, cards: [value] });
+    else last.cards.push(value);
   }
-  return cards;
+  return lineages
+    .filter(({ root }) => inboxGroup(root) === group)
+    .map((lineage, index) => ({ lineage, index }))
+    .sort((a, b) => attention(a.lineage.root.agent) - attention(b.lineage.root.agent) || a.index - b.index)
+    .flatMap(({ lineage }) => lineage.cards);
 }
 
-/** One row of the waiting band (D-11): an agent that waits on the operator, where it works, and its request. */
-export type WaitingRow = {
-  agent: AgentRow;
-  place: BoardPlace;
-  /** Mono context before the request: the project on All projects, the task's id, the branch. */
-  where: string;
-};
-
-/**
- * The waiting band (D-11, B10): every agent of the scope that waits on the
- * operator, the ones asking first (an error before a question or approval),
- * then the finished ones not yet looked at, each group in the core's order.
- * Only an agent in the Project's own checkouts counts; a delegated agent is
- * never Needs You or unread, so its parent is the one that waits.
- */
-export function buildWaiting(projects: readonly BoardProject[], scope: BoardScope): WaitingRow[] {
-  const rows: (WaitingRow & { rank: number; index: number })[] = [];
-  for (const { workspace, agents } of projects) {
-    const { owners } = lineage(workspace, agents);
-    const tasks = new Map((workspace.tasks?.tasks ?? []).map((task) => [task.key, task]));
-    for (const agent of agents) {
-      const checkout = owners.get(agent.pane_id);
-      if (!checkout || (agent.group !== "needs_you" && agent.group !== "done")) continue;
-      const task = checkout.task_key ? tasks.get(checkout.task_key) : undefined;
-      const where = [scope === "all" ? workspace.label : null, task?.id ?? null, checkout.branch ?? checkout.label].filter(Boolean).join(" · ");
-      rows.push({ agent, place: place(workspace), where, rank: attention(agent), index: rows.length });
-    }
-  }
-  return rows.sort((a, b) => a.rank - b.rank || a.index - b.index).map(({ agent, place: at, where }) => ({ agent, place: at, where }));
+/** How many agents wait on the operator: the Agents tab's count. A delegated agent's parent is the one that waits. */
+export function waitingCount(board: AgentsBoard): number {
+  return board.cards.filter((value) => value.depth === 0 && (value.agent.group === "needs_you" || value.agent.group === "done")).length;
 }
 
 export type BoardStats = {

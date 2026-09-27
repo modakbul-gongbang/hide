@@ -37,6 +37,7 @@ import {
   type Checkout,
   type EditorDocumentSnapshot,
   type EditorTabSnapshot,
+  type IssueSettings,
   type Tab,
   type Workspace,
 } from "./snapshot";
@@ -911,9 +912,47 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "github_request", payload: { workspace_id: workspaceId, refresh: false } });
     },
 
-    /** A new tab in the checkout with the provider started in it (D-05); `terminal` is the tab alone. */
-    startAgent(checkoutPath: string, provider: "claude" | "codex" | "terminal") {
-      dispatch({ schema_version: 2, kind: "agent_start_in_checkout", payload: { checkout_path: checkoutPath, provider } });
+    /**
+     * A new tab in the checkout with the provider started in it (D-05);
+     * `terminal` is the tab alone. `prompt` is the agent's first prompt, sent
+     * once it is ready.
+     */
+    startAgent(checkoutPath: string, provider: "claude" | "codex" | "terminal", prompt: string | null = null) {
+      dispatch({ schema_version: 2, kind: "agent_start_in_checkout", payload: { checkout_path: checkoutPath, provider, ...(prompt ? { prompt } : {}) } });
+    },
+
+    /** A new issue in the project's source (Settings › Issues); the core answers in `issue_work.create`. */
+    createIssue(workspaceId: string, title: string, body: string) {
+      dispatch({ schema_version: 2, kind: "issue_create", payload: { workspace_id: workspaceId, title, body } });
+    },
+
+    /** An issue's body for the Start dialog, answered in `issue_work.detail`. */
+    requestIssueDetail(workspaceId: string, taskKey: string) {
+      dispatch({ schema_version: 2, kind: "issue_detail_request", payload: { workspace_id: workspaceId, task_key: taskKey } });
+    },
+
+    /** Asks the background AI to name a worktree; `prefix` stays at the front. Answered in `issue_work.name`. */
+    suggestWorktreeName(requestId: string, prefix: string, title: string, body: string) {
+      dispatch({ schema_version: 2, kind: "worktree_name_suggest", payload: { request_id: requestId, prefix, title, body } });
+    },
+
+    /** A project's issue source; `auto` returns it to the default. */
+    setIssueSource(projectPath: string, source: "auto" | "github" | "local") {
+      dispatch({ schema_version: 2, kind: "issue_source_set", payload: { project_path: projectPath, source } });
+    },
+
+    setIssueSettings(patch: Partial<IssueSettings>) {
+      dispatch({ schema_version: 2, kind: "issue_settings_set", payload: patch });
+    },
+
+    /** Closes or reopens a Local issue; a GitHub one closes on GitHub. */
+    setIssueOpen(taskKey: string, open: boolean) {
+      dispatch({ schema_version: 2, kind: "issue_set_open", payload: { task_key: taskKey, open } });
+    },
+
+    /** Links a worktree to an issue by the id its source shows (`#42`, `L-3`); an empty id unlinks it. */
+    linkIssue(checkoutId: string, issueId: string) {
+      dispatch({ schema_version: 2, kind: "set_checkout_issue", payload: { checkout_id: checkoutId, text: issueId } });
     },
 
     measureProjectDisk(workspaceId: string) {
@@ -941,7 +980,17 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "workspace_pin_set", payload: { workspace_id: workspaceId, pinned } });
     },
 
-    createWorktree(request: { deviceId: string; repositoryRoot: string; branch: string; baseBranch: string | null; agentKind: string | null; purpose: string | null }) {
+    /** A new worktree; `taskKey` links it to that issue, and `prompt` is its agent's first prompt. */
+    createWorktree(request: {
+      deviceId: string;
+      repositoryRoot: string;
+      branch: string;
+      baseBranch: string | null;
+      agentKind: string | null;
+      purpose: string | null;
+      taskKey?: string | null;
+      prompt?: string | null;
+    }) {
       dispatch({
         schema_version: 2,
         kind: "create_worktree",
@@ -952,6 +1001,8 @@ export function createActions(dispatch: DispatchFn) {
           base_branch: request.baseBranch,
           agent_kind: request.agentKind,
           purpose: request.purpose,
+          ...(request.taskKey ? { task_key: request.taskKey } : {}),
+          ...(request.prompt ? { prompt: request.prompt } : {}),
         },
       });
     },

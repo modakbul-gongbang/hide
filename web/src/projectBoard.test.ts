@@ -1,9 +1,10 @@
-// The Tasks and Agents boards (PRD task-agents-views): five columns from Git,
-// a card per task and per untracked checkout, the backlog, the pull request
-// as the result, at most two agents per card, and both scopes.
+// The Tasks and Agents views (PRD task-agents-views, reworked issue-first on
+// 2026-09-28): four stages from Git, a card per issue and per worktree, the
+// backlog that starts work, the pull request as the result, at most two
+// agents per card, the Agents inbox, and both scopes.
 
 import { describe, expect, it } from "vitest";
-import { agentColumnCards, allProjectsStats, buildAgents, buildDependencies, buildTasks, buildWaiting, formatBytes, projectStats, shownAgents, stageCards, stageOf, type BoardProject } from "./projectBoard";
+import { agentGroupCards, allProjectsStats, buildAgents, buildDependencies, buildTasks, formatBytes, projectStats, shownAgents, stageCards, stageOf, waitingCount, type BoardProject } from "./projectBoard";
 import type { AgentRow, Checkout, PullRequest, Task, Workspace } from "./snapshot";
 
 const NOW = 1_800_000_000_000;
@@ -42,9 +43,10 @@ function task(number: number, open = true, title = `Task ${number}`): Task {
   return { key: `github:acme/project#${number}`, source: "github", id: `#${number}`, url: `https://github.com/acme/project/issues/${number}`, title, open };
 }
 
-function workspace(checkouts: Checkout[], options: { git?: boolean; tasks?: Task[] | null; failure?: string; id?: string } = {}): Workspace {
+function workspace(checkouts: Checkout[], options: { git?: boolean; tasks?: Task[] | null; failure?: string; id?: string; remote?: string } = {}): Workspace {
   const connected = options.tasks !== null;
   return {
+    ...(options.remote ? { remote_target_id: options.remote } : {}),
     id: options.id ?? "project",
     label: options.id ?? "Project",
     path: "/fixture",
@@ -57,7 +59,6 @@ function workspace(checkouts: Checkout[], options: { git?: boolean; tasks?: Task
     inactive_checkouts: { expanded: false, checkout_ids: [] },
     tasks: {
       source: connected ? { kind: "github", label: "GitHub", name: "acme/project", reading: false, failure: options.failure ?? null, last_read_at_unix_ms: NOW - 5 * 60_000 } : null,
-      unconnected_reason: connected ? null : "gh is not logged in",
       tasks: options.tasks ?? [],
       overflow: false,
     },
@@ -73,8 +74,8 @@ function one(project: Workspace, agents: AgentRow[] = []): BoardProject[] {
 }
 
 describe("the Git stage", () => {
-  it("is done, then review, then working, else ready; agents and the task's state never move it", () => {
-    expect(stageOf(checkout("a"))).toBe("ready");
+  it("is done, then review, else in progress; agents and the issue's state never move it", () => {
+    expect(stageOf(checkout("a"))).toBe("working");
     expect(stageOf(checkout("a", { changed: 1 }))).toBe("working");
     expect(stageOf(checkout("a", { ahead: 1 }))).toBe("working");
     expect(stageOf(checkout("a", { changed: 3, pr: pr("open") }))).toBe("review");
@@ -93,7 +94,15 @@ describe("the Tasks board", () => {
     expect(working?.title).toBe("Task 170");
     expect(working?.task?.id).toBe("#170");
     expect(working?.facts).toEqual({ files: 4, ahead: null, pr: null, behind: null });
-    expect(board.adHoc).toEqual([]);
+    // The primary checkout with no issue and no agent is not a task.
+    expect(board.cards.some((card) => card.checkout?.id === "main")).toBe(false);
+  });
+
+  it("orders the backlog by when each issue last changed, most recent first", () => {
+    const at = (value: Task, updated: number): Task => ({ ...value, updated_at_unix_ms: updated });
+    const board = buildTasks(one(workspace([], { tasks: [at(task(1), 10), at(task(2), 30), task(3), at(task(4), 20)] })), "project", NOW);
+    expect(stageCards(board, "backlog").map((card) => card.task?.id)).toEqual(["#2", "#4", "#1", "#3"]);
+    expect(board.source).toEqual({ reading: false, failure: null, openIssues: 4, label: "GitHub" });
   });
 
   it("titles an untracked checkout by its branch and gives it only its pull request (D-07)", () => {
@@ -101,7 +110,7 @@ describe("the Tasks board", () => {
     const [card] = stageCards(board, "review");
     expect(card?.task).toBeNull();
     expect(card?.title).toBe("fix/tab-crash");
-    expect(card?.facts.pr).toEqual({ number: 7, url: "https://github.com/acme/project/pull/7", tone: "draft", checks: null });
+    expect(card?.facts.pr).toEqual({ number: 7, url: "https://github.com/acme/project/pull/7", tone: "draft", checks: null, review: null });
   });
 
   it("colours the pull request by its lifecycle and reads CI only once it was read (D-06)", () => {
@@ -132,9 +141,23 @@ describe("the Tasks board", () => {
     expect(more).toBe(1);
   });
 
-  it("offers Start agent only on a ready card nobody works on, on this machine (B7)", () => {
-    const board = buildTasks(one(workspace([checkout("idle"), checkout("busy", { panes: ["b"] }), checkout("work", { changed: 1 })]), [agent("b")]), "project", NOW);
-    expect(board.cards.filter((card) => card.canStart).map((card) => card.id)).toEqual(["checkout:idle"]);
+  it("offers 시작 on an open backlog issue of a project on this Mac, and 이슈 연결 on a worktree with none (B7)", () => {
+    const project = workspace([checkout("idle"), checkout("busy", { panes: ["b"] }), checkout("linked", { task: "github:acme/project#1", changed: 1 })], { tasks: [task(1), task(2)] });
+    const board = buildTasks(one(project, [agent("b")]), "project", NOW);
+    expect(board.cards.filter((card) => card.canStart).map((card) => card.id)).toEqual(["task:project:github:acme/project#2"]);
+    expect(board.cards.filter((card) => card.canLink).map((card) => card.id)).toEqual(["checkout:idle", "checkout:busy"]);
+    // A worktree with no issue and no agent folds away; one an agent works in stays.
+    expect(board.cards.filter((card) => card.idle).map((card) => card.id)).toEqual(["checkout:idle"]);
+    expect(board.cards.find((card) => card.id === "checkout:busy")?.title).toBe("busy");
+    const remote = buildTasks(one(workspace([checkout("w")], { tasks: [task(3)], remote: "mini" })), "project", NOW);
+    expect(remote.cards.some((card) => card.canStart || card.canLink)).toBe(false);
+  });
+
+  it("titles a worktree with no issue by its purpose, else its branch", () => {
+    const named = { ...checkout("prd/agent-tab-groups"), purpose: { text: "Agent tab groups", origin: "token" } as Checkout["purpose"] };
+    const board = buildTasks(one(workspace([named])), "project", NOW);
+    expect(board.cards[0]?.title).toBe("Agent tab groups");
+    expect(board.cards[0]?.branch).toBe("prd/agent-tab-groups");
   });
 
   it("raises a needs-you card to the top of its own column and keeps the rest in order", () => {
@@ -167,20 +190,22 @@ describe("the Tasks board", () => {
     expect(failures.filter(Boolean)).toHaveLength(2);
     expect(failures[0]).toBe("GitHub 읽기 실패 · 5분 전에 확인한 상태 · 자세한 오류는 진단 로그");
     expect(board.cards.find((card) => card.id === "checkout:loose")?.sourceFailure).toBeNull();
+    expect(board.source.failure).toBe("GitHub 읽기 실패 · 자세한 오류는 진단 로그");
   });
 
-  it("is empty only with no source and no agent; a folder with agents draws only the ad hoc strip (B14)", () => {
-    const empty = buildTasks(one(workspace([checkout("a", { changed: 3 })], { tasks: null })), "project", NOW);
-    expect(empty.empty).toBe(true);
-    expect(empty.unconnectedReason).toBe("gh is not logged in");
-    expect(buildTasks(one(workspace([], { tasks: [] })), "project", NOW).empty).toBe(false);
-    const folder = buildTasks(one(workspace([checkout("f", { worktree: false, panes: ["x"] })], { git: false, tasks: null }), [agent("x")]), "project", NOW);
-    expect(folder.empty).toBe(false);
-    expect(folder.columns).toBe(false);
-    expect(folder.adHoc.map((card) => card.id)).toEqual(["checkout:f"]);
+  it("puts a folder or the primary checkout on the board only while an agent there works on an issue (B14)", () => {
+    const local = (number: number): Task => ({ key: `local:/fixture#${number}`, source: "local", id: `L-${number}`, url: null, title: `Local ${number}`, open: true });
+    const folder = (key: string | undefined, panes: string[]) => workspace([checkout("f", { worktree: false, panes, task: key })], { git: false, tasks: [local(1)] });
+    expect(stageCards(buildTasks(one(folder("local:/fixture#1", ["x"]), [agent("x")]), "project", NOW), "working").map((card) => card.task?.id)).toEqual(["L-1"]);
+    expect(buildTasks(one(folder(undefined, ["x"]), [agent("x")]), "project", NOW).cards.map((card) => card.id)).toEqual(["task:project:local:/fixture#1"]);
+    expect(stageCards(buildTasks(one(folder("local:/fixture#1", [])), "project", NOW), "working")).toEqual([]);
+    // A project still reading its source has no count to state.
+    const reading = workspace([], { tasks: [] });
+    reading.tasks = { ...reading.tasks!, source: { ...reading.tasks!.source!, reading: true } };
+    expect(buildTasks(one(reading), "project", NOW).source.openIssues).toBeNull();
   });
 
-  it("mixes every project's tasks on All projects and gathers a project with agents and no source below (B15)", () => {
+  it("mixes every project's tasks on All projects, each card naming its project (B15)", () => {
     const herdr = workspace([checkout("feat", { task: "github:acme/project#170", panes: ["h"] })], { id: "herdr", tasks: [task(170), task(172)] });
     const quiet = workspace([checkout("main", { worktree: false, panes: ["m"] })], { id: "modakbul", tasks: null });
     const board = buildTasks(
@@ -193,8 +218,7 @@ describe("the Tasks board", () => {
     );
     expect(board.cards.map((card) => card.place.projectId)).toEqual(["herdr", "herdr"]);
     expect(board.cards[0]?.idHelp).toBe("GitHub · herdr · feat");
-    expect(board.unconnected).toEqual([{ place: { projectId: "modakbul", projectLabel: "modakbul" }, agents: 1, reason: "gh is not logged in" }]);
-    expect(board.adHoc).toEqual([]);
+    expect(board.cards.map((card) => card.project)).toEqual(["herdr", "herdr"]);
   });
 });
 
@@ -262,32 +286,6 @@ describe("the Dependencies mode", () => {
   });
 });
 
-describe("the waiting band", () => {
-  it("lists the agents that wait on the operator, asking before finished, an error first, and nothing else (B10)", () => {
-    const project = workspace([checkout("feat", { task: "github:acme/project#170", panes: ["ask", "fail", "done", "busy", "seen"] }), checkout("main", { worktree: false, panes: ["root"] })], { tasks: [task(170)] });
-    const agents = [
-      agent("done", "done", { unread: true }),
-      agent("ask", "needs_you", { demand: "question", detail: "창 기준으로 할까요?" }),
-      agent("busy"),
-      agent("seen", "seen"),
-      agent("fail", "needs_you", { demand: "error" }),
-      agent("root", "needs_you", { demand: "approval" }),
-      // A pane of another project's checkout waits there, not here.
-      agent("elsewhere", "needs_you", { demand: "question" }),
-    ];
-    const rows = buildWaiting(one(project, agents), "project");
-    expect(rows.map((row) => row.agent.pane_id)).toEqual(["fail", "ask", "root", "done"]);
-    expect(rows.find((row) => row.agent.pane_id === "ask")?.where).toBe("#170 · feat");
-    expect(rows.find((row) => row.agent.pane_id === "root")?.where).toBe("main");
-    expect(buildWaiting(one(project, [agent("busy"), agent("seen", "seen")]), "project")).toEqual([]);
-  });
-
-  it("names the project first on All projects", () => {
-    const rows = buildWaiting(one(workspace([checkout("feat", { task: "github:acme/project#170", panes: ["ask"] })], { id: "herdr-ide", tasks: [task(170)] }), [agent("ask", "needs_you", { demand: "question" })]), "all");
-    expect(rows[0]?.where).toBe("herdr-ide · #170 · feat");
-  });
-});
-
 describe("the Agents board", () => {
   it("draws every agent, a delegated one right under its parent in the parent's column, with its task and its PR in the chip's tooltip (B11)", () => {
     const project = workspace([checkout("feat/waiting-band", { panes: ["a", "a2"], task: "github:acme/project#170", pr: pr("open") }), checkout("quick", { panes: ["b"] })], { tasks: [task(170)] });
@@ -297,14 +295,33 @@ describe("the Agents board", () => {
       ["a2", 1],
       ["b", 0],
     ]);
-    expect(agentColumnCards(board, "active").map((card) => card.agent.pane_id)).toEqual(["a", "a2"]);
-    expect(agentColumnCards(board, "seen").map((card) => card.agent.pane_id)).toEqual(["b"]);
-    expect(agentColumnCards(board, "done")).toEqual([]);
+    expect(agentGroupCards(board, "needs").map((card) => card.agent.pane_id)).toEqual(["a", "a2"]);
+    expect(agentGroupCards(board, "resting").map((card) => card.agent.pane_id)).toEqual(["b"]);
+    expect(agentGroupCards(board, "working")).toEqual([]);
     const [first] = board.cards;
     expect(first?.task?.id).toBe("#170");
     expect(first?.taskHelp).toBe("Task 170 · feat/waiting-band · PR #7");
     expect(first?.where).toBe("feat/waiting-band");
     expect(board.cards[2]?.task).toBeNull();
+  });
+
+  it("puts the agents waiting on the operator first, an error before a question before a result, and counts each lineage once", () => {
+    const project = workspace([checkout("feat", { panes: ["ask", "fail", "done", "busy", "child"] }), checkout("old", { panes: ["rest"], merged: true })]);
+    const agents = [
+      agent("done", "done", { unread: true }),
+      agent("ask", "needs_you", { demand: "question", lineage_child_pane_ids: ["child"] }),
+      agent("child", "working", { lineage_parent_pane_id: "ask", delegated: true }),
+      agent("busy"),
+      agent("fail", "needs_you", { demand: "error" }),
+      agent("rest", "seen"),
+    ];
+    const board = buildAgents(one(project, agents), "project");
+    expect(agentGroupCards(board, "needs").map((card) => card.agent.pane_id)).toEqual(["fail", "ask", "child", "done"]);
+    expect(agentGroupCards(board, "working").map((card) => card.agent.pane_id)).toEqual(["busy"]);
+    // A resting agent in a merged worktree is there only to be closed.
+    expect(agentGroupCards(board, "resting")).toEqual([]);
+    expect(agentGroupCards(board, "cleanup").map((card) => card.agent.pane_id)).toEqual(["rest"]);
+    expect(waitingCount(board)).toBe(3);
   });
 
   it("names the project before the checkout on All projects and the device of a remote agent (B12)", () => {

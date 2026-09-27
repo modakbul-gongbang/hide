@@ -48,11 +48,12 @@ export type Screen = { kind: "main" } | { kind: "overview"; projectId: string } 
 export type ProjectView = "tasks" | "agents" | "sessions" | "projects";
 
 /**
- * How the Tasks view draws its tasks: the stage columns, or the tasks that
- * wait on one another laid out left to right (PRD task-agents-views D-02).
- * Like the view it belongs to the page, so another scope keeps it (B9).
+ * How the Tasks view draws its tasks: the stage columns, one row per task
+ * grouped by stage, or the tasks that wait on one another laid out left to
+ * right (PRD task-agents-views D-02). Like the view it belongs to the page,
+ * so another scope keeps it (B9).
  */
-export type TasksMode = "board" | "dependencies";
+export type TasksMode = "board" | "list" | "dependencies";
 
 /** The view a scope draws: the page's own when the scope has it, else the scope's first. */
 export function scopeView(view: ProjectView, views: readonly ProjectView[]): ProjectView {
@@ -76,6 +77,10 @@ export type Notice = {
 /** A project or checkout management dialog, named by the row that opened it. */
 export type WorkspaceDialog =
   | { kind: "new_worktree"; workspaceId: string }
+  /** A new issue, in the named project's source to begin with; the dialog can move it to another project. */
+  | { kind: "new_issue"; workspaceId: string }
+  /** Work started from an issue: a worktree named for it, its agent and first prompt. */
+  | { kind: "start_issue"; workspaceId: string; taskKey: string }
   | { kind: "purpose"; workspaceId: string; checkoutId: string }
   | { kind: "delete_worktree"; workspaceId: string; checkoutId: string }
   | { kind: "remove_project"; workspaceId: string };

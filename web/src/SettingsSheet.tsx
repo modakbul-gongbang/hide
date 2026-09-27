@@ -3,7 +3,7 @@
 // edit sent as the one core event that owns it. Nothing here decides a value;
 // a pending edit shows as pending until the snapshot says it landed.
 
-import { XIcon } from "lucide-react";
+import { TriangleAlertIcon, XIcon } from "lucide-react";
 import { useEffect, useState, type KeyboardEvent } from "react";
 import type { Actions } from "./actions";
 import {
@@ -23,6 +23,7 @@ import { Kbd } from "./components/ui/kbd";
 import { RadioGroup, RadioGroupItem } from "./components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Slider } from "./components/ui/slider";
+import { Switch } from "./components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
 import { Hint } from "./components/ui/tooltip";
@@ -34,8 +35,12 @@ import {
   FONT_SIZE_BASE,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
+  ISSUE_AGENT_CHOICES,
   SETTINGS_TABS,
   SLEEP_AFTER_CHOICES,
+  githubAccess,
+  githubAccessLine,
+  issueSourceChoices,
   sleepAfterChoice,
   sleepingCount,
   aliasProblem,
@@ -59,6 +64,7 @@ import {
   socketProblem,
   usableAccent,
   usableFontSize,
+  type IssueSourceChoice,
   type SettingsTab,
 } from "./settings";
 import {
@@ -78,7 +84,7 @@ import {
   type CommandId,
   sheetRows,
 } from "./shortcuts";
-import type { AgentHookRuntime, Device } from "./snapshot";
+import type { AgentHookRuntime, Device, IssueSettings } from "./snapshot";
 import { latestDraft } from "./editor/draft";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -136,6 +142,7 @@ function SettingsSheet({ actions }: { actions: Actions }) {
             {tab === "general" ? <GeneralTab /> : null}
             {tab === "appearance" ? <AppearanceTab actions={actions} /> : null}
             {tab === "agents" ? <AgentsTab actions={actions} /> : null}
+            {tab === "issues" ? <IssuesTab actions={actions} /> : null}
             {tab === "devices" ? <DevicesTab actions={actions} /> : null}
             {tab === "performance" ? <PerformanceTab actions={actions} /> : null}
             {tab === "shortcuts" ? <ShortcutsTab actions={actions} /> : null}
@@ -580,6 +587,143 @@ function AgentsTab({ actions }: { actions: Actions }) {
         </AlertDialog>
       ) : null}
     </>
+  );
+}
+
+// --- Issues --------------------------------------------------------------------
+
+/**
+ * Where each local project's issues live and how work starts from one. The
+ * core resolves every source; this tab names what it resolved and sends the
+ * operator's choice back as one event.
+ */
+function IssuesTab({ actions }: { actions: Actions }) {
+  const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
+  const stored = useShellStore((s) => s.rest?.ui_state?.project_issue_sources);
+  const settings = useShellStore((s) => s.rest?.ui_state?.issue_settings);
+  const [sourceAt, setSourceAt] = useState<number | null>(null);
+  const sourceError = useErrorSince(sourceAt, ["issue_source."]);
+  const [settingsAt, setSettingsAt] = useState<number | null>(null);
+  const settingsError = useErrorSince(settingsAt, ["issue_settings."]);
+  // A device's projects keep their issues on that device, so only this Mac's are listed.
+  const projects = (workspaces ?? []).filter((workspace) => workspace.registered && !workspace.temporary && !workspace.remote_target_id);
+  const access = githubAccess(projects);
+  const accessLine = access ? githubAccessLine(access) : null;
+  const change = (patch: Partial<IssueSettings>) => {
+    setSettingsAt(Date.now());
+    actions.setIssueSettings(patch);
+  };
+  return (
+    <div data-settings-issues="true">
+      <Group title="이슈 출처" data-settings-group="issue-sources">
+        <Row
+          label="GitHub"
+          detail={access?.state === "failed" && access.reason ? <Note tone="warn" data-issue-github-reason="true">{access.reason}</Note> : null}
+        >
+          <span className="text-body text-muted-foreground">gh로 읽고 씀</span>
+          {accessLine ? (
+            <Status tone={accessLine.tone} data-issue-source-github={access?.state === "failed" ? access.category : "connected"}>
+              {accessLine.text}
+            </Status>
+          ) : null}
+        </Row>
+        <Row label="Local">
+          <span className="text-body text-muted-foreground">이 Mac에 저장 · 언제나 사용 가능</span>
+        </Row>
+      </Group>
+      <Group
+        title="프로젝트별 출처"
+        note="한 프로젝트는 출처 하나. 바꿔도 이미 있는 이슈는 옮기지 않고, 연결된 워크트리는 그대로 둔다."
+        data-settings-group="project-issue-sources"
+      >
+        {projects.length === 0 ? <Row label={<Note>등록된 프로젝트가 없다.</Note>} /> : null}
+        {projects.map((workspace) => {
+          const { value, options } = issueSourceChoices(workspace, stored?.[workspace.path]);
+          const failure = workspace.tasks?.source?.failure ?? null;
+          return (
+            <Row key={workspace.id} label={<span className="break-words">{workspace.label}</span>}>
+              {failure ? (
+                <Hint label={failure}>
+                  <span className="text-warning" tabIndex={0} data-issue-source-failure={workspace.path}>
+                    <TriangleAlertIcon aria-hidden="true" className="size-(--size-icon)" />
+                  </span>
+                </Hint>
+              ) : null}
+              <Select
+                value={value}
+                onValueChange={(next) => {
+                  if (next === value) return;
+                  setSourceAt(Date.now());
+                  actions.setIssueSource(workspace.path, next as IssueSourceChoice);
+                }}
+              >
+                <SelectTrigger
+                  aria-label={`${workspace.label} 이슈 출처`}
+                  className="w-auto min-w-(--size-settings-control-w)"
+                  data-issue-source-project={workspace.path}
+                  data-issue-source={value}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {options.map((option) => (
+                    <SelectItem key={option.id} value={option.id} data-issue-source-option={option.id}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Row>
+          );
+        })}
+        {sourceError ? <Row label={<Note tone="error" data-issue-source-error="true">저장되지 않음: {sourceError}</Note>} /> : null}
+      </Group>
+      <Group title="작업 시작" data-settings-group="issue-start">
+        {settings ? (
+          <>
+            <Row label="AI가 워크트리 이름 짓기">
+              <Switch
+                checked={settings.ai_worktree_name}
+                onCheckedChange={(checked) => change({ ai_worktree_name: checked })}
+                aria-label="AI가 워크트리 이름 짓기"
+                data-issue-ai-worktree-name={String(settings.ai_worktree_name)}
+              />
+            </Row>
+            <Row label="기본 에이전트">
+              <Select
+                value={settings.default_agent}
+                onValueChange={(next) => {
+                  if (next === settings.default_agent) return;
+                  change({ default_agent: next as IssueSettings["default_agent"] });
+                }}
+              >
+                <SelectTrigger aria-label="기본 에이전트" data-issue-default-agent={settings.default_agent}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {ISSUE_AGENT_CHOICES.map((choice) => (
+                    <SelectItem key={choice.id} value={choice.id} data-issue-agent-option={choice.id}>
+                      {choice.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Row>
+            <Row label="PR 본문에 Closes 넣도록 지시">
+              <Switch
+                checked={settings.closes_instruction}
+                onCheckedChange={(checked) => change({ closes_instruction: checked })}
+                aria-label="PR 본문에 Closes 넣도록 지시"
+                data-issue-closes-instruction={String(settings.closes_instruction)}
+              />
+            </Row>
+          </>
+        ) : (
+          <Row label={<Note>아직 읽지 못했다.</Note>} />
+        )}
+        {settingsError ? <Row label={<Note tone="error" data-issue-settings-error="true">저장되지 않음: {settingsError}</Note>} /> : null}
+      </Group>
+    </div>
   );
 }
 
