@@ -1518,12 +1518,17 @@ impl Runtime {
                 self.sync_changes_root_path();
                 self.yield_surface_to_terminal();
                 self.persist_current_ui_state();
+                self.next_async_operation_id = self
+                    .next_async_operation_id
+                    .saturating_add(1)
+                    .max(unix_milliseconds());
+                let admission_id = self.next_async_operation_id;
                 if let Some(store) = self.workspace_views.as_mut() {
                     store
                         .agent_admissions
                         .entry(key)
                         .or_default()
-                        .push(Instant::now());
+                        .insert(admission_id);
                 }
                 let admission_path = cwd.clone();
                 let action = match session_workspace_id {
@@ -1532,11 +1537,13 @@ impl Runtime {
                         cwd,
                         label: label.to_owned(),
                         area_id,
+                        admission_id: Some(admission_id),
                     },
                     None => RemoteControlAction::CreateWorkspace {
                         cwd,
                         label: workspace_label,
                         area_id,
+                        admission_id: Some(admission_id),
                     },
                 };
                 self.push_diagnostic(
@@ -1544,7 +1551,7 @@ impl Runtime {
                     format!("Creating {}", action.kind()),
                 );
                 if let Err(message) = live::spawn_local_control(context, action) {
-                    self.finish_agent_admission(&admission_path);
+                    self.finish_agent_admission(&admission_path, admission_id);
                     self.set_error("tab.create_worker_failed", message, true);
                 }
                 true

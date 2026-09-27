@@ -417,6 +417,9 @@ An entry stored before the panel, with S6's `mode` (and `agent_share`, `views_ov
 
 The same schema-2 entry adds a defaulted `agent_layout` key for local Agent areas.
 Agent admission counts the shared 64-item limit together with pending creates, placements, reopen and replacement-close effects.
+Request-specific claims reserve slots before the worker starts; reconciliation places acknowledged local effects before external arrivals and does not expire uncertain claims by time.
+An ambiguous local create gets one bounded marker lookup outside the runtime lock, without another mutation; an unresolved claim remains charged for that runtime session.
+A close retry that reuses a confirmed replacement carries reuse-only permission to its worker, so a concurrent deletion cannot turn that retry into a new creation.
 An authoritative excess tab remains in checkout topology and contributes to the snapshot waiting count; reconciliation admits it when a slot opens without selecting an unplaced tab.
 Hide refuses a new external effect at capacity, including a protected replacement close, and uses the existing capacity notice surface.
 

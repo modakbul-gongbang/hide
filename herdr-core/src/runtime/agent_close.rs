@@ -36,9 +36,25 @@ impl Runtime {
             .as_ref()
             .ok_or("replacement context is missing")?;
         self.queue_restored_agent_tab(context, tab_id)?;
+        self.close_operations
+            .get_mut(&request.key)
+            .expect("checked")
+            .replacement_tab_id = Some(tab_id.to_owned());
         // The owned fresh projection includes both tabs. Arrange the shell before
         // removing the old tab so its area cannot collapse between the two effects.
         self.ingest_session(Ok(payload));
+        if !self
+            .agent_layout_of(&(
+                workspace::LOCAL_DEVICE_ID.to_owned(),
+                context.checkout_path.clone(),
+            ))
+            .is_some_and(|layout| layout.tree.display(tab_id).is_some())
+            && self.workspace_views.is_some()
+        {
+            return Err(
+                "The replacement shell could not be placed; the original tab was not closed".into(),
+            );
+        }
         let operation = self
             .close_operations
             .get(&request.key)
@@ -79,7 +95,7 @@ impl Runtime {
         }
         store
             .agent_placements
-            .insert(tab_id.to_owned(), (key, area, Some(index), Instant::now()));
+            .insert(tab_id.to_owned(), (key, area, Some(index)));
         Ok(())
     }
 
@@ -92,9 +108,12 @@ impl Runtime {
         {
             return false;
         }
-        if operation.stage != "close_request"
-            && !self.admit_agent_tab(&operation.request.context.checkout_path)
-        {
+        let reuse = operation.replacement_tab_id.as_ref().is_some_and(|id| {
+            self.herdr_workspace_tab_order
+                .values()
+                .any(|tabs| tabs.contains(id))
+        });
+        if !reuse && !self.admit_agent_tab(&operation.request.context.checkout_path) {
             return true;
         }
         if let Some(message) = self.close_precondition_failure(&operation) {
@@ -105,6 +124,10 @@ impl Runtime {
             return false;
         };
         if let Some(current) = self.close_operations.get_mut(key) {
+            current.allow_replacement_create = !reuse;
+            if !reuse {
+                current.replacement_tab_id = None;
+            }
             current.phase = "preparing".into();
             current.stage = "capture".into();
             current.message = None;

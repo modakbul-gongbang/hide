@@ -1245,6 +1245,8 @@ impl Runtime {
         self.close_operations.insert(
             request.key.clone(),
             PendingClose {
+                replacement_tab_id: None,
+                allow_replacement_create: true,
                 target_id: target_id.clone(),
                 scope_id,
                 scope_pane_ids,
@@ -1419,6 +1421,8 @@ impl Runtime {
         self.close_operations.insert(
             request.key.clone(),
             PendingClose {
+                replacement_tab_id: None,
+                allow_replacement_create: true,
                 request: request.clone(),
                 target_id,
                 scope_id: request.context.tab_id.clone(),
@@ -1497,6 +1501,7 @@ impl Runtime {
                         CLOSE_STAGE_TIMEOUT_MS
                     },
                 ));
+                let allow_replacement_create = operation.allow_replacement_create;
                 self.push_diagnostic(
                     "recent_closed.reserved",
                     format!(
@@ -1505,6 +1510,7 @@ impl Runtime {
                     ),
                 );
                 effects.push(live::CloseEffectRequest {
+                    allow_replacement_create,
                     key: request.key.clone(),
                     connection_generation: request.connection_generation,
                     target: request.target.clone(),

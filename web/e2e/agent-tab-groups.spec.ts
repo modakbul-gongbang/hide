@@ -140,7 +140,7 @@ test("Agent pointer drags split live canvases, reorder, move, cancel, resize, co
     await expect(panel).toBeVisible();
     const floating = await box(panel);
     const beforePanelDrop = await shape(page);
-    await drag(page, tab(page, first!), { x: floating.x + floating.width / 2, y: floating.y + floating.height / 2 }, async () => {
+    await drag(page, tab(page, first!), { x: floating.x + floating.width - 5, y: floating.y + floating.height / 2 }, async () => {
       await expect(page.locator("[data-agent-drop]")).toHaveCount(0);
       await expect(page.locator("html")).toHaveAttribute("data-agent-drag", "forbidden");
     });
@@ -219,5 +219,30 @@ test("Delegated canvas returns to its normal tab and Agent controls keep palette
     await expect(page.locator('[data-palette-row="command:agent:split_right"]')).toBeVisible();
     await page.keyboard.press("Escape");
     await screenshot(page, "agent-groups-delegated-return");
+  } finally { daemon?.stop(); herdr.stop(); }
+});
+
+test("An external focused creation joins a bar without replacing either shown canvas", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  const herdr = await startHerdr({ agents: false });
+  let daemon: Daemon | null = null;
+  try {
+    const second = herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "second", "--no-focus"]) as { result: { tab: { tab_id: string } } };
+    daemon = await startHided(herdr, "agent-external-focus");
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await enterWorkspace(page, "fixture");
+    await expect(tab(page, second.result.tab.tab_id)).toBeVisible();
+    const body = await box(page.locator("[data-agent-body]"));
+    await drag(page, tab(page, second.result.tab.tab_id), { x: body.x + body.width - 5, y: body.y + body.height / 2 });
+    await expect(areas(page)).toHaveCount(2);
+    const before = (await shape(page)).map(({ id, active, shown }) => ({ id, active, shown }));
+    const external = herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "외부 생성", "--focus"]) as { result: { tab: { tab_id: string } } };
+    await expect(tab(page, external.result.tab.tab_id)).toBeVisible();
+    // Wait through the actual separate creation/layout/focus stream, including
+    // the next read-only projection, rather than asserting its first frame.
+    await expect.poll(async () => (await shape(page)).map(({ id, active, shown }) => ({ id, active, shown }))).toEqual(before);
+    await page.waitForTimeout(1500);
+    expect((await shape(page)).map(({ id, active, shown }) => ({ id, active, shown }))).toEqual(before);
+    await screenshot(page, "agent-groups-external-focus");
   } finally { daemon?.stop(); herdr.stop(); }
 });

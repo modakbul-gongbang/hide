@@ -796,12 +796,21 @@ pub(crate) fn move_outcome(
 }
 
 pub(crate) fn tab_create_params(workspace: &str, cwd: &str, label: &str) -> Result<Value, String> {
+    tab_create_with_env_params(workspace, cwd, label, Default::default())
+}
+
+pub(crate) fn tab_create_with_env_params(
+    workspace: &str,
+    cwd: &str,
+    label: &str,
+    env: std::collections::BTreeMap<String, String>,
+) -> Result<Value, String> {
     params(req::TabCreateParams {
         workspace_id: Some(workspace.into()),
         cwd: Some(cwd.into()),
         label: Some(label.into()),
         focus: true,
-        env: Default::default(),
+        env: env.into_iter().collect(),
     })
 }
 pub(crate) fn replacement_tab_params(

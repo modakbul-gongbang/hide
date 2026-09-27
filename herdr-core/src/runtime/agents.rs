@@ -563,6 +563,7 @@ impl Runtime {
                         cwd: registration.path.clone(),
                         label: registration.label.clone(),
                         area_id: None,
+                        admission_id: None,
                     }
                 } else {
                     let Some(source_id) = remote_herdr_workspace(
@@ -593,6 +594,7 @@ impl Runtime {
                         cwd,
                         label,
                         area_id: None,
+                        admission_id: None,
                     }
                 }
             }

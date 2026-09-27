@@ -1041,30 +1041,18 @@ impl Runtime {
                 })
                 .collect::<HashSet<_>>();
             store.agent_live.retain(|key| keys.contains(key));
-            store.agent_admissions.retain(|key, pending| {
-                pending.retain(|started| {
-                    let current = started.elapsed() < std::time::Duration::from_secs(30);
-                    if !current {
-                        agent_layout_errors
-                            .push(format!("Agent create admission expired for {}", key.1));
-                    }
-                    current
-                });
-                keys.contains(key) && !pending.is_empty()
-            });
-            store.agent_placements.retain(|id, (_, _, _, started)| {
-                let current = started.elapsed() < std::time::Duration::from_secs(30);
-                if !current {
-                    agent_layout_errors.push(format!(
-                        "Placement for tab {id} expired before topology confirmed it"
-                    ));
-                }
-                current
-            });
+            // A timeout does not prove an external creation did not happen.
+            store
+                .agent_admissions
+                .retain(|key, pending| keys.contains(key) && !pending.is_empty());
+            store
+                .agent_placements
+                .retain(|_, (key, _, _)| keys.contains(key));
         }
         for workspace in workspaces.iter_mut() {
             for checkout in workspace.checkouts.iter_mut() {
                 let key = (workspace.device_id.clone(), checkout.path.clone());
+                let reserved = self.pending_agent_admissions(&checkout.path);
                 let mut restored_agent_tab = None;
                 let mut placed_tabs: Option<HashSet<String>> = None;
                 if workspace.device_id == workspace::LOCAL_DEVICE_ID
@@ -1077,7 +1065,13 @@ impl Runtime {
                         .iter()
                         .filter_map(|tab| Some((tab.id.clone()?, tab.delegated)))
                         .collect::<Vec<_>>();
-                    match layout.reconcile(&topology) {
+                    let admitted = store
+                        .agent_placements
+                        .iter()
+                        .filter(|(_, (scope, _, _))| scope == &key)
+                        .map(|(id, _)| id.clone())
+                        .collect();
+                    match layout.reconcile_admissions(&topology, reserved, &admitted) {
                         Ok(changed) => agent_layout_changed |= changed,
                         Err(error) => {
                             agent_layout_errors.push(format!("{}: {error:?}", checkout.id))
@@ -1099,10 +1093,10 @@ impl Runtime {
                     let placements = store
                         .agent_placements
                         .iter()
-                        .filter(|(id, (scope, _, _, _))| {
+                        .filter(|(id, (scope, _, _))| {
                             scope == &key && layout.tree.display(id).is_some()
                         })
-                        .map(|(id, (_, area, index, _))| (id.clone(), area.clone(), *index))
+                        .map(|(id, (_, area, index))| (id.clone(), area.clone(), *index))
                         .collect::<Vec<_>>();
                     for (id, area, index) in placements {
                         let target = layout
@@ -3614,10 +3608,20 @@ impl Runtime {
         elapsed_ms: u128,
     ) -> bool {
         let action_kind = action.kind();
-        match &action {
-            RemoteControlAction::CreateTab { cwd, .. }
-            | RemoteControlAction::CreateWorkspace { cwd, .. } => self.finish_agent_admission(cwd),
-            _ => {}
+        if !result.as_ref().is_err_and(|error| error.is_ambiguous()) {
+            match &action {
+                RemoteControlAction::CreateTab {
+                    cwd,
+                    admission_id: Some(id),
+                    ..
+                }
+                | RemoteControlAction::CreateWorkspace {
+                    cwd,
+                    admission_id: Some(id),
+                    ..
+                } => self.finish_agent_admission(cwd, *id),
+                _ => {}
+            }
         }
         if let RemoteControlAction::RenameTab { request_id, .. } = &action {
             return self.ingest_tab_rename_result(
@@ -3673,12 +3677,7 @@ impl Runtime {
                         if store.agent_placements.len() < 64 {
                             store.agent_placements.insert(
                                 tab_id.clone(),
-                                (
-                                    (workspace::LOCAL_DEVICE_ID.to_owned(), path),
-                                    area,
-                                    None,
-                                    Instant::now(),
-                                ),
+                                ((workspace::LOCAL_DEVICE_ID.to_owned(), path), area, None),
                             );
                         } else {
                             self.push_diagnostic(
@@ -3743,6 +3742,26 @@ impl Runtime {
                     "created_pane_id": created_pane_id,
                     "duration_ms": elapsed_ms,
                 }));
+            }
+            Err(error)
+                if error.is_ambiguous()
+                    && matches!(
+                        action,
+                        RemoteControlAction::CreateTab {
+                            admission_id: Some(_),
+                            ..
+                        } | RemoteControlAction::CreateWorkspace {
+                            admission_id: Some(_),
+                            ..
+                        }
+                    ) =>
+            {
+                self.push_diagnostic(
+                    "tab.create.unknown",
+                    format!("{action_kind}: {}", error.message()),
+                );
+                self.set_error("agent_layout.display_limit",
+                    "Tab creation is unconfirmed; its place stays reserved. Close a tab to make room.", false);
             }
             Err(error) => {
                 let message = error.message().to_owned();

@@ -79,6 +79,8 @@ An explicit local `--reveal` brings that Workspace and the opened View forward, 
 
 At most 64 normal Agent tabs are placed, in up to six areas and three split levels.
 New tab, Reopen that needs a tab, and protected replacement close count pending admissions and refuse before any external effect when full; the existing one-line notice asks the operator to close a tab.
+After an ambiguous creation reply, Hide checks the request marker once without resending the mutation.
+An unconfirmed creation retains its request-specific place and reports that uncertainty in the same notice; elapsed time alone never frees the place.
 External tabs beyond the cap remain in Herdr topology, with their waiting count in that same notice, and enter the active area in authoritative order when a slot opens.
 A waiting tab cannot take Hide's keyboard or active-tab selection.
 This boundary is an Observer-approved, user-vetoable implementation assumption from the Agent groups contract.

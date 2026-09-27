@@ -73,6 +73,15 @@ impl Layout {
         &mut self,
         tabs: &[(String, bool)],
     ) -> Result<bool, crate::split_tree::LayoutError> {
+        self.reconcile_admissions(tabs, 0, &HashSet::new())
+    }
+
+    pub fn reconcile_admissions(
+        &mut self,
+        tabs: &[(String, bool)],
+        reserved: usize,
+        admitted: &HashSet<String>,
+    ) -> Result<bool, crate::split_tree::LayoutError> {
         let before = self.clone();
         let members: HashSet<_> = tabs
             .iter()
@@ -93,9 +102,20 @@ impl Layout {
                 && tabs.iter().any(|(id, delegated)| id == tab && *delegated)
         });
         self.waiting = 0;
-        for (id, delegated) in tabs {
+        // Confirmed local effects own their reserved slots even if an external
+        // creation was observed first. Unknown effects keep capacity reserved.
+        let absent = admitted
+            .iter()
+            .filter(|id| !members.contains(id.as_str()))
+            .count();
+        let capacity = Tab::LIMITS.items.saturating_sub(reserved + absent);
+        for (id, delegated) in tabs
+            .iter()
+            .filter(|(id, _)| admitted.contains(id))
+            .chain(tabs.iter().filter(|(id, _)| !admitted.contains(id)))
+        {
             if !delegated && self.tree.display(id).is_none() {
-                if self.tree.displays().count() >= Tab::LIMITS.items {
+                if self.tree.displays().count() >= capacity {
                     self.waiting += 1;
                     continue;
                 }

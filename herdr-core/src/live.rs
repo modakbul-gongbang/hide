@@ -381,11 +381,13 @@ pub enum RemoteControlAction {
         cwd: String,
         label: String,
         area_id: Option<String>,
+        admission_id: Option<u64>,
     },
     CreateWorkspace {
         cwd: String,
         label: String,
         area_id: Option<String>,
+        admission_id: Option<u64>,
     },
     CloseTab {
         tab_id: String,
@@ -539,21 +541,36 @@ fn execute_remote_control(
             workspace_id,
             cwd,
             label,
+            admission_id,
             ..
         } => {
             let result = mutation_request(
                 connector,
                 "tab.create",
-                wire::tab_create_params(workspace_id, cwd, label)?,
+                wire::tab_create_with_env_params(
+                    workspace_id,
+                    cwd,
+                    label,
+                    local_create_env(*admission_id),
+                )?,
             )?;
             let (tab_id, pane_id) = wire::created_tab(result).map_err(ControlFailure::Ambiguous)?;
             (Some(tab_id), Some(pane_id))
         }
-        RemoteControlAction::CreateWorkspace { cwd, label, .. } => {
+        RemoteControlAction::CreateWorkspace {
+            cwd,
+            label,
+            admission_id,
+            ..
+        } => {
             let result = mutation_request(
                 connector,
                 "workspace.create",
-                wire::workspace_create_params(cwd, label)?,
+                wire::workspace_create_with_env_params(
+                    cwd,
+                    label,
+                    local_create_env(*admission_id),
+                )?,
             )?;
             let (_, tab_id, pane_id) =
                 wire::created_workspace(result).map_err(ControlFailure::Ambiguous)?;
@@ -731,6 +748,7 @@ pub struct CloseCaptureOutcome {
 
 #[derive(Clone, Debug)]
 pub struct CloseEffectRequest {
+    pub allow_replacement_create: bool,
     pub replacement: Option<ClosedContext>,
     pub key: String,
     pub connection_generation: u64,
@@ -762,6 +780,7 @@ pub fn spawn_close_capture(
                         context.api_connector.as_ref(),
                         &effect.key,
                         replacement,
+                        effect.allow_replacement_create,
                     )
                     .and_then(|(tab_id, payload)| {
                         let runtime = context.runtime.upgrade().ok_or("runtime stopped")?;
@@ -843,6 +862,7 @@ fn prepare_close_replacement(
     connector: &dyn ApiConnector,
     key: &str,
     context: &ClosedContext,
+    allow_create: bool,
 ) -> Result<(String, SessionSnapshotPayload), String> {
     let started = Instant::now();
     let snapshot =
@@ -881,6 +901,11 @@ fn prepare_close_replacement(
     }
     let tab_id = match owned {
         Some(id) => id,
+        None if !allow_create => {
+            return Err(
+                "The replacement shell disappeared; retry after making room for a tab".into(),
+            );
+        }
         None => {
             let value = reopen_request(
                 connector,
@@ -996,6 +1021,7 @@ const REOPEN_INTENT_ENV: &str = "HIDE_REOPEN_INTENT";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum ReopenIntentStage {
+    LocalCreate,
     Workspace,
     Layout,
     Pane,
@@ -1004,6 +1030,7 @@ enum ReopenIntentStage {
 
 fn reopen_intent_marker(key: &str, stage: ReopenIntentStage) -> String {
     let stage = match stage {
+        ReopenIntentStage::LocalCreate => "local-create",
         ReopenIntentStage::Workspace => "workspace",
         ReopenIntentStage::Layout => "layout",
         ReopenIntentStage::Pane => "pane",
@@ -2354,6 +2381,83 @@ pub fn spawn_remote_control(
         .map_err(|error| format!("remote control worker could not be started: {error}"))
 }
 
+// A local create is tagged once. A lost reply gets one bounded read-only
+// recovery, never a repeated mutation; a still-unknown result retains its claim.
+fn local_create_key(id: u64) -> String {
+    format!("create-{}-{id}", std::process::id())
+}
+fn local_create_env(id: Option<u64>) -> std::collections::BTreeMap<String, String> {
+    id.map(|id| reopen_intent_env(&local_create_key(id), ReopenIntentStage::LocalCreate))
+        .unwrap_or_default()
+}
+fn execute_local_control(
+    connector: &dyn ApiConnector,
+    action: &RemoteControlAction,
+) -> Result<RemoteControlOutcome, ControlFailure> {
+    let result = execute_remote_control(connector, action);
+    if !result.as_ref().is_err_and(ControlFailure::is_ambiguous) {
+        return result;
+    }
+    match recover_local_creation(connector, action) {
+        Ok(outcome) => Ok(outcome),
+        Err(message) => {
+            crate::diagnostic!(
+                json!({"component":"tab_control", "kind":"tab.create.recovery_unknown", "message":message})
+            );
+            result
+        }
+    }
+}
+fn recover_local_creation(
+    connector: &dyn ApiConnector,
+    action: &RemoteControlAction,
+) -> Result<RemoteControlOutcome, String> {
+    let (id, workspace) = match action {
+        RemoteControlAction::CreateTab {
+            admission_id: Some(id),
+            workspace_id,
+            ..
+        } => (*id, Some(workspace_id.as_str())),
+        RemoteControlAction::CreateWorkspace {
+            admission_id: Some(id),
+            ..
+        } => (*id, None),
+        _ => return Err("No local creation claim to recover".into()),
+    };
+    let started = Instant::now();
+    let snapshot =
+        fetch_session_with_connector(connector).map_err(|error| error.message().to_owned())?;
+    let tabs = snapshot
+        .tabs
+        .iter()
+        .filter(|tab| workspace.is_none_or(|id| tab.workspace_id == id))
+        .collect::<Vec<_>>();
+    if tabs.len() > 64 {
+        return Err("Too many tabs for bounded creation recovery".into());
+    }
+    let key = local_create_key(id);
+    let marker = reopen_intent_marker(&key, ReopenIntentStage::LocalCreate);
+    let mut found = None;
+    for tab in tabs {
+        if started.elapsed() > Duration::from_secs(5) {
+            return Err("Creation recovery timed out".into());
+        }
+        let layout = export_reopen_layout(connector, &key, &tab.tab_id)?;
+        let mut panes = Vec::new();
+        pane_ids_with_reopen_marker(&layout.root, &marker, &mut panes);
+        if let Some(pane) = panes.first() {
+            if found.is_some() {
+                return Err("Multiple tabs carry the creation claim".into());
+            }
+            found = Some(RemoteControlOutcome::Acknowledged {
+                created_tab_id: Some(tab.tab_id.clone()),
+                created_pane_id: Some(pane.clone()),
+            });
+        }
+    }
+    found.ok_or_else(|| "Creation is not yet confirmed".into())
+}
+
 pub fn spawn_local_control(
     context: LiveContext,
     action: RemoteControlAction,
@@ -2371,7 +2475,7 @@ pub fn spawn_local_control(
         .name(worker_name.to_owned())
         .spawn(move || {
             let started = Instant::now();
-            let result = execute_remote_control(context.api_connector.as_ref(), &action);
+            let result = execute_local_control(context.api_connector.as_ref(), &action);
             let elapsed_ms = started.elapsed().as_millis();
             let Some(runtime) = context.runtime.upgrade() else {
                 return;
@@ -4427,6 +4531,7 @@ mod tests {
                 cwd: "/tmp/herdr-ide-hide".to_owned(),
                 label: "hide".to_owned(),
                 area_id: None,
+                admission_id: None,
             },
         )
         .expect("workspace control request");
@@ -4536,6 +4641,7 @@ mod tests {
                 cwd: "/tmp/herdr-ide-remote-tab".to_owned(),
                 label: "New tab".to_owned(),
                 area_id: None,
+                admission_id: None,
             },
             RemoteControlAction::CloseTab {
                 tab_id: "w1:t3".to_owned(),
@@ -4675,6 +4781,7 @@ mod tests {
                 cwd: cwd.clone(),
                 label: "Herdr IDE remote control probe".to_owned(),
                 area_id: None,
+                admission_id: None,
             },
         )
         .expect("create fixture tab")

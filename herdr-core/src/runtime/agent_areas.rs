@@ -78,18 +78,36 @@ impl Runtime {
         let layout = self.agent_layout_of(&key).expect("entry exists");
         let placed = layout.tree.display_count();
         let store = self.workspace_views.as_ref().expect("layout exists");
-        let creating = store.agent_admissions.get(&key).map_or(0, Vec::len);
         let arriving = store
             .agent_placements
             .iter()
-            .filter(|(id, (scope, _, _, _))| scope == &key && layout.tree.display(id).is_none())
+            .filter(|(id, (scope, _, _))| scope == &key && layout.tree.display(id).is_none())
             .count();
+        if placed + arriving + self.pending_agent_admissions(path) < Tab::LIMITS.items {
+            return true;
+        }
+        self.set_error(
+            "agent_layout.display_limit",
+            "64 Agent tabs are placed or opening. Close a tab to make room.",
+            false,
+        );
+        false
+    }
+
+    pub(super) fn pending_agent_admissions(&self, path: &str) -> usize {
+        let key = (workspace::LOCAL_DEVICE_ID.to_owned(), path.to_owned());
+        let creating = self
+            .workspace_views
+            .as_ref()
+            .and_then(|store| store.agent_admissions.get(&key))
+            .map_or(0, HashSet::len);
         let closing = self
             .close_operations
             .values()
             .filter(|operation| {
                 operation.request.context.replacement_shell
                     && operation.request.context.checkout_path == path
+                    && operation.replacement_tab_id.is_none()
                     && matches!(operation.phase.as_str(), "preparing" | "transmitting")
             })
             .count();
@@ -108,15 +126,7 @@ impl Runtime {
                 }
                 ClosedItem::File { .. } => false,
             });
-        if placed + creating + arriving + closing + usize::from(reopening) < Tab::LIMITS.items {
-            return true;
-        }
-        self.set_error(
-            "agent_layout.display_limit",
-            "64 Agent tabs are placed or opening. Close a tab to make room.",
-            false,
-        );
-        false
+        creating + closing + usize::from(reopening)
     }
 
     pub(super) fn agent_can_show_created(&self, path: &str, id: &str) -> bool {
@@ -147,14 +157,12 @@ impl Runtime {
             })
     }
 
-    pub(super) fn finish_agent_admission(&mut self, path: &str) {
+    pub(super) fn finish_agent_admission(&mut self, path: &str, id: u64) {
         let key = (workspace::LOCAL_DEVICE_ID.to_owned(), path.to_owned());
         if let Some(store) = self.workspace_views.as_mut()
             && let Some(pending) = store.agent_admissions.get_mut(&key)
         {
-            if !pending.is_empty() {
-                pending.remove(0);
-            }
+            pending.remove(&id);
             if pending.is_empty() {
                 store.agent_admissions.remove(&key);
             }

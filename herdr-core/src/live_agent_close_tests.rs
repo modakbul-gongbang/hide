@@ -39,7 +39,8 @@ fn replacement_creation_failure_sends_no_close() {
         "tab.create" => Err(("fixture_create_refused".into(), "private diagnostic".into())),
         other => panic!("unexpected effect {other}"),
     });
-    let error = prepare_close_replacement(&herdr.connector(), "intent", &context()).unwrap_err();
+    let error =
+        prepare_close_replacement(&herdr.connector(), "intent", &context(), true).unwrap_err();
     assert!(error.contains("fixture_create_refused"));
     assert_eq!(herdr.methods(), ["session.snapshot", "tab.create"]);
 }
@@ -71,12 +72,13 @@ fn replacement_retry_after_close_refusal_adopts_its_shell_without_another_create
     );
     let connector = herdr.connector();
     assert_eq!(
-        prepare_close_replacement(&connector, "intent", &context())
+        prepare_close_replacement(&connector, "intent", &context(), true)
             .unwrap()
             .0,
         "w1:t2"
     );
     let close = CloseEffectRequest {
+        allow_replacement_create: true,
         key: "intent".into(),
         connection_generation: 0,
         target: CloseCaptureTarget::Tab {
@@ -86,7 +88,7 @@ fn replacement_retry_after_close_refusal_adopts_its_shell_without_another_create
     };
     assert!(run_close_effect(&connector, &close).is_err());
     assert_eq!(
-        prepare_close_replacement(&connector, "intent", &context())
+        prepare_close_replacement(&connector, "intent", &context(), false)
             .unwrap()
             .0,
         "w1:t2"
@@ -106,5 +108,68 @@ fn replacement_retry_after_close_refusal_adopts_its_shell_without_another_create
             .filter(|method| method.as_str() == "tab.close")
             .count(),
         1
+    );
+}
+
+#[test]
+fn reuse_only_retry_cannot_create_when_its_shell_disappears_before_worker_reads() {
+    let herdr = FakeHerdr::start("replacement-reuse-only", |method, _| match method {
+        "session.snapshot" => snapshot(false),
+        other => panic!("reuse-only retry must not send {other}"),
+    });
+    let error =
+        prepare_close_replacement(&herdr.connector(), "intent", &context(), false).unwrap_err();
+    assert!(error.contains("disappeared"));
+    assert_eq!(herdr.methods(), ["session.snapshot"]);
+}
+
+#[test]
+fn malformed_create_ack_is_recovered_by_its_marker_without_repeating_the_effect() {
+    let mut marker = String::new();
+    let herdr = FakeHerdr::start("create-recover", move |method, params| match method {
+        "tab.create" => {
+            assert!(marker.is_empty(), "creation must not be repeated");
+            marker = params["env"][REOPEN_INTENT_ENV]
+                .as_str()
+                .unwrap()
+                .to_owned();
+            json!({"type":"tab_created","tab":tab(""),"root_pane":{
+                "pane_id":"w1:p2","terminal_id":"terminal","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"idle","revision":0
+            }})
+        }
+        "session.snapshot" => snapshot(true),
+        "layout.export" => {
+            let id = params["tab_id"].as_str().unwrap();
+            json!({"type":"layout_export","layout":{
+                "workspace_id":"w1","tab_id":id,"zoomed":false,"focused_pane_id":"w1:p2",
+                "root":{"type":"pane","pane_id":"w1:p2","cwd":"/tmp","env":{
+                    (REOPEN_INTENT_ENV): if id == "w1:t2" {marker.clone()} else {"other-intent".into()}
+                }}
+            }})
+        }
+        other => panic!("unexpected {other}"),
+    });
+    let outcome = execute_local_control(
+        &herdr.connector(),
+        &RemoteControlAction::CreateTab {
+            workspace_id: "w1".into(),
+            cwd: "/tmp".into(),
+            label: "New".into(),
+            area_id: Some("a1".into()),
+            admission_id: Some(91),
+        },
+    )
+    .unwrap();
+    assert!(
+        matches!(outcome, RemoteControlOutcome::Acknowledged { created_tab_id: Some(id), .. } if id == "w1:t2")
+    );
+    assert_eq!(
+        herdr.methods(),
+        [
+            "tab.create",
+            "session.snapshot",
+            "layout.export",
+            "layout.export"
+        ]
     );
 }

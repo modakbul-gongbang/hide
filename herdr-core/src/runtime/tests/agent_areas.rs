@@ -97,6 +97,7 @@ fn requested_new_tab_area_survives_a_focus_change_before_topology_arrives() {
             cwd: "/agent-groups".into(),
             label: "Tab".into(),
             area_id: Some("a1".into()),
+            admission_id: None,
         },
         Ok(RemoteControlOutcome::Acknowledged {
             created_tab_id: Some("w-order:t4".into()),
@@ -310,12 +311,9 @@ fn pending_agent_admissions_are_counted_before_the_next_effect() {
         .as_mut()
         .unwrap()
         .agent_admissions
-        .insert(
-            ("local".into(), "/agent-groups".into()),
-            vec![Instant::now()],
-        );
+        .insert(("local".into(), "/agent-groups".into()), HashSet::from([1]));
     assert!(!runtime.admit_agent_tab("/agent-groups"));
-    runtime.finish_agent_admission("/agent-groups");
+    runtime.finish_agent_admission("/agent-groups", 1);
     assert!(runtime.admit_agent_tab("/agent-groups"));
 }
 
@@ -403,4 +401,174 @@ fn protected_close_and_reopen_at_capacity_refuse_before_any_worker_or_selection_
         runtime.snapshot.status.last_error.as_ref().unwrap().kind,
         "agent_layout.display_limit"
     );
+}
+
+#[test]
+fn admitted_tab_keeps_its_slot_when_external_topology_arrives_first() {
+    let (mut runtime, _) = setup();
+    let mut ids = (1..=63)
+        .map(|n| format!("w-order:t{n}"))
+        .collect::<Vec<_>>();
+    ingest(
+        &mut runtime,
+        &ids.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
+    runtime
+        .workspace_views
+        .as_mut()
+        .unwrap()
+        .agent_admissions
+        .insert(
+            ("local".into(), "/agent-groups".into()),
+            HashSet::from([71]),
+        );
+    ids.push("w-order:external".into());
+    ingest(
+        &mut runtime,
+        &ids.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
+    assert_eq!(layout(&runtime).tree.display_count(), 63);
+    assert_eq!(layout(&runtime).waiting, 1);
+    runtime.ingest_local_control_result(
+        RemoteControlAction::CreateTab {
+            workspace_id: "w-order".into(),
+            cwd: "/agent-groups".into(),
+            label: "Tab".into(),
+            area_id: Some("a1".into()),
+            admission_id: Some(71),
+        },
+        Ok(RemoteControlOutcome::Acknowledged {
+            created_tab_id: Some("w-order:admitted".into()),
+            created_pane_id: None,
+        }),
+        1,
+    );
+    // The known ID also retains its slot while still absent from topology.
+    ingest(
+        &mut runtime,
+        &ids.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
+    assert_eq!(layout(&runtime).tree.display_count(), 63);
+    ids.push("w-order:admitted".into());
+    ingest(
+        &mut runtime,
+        &ids.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
+    assert!(layout(&runtime).tree.display("w-order:admitted").is_some());
+    assert!(layout(&runtime).tree.display("w-order:external").is_none());
+    assert_eq!(layout(&runtime).waiting, 1);
+}
+
+#[test]
+fn uncertain_create_retains_its_own_claim_until_a_definite_result() {
+    let (mut runtime, _) = setup();
+    let ids = (1..=62)
+        .map(|n| format!("w-order:t{n}"))
+        .collect::<Vec<_>>();
+    let tabs = ids.iter().map(String::as_str).collect::<Vec<_>>();
+    ingest(&mut runtime, &tabs);
+    runtime
+        .workspace_views
+        .as_mut()
+        .unwrap()
+        .agent_admissions
+        .insert(
+            ("local".into(), "/agent-groups".into()),
+            HashSet::from([71, 72]),
+        );
+    let create = |id| RemoteControlAction::CreateTab {
+        workspace_id: "w-order".into(),
+        cwd: "/agent-groups".into(),
+        label: "Tab".into(),
+        area_id: Some("a1".into()),
+        admission_id: Some(id),
+    };
+    runtime.ingest_local_control_failure(
+        create(71),
+        Err(live::ControlFailure::Ambiguous(
+            "lost acknowledgement".into(),
+        )),
+        1,
+    );
+    ingest(&mut runtime, &tabs);
+    assert!(!runtime.admit_agent_tab("/agent-groups"));
+    runtime.ingest_local_control_failure(
+        create(72),
+        Err(live::ControlFailure::Definite("refused".into())),
+        1,
+    );
+    let pending = &runtime.workspace_views.as_ref().unwrap().agent_admissions;
+    assert_eq!(
+        pending
+            .get(&("local".into(), "/agent-groups".into()))
+            .unwrap(),
+        &HashSet::from([71])
+    );
+    assert!(runtime.admit_agent_tab("/agent-groups"));
+    runtime.ingest_local_control_result(
+        create(71),
+        Ok(RemoteControlOutcome::Acknowledged {
+            created_tab_id: Some("w-order:recovered".into()),
+            created_pane_id: None,
+        }),
+        1,
+    );
+    assert!(
+        runtime
+            .workspace_views
+            .as_ref()
+            .unwrap()
+            .agent_admissions
+            .is_empty()
+    );
+    let mut recovered = tabs.clone();
+    recovered.push("w-order:recovered");
+    ingest(&mut runtime, &recovered);
+    assert_eq!(layout(&runtime).tree.display_count(), 63);
+    assert!(runtime.admit_agent_tab("/agent-groups"));
+}
+
+#[test]
+fn replacement_retry_with_missing_shell_at_capacity_sends_no_effect() {
+    let (mut runtime, _) = setup();
+    let ids = (1..=64)
+        .map(|n| format!("w-order:t{n}"))
+        .collect::<Vec<_>>();
+    ingest(
+        &mut runtime,
+        &ids.iter().map(String::as_str).collect::<Vec<_>>(),
+    );
+    let tab = runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter()
+        .flat_map(|w| &w.checkouts)
+        .flat_map(|c| &c.tabs)
+        .find(|tab| tab.id.as_deref() == Some("w-order:t1"))
+        .unwrap()
+        .clone();
+    let mut context = runtime.close_context(&tab).unwrap();
+    context.replacement_shell = true;
+    let request = live::CloseCaptureRequest {
+        key: "retained-close".into(),
+        connection_generation: runtime.live_generation,
+        context,
+        panes: runtime.closed_panes(&tab),
+        target: live::CloseCaptureTarget::Tab {
+            tab_id: "w-order:t1".into(),
+        },
+    };
+    runtime.ensure_pending_close_from_request(&request);
+    let operation = runtime.close_operations.get_mut("retained-close").unwrap();
+    operation.phase = "refused".into();
+    operation.stage = "close_request".into();
+    operation.replacement_tab_id = Some("w-order:removed-shell".into());
+    assert!(runtime.retry_agent_close("retained-close"));
+    assert_eq!(
+        runtime.snapshot.status.last_error.as_ref().unwrap().kind,
+        "agent_layout.display_limit"
+    );
+    assert_eq!(runtime.close_operations["retained-close"].phase, "refused");
+    assert!(runtime.panes_closing.is_empty());
 }
