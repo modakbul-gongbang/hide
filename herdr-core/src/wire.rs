@@ -310,6 +310,11 @@ record_conversions!(ev);
 /// with the pane, and it is read here and nowhere else.
 pub(crate) const PARENT_PANE_TOKEN: &str = "parent_pane";
 
+/// Stable machine identity paired with `parent_pane` for cross-device
+/// lineage. Same-machine children omit it so an ordinary local parent keeps
+/// the existing device-scoped path.
+pub(crate) const PARENT_MACHINE_TOKEN: &str = "parent_machine";
+
 /// The source under which Hide writes its own pane tokens. Herdr keeps one
 /// token set per source, so a token Hide wrote can never overwrite one an
 /// orchestrator or the hook helper wrote under theirs.
@@ -332,6 +337,12 @@ impl From<res::AgentInfo> for ProjectedAgent {
             .find(|(key, _)| key.as_str() == PARENT_PANE_TOKEN)
             .map(|(_, id)| id.as_str());
         let spawned_from_pane_id = lineage_parent(declared_parent);
+        let declared_parent_machine = v
+            .tokens
+            .iter()
+            .find(|(key, _)| key.as_str() == PARENT_MACHINE_TOKEN)
+            .map(|(_, id)| id.as_str());
+        let spawned_from_machine_id = lineage_parent(declared_parent_machine);
         Self {
             pane_id: v.pane_id,
             name: v.name,
@@ -345,6 +356,7 @@ impl From<res::AgentInfo> for ProjectedAgent {
                 value: s.value,
             }),
             spawned_from_pane_id,
+            spawned_from_machine_id,
             state_change_seq: v.state_change_seq,
             tokens: v
                 .tokens
@@ -930,36 +942,6 @@ pub(crate) fn fork_split_params(parent_pane_id: &str, cwd: Option<&str>) -> Resu
     })
 }
 
-/// Declares `parent_pane_id` as the pane `child_pane_id` was spawned from,
-/// under Hide's own metadata source.
-pub(crate) fn declare_parent_pane_params(
-    child_pane_id: &str,
-    parent_pane_id: &str,
-) -> Result<Value, String> {
-    params(req::PaneReportMetadataParams {
-        pane_id: child_pane_id.into(),
-        source: HIDE_METADATA_SOURCE.into(),
-        tokens: [(
-            PARENT_PANE_TOKEN
-                .parse()
-                .map_err(|error| format!("parent pane token name is invalid: {error}"))?,
-            Some(parent_pane_id.to_owned()),
-        )]
-        .into_iter()
-        .collect(),
-        agent: None,
-        applies_to_source: None,
-        clear_display_agent: false,
-        clear_state_labels: false,
-        clear_title: false,
-        display_agent: None,
-        seq: None,
-        state_labels: Default::default(),
-        title: None,
-        ttl_ms: None,
-    })
-}
-
 fn request_layout_node(node: &ClosedLayoutNode) -> req::LayoutNode {
     match node {
         ClosedLayoutNode::Pane {
@@ -1501,7 +1483,7 @@ mod tests {
     }
 
     #[test]
-    fn a_fork_splits_without_focus_and_declares_its_parent_under_hides_source() {
+    fn a_fork_splits_without_focus() {
         assert_eq!(
             fork_split_params("w1:p1", Some("/fixture")).unwrap(),
             json!({"target_pane_id": "w1:p1", "direction": "right", "cwd": "/fixture",
@@ -1510,11 +1492,6 @@ mod tests {
         assert_eq!(
             fork_split_params("w1:p1", Some("  ")).unwrap()["cwd"],
             Value::Null
-        );
-        assert_eq!(
-            declare_parent_pane_params("w1:p4", "w1:p1").unwrap(),
-            json!({"pane_id": "w1:p4", "source": "hide", "tokens": {"parent_pane": "w1:p1"},
-                "clear_display_agent": false, "clear_state_labels": false, "clear_title": false})
         );
     }
 
@@ -1776,11 +1753,22 @@ mod tests {
     // Observer had no child (2026-09-18).
     #[test]
     fn a_parent_declared_as_a_pane_token_is_the_lineage() {
-        let declared =
-            agents_response(listed_agent(json!({"tokens": {"parent_pane": "w1:p1"}}))).unwrap();
+        let declared = agents_response(listed_agent(json!({"tokens": {
+            "parent_pane": "w1:p1",
+            "parent_machine": "machine-parent"
+        }})))
+        .unwrap();
         assert_eq!(declared[0].spawned_from_pane_id.as_deref(), Some("w1:p1"));
+        assert_eq!(
+            declared[0].spawned_from_machine_id.as_deref(),
+            Some("machine-parent")
+        );
         // The token is still carried verbatim; the sidebar's own token readers are unaffected.
         assert_eq!(declared[0].tokens.get("parent_pane"), Some(&json!("w1:p1")));
+        assert_eq!(
+            declared[0].tokens.get("parent_machine"),
+            Some(&json!("machine-parent"))
+        );
 
         let cleared =
             agents_response(listed_agent(json!({"tokens": {"parent_pane": "  "}}))).unwrap();

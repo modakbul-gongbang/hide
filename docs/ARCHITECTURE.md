@@ -140,8 +140,10 @@ The hook helper reports it through the `pane.report_metadata` socket method, whi
 A count Hide cannot read is reported as unknown, never as zero.
 
 A pane's parent travels the same channel, and it is the only lineage there is: Herdr records none.
-Whoever creates a child pane declares its parent as the pane token `parent_pane` through `pane.report_metadata`; Hide's own fork does (`fork.rs`, three socket calls: `pane.split`, `agent.start`, then the declaration under source `hide`), and so does an orchestrator that starts its child with `agent.start` (sasu's dispatch, under its own source).
-`wire.rs::lineage_parent` reads that token into the one `spawned_from_pane_id` the sidebar's lineage is built from; `docs/status-model.md` owns the contract.
+hcoord is the sole writer of the `parent_pane` and optional `parent_machine` tokens through `pane.report_metadata`; the complete contract is [plugins/hcoord/docs/pane-tokens.md](../plugins/hcoord/docs/pane-tokens.md).
+Hide's fork calls the fixed hcoord binary only after `pane.split` and `agent.start` have produced the real child pane, and a registration failure preserves that pane and records a diagnostic instead of inventing an edge.
+`wire.rs` is the only token conversion boundary.
+The runtime reads every connected device's hcoord identity on the remote worker, outside `Mutex<Runtime>`, then resolves all local and remote rows into one machine-qualified lineage.
 
 An attach lives only while its tab is in the last five shown.
 Herdr renders a pane for every attached client, so an attach nobody is looking at costs a child process here and a render there for the life of the process; visiting eight tabs used to leave eight attaches alive.
@@ -459,7 +461,9 @@ The Agent area is its own stacking context, so nothing it raises draws over the 
 The panel's left edge drags a guide and sends one `views_over_share`, or `tools_share` for a panel holding only the tools, on release, so the panel itself does not move during a drag; a browser display's slot inside the panel reports its rect like any other, a resize that lands reaches the page through the slot's ResizeObserver, and closing the panel unmounts the slots, which hides their pages without closing them.
 The web also owns the pixel rule, because it has the geometry: an edge takes a drop, and a Split item or an Open to the side from the only area is enabled, only when the target area's size along the split axis is at least twice `--size-workspace-area-min` (a `row` split) or twice `--size-view-area-min-height` (a `column` split) plus the divider, and the split stays within `layout.limits`; the core owns the counts and the depth and refuses whatever passes them.
 
-A pane's delegated children and ancestors come from the pane rows the core already projects (`children.chips`, `lineage_path`; rules in `web/src/lineage.ts`), a device's panes from that device's own lineage (`sync_remote_pane_relations`, with each declared parent scoped to the device in `replica.rs`): a parent's header lists every direct child on one scrolling row, a child's header has a compact Return, and the pane menu lists parent, siblings and children, each moved to only by its explicit Open.
+A pane's delegated children and ancestors come from the global machine-qualified pane rows the core projects (`children.chips`, `lineage_path`; rules in `web/src/lineage.ts`).
+The remote replica preserves a declared raw pane and machine id, and the runtime scopes it only after the remote worker has returned that device's hcoord identity.
+A parent's header lists every direct child on one scrolling row, a child's header has a compact Return, and the pane menu lists parent, siblings and children, each moved to only by its explicit Open.
 Each of those moves is one `focus_pane` carrying a `request_id` (on a device, `remote_control` with `report_pane_focus_outcome`), and the core's `status.pane_focus_request` is the only answer the header shows: pending until Herdr's layout confirms, or failed with the core's reason and Retry when it can be retried; a second click on the same target while one is in flight is dropped, and a failure never splits the parent or makes a pane.
 
 ### The `$HOME` filesystem boundary

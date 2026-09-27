@@ -1933,21 +1933,112 @@ impl Runtime {
         }
     }
 
-    pub(super) fn refresh_agent_lineage(&mut self) {
-        crate::sidebar::apply_lineage(
-            &mut self.snapshot.navigator.agents,
-            &self.snapshot.navigator.workspaces,
-            &self.snapshot.ui_state.expanded_agent_pane_ids,
-        );
-        for remote in &mut self.snapshot.status.remote {
-            if let Some(session) = &mut remote.session {
-                crate::sidebar::apply_lineage(
-                    &mut session.agents,
-                    &session.workspaces,
-                    &self.snapshot.ui_state.expanded_agent_pane_ids,
-                );
+    pub(super) fn refresh_agent_lineage(&mut self) -> bool {
+        let before_local = self.snapshot.navigator.agents.clone();
+        let before_remote = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .map(|remote| {
+                (
+                    remote.target_id.clone(),
+                    remote
+                        .session
+                        .as_ref()
+                        .map(|session| session.agents.clone()),
+                )
+            })
+            .collect::<Vec<_>>();
+        let machine_targets = self
+            .device_machine_ids
+            .iter()
+            .map(|(target, machine)| (machine.clone(), target.clone()))
+            .collect::<BTreeMap<_, _>>();
+        let mut unresolved = HashSet::new();
+        let mut agents = Vec::new();
+        let mut workspaces = self.snapshot.navigator.workspaces.clone();
+
+        let resolve = |agent: &mut SidebarAgentSnapshot,
+                       origin: Option<&str>,
+                       unresolved: &mut HashSet<String>| {
+            let Some(parent) = agent.declared_parent_pane_id.as_deref() else {
+                agent.spawned_from_pane_id = None;
+                return;
+            };
+            agent.spawned_from_pane_id = match agent.spawned_from_machine_id.as_deref() {
+                None => Some(match origin {
+                    Some(target) => crate::session_sync::remote_pane_id(target, parent),
+                    None => parent.to_owned(),
+                }),
+                Some(machine) if self.local_machine_id.as_deref() == Some(machine) => {
+                    Some(parent.to_owned())
+                }
+                Some(machine) => machine_targets
+                    .get(machine)
+                    .map(|target| crate::session_sync::remote_pane_id(target, parent)),
+            };
+            if agent.spawned_from_machine_id.is_some() && agent.spawned_from_pane_id.is_none() {
+                unresolved.insert(agent.pane_id.clone());
+            }
+        };
+
+        for mut agent in self.snapshot.navigator.agents.clone() {
+            resolve(&mut agent, None, &mut unresolved);
+            agents.push(agent);
+        }
+        for remote in &self.snapshot.status.remote {
+            if let Some(session) = &remote.session {
+                workspaces.extend(session.workspaces.clone());
+                for mut agent in session.agents.clone() {
+                    resolve(&mut agent, Some(&remote.target_id), &mut unresolved);
+                    agents.push(agent);
+                }
             }
         }
+        for pane in unresolved.difference(&self.unresolved_machine_lineage) {
+            crate::diagnostic!(serde_json::json!({
+                "component": "lineage",
+                "kind": "parent_machine_unresolved",
+                "pane_id": pane,
+                "message": "The parent machine is disconnected or has no matching machine identity",
+            }));
+        }
+        self.unresolved_machine_lineage = unresolved;
+        crate::sidebar::apply_lineage(
+            &mut agents,
+            &workspaces,
+            &self.snapshot.ui_state.expanded_agent_pane_ids,
+        );
+        let resolved = agents
+            .into_iter()
+            .map(|agent| (agent.pane_id.clone(), agent))
+            .collect::<BTreeMap<_, _>>();
+        for agent in &mut self.snapshot.navigator.agents {
+            if let Some(row) = resolved.get(&agent.pane_id) {
+                *agent = row.clone();
+            }
+        }
+        for remote in &mut self.snapshot.status.remote {
+            if let Some(session) = &mut remote.session {
+                for agent in &mut session.agents {
+                    if let Some(row) = resolved.get(&agent.pane_id) {
+                        *agent = row.clone();
+                    }
+                }
+            }
+        }
+        before_local != self.snapshot.navigator.agents
+            || before_remote.iter().any(|(target, before)| {
+                self.snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .find(|remote| &remote.target_id == target)
+                    .and_then(|remote| remote.session.as_ref())
+                    .map(|session| &session.agents)
+                    != before.as_ref()
+            })
     }
 
     /// Logs the descendants whose activity Herdr cannot classify, once per

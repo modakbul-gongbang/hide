@@ -64,6 +64,38 @@ fn host_name() -> Option<String> {
     }
 }
 
+/// Reads the operating system identity before the core is placed behind its
+/// runtime mutex. Failure is explicit in the diagnostic and leaves
+/// cross-device lineage unresolved rather than guessing from a host name.
+fn machine_id() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    let result = std::process::Command::new("/usr/sbin/ioreg")
+        .args(["-rd1", "-c", "IOPlatformExpertDevice"])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| {
+            let text = String::from_utf8_lossy(&output.stdout);
+            text.lines().find_map(|line| {
+                let (_, value) = line.split_once("IOPlatformUUID")?;
+                value
+                    .split('"')
+                    .nth(1)
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .map(str::to_owned)
+            })
+        });
+    #[cfg(target_os = "linux")]
+    let result = std::fs::read_to_string("/etc/machine-id")
+        .ok()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty());
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let result = None;
+    result
+}
+
 fn find_ui_dir() -> Option<std::path::PathBuf> {
     if let Ok(dir) = std::env::var("HIDED_UI_DIR") {
         let path = std::path::PathBuf::from(dir);
@@ -180,6 +212,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     }
     let options = CoreOptions {
         schema_version: SCHEMA_VERSION,
+        machine_id: machine_id(),
         herdr_socket_path: env.herdr_socket_path.clone(),
         herdr_bin_path: env
             .herdr_bin_path

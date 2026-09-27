@@ -1,6 +1,7 @@
 import {
   ChevronDownIcon,
   ChevronRightIcon,
+  CornerUpLeftIcon,
   FolderGit2Icon,
   FolderIcon,
   GitBranchIcon,
@@ -21,14 +22,15 @@ import { SearchField } from "./components/search-field";
 import { Hint } from "./components/ui/tooltip";
 import { DevicePicker } from "./DevicePicker";
 import { NewWorkspace } from "./NewWorkspace";
-import { badgeWords, directChildren, sectionCount, sectionTree, unfoldedRows } from "./agentRow";
+import { badgeWords, unfoldedRows } from "./agentRow";
 import { Badge } from "./components/ui/badge";
 import { cn } from "./lib/utils";
 import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow } from "./components/sidebar-agent-row";
 import { StatusBadge } from "./components/status-badge";
 import { WeeklyUsage } from "./components/weekly-usage";
-import { agentPlaces, agentSections, allAgents, allProjectsCount, liveDescendantCounts, type ListedAgent } from "./navigation";
+import { agentPlaces, agentSections, allAgents, allLineageWorkspaces, allProjectsCount, type ListedAgent } from "./navigation";
+import { foldedLineage, type FoldedLineage } from "./lineageSummary";
 import {
   activeCheckouts,
   checkoutPresentation,
@@ -42,7 +44,7 @@ import {
 } from "./projects";
 import { hostKind } from "./host";
 import { displayCommand, hostRegistry } from "./shortcuts";
-import { contextAgents, contextWorkspaces, deviceCatalogLine, remoteContext, remoteView } from "./remote";
+import { contextWorkspaces, deviceCatalogLine, remoteContext, remoteView } from "./remote";
 import { checkoutMenu, folderMenu, projectMenu, remotePurposeProblem, type MenuItem } from "./workspaceManage";
 import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
@@ -131,7 +133,8 @@ function AgentList({ actions }: { actions: Actions }) {
   const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
   const localAgents = useShellStore((s) => s.agents);
   const listed = useMemo(() => allAgents(remote, devices, localAgents), [remote, devices, localAgents]);
-  const tree = useMemo(() => agentTree(listed), [listed]);
+  const lineageWorkspaces = useMemo(() => allLineageWorkspaces(workspaces, remote), [workspaces, remote]);
+  const tree = useMemo(() => agentTree(listed, lineageWorkspaces), [listed, lineageWorkspaces]);
   const placeOf = useMemo(() => agentPlaces(workspaces, remote, devices), [workspaces, remote, devices]);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
   // Before the first snapshot nothing is known, so an empty list would be a claim.
@@ -155,11 +158,12 @@ function AgentList({ actions }: { actions: Actions }) {
                 place={row.depth === 0 ? placeOf(row.device, row.agent.pane_id) : null}
                 depth={row.depth}
                 descendants={row.descendants}
-                childRows={tree.children(row.device, row.agent)}
+                childRows={tree.presentation(row.agent).badgeChildren}
                 selected={row.agent.pane_id === focusedPaneId}
                 onOpen={actions.openAgent}
                 onToggleTree={actions.toggleAgentTree}
                 inset="var(--spacing-xs)"
+                foldedLineage={tree.presentation(row.agent)}
               />
             ))}
           </ul>
@@ -170,32 +174,51 @@ function AgentList({ actions }: { actions: Actions }) {
 }
 
 /**
- * The sections and the rows each draws, from one index per device: pane ids
- * are scoped to the device that reported them, so a lineage never crosses
- * devices.
+ * The sections and rows each draws from the core's one global lineage.
+ * Remote pane ids are already scoped, while machine identities can connect
+ * a child to a parent on another device.
  */
-function agentTree(listed: ListedAgent[]) {
-  const byDevice = new Map<string | null, AgentRow[]>();
-  for (const { agent, device } of listed) {
-    const rows = byDevice.get(device) ?? [];
-    rows.push(agent);
-    byDevice.set(device, rows);
-  }
-  const index = new Map([...byDevice].map(([device, rows]) => [device, new Map(rows.map((row) => [row.pane_id, row]))]));
-  const counts = new Map([...byDevice].map(([device, rows]) => [device, liveDescendantCounts(rows)]));
-  const deviceOf = new Map(listed.map((row) => [row.agent, row.device]));
-  const lookup = (device: string | null, paneId: string) => index.get(device)?.get(paneId);
-  const descendantsOf = (device: string | null, paneId: string) => counts.get(device)?.get(paneId) ?? 0;
+function agentTree(listed: ListedAgent[], workspaces: Workspace[]) {
+  const index = new Map(listed.map((row) => [row.agent.pane_id, row]));
+  const agents = listed.map((row) => row.agent);
+  const presentations = new Map(agents.map((agent) => [agent.pane_id, foldedLineage(agent, agents, workspaces)]));
+  const allDescendants = (agent: AgentRow) => {
+    const seen = new Set<string>();
+    const queue = [...(agent.lineage_child_pane_ids ?? [])];
+    while (queue.length > 0) {
+      const paneId = queue.shift()!;
+      if (seen.has(paneId) || paneId === agent.pane_id) continue;
+      const child = index.get(paneId)?.agent;
+      if (!child) continue;
+      seen.add(paneId);
+      queue.push(...(child.lineage_child_pane_ids ?? []));
+    }
+    return seen.size;
+  };
   const sections = agentSections(listed.map((row) => row.agent))
     .map((section) => {
       const roots = section.agents.filter((agent) => !agent.delegated);
-      const rows = sectionTree(roots.map((agent) => ({ agent, device: deviceOf.get(agent) ?? null })), lookup, descendantsOf);
-      return { group: section.group, label: section.label, rows, count: sectionCount(rows) };
+      const rows: { agent: AgentRow; device: string | null; depth: number; descendants: number }[] = [];
+      const visit = (agent: AgentRow, depth: number, seen: Set<string>) => {
+        if (seen.has(agent.pane_id)) return;
+        seen.add(agent.pane_id);
+        const listedAgent = index.get(agent.pane_id);
+        const presentation = presentations.get(agent.pane_id)!;
+        rows.push({ agent, device: listedAgent?.device ?? null, depth, descendants: presentation.badgeDescendants });
+        if (agent.lineage_collapsed !== false) return;
+        for (const paneId of agent.lineage_child_pane_ids ?? []) {
+          const child = index.get(paneId)?.agent;
+          if (child) visit(child, depth + 1, seen);
+        }
+      };
+      for (const root of roots) visit(root, 0, new Set());
+      const count = roots.reduce((total, root) => total + 1 + allDescendants(root), 0);
+      return { group: section.group, label: section.label, rows, count };
     })
     .filter((section) => section.rows.length > 0);
   return {
     sections,
-    children: (device: string | null, agent: AgentRow) => directChildren(agent, (paneId) => lookup(device, paneId)),
+    presentation: (agent: AgentRow) => presentations.get(agent.pane_id)!,
   };
 }
 
@@ -231,7 +254,13 @@ function ProjectList({ actions }: { actions: Actions }) {
   const focusedCheckoutId = useShellStore((s) =>
     remote ? (remoteView(remoteContext(s.rest)?.session ?? null)?.checkout.id ?? null) : (s.rest?.navigator?.focused_checkout_id ?? null),
   );
-  const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
+  const localWorkspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
+  const remoteStatuses = useShellStore((s) => s.rest?.status?.remote);
+  const devices = useShellStore((s) => s.rest?.navigator?.devices);
+  const localAgents = useShellStore((s) => s.agents);
+  const listedAgents = useMemo(() => allAgents(remoteStatuses, devices, localAgents), [remoteStatuses, devices, localAgents]);
+  const agents = useMemo(() => listedAgents.map((row) => row.agent), [listedAgents]);
+  const lineageWorkspaces = useMemo(() => allLineageWorkspaces(localWorkspaces, remoteStatuses), [localWorkspaces, remoteStatuses]);
   const openCheckouts = useShellStore((s) => s.rest?.ui_state?.expanded_checkout_ids ?? NO_IDS);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
   const screenKind = useUiStore((s) => s.screen?.kind ?? null);
@@ -240,14 +269,12 @@ function ProjectList({ actions }: { actions: Actions }) {
   const catalogText = useShellStore((s) => catalogLineOf(s.rest)?.text ?? null);
   const catalogLine = catalogState && catalogText ? { state: catalogState, text: catalogText } : null;
   const rows = projectRows(workspaces, groups);
-  const descendants = useMemo(() => liveDescendantCounts(agents), [agents]);
-  const byPane = useMemo(() => new Map(agents.map((agent) => [agent.pane_id, agent])), [agents]);
+  const presentations = useMemo(() => new Map(agents.map((agent) => [agent.pane_id, foldedLineage(agent, agents, lineageWorkspaces)])), [agents, lineageWorkspaces]);
   // The folds are this machine's choices, like the inactive groups, so a
   // selected SSH device's tree is drawn open with every checkout's line two.
   const context: ListContext = {
     agents,
-    descendantsOf: (paneId) => descendants.get(paneId) ?? 0,
-    childrenOf: (agent) => directChildren(agent, (paneId) => byPane.get(paneId)),
+    presentationOf: (agent) => presentations.get(agent.pane_id)!,
     focusedCheckoutId,
     focusedPaneId,
     workspaceScreen: screenKind === "workspace",
@@ -285,10 +312,7 @@ const NO_IDS: string[] = [];
 /** What every row of the Projects list reads besides its own project. */
 type ListContext = {
   agents: AgentRow[];
-  /** Live descendants of a pane among the context device's agents. */
-  descendantsOf: (paneId: string) => number;
-  /** A pane's direct children still listed, for its chevron and badge. */
-  childrenOf: (agent: AgentRow) => AgentRow[];
+  presentationOf: (agent: AgentRow) => FoldedLineage;
   focusedCheckoutId: string | null;
   focusedPaneId: string | null;
   /** A Workspace is in front, so the focused checkout and agent are the scope shown. */
@@ -570,8 +594,14 @@ function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: Che
   const foldable = context.disclosure && agentRows.length > 0;
   const open = foldable && context.openCheckouts.includes(checkout.id);
   const purpose = checkout.purpose?.text ?? null;
-  const secondLine = view.secondLineReady && (purpose !== null || agentRows.length > 0);
-  return { foldable, open, purpose, secondLine };
+  const parents = [...new Set(agentRows
+    .filter((row) => row.depth === 0)
+    .map((row) => context.agents.find((candidate) => candidate.pane_id === row.agent.lineage_parent_pane_id))
+    .filter((parent): parent is AgentRow => parent !== undefined)
+    .map((parent) => parent.identity_label))];
+  const raisedFrom = parents.length > 0 ? `${parents[0]}${parents.length > 1 ? ` +${parents.length - 1}` : ""}에서` : null;
+  const secondLine = view.secondLineReady && (purpose !== null || agentRows.length > 0 || raisedFrom !== null);
+  return { foldable, open, purpose, secondLine, raisedFrom };
 }
 
 /**
@@ -601,7 +631,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
   const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote));
   const view = checkoutPresentation(workspace, checkout, Date.now());
   const name = checkout.branch ?? checkout.label;
-  const { foldable, open, purpose, secondLine } = checkoutDisclosure(checkout, agentRows, view, context);
+  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context);
   const marks = checkout.agent_summary?.marks;
   const KindIcon = KIND_ICON[view.kind];
   return (
@@ -653,10 +683,10 @@ const CheckoutRowView = memo(function CheckoutRowView({
               )}
             </RowEnd>
           </span>
-          {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={view.age} /> : null}
+          {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={view.age} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {open ? <OpenAgentRows checkoutId={checkout.id} agentRows={agentRows} inset={CHECKOUT_NAME_COLUMN} context={context} /> : null}
+      {open ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={agentRows} inset={CHECKOUT_NAME_COLUMN} context={context} /> : null}
     </li>
   );
 });
@@ -689,7 +719,7 @@ const FolderRowView = memo(function FolderRowView({
   const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote));
   const view = checkoutPresentation(workspace, checkout, Date.now());
   const marks = checkout.agent_summary?.marks;
-  const { foldable, open, purpose, secondLine } = checkoutDisclosure(checkout, agentRows, view, context);
+  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context);
   return (
     <li data-project={workspace.id} data-checkout-open={open ? "true" : undefined} className={cn(inset, open && "rounded-sm bg-muted")}>
       <EntryContextMenu
@@ -736,10 +766,10 @@ const FolderRowView = memo(function FolderRowView({
               )}
             </RowEnd>
           </span>
-          {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={null} /> : null}
+          {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={null} raisedFrom={raisedFrom} /> : null}
         </div>
       </EntryContextMenu>
-      {open ? <OpenAgentRows checkoutId={checkout.id} agentRows={agentRows} inset={PROJECT_NAME_COLUMN} context={context} /> : null}
+      {open ? <OpenAgentRows checkoutId={checkout.id} deviceId={workspace.device_id} agentRows={agentRows} inset={PROJECT_NAME_COLUMN} context={context} /> : null}
     </li>
   );
 });
@@ -808,12 +838,18 @@ function CheckoutAge({ age }: { age: string }) {
  * has no age: a plain folder has no commit. Until a purpose is known the line
  * keeps its place empty.
  */
-function PurposeLine({ purpose, origin, age }: { purpose: string | null; origin: string | undefined; age: string | null }) {
+function PurposeLine({ purpose, origin, age, raisedFrom }: { purpose: string | null; origin: string | undefined; age: string | null; raisedFrom: string | null }) {
   return (
     // The row is already inset to its glyph, so line two starts one glyph and gap further, under the name.
     <span aria-hidden="true" className="pointer-events-none flex min-h-(--size-badge-height) min-w-0 items-center gap-sm pl-(--size-checkout-metadata-inset) text-caption">
-      <span className="min-w-0 flex-1 truncate text-muted-foreground" data-purpose={purpose === null ? undefined : origin}>
-        {purpose}
+      <span className="flex min-w-0 flex-1 items-center gap-xs truncate text-muted-foreground" data-purpose={purpose === null ? undefined : origin}>
+        {raisedFrom ? (
+          <span className="inline-flex min-w-0 shrink items-center gap-xxs text-subtle-foreground" data-checkout-parent={raisedFrom}>
+            <CornerUpLeftIcon aria-hidden="true" className="size-(--size-icon-xs) shrink-0" />
+            <span className="truncate">{raisedFrom}</span>
+          </span>
+        ) : null}
+        {purpose ? <span className="min-w-0 truncate">{purpose}</span> : null}
       </span>
       {age ? (
         <RowEnd>
@@ -832,26 +868,31 @@ function PurposeLine({ purpose, origin, age }: { purpose: string | null; origin:
  * sidebar-readability D-6, B12). A selected SSH device's tree is drawn with
  * nothing folded, as its checkouts are.
  */
-function OpenAgentRows({ checkoutId, agentRows, inset, context }: { checkoutId: string; agentRows: BoardRow[]; inset: string; context: ListContext }) {
+function OpenAgentRows({ checkoutId, deviceId, agentRows, inset, context }: { checkoutId: string; deviceId: string; agentRows: BoardRow[]; inset: string; context: ListContext }) {
   const rows = context.disclosure ? unfoldedRows(agentRows) : agentRows;
   return (
     <ul data-checkout-agents-open={checkoutId} className="pb-xs">
-      {rows.map((row) => (
-        <SidebarAgentRow
-          key={row.agent.pane_id}
-          agent={row.agent}
-          device={null}
-          place={null}
-          depth={row.depth}
-          descendants={context.disclosure ? context.descendantsOf(row.agent.pane_id) : 0}
-          childRows={context.disclosure ? context.childrenOf(row.agent) : NO_AGENT_ROWS}
-          selected={context.workspaceScreen && row.agent.pane_id === context.focusedPaneId}
-          onOpen={context.actions.openAgent}
-          onToggleTree={context.disclosure ? context.actions.toggleAgentTree : null}
-          inset={inset}
-          branchShown={row.depth > 0}
-        />
-      ))}
+      {rows.map((row) => {
+        const presentation = context.presentationOf(row.agent);
+        const device = row.agent.device_id !== deviceId ? (row.agent.device_label ?? null) : null;
+        return (
+          <SidebarAgentRow
+            key={row.agent.pane_id}
+            agent={row.agent}
+            device={device}
+            place={null}
+            depth={row.depth}
+            descendants={context.disclosure ? presentation.badgeDescendants : 0}
+            childRows={context.disclosure ? presentation.badgeChildren : NO_AGENT_ROWS}
+            selected={context.workspaceScreen && row.agent.pane_id === context.focusedPaneId}
+            onOpen={context.actions.openAgent}
+            onToggleTree={context.disclosure ? context.actions.toggleAgentTree : null}
+            inset={inset}
+            branchShown={row.depth > 0}
+            foldedLineage={presentation}
+          />
+        );
+      })}
     </ul>
   );
 }

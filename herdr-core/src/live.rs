@@ -2006,10 +2006,9 @@ pub fn spawn_agent_fork(context: LiveContext, request: ForkRequest) -> Result<()
         .map_err(|error| format!("fork worker could not be started: {error}"))
 }
 
-/// Splits beside the parent, starts the agent in the new pane, and declares
-/// the parent on it. The three calls are not one transaction, so a pane
-/// whose agent never started is closed again before the failure is
-/// reported: the operator asked for a fork, and an empty pane is not one.
+/// Splits beside the parent and starts the agent in the new pane. A pane whose
+/// agent never started is closed again; hcoord registration happens only
+/// after start succeeded and never turns a working fork into a failure.
 fn run_agent_fork(connector: &dyn ApiConnector, request: &ForkRequest) -> Result<String, String> {
     let child_pane_id = control_request(
         connector,
@@ -2024,17 +2023,20 @@ fn run_agent_fork(connector: &dyn ApiConnector, request: &ForkRequest) -> Result
         &request.name,
         request.agent.kind(),
         request.agent.resume_arguments(&request.session_id),
-    )
-    .and_then(|started_pane_id| {
-        control_request(
-            connector,
-            "pane.report_metadata",
-            wire::declare_parent_pane_params(&started_pane_id, &request.parent_pane_id)?,
-        )
-        .map(|_| started_pane_id)
-    });
+    );
     match started {
-        Ok(pane_id) => Ok(pane_id),
+        Ok(pane_id) => {
+            if let Err(message) = register_fork_lineage(&request.parent_pane_id, &pane_id) {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "fork",
+                    "kind": "hcoord_registration_failed",
+                    "parent_pane_id": request.parent_pane_id,
+                    "child_pane_id": pane_id,
+                    "message": message,
+                }));
+            }
+            Ok(pane_id)
+        }
         Err(error) => {
             let closed = control_request(
                 connector,
@@ -2049,6 +2051,39 @@ fn run_agent_fork(connector: &dyn ApiConnector, request: &ForkRequest) -> Result
             })
         }
     }
+}
+
+fn register_fork_lineage(parent_pane_id: &str, child_pane_id: &str) -> Result<(), String> {
+    let home = std::env::var_os("HOME").ok_or_else(|| {
+        "HOME is unavailable, so ~/.hcoord/bin/hcoord cannot register the fork".to_owned()
+    })?;
+    let binary = PathBuf::from(home).join(".hcoord/bin/hcoord");
+    let output = Command::new(&binary)
+        .args([
+            "agent",
+            "link",
+            "--parent-pane",
+            parent_pane_id,
+            "--child-pane",
+            child_pane_id,
+            "--json",
+        ])
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|error| format!("{} could not run: {error}", binary.display()))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let detail = String::from_utf8_lossy(if output.stderr.is_empty() {
+        &output.stdout
+    } else {
+        &output.stderr
+    });
+    Err(format!(
+        "hcoord refused fork registration ({}): {}",
+        output.status,
+        detail.trim().chars().take(300).collect::<String>()
+    ))
 }
 
 pub fn spawn_remote_control(

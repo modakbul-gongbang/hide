@@ -137,6 +137,30 @@ async function resolveParentHere(args: Parsed): Promise<void> {
   if (flag(args, "session") === undefined) args.flags.set("session", agent.sessionId);
 }
 
+/** Registers a Hide fork only after both exact Herdr executions exist. */
+async function linkFork(args: Parsed): Promise<WireResult> {
+  const parentPane = needed(args, "parent-pane"), childPane = needed(args, "child-pane");
+  const observe = async (pane: string, wait: boolean): Promise<Extract<ReturnType<typeof getAgent>, { kind: "found" }>> => {
+    const deadline = Date.now() + (wait ? 10_000 : 0);
+    while (true) {
+      const observed = getAgent(pane);
+      if (observed.kind === "found" && observed.agent.paneId === pane && observed.agent.sessionId !== null && observed.agent.terminalId !== null && observed.agent.name !== null) return observed;
+      if (Date.now() >= deadline) throw new HcoordError("runtime_unavailable", `Herdr did not report a complete execution in ${pane}; the fork remains open as a root agent`);
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+  };
+  const parent = (await observe(parentPane, false)).agent;
+  const child = (await observe(childPane, true)).agent;
+  const hostScope = process.env["HERDR_SOCKET_PATH"] ?? "default";
+  const parentResult = await callDaemon("agent.register", { machine: "local", hostScope, session: parent.sessionId, instance: parent.terminalId, name: parent.name, pane: parentPane });
+  if (!parentResult.ok) throw new HcoordError(parentResult.error?.code ?? "registration_failed", parentResult.error?.message ?? "parent registration failed");
+  const parentId = (parentResult.value as { id?: unknown }).id;
+  if (typeof parentId !== "string") throw new HcoordError("registration_failed", "parent registration returned no participant id");
+  const childResult = await callDaemon("agent.register", { machine: "local", hostScope, session: child.sessionId, instance: child.terminalId, name: child.name, pane: childPane, parent: parentId });
+  if (!childResult.ok) throw new HcoordError(childResult.error?.code ?? "registration_failed", childResult.error?.message ?? "child registration failed");
+  return ok({ parent: parentResult.value, child: childResult.value });
+}
+
 function coordinatorIdentity(result: WireResult): WireResult {
   result.value = { ...(result.value as object), hcoordVersion: HCOORD_VERSION, apiVersion: API_VERSION, machineId: machineId() };
   return result;
@@ -184,6 +208,7 @@ async function refuseWhileCoordinating(action: string): Promise<void> {
 async function remoteSide(args: Parsed): Promise<WireResult> {
   const action = args.words[1];
   const base = { protocol: REMOTE_PROTOCOL, letterSchema: LETTER_SCHEMA, host: os.hostname(), machineId: machineId() };
+  if (action === "identity") return ok(base);
   if (action === "hello") {
     const hq = needed(args, "hq"), current = readHq();
     if (current !== "local" && current !== hq) throw new HcoordError("hq_conflict", `this machine reports to HQ ${current}; run hcoord config set hq local here before ${hq} can use it`);
@@ -210,7 +235,7 @@ async function remoteSide(args: Parsed): Promise<WireResult> {
     return ok({ ...base, letters: readOutboxRaw(Number.isSafeInteger(limit) && limit > 0 ? limit : 64, undefined, 4 * 1024 * 1024) });
   }
   if (action === "drop") return ok({ ...base, removed: removeLetters(args.words.slice(2)) });
-  throw new HcoordError("invalid_argument", "remote subcommands are hello, herdr, take, and drop");
+  throw new HcoordError("invalid_argument", "remote subcommands are identity, hello, herdr, take, and drop");
 }
 
 /** `hcoord config set hq <local|machine>` (PRD B17). */
@@ -289,6 +314,11 @@ export async function main(argv: string[]): Promise<number> {
         return 0;
       }
       throw new HcoordError("invalid_argument", "use daemon run, start, ensure, stop, or status");
+    }
+    if (args.words[0] === "agent" && args.words[1] === "link") {
+      const result = await linkFork(args);
+      print(result, json);
+      return 0;
     }
     await resolveParentHere(args);
     const { operation, data } = route(args);

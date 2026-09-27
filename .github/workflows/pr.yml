@@ -1,4 +1,4 @@
-# Every pull request and every push to main runs the same four lanes, and the
+# Every pull request and every push to main runs the same required lanes, and the
 # single `verify` job is what branch protection requires. Adding a lane means
 # adding it to `verify`'s `needs`; the protection rule never changes.
 #
@@ -166,9 +166,31 @@ jobs:
           pnpm --dir desktop lint
           pnpm --dir desktop test
 
+  hcoord:
+    name: hcoord plugin
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Typecheck, build, unit test, and end-to-end test
+        run: |
+          pnpm --dir plugins/hcoord typecheck
+          pnpm --dir plugins/hcoord build
+          pnpm --dir plugins/hcoord test
+          pnpm --dir plugins/hcoord test:e2e
+
   verify:
     name: verify
-    needs: [rust, scripts, web, desktop]
+    needs: [rust, scripts, web, desktop, hcoord]
     if: always()
     runs-on: ubuntu-latest
     steps:

@@ -381,6 +381,7 @@ mod tests {
     fn navigator(workspaces: Vec<WorkspaceSnapshot>) -> NavigatorSnapshot {
         let mut navigator = Snapshot::initial(&CoreOptions {
             schema_version: SCHEMA_VERSION,
+            machine_id: None,
             herdr_socket_path: None,
             herdr_bin_path: None,
             app_state_path: "/tmp/hide-project-context-test-state.json".to_owned(),

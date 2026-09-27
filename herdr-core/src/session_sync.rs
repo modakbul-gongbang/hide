@@ -223,6 +223,7 @@ pub(crate) use projection::{
     ProjectedAgent, ProjectedPane, ProjectedTab, ProjectedWorkspace, ProjectedWorktree,
     ProjectionState, non_blank, project_snapshot,
 };
+pub(crate) use replica::remote_pane_id;
 pub(crate) use replica::{ApplyMode, PaneMove, ReplicaEvent, SessionReplica, SubscriptionLine};
 #[cfg(test)]
 pub(crate) use replica::{SNAPSHOT_FIELDS_THE_REPLICA_READS, remote_tab_id};

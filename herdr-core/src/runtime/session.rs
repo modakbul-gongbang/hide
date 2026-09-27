@@ -1441,6 +1441,7 @@ impl Runtime {
         if session_ok {
             changed |= self.request_device_facts(target_id);
         }
+        changed |= self.refresh_agent_lineage();
         if changed {
             self.sync_async_operations();
         }
@@ -1955,6 +1956,7 @@ impl Runtime {
             changed |= self.sync_pane_lineage();
             changed |= self.relocate_delegated_child_panes();
         }
+        changed |= self.refresh_agent_lineage();
         for (tab_id, reason) in &rejected_layouts {
             crate::diagnostic!(serde_json::json!({
                 "component": "session",

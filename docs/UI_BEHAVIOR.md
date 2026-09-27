@@ -180,10 +180,14 @@ A leaf row keeps the same slot empty, so every agent row's time ends on one colu
 A folded parent with live descendants carries a badge after its title: one mark and count per state (error, approval, question, working, done), summed over every live descendant, or `↳N` when all of them are merely ready.
 The badge is a button: a click, Enter or Space opens a list of the direct children with their status mark, name, status word, branch when it differs, and elapsed time; the arrow keys move the highlight, Enter or the highlighted row's arrow opens that child's pane, the last item unfolds the children in the list, and Escape closes it and returns focus to the parent row.
 The list has no Stop action, drops a child the moment it leaves the projection, and closes when no child is left.
+A folded root keeps descendants in its own checkout in that badge and draws one compact line for each other checkout below the root, ordered by its representative child's state and then branch.
+Each line shows the representative status mark, branch, a pull-request number only when current GitHub facts contain one, the server-glyph device chip when it runs elsewhere, and `+N` for further descendants in that checkout; at most three lines are drawn, followed by one overflow line.
+The representative is the most actionable child in Needs You, Done, Working, then Seen order, so the line is a derived summary and never an invented status.
 
 A root whose own turn is over while a descendant still works or asks is waiting on its children (docs/status-model.md): it stays in Working with its ring in the working color, and its badge, not its own sentence, says what is going on.
 
 A sidebar agent row's first line is always its status mark, provider mark, stable task name, a branch chip only when a delegated row's checkout differs from its parent's and the row above does not already name that checkout, a device chip for a row on an SSH device, the badge, the elapsed time, and a parent's chevron; the elapsed time is always drawn and never gives way to a control, and an agent whose elapsed time was never reported shows none rather than a made-up `0s`.
+The device chip is the existing Badge treatment with a server glyph and the device's real display name, never a connection state inferred by the web shell.
 Its second line exists only when the row has something to say, and from the moment it does: a question, approval or error keeps its request in the warning color (red for an error) until it is resolved, however often the row is read, and a row that changed since the operator last looked shows its sentence bright until it is read; either is one line, cut at its end.
 A quiet sentence is never drawn on the row; the row's tooltip carries it with the full title.
 In Agents a root row adds a fixed context line naming its project and checkout (`project › checkout`, the project alone for a plain folder), since the list does not otherwise say where the agent works; a row under a checkout in Projects has none, because the rows above it say it.
@@ -405,6 +409,7 @@ A status badge counts agents under the mark each agent's own row draws, one mark
 A web project row folds its checkouts from its chevron on the right, and the rest of the row opens the project's Overview; both folds are this machine's, so a selected SSH device's tree is drawn with nothing folded.
 A web project row carries no time: it ends in its checkouts' badges added up, which stay while its checkouts are open because they are the project's own summary, and a project with no agent draws none.
 An opened checkout's parent agent folds its children with the lineage chevron and badge the Agents list uses, from the same core state; a child working in another checkout is also drawn as a root in that checkout, so folding a parent never hides where an agent runs, and a selected SSH device's lineage is drawn unfolded with no chevron.
+A checkout whose root came from another checkout prefixes its purpose line with the Return glyph and the parent checkout's branch, adding `+N` when more than one external root raised it.
 Folding a project, a checkout or a parent changes the list only: the center, the focused pane and tab, read state, groups and running processes stay as they were.
 Before the first snapshot arrives the Agents and Projects lists say they are connecting rather than drawing an empty list, and a local Projects list with no registered project offers Add project.
 The web Projects list is the scope picker: an All projects row heads it, with the layout-grid glyph and `N projects`, and opens All projects.
@@ -570,6 +575,8 @@ A relationship Open or parent Return publishes one request-scoped pending state;
 Target retirement before dispatch, and a core-owned refusal, timeout, or remote-control failure, keep the current pane geometry and tab topology, show the scoped reason, offer Retry when the outcome is retryable, and offer Dismiss to clear only the notice.
 The shell never derives success from an old focused layout or optimistic remote selection, never attributes an unrelated global error to the control, and never sends a second focus event as rollback; a canvas notice preserves pending and failed feedback after successful navigation removes the source header or sheet from view.
 A root with no parent carries no Return control, following the rule that a control with nothing to do is not drawn.
+A child chip names the child's checkout branch when it differs from the parent checkout, otherwise it keeps the child's identity label.
+A child on another device adds the server-glyph device chip with that device's real display name.
 
 Ownership is drawn as emphasis, not as a new color or container: the operator's own rows are bright, delegated rows are subdued, and nothing new is introduced, because a delegated row is simply never emphasized.
 A child's question or completion reaches the operator through its ancestors: the ancestor row turns unread and its descendant badge changes, and the ancestor's own group does not move.
