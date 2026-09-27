@@ -382,7 +382,7 @@ impl SessionReplica {
                                 focused_pane_id: focused
                                     .map(|pane| remote_pane_id(target_id, pane))
                                     .unwrap_or_default(),
-                                number: tab.number,
+                                number: crate::model::tab_number(&tab.label, tab.number),
                                 processes: state
                                     .panes
                                     .iter()

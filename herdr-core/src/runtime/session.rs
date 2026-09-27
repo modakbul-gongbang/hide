@@ -277,7 +277,7 @@ impl Runtime {
                 agent: representative.map(Into::into),
                 naming: crate::model::TabNaming {
                     focused_pane_id: layout.focused_pane_id.clone(),
-                    number: session_tab.number,
+                    number: crate::model::tab_number(&session_tab.label, session_tab.number),
                     processes: payload
                         .panes
                         .iter()

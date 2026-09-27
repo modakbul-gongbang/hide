@@ -477,7 +477,16 @@ fn pane(id: &str, cwd: &str) -> PaneSnapshot {
 fn tab(workspace_id: &str, checkout_id: &str, pane: Option<PaneSnapshot>) -> TabSnapshot {
     TabSnapshot {
         agent: None,
-        naming: Default::default(),
+        naming: crate::model::TabNaming {
+            focused_pane_id: pane
+                .as_ref()
+                .map(|pane| pane.id.clone())
+                .unwrap_or_default(),
+            number: 1,
+            raw: "Session".into(),
+            automatic: "Tab 1".into(),
+            ..Default::default()
+        },
         id: Some(format!("{checkout_id}:tab")),
         workspace_id: Some(workspace_id.to_owned()),
         checkout_id: Some(checkout_id.to_owned()),

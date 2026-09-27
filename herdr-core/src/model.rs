@@ -1082,6 +1082,17 @@ impl StripTabSnapshot {
     }
 }
 
+/// Preserve the established numeric label when a projection has no newer number.
+pub fn tab_number(raw_label: &str, fallback: u32) -> u32 {
+    let trimmed = raw_label.trim();
+    trimmed
+        .strip_prefix("Tab ")
+        .unwrap_or(trimmed)
+        .trim()
+        .parse()
+        .unwrap_or(fallback)
+}
+
 /// A custom name wins; automatic names follow the focused pane's identity.
 pub fn display_tab_label(
     raw_label: &str,
