@@ -96,37 +96,44 @@ impl Runtime {
 
     pub(super) fn pending_agent_admissions(&self, path: &str) -> usize {
         let key = (workspace::LOCAL_DEVICE_ID.to_owned(), path.to_owned());
-        let creating = self
+        self.workspace_views
+            .as_ref()
+            .and_then(|store| store.agent_admissions.get(&key))
+            .map_or(0, HashSet::len)
+    }
+
+    pub(super) fn has_agent_effect(&self, path: &str, claim: &str) -> bool {
+        self.workspace_views
+            .as_ref()
+            .and_then(|store| {
+                store
+                    .agent_admissions
+                    .get(&(workspace::LOCAL_DEVICE_ID.to_owned(), path.to_owned()))
+            })
+            .is_some_and(|claims| claims.contains(claim))
+    }
+
+    pub(super) fn reserve_agent_effect(&mut self, path: &str, claim: &str) -> bool {
+        let key = (workspace::LOCAL_DEVICE_ID.to_owned(), path.to_owned());
+        if self
             .workspace_views
             .as_ref()
             .and_then(|store| store.agent_admissions.get(&key))
-            .map_or(0, HashSet::len);
-        let closing = self
-            .close_operations
-            .values()
-            .filter(|operation| {
-                operation.request.context.replacement_shell
-                    && operation.request.context.checkout_path == path
-                    && operation.replacement_tab_id.is_none()
-                    && matches!(operation.phase.as_str(), "preparing" | "transmitting")
-            })
-            .count();
-        let reopening = self
-            .reopen_in_flight
-            .as_deref()
-            .and_then(|id| self.recent_closed.iter().find(|item| item.key() == id))
-            .is_some_and(|item| match item {
-                ClosedItem::Tab { context, .. } => context.checkout_path == path,
-                ClosedItem::Pane { context, .. } => {
-                    context.checkout_path == path
-                        && !self
-                            .herdr_workspace_tab_order
-                            .values()
-                            .any(|tabs| tabs.contains(&context.tab_id))
-                }
-                ClosedItem::File { .. } => false,
-            });
-        creating + closing + usize::from(reopening)
+            .is_some_and(|claims| claims.contains(claim))
+        {
+            return true;
+        }
+        if !self.admit_agent_tab(path) {
+            return false;
+        }
+        if let Some(store) = self.workspace_views.as_mut() {
+            store
+                .agent_admissions
+                .entry(key)
+                .or_default()
+                .insert(claim.to_owned());
+        }
+        true
     }
 
     pub(super) fn agent_can_show_created(&self, path: &str, id: &str) -> bool {
@@ -158,11 +165,15 @@ impl Runtime {
     }
 
     pub(super) fn finish_agent_admission(&mut self, path: &str, id: u64) {
+        self.finish_agent_effect(path, &format!("create:{id}"));
+    }
+
+    pub(super) fn finish_agent_effect(&mut self, path: &str, claim: &str) {
         let key = (workspace::LOCAL_DEVICE_ID.to_owned(), path.to_owned());
         if let Some(store) = self.workspace_views.as_mut()
             && let Some(pending) = store.agent_admissions.get_mut(&key)
         {
-            pending.remove(&id);
+            pending.remove(claim);
             if pending.is_empty() {
                 store.agent_admissions.remove(&key);
             }

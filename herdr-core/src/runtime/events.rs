@@ -1528,7 +1528,7 @@ impl Runtime {
                         .agent_admissions
                         .entry(key)
                         .or_default()
-                        .insert(admission_id);
+                        .insert(format!("create:{admission_id}"));
                 }
                 let admission_path = cwd.clone();
                 let action = match session_workspace_id {

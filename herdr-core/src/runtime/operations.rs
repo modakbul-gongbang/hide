@@ -16,6 +16,7 @@ use super::*;
 /// twenty-entry undo stack while its result is unknown.
 #[derive(Clone, Debug)]
 pub(super) struct PendingClose {
+    pub(super) replacement_effect_started: bool,
     pub(super) replacement_tab_id: Option<String>,
     pub(super) allow_replacement_create: bool,
     pub(super) request: live::CloseCaptureRequest,

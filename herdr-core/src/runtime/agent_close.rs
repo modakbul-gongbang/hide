@@ -36,6 +36,7 @@ impl Runtime {
             .as_ref()
             .ok_or("replacement context is missing")?;
         self.queue_restored_agent_tab(context, tab_id)?;
+        self.finish_agent_effect(&context.checkout_path, &format!("close:{}", request.key));
         self.close_operations
             .get_mut(&request.key)
             .expect("checked")
@@ -113,7 +114,12 @@ impl Runtime {
                 .values()
                 .any(|tabs| tabs.contains(id))
         });
-        if !reuse && !self.admit_agent_tab(&operation.request.context.checkout_path) {
+        if !reuse
+            && !self.reserve_agent_effect(
+                &operation.request.context.checkout_path,
+                &format!("close:{key}"),
+            )
+        {
             return true;
         }
         if let Some(message) = self.close_precondition_failure(&operation) {

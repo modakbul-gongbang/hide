@@ -311,7 +311,10 @@ fn pending_agent_admissions_are_counted_before_the_next_effect() {
         .as_mut()
         .unwrap()
         .agent_admissions
-        .insert(("local".into(), "/agent-groups".into()), HashSet::from([1]));
+        .insert(
+            ("local".into(), "/agent-groups".into()),
+            HashSet::from(["create:1".into()]),
+        );
     assert!(!runtime.admit_agent_tab("/agent-groups"));
     runtime.finish_agent_admission("/agent-groups", 1);
     assert!(runtime.admit_agent_tab("/agent-groups"));
@@ -420,7 +423,7 @@ fn admitted_tab_keeps_its_slot_when_external_topology_arrives_first() {
         .agent_admissions
         .insert(
             ("local".into(), "/agent-groups".into()),
-            HashSet::from([71]),
+            HashSet::from(["create:71".into()]),
         );
     ids.push("w-order:external".into());
     ingest(
@@ -474,7 +477,7 @@ fn uncertain_create_retains_its_own_claim_until_a_definite_result() {
         .agent_admissions
         .insert(
             ("local".into(), "/agent-groups".into()),
-            HashSet::from([71, 72]),
+            HashSet::from(["create:71".into(), "create:72".into()]),
         );
     let create = |id| RemoteControlAction::CreateTab {
         workspace_id: "w-order".into(),
@@ -502,7 +505,7 @@ fn uncertain_create_retains_its_own_claim_until_a_definite_result() {
         pending
             .get(&("local".into(), "/agent-groups".into()))
             .unwrap(),
-        &HashSet::from([71])
+        &HashSet::from(["create:71".into()])
     );
     assert!(runtime.admit_agent_tab("/agent-groups"));
     runtime.ingest_local_control_result(
@@ -571,4 +574,133 @@ fn replacement_retry_with_missing_shell_at_capacity_sends_no_effect() {
     );
     assert_eq!(runtime.close_operations["retained-close"].phase, "refused");
     assert!(runtime.panes_closing.is_empty());
+}
+
+fn capacity_close_request(runtime: &Runtime, key: &str) -> live::CloseCaptureRequest {
+    let tab = runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter()
+        .flat_map(|w| &w.checkouts)
+        .flat_map(|c| &c.tabs)
+        .find(|tab| tab.id.as_deref() == Some("w-order:t1"))
+        .unwrap();
+    let mut context = runtime.close_context(tab).unwrap();
+    context.replacement_shell = true;
+    live::CloseCaptureRequest {
+        key: key.into(),
+        connection_generation: runtime.live_generation,
+        context,
+        panes: runtime.closed_panes(tab),
+        target: live::CloseCaptureTarget::Tab {
+            tab_id: "w-order:t1".into(),
+        },
+    }
+}
+
+#[test]
+fn replacement_unknown_claim_survives_refusal_and_dismissal() {
+    let (mut runtime, _) = setup();
+    let ids = (1..=63)
+        .map(|n| format!("w-order:t{n}"))
+        .collect::<Vec<_>>();
+    let tabs = ids.iter().map(String::as_str).collect::<Vec<_>>();
+    ingest(&mut runtime, &tabs);
+    let request = capacity_close_request(&runtime, "uncertain-replacement");
+    assert!(runtime.reserve_agent_effect("/agent-groups", "close:uncertain-replacement"));
+    runtime.ensure_pending_close_from_request(&request);
+    let operation = runtime.close_operations.get_mut(&request.key).unwrap();
+    operation.phase = "transmitting".into();
+    operation.replacement_effect_started = true;
+    runtime.ingest_close_effect_result(
+        &live::CloseEffectRequest {
+            key: request.key.clone(),
+            connection_generation: runtime.live_generation,
+            target: request.target.clone(),
+            replacement: Some(request.context.clone()),
+            allow_replacement_create: true,
+        },
+        Err(hide_herdr_client::ApiError::Remote {
+            code: "replacement_failed".into(),
+            message: "created but acknowledgement lost".into(),
+        }),
+    );
+    ingest(&mut runtime, &tabs);
+    assert!(!runtime.admit_agent_tab("/agent-groups"));
+    assert!(
+        runtime.reserve_agent_effect("/agent-groups", "close:uncertain-replacement"),
+        "the same intent reuses its own claim"
+    );
+    runtime.dismiss_agent_close(&request.key);
+    assert!(
+        !runtime.admit_agent_tab("/agent-groups"),
+        "dismiss is not proof that the effect did not happen"
+    );
+}
+
+#[test]
+fn reopen_unknown_claim_survives_error_and_retry_launch_failure_then_transfers_to_placement() {
+    let (mut runtime, _) = setup();
+    let ids = (1..=63)
+        .map(|n| format!("w-order:t{n}"))
+        .collect::<Vec<_>>();
+    let tabs = ids.iter().map(String::as_str).collect::<Vec<_>>();
+    ingest(&mut runtime, &tabs);
+    let close = capacity_close_request(&runtime, "uncertain-reopen");
+    let item = ClosedItem::Tab {
+        key: close.key.clone(),
+        context: close.context,
+        panes: close.panes,
+        layout: crate::recent_closed::ClosedLayout {
+            workspace_id: "w-order".into(),
+            tab_id: "retired".into(),
+            zoomed: false,
+            focused_pane_id: "retired:p".into(),
+            root: crate::recent_closed::ClosedLayoutNode::Pane {
+                pane_id: Some("retired:p".into()),
+                label: None,
+                cwd: Some("/agent-groups".into()),
+                command: None,
+                env: BTreeMap::new(),
+            },
+        },
+    };
+    runtime.push_recent_closed(item.clone());
+    let request = live::ReopenRequest {
+        item,
+        workspace_exists: true,
+        tab_exists: false,
+        fallback_pane_id: None,
+    };
+    assert!(runtime.reserve_agent_effect("/agent-groups", "reopen:uncertain-reopen"));
+    runtime.reopen_in_flight = Some(close.key.clone());
+    runtime.ingest_reopen_result(
+        &request,
+        Err("layout applied but acknowledgement lost".into()),
+    );
+    ingest(&mut runtime, &tabs);
+    assert!(!runtime.admit_agent_tab("/agent-groups"));
+    runtime.reopen_closed(); // No fixture live worker: this retry cannot start.
+    assert!(!runtime.admit_agent_tab("/agent-groups"));
+    runtime.reopen_in_flight = Some(close.key);
+    runtime.ingest_reopen_result(
+        &request,
+        Ok(live::FileReopenResultOrHerdr::Herdr(live::ReopenOutcome {
+            tab_id: Some("w-order:restored".into()),
+            consumed: true,
+            focused_pane_id: None,
+            notices: vec![],
+        })),
+    );
+    assert_eq!(runtime.pending_agent_admissions("/agent-groups"), 0);
+    assert!(
+        !runtime.admit_agent_tab("/agent-groups"),
+        "known placement keeps the slot until topology arrives"
+    );
+    let mut restored = tabs;
+    restored.push("w-order:restored");
+    ingest(&mut runtime, &restored);
+    assert_eq!(layout(&runtime).waiting, 0);
+    assert!(layout(&runtime).tree.display("w-order:restored").is_some());
 }

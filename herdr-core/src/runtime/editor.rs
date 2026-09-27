@@ -1045,6 +1045,12 @@ impl Runtime {
         operation.retryable = true;
         operation.deadline_at_unix_ms = None;
         let operation = operation.clone();
+        if !operation.replacement_effect_started {
+            self.finish_agent_effect(
+                &operation.request.context.checkout_path,
+                &format!("close:{key}"),
+            );
+        }
         self.clear_close_guards(&operation);
         self.restore_close_selection(operation.selection_restore.as_ref());
         self.set_reopen_notices(vec![live::ReopenNotice {
@@ -1205,6 +1211,14 @@ impl Runtime {
             panes: self.closed_panes(&tab),
             target,
         };
+        if request.context.replacement_shell
+            && !self.reserve_agent_effect(
+                &request.context.checkout_path,
+                &format!("close:{}", request.key),
+            )
+        {
+            return true;
+        }
         let pane_ids = Self::close_operation_pane_ids(&request.target, &request.panes);
         let mut scope_pane_ids = tab
             .panes
@@ -1245,6 +1259,7 @@ impl Runtime {
         self.close_operations.insert(
             request.key.clone(),
             PendingClose {
+                replacement_effect_started: false,
                 replacement_tab_id: None,
                 allow_replacement_create: true,
                 target_id: target_id.clone(),
@@ -1391,6 +1406,12 @@ impl Runtime {
         operation.retryable = true;
         operation.deadline_at_unix_ms = None;
         let operation = operation.clone();
+        if !operation.replacement_effect_started {
+            self.finish_agent_effect(
+                &operation.request.context.checkout_path,
+                &format!("close:{key}"),
+            );
+        }
         self.clear_close_guards(&operation);
         self.set_reopen_notices(vec![live::ReopenNotice {
             pane_id: matches!(
@@ -1421,6 +1442,7 @@ impl Runtime {
         self.close_operations.insert(
             request.key.clone(),
             PendingClose {
+                replacement_effect_started: false,
                 replacement_tab_id: None,
                 allow_replacement_create: true,
                 request: request.clone(),
@@ -1489,6 +1511,7 @@ impl Runtime {
                 let Some(operation) = self.close_operations.get_mut(&request.key) else {
                     return (false, Vec::new());
                 };
+                operation.replacement_effect_started |= request.context.replacement_shell;
                 operation.item = outcome.item;
                 operation.phase = "transmitting".to_owned();
                 operation.stage = "close_request".to_owned();
@@ -1625,7 +1648,7 @@ impl Runtime {
                     operation.message = Some(if !operation.request.context.replacement_shell {
                         "The item was not closed. Check its current state before closing it again."
                     } else if code == "replacement_failed" {
-                        "The replacement shell could not be prepared. Nothing was closed. Retry when the connection is ready."
+                        "The replacement shell is unconfirmed; its place stays reserved. Nothing was closed. Retry when the connection is ready."
                     } else {
                         "The item was not closed. The replacement shell remains available; retry the close."
                     }.to_owned());
@@ -2229,16 +2252,25 @@ impl Runtime {
         {
             return true;
         }
-        if !tab_exists && self.reopen_device() == workspace::LOCAL_DEVICE_ID {
-            let path = match &item {
-                ClosedItem::Pane { context, .. } | ClosedItem::Tab { context, .. } => {
-                    Some(context.checkout_path.clone())
-                }
+        let admission = if !tab_exists && self.reopen_device() == workspace::LOCAL_DEVICE_ID {
+            match &item {
+                ClosedItem::Pane { context, .. } | ClosedItem::Tab { context, .. } => Some((
+                    context.checkout_path.clone(),
+                    format!("reopen:{}", item.key()),
+                )),
                 ClosedItem::File { .. } => None,
-            };
-            if path.is_some_and(|path| !self.admit_agent_tab(&path)) {
-                return true;
             }
+        } else {
+            None
+        };
+        let prior_admission = admission
+            .as_ref()
+            .is_some_and(|(path, claim)| self.has_agent_effect(path, claim));
+        if admission
+            .as_ref()
+            .is_some_and(|(path, claim)| !self.reserve_agent_effect(path, claim))
+        {
+            return true;
         }
         let key = item.key().to_owned();
         self.reopen_in_flight = Some(key.clone());
@@ -2287,6 +2319,9 @@ impl Runtime {
                 .and_then(|context| live::spawn_reopen(context, request))
         };
         if let Err(message) = spawned {
+            if !prior_admission && let Some((path, claim)) = admission {
+                self.finish_agent_effect(&path, &claim);
+            }
             self.reopen_in_flight = None;
             self.set_reopen_notices(vec![live::ReopenNotice {
                 pane_id: None,
@@ -2309,9 +2344,20 @@ impl Runtime {
         self.reopen_in_flight = None;
         match result {
             Err(message) => {
+                let reserved = match &request.item {
+                    ClosedItem::Pane { context, .. } | ClosedItem::Tab { context, .. } => {
+                        self.has_agent_effect(&context.checkout_path, &format!("reopen:{key}"))
+                    }
+                    ClosedItem::File { .. } => false,
+                };
+                let reservation = if reserved {
+                    " Its tab place stays reserved."
+                } else {
+                    ""
+                };
                 self.set_reopen_notices(vec![live::ReopenNotice {
                     pane_id: request.fallback_pane_id.clone(),
-                    message: format!("Reopen failed; retry is available: {message}"),
+                    message: format!("Reopen failed; retry is available: {message}.{reservation}"),
                 }]);
             }
             Ok(live::FileReopenResultOrHerdr::File(file)) => {
@@ -2387,10 +2433,15 @@ impl Runtime {
                         }
                         _ => None,
                     };
-                    if let Some(context) = context
-                        && let Err(message) = self.queue_restored_agent_tab(context, tab_id)
-                    {
-                        self.push_diagnostic("agent_layout.reopen_placement_failed", message);
+                    if let Some(context) = context {
+                        match self.queue_restored_agent_tab(context, tab_id) {
+                            Ok(()) => self.finish_agent_effect(
+                                &context.checkout_path,
+                                &format!("reopen:{key}"),
+                            ),
+                            Err(message) => self
+                                .push_diagnostic("agent_layout.reopen_placement_failed", message),
+                        }
                     }
                 }
                 if outcome.consumed {
