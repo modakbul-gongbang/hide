@@ -240,6 +240,8 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
 
     for (const theme of ["dark", "light"] as const) {
       await chooseTheme(page, theme);
+      // Settings hands focus back to the Done toggle; the capture shows it at rest.
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
       await screenshot(page, `overview-tasks-${theme}`);
     }
 
