@@ -11,6 +11,11 @@ The code is the executable authority: `herdr-core/src/` for the core, `hided/src
 The core (`herdr-core`) owns all state behind one `Mutex<Runtime>`.
 The shell dispatches typed JSON events in and receives snapshot and delta frames out over hided's WebSocket (see hided and the WebSocket boundary) when the change notifier announces.
 The event sync coordinator (`session_sync/coordinator.rs`) delegates Herdr snapshot and subscription lifecycle to `session_sync/subscription.rs`, opens `events.subscribe` first and reads `session.snapshot` second, applies the topology events that follow, and refreshes agent telemetry with `agent.list` once per second.
+Tab names use core focus and the same agent row as the sidebar; process names arrive through a coordinator-owned off-lock `pane.process_info` reader on each host's connector.
+Its single worker reads at most the five attached tabs' focused panes, on focus or agent-state changes or a 30-second recheck, rejects obsolete generations, and publishes only changed names.
+Stopping its coordinator cancels the rest of the batch and joins the active read off the runtime lock.
+Small process responses have a one-second absolute read deadline and a 64 KiB cap; SSH session contention, connection setup, socket discovery, channel opening and disconnect each use the remote transport's 15-second bound, so shutdown can include those setup and cleanup stages.
+`rename_tab` keeps retry intent separate from the committed label; only Herdr success commits it, and a refusal or timeout preserves the prior label and a request-correlated inline retry result.
 Herdr's stream carries no sequence and cannot be resumed from a position, so subscribing before the snapshot is the only way not to lose an event between the two, and every reconnect is a fresh subscription followed by a fresh snapshot.
 The price of that order is that an event emitted just before the snapshot was taken arrives as well; for one second after the snapshot the replica reconciles (`ApplyMode::Reconcile`), dropping with a diagnostic an event the snapshot already accounts for, and after that window an event the replica cannot apply is a real divergence that rebuilds it.
 `wire.rs` names the day Herdr sequences its stream: a test fails when the event schema declares `sequence` or the subscribe params take `after_sequence`, because a resume cursor would then be worth building back.
@@ -27,6 +32,18 @@ Everything the shell renders comes from that one snapshot pull.
 The shell decodes it strictly: one string value it does not know fails the whole decode, the bridge keeps its last good frame, and every later notification repeats the failure until the two sides agree, so an unknown value is a stalled shell, not a blank field.
 The string enums the core serializes into the snapshot are therefore pinned in `contracts/snapshot-wire-enums.json`; `model.rs` tests that each variant emits the listed value and `SnapshotWireEnumTests` that each listed value decodes, so a variant added on one side fails a suite before it can reach a running shell (a `PullRequestTitle` origin once shipped as `pull_request_title` against a shell that read `pr_title`).
 The bridge publishes `bridgeError` only on change and names the coding path in it, because a repeated failure republished every notification rebuilt every view observing the bridge at the notification rate.
+
+## Stored primary checkout
+
+A local registered project stores `primary_checkout_id` on its `WorkspaceRegistration` in `core-state.json`.
+An absent choice keeps the root default for existing registrations; a stored choice remains stored while its checkout is unavailable.
+The single `set_primary_checkout` event carries `{workspace_id, checkout_id}` and accepts only an existing checkout of that registered local Git project.
+Missing projects or checkouts, plain folders and remote registrations are refused with a diagnostic, without changing the selection or presenting an alert.
+The catalog projects `CheckoutSnapshot.is_primary` after assigning registration identities and adding Git worktrees; sorting and inactive folding consume that flag, and the web reads it for the house glyph rather than comparing paths.
+A change updates the accepted catalog immediately, so stale worker results cannot restore the old choice, then uses the existing coalesced off-lock UI save.
+An unchanged choice publishes and saves nothing; there is no additional worker, subprocess, timer or queue.
+Checkout fields remain in the hand-maintained `web/src/snapshot.ts` shape; the WebSocket frame generator does not generate this part of the core snapshot.
+SSH catalogs currently read Herdr and the device helper, not another hided core's registrations, so they retain the remote root default and do not synchronize a primary choice stored by another daemon.
 
 ## Project sessions and Memory
 
@@ -303,6 +320,7 @@ The daemon leads its own process group, so an interrupt to the terminal job or h
 It does not start a Herdr server.
 A release `hided` carries `web/dist` inside the binary (`hided/build.rs`); a debug build reads the directory from disk, so `pnpm build` shows up without a cargo rebuild.
 The core spawns `herdr terminal session control` for every pane attach and refuses without a binary, so `hided` resolves one from `HERDR_BIN_PATH`, the variable Herdr sets in every pane it manages, then from the first `herdr` on PATH; with neither it logs `herdr_bin.missing` and no pane terminal can attach.
+A `HERDR_BIN_PATH` that names nothing executable refuses the daemon before it binds, and `hide connect` refuses the same value as `start_failed` before spawning one: Herdr hands every pane the path its server started from, that path dies when the app bundle is replaced under a running server, and a daemon that came up on it would answer healthy and then fail every pane attach one by one (`env::herdr_bin_error`).
 The web shell holds no UI authority: it draws the snapshot, writes terminal chunks straight into xterm.js, and sends one event per operator action.
 With `probe=1` in the page URL it also installs `window.__hideProbe`, the only way to read the WebGL-drawn terminal from Playwright or a CDP driver; without the query the writer path is the plain `term.write`.
 

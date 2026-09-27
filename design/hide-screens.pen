@@ -15148,24 +15148,37 @@
                             {
                               "type": "frame",
                               "id": "ws-agtab1-lo",
-                              "name": "Tab 1",
+                              "name": "탭 이름과 구성 개선",
                               "children": [
                                 {
-                                  "type": "icon",
-                                  "id": "ws-agtab1-lo-i",
-                                  "name": "Glyph",
-                                  "enabled": true,
+                                  "type": "text",
+                                  "id": "ws-agtab1-lo-status",
+                                  "name": "●",
+                                  "content": "●",
+                                  "fill": "$--agent-working",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ws-agtab1-lo-provider",
+                                  "name": "Provider logo",
+                                  "children": [],
                                   "width": 12,
                                   "height": 12,
-                                  "icon": "square-terminal",
-                                  "library": "lucide",
-                                  "fill": "$--foreground"
+                                  "fill": {
+                                    "type": "image",
+                                    "enabled": true,
+                                    "url": "../web/src/assets/agent-claude.png",
+                                    "mode": "fit"
+                                  }
                                 },
                                 {
                                   "type": "text",
                                   "id": "ws-agtab1-lo-t",
-                                  "name": "Tab 1",
-                                  "content": "Tab 1",
+                                  "name": "탭 이름과 구성 개선",
+                                  "content": "탭 이름과 구성 개선",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-subhead",
@@ -16686,24 +16699,37 @@
                             {
                               "type": "frame",
                               "id": "ws-agtab1-lc",
-                              "name": "Tab 1",
+                              "name": "탭 이름과 구성 개선",
                               "children": [
                                 {
-                                  "type": "icon",
-                                  "id": "ws-agtab1-lc-i",
-                                  "name": "Glyph",
-                                  "enabled": true,
+                                  "type": "text",
+                                  "id": "ws-agtab1-lc-status",
+                                  "name": "●",
+                                  "content": "●",
+                                  "fill": "$--agent-working",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ws-agtab1-lc-provider",
+                                  "name": "Provider logo",
+                                  "children": [],
                                   "width": 12,
                                   "height": 12,
-                                  "icon": "square-terminal",
-                                  "library": "lucide",
-                                  "fill": "$--foreground"
+                                  "fill": {
+                                    "type": "image",
+                                    "enabled": true,
+                                    "url": "../web/src/assets/agent-claude.png",
+                                    "mode": "fit"
+                                  }
                                 },
                                 {
                                   "type": "text",
                                   "id": "ws-agtab1-lc-t",
-                                  "name": "Tab 1",
-                                  "content": "Tab 1",
+                                  "name": "탭 이름과 구성 개선",
+                                  "content": "탭 이름과 구성 개선",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-subhead",
@@ -17887,24 +17913,37 @@
                             {
                               "type": "frame",
                               "id": "ws-agtab1-do",
-                              "name": "Tab 1",
+                              "name": "탭 이름과 구성 개선",
                               "children": [
                                 {
-                                  "type": "icon",
-                                  "id": "ws-agtab1-do-i",
-                                  "name": "Glyph",
-                                  "enabled": true,
+                                  "type": "text",
+                                  "id": "ws-agtab1-do-status",
+                                  "name": "●",
+                                  "content": "●",
+                                  "fill": "$--agent-working",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ws-agtab1-do-provider",
+                                  "name": "Provider logo",
+                                  "children": [],
                                   "width": 12,
                                   "height": 12,
-                                  "icon": "square-terminal",
-                                  "library": "lucide",
-                                  "fill": "$--foreground"
+                                  "fill": {
+                                    "type": "image",
+                                    "enabled": true,
+                                    "url": "../web/src/assets/agent-claude.png",
+                                    "mode": "fit"
+                                  }
                                 },
                                 {
                                   "type": "text",
                                   "id": "ws-agtab1-do-t",
-                                  "name": "Tab 1",
-                                  "content": "Tab 1",
+                                  "name": "탭 이름과 구성 개선",
+                                  "content": "탭 이름과 구성 개선",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-subhead",
@@ -19425,24 +19464,37 @@
                             {
                               "type": "frame",
                               "id": "ws-agtab1-dc",
-                              "name": "Tab 1",
+                              "name": "탭 이름과 구성 개선",
                               "children": [
                                 {
-                                  "type": "icon",
-                                  "id": "ws-agtab1-dc-i",
-                                  "name": "Glyph",
-                                  "enabled": true,
+                                  "type": "text",
+                                  "id": "ws-agtab1-dc-status",
+                                  "name": "●",
+                                  "content": "●",
+                                  "fill": "$--agent-working",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ws-agtab1-dc-provider",
+                                  "name": "Provider logo",
+                                  "children": [],
                                   "width": 12,
                                   "height": 12,
-                                  "icon": "square-terminal",
-                                  "library": "lucide",
-                                  "fill": "$--foreground"
+                                  "fill": {
+                                    "type": "image",
+                                    "enabled": true,
+                                    "url": "../web/src/assets/agent-claude.png",
+                                    "mode": "fit"
+                                  }
                                 },
                                 {
                                   "type": "text",
                                   "id": "ws-agtab1-dc-t",
-                                  "name": "Tab 1",
-                                  "content": "Tab 1",
+                                  "name": "탭 이름과 구성 개선",
+                                  "content": "탭 이름과 구성 개선",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-subhead",

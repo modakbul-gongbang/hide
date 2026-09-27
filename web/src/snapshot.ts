@@ -204,7 +204,10 @@ export type PaneRow = {
   sleep_action?: AgentSleepAction;
 };
 
+export type TabAgent = Pick<AgentRow, "agent_kind" | "symbol" | "demand" | "activity" | "emphasized" | "waiting_on_descendants" | "status_label">;
+
 export type Tab = {
+  agent?: TabAgent | null;
   id: string | null;
   workspace_id: string | null;
   checkout_id: string | null;
@@ -257,6 +260,8 @@ export type Checkout = {
   branch: string | null;
   purpose: Purpose | null;
   is_worktree: boolean;
+  /** Core-owned home choice; absent in snapshots from older daemons. */
+  is_primary?: boolean;
   exists: boolean;
   /** A checkout Hide opened outside every registered project. */
   temporary?: boolean;
@@ -387,6 +392,7 @@ export type ExplorerOperation = {
 };
 
 export type WorkspaceRegistration = {
+  primary_checkout_id?: string | null;
   id: string;
   label: string;
   path: string;
@@ -860,6 +866,7 @@ export type SnapshotRest = {
     background_ai?: BackgroundAi;
     diagnostics?: CoreDiagnostic[];
     async_operations?: AsyncOperation[];
+    tab_rename?: { request_id: string; tab_id: string; label: string; phase: "pending" | "succeeded" | "failed" } | null;
     pane_focus_request?: PaneFocusRequest | null;
     /** The core's most recent failure; the shell logs its detail (B5). */
     last_error?: { kind: string; message: string; retryable: boolean; occurred_at: number } | null;

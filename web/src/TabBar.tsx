@@ -1,13 +1,16 @@
 import { PlusIcon, XIcon } from "lucide-react";
-import { memo, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
+import { StatusMark } from "./components/status-mark";
+import { markTone } from "./agentRow";
 import { AgentMark } from "./AgentMark";
 import { EntryContextMenu, type MenuEntry } from "./components/entry-menu";
 import { Button } from "./components/ui/button";
-import { Hint } from "./components/ui/tooltip";
-import type { AgentRow, AsyncOperation, Checkout, StripTab } from "./snapshot";
+import { Input } from "./components/ui/input";
+import { Hint, Tooltip, TooltipTrigger, TooltipContent } from "./components/ui/tooltip";
+import type { AsyncOperation, Checkout, StripTab } from "./snapshot";
 import { useShellStore } from "./store";
-import { agentEntries, tabAgent, tabIdentity } from "./workspace";
+import { agentEntries } from "./workspace";
 import { hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
 
@@ -20,7 +23,6 @@ import { displayCommand } from "./shortcuts";
 // are `ViewAreas.tsx`'s.
 
 const NONE: AsyncOperation[] = [];
-const NO_AGENTS: AgentRow[] = [];
 
 /** Phases of a close the core is still confirming with Herdr (`operations.rs`). */
 const IN_FLIGHT = new Set(["transmitting", "awaiting_topology", "unknown"]);
@@ -74,30 +76,32 @@ function useTabDrag(actions: Actions, strip: StripTab[]) {
  * `device` marks a selected SSH device's strip, whose tabs are chosen and
  * closed on that host.
  */
-export function AgentTabBar({ checkout, activeTabId, agents, device = false, actions }: { checkout: Checkout; activeTabId: string | null; agents: AgentRow[] | null; device?: boolean; actions: Actions }) {
+export function AgentTabBar({ checkout, activeTabId, device = false, actions }: { checkout: Checkout; activeTabId: string | null; device?: boolean; actions: Actions }) {
   const operations = useShellStore((s) => s.rest?.status?.async_operations) ?? NONE;
-  const focusedPaneId = useShellStore((s) => s.focusedPaneId);
+  const [renaming, setRenaming] = useState<string | null>(null);
   const drag = useTabDrag(actions, checkout.strip);
   const entries = agentEntries(checkout);
   return (
     <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch overflow-x-auto bg-card" role="tablist" aria-label="Agent tabs" data-tab-bar={checkout.id} data-agent-tab-bar="true" data-remote-tab-bar={device ? "true" : undefined}>
       {entries.map((entry) => {
         const tab = checkout.tabs.find((row) => row.id === entry.source_id);
-        const agent = tabAgent(tab, agents ?? NO_AGENTS, focusedPaneId);
-        const identity = tabIdentity(entry, agent);
+        const agent = tab?.agent;
+        const identity = `${agent ? `${agent.agent_kind} agent` : "Terminal"} tab ${entry.label}${agent ? ` · ${agent.status_label}` : ""}`;
         return (
           <EntryContextMenu
             key={entry.id}
             label={`${entry.label} tab actions`}
-            items={() => agentTabMenu(entry)}
-            onSelect={(id) => runAgentTabItem(id, entry, actions)}
+            items={() => agentTabMenu()}
+            onSelect={(id) => id === "rename_tab" ? setRenaming(entry.source_id) : runAgentTabItem(id, entry, actions)}
+            onCloseAutoFocus={(event) => { if (renaming === entry.source_id) event.preventDefault(); }}
             className="flex shrink-0"
             data-tab-menu={entry.source_id}
           >
             <TabButton
               entry={entry}
+              editor={renaming === entry.source_id ? <TabRenameInput key={entry.source_id} entry={entry} actions={actions} onCancel={() => setRenaming(null)} /> : null}
               identity={identity}
-              mark={<AgentMark kind={agent?.agent_kind} />}
+              mark={<>{agent ? <StatusMark symbol={agent.symbol} className={markTone(agent)} data-tab-status={agent.status_label} /> : null}<AgentMark kind={agent?.agent_kind} /></>}
               active={entry.source_id === activeTabId}
               closing={closingSuffix(entry.source_id, "tab.close", operations)}
               closeLabel={`Close tab ${entry.label}`}
@@ -123,12 +127,13 @@ export function AgentTabBar({ checkout, activeTabId, agents, device = false, act
   );
 }
 
-type AgentTabItem = "new_tab" | "copy_name" | "close_tab";
+type AgentTabItem = "rename_tab" | "new_tab" | "copy_name" | "close_tab";
 
-function agentTabMenu(entry: StripTab): MenuEntry<AgentTabItem>[] {
+function agentTabMenu(): MenuEntry<AgentTabItem>[] {
   return [
     { id: "new_tab", label: "New tab", unavailable: null },
-    { id: "copy_name", label: `Copy tab name “${entry.label}”`, unavailable: null },
+    { id: "rename_tab", label: "Rename…", unavailable: null },
+    { id: "copy_name", label: "Copy name", unavailable: null },
     { id: "close_tab", label: "Close tab…", unavailable: null, separated: true },
   ];
 }
@@ -139,9 +144,68 @@ function runAgentTabItem(id: AgentTabItem, entry: StripTab, actions: Actions) {
   if (id === "close_tab") actions.closeTab(entry.source_id);
 }
 
+const RENAME_FAILURE = "이름을 저장하지 못했습니다 · 다시 시도";
+
+function TabRenameInput({ entry, actions, onCancel }: { entry: StripTab; actions: Actions; onCancel: () => void }) {
+  const [value, setValue] = useState(entry.label);
+  const [requestId, setRequestId] = useState<string | null>(null);
+  const sent = useRef(false);
+  const input = useRef<HTMLInputElement>(null);
+  const receipt = useShellStore((state) => state.rest?.status?.tab_rename);
+  const answer = receipt?.request_id === requestId ? receipt : null;
+  const failed = answer?.phase === "failed";
+  const pending = requestId !== null && !failed;
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => { input.current?.focus(); input.current?.select(); });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  useEffect(() => {
+    if (answer?.phase === "succeeded") onCancel();
+    if (failed) sent.current = false;
+  }, [answer?.phase, failed, onCancel]);
+  const cancel = () => {
+    const tab = input.current?.closest<HTMLElement>("[role=tab]");
+    onCancel();
+    tab?.focus();
+  };
+  return (
+    <Tooltip open={failed}>
+      <TooltipTrigger asChild>
+        <Input
+          ref={input}
+          aria-label="Tab name"
+          aria-invalid={failed || undefined}
+          aria-describedby={failed ? "tab-rename-failure" : undefined}
+          className="h-(--size-control-sm) flex-1 px-xs text-caption"
+          value={value}
+          readOnly={pending}
+          onChange={(event) => setValue(event.target.value)}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+          onBlur={onCancel}
+          onKeyDown={(event) => {
+            event.stopPropagation();
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (event.key === "Escape") { event.preventDefault(); cancel(); }
+            if (event.key === "Enter" && !sent.current) {
+              event.preventDefault();
+              sent.current = true;
+              const id = crypto.randomUUID();
+              setRequestId(id);
+              actions.renameTab(entry.source_id, value, id);
+            }
+          }}
+        />
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="start" className="max-w-none whitespace-nowrap text-destructive" id="tab-rename-failure" role="status">{RENAME_FAILURE}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 const TabButton = memo(function TabButton({
   entry,
   identity,
+  editor,
   mark,
   active,
   closing,
@@ -157,6 +221,7 @@ const TabButton = memo(function TabButton({
 }: {
   entry: StripTab;
   identity: string;
+  editor: React.ReactNode;
   mark: React.ReactNode;
   active: boolean;
   closing: boolean;
@@ -200,10 +265,10 @@ const TabButton = memo(function TabButton({
     >
       {over ? <span className="absolute inset-y-0 left-0 w-[var(--size-tab-indicator)] bg-primary" /> : null}
       {mark}
-      <span className="min-w-0 flex-1 truncate">
+      {editor ?? <span className="min-w-0 flex-1 truncate">
         {entry.label}
         {closing ? <span className="text-muted-foreground"> closing…</span> : null}
-      </span>
+      </span>}
       <Hint label={closeLabel}>
         <Button
           variant="ghost"

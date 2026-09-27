@@ -108,9 +108,15 @@ describe("checkoutPresentation", () => {
   });
 
   it("names the primary checkout, a detached one and a plain folder", () => {
-    expect(checkoutPresentation(project, checkout({ is_worktree: false, path: "/h/repo" }), now).kind).toBe("primary");
+    expect(checkoutPresentation(project, checkout({ is_primary: true, is_worktree: false, path: "/h/repo" }), now).kind).toBe("primary");
     expect(checkoutPresentation(project, checkout({ worktree: { branch: null, head_sha: "abc1234" } as Checkout["worktree"] }), now).kind).toBe("detached");
     expect(checkoutPresentation(workspace("notes", { is_git: false }), checkout({ worktree: null, is_worktree: false }), now).kind).toBe("folder");
+  });
+
+  it("uses the snapshot home choice even on a linked worktree with a pull request", () => {
+    expect(checkoutPresentation(project, checkout({ is_primary: true, pull_request: pr() }), now).kind).toBe("primary");
+    expect(checkoutPresentation(project, checkout({ is_primary: false, is_worktree: false, path: project.path }), now).kind).toBe("branch");
+    expect(checkoutPresentation({ ...project, device_id: "remote" }, checkout({ is_primary: true }), now).kind).toBe("primary");
   });
 
   it("dates the last commit, and draws a missing folder in danger with no age", () => {

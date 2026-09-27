@@ -22,6 +22,7 @@ pub(crate) struct ProjectedWorktree {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ProjectedTab {
+    pub(crate) number: u32,
     pub(crate) tab_id: String,
     pub(crate) workspace_id: String,
     pub(crate) label: String,
@@ -29,6 +30,8 @@ pub(crate) struct ProjectedTab {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ProjectedPane {
+    pub(crate) foreground_process: Option<String>,
+    pub(crate) agent_status: String,
     pub(crate) pane_id: String,
     pub(crate) workspace_id: String,
     pub(crate) tab_id: String,
@@ -106,6 +109,7 @@ impl ProjectionState {
             .tabs
             .iter()
             .map(|tab| SessionTabPayload {
+                number: tab.number,
                 tab_id: tab.tab_id.clone(),
                 workspace_id: tab.workspace_id.clone(),
                 label: tab.label.clone(),
@@ -115,6 +119,7 @@ impl ProjectionState {
             .panes
             .iter()
             .map(|pane| SessionPanePayload {
+                foreground_process: pane.foreground_process.clone(),
                 pane_id: pane.pane_id.clone(),
                 tokens: pane.tokens.clone(),
                 cwd: pane.cwd.clone(),

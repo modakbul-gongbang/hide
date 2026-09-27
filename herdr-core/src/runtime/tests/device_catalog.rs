@@ -68,6 +68,8 @@ fn herdr_workspace(
     row.tabs = tabs
         .iter()
         .map(|(tab, cwd)| TabSnapshot {
+            agent: None,
+            naming: Default::default(),
             id: Some(format!("remote:{target}:tab:{tab}")),
             workspace_id: Some(workspace_id.clone()),
             checkout_id: Some(checkout_id.clone()),
@@ -444,6 +446,7 @@ fn a_device_registration_is_listed_without_panes_pinned_and_removed_on_that_devi
         .ui_state
         .workspace_registrations
         .push(crate::model::WorkspaceRegistration {
+            primary_checkout_id: None,
             id: "workspace:local-other".to_owned(),
             label: "Local other".to_owned(),
             path: t.other.clone(),
@@ -839,6 +842,7 @@ fn removing_a_device_forgets_its_projects_tabs_and_folders_and_keeps_this_machin
             host_consent: None,
         });
     let registration = |id: &str, device: &str| crate::model::WorkspaceRegistration {
+        primary_checkout_id: None,
         id: id.to_owned(),
         label: id.to_owned(),
         path: format!("/repo/{id}"),

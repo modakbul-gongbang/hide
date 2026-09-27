@@ -723,12 +723,12 @@ function buildProjectOverview(tokens) {
 // tab and carries no icon. No library master matches this exact shape
 // (icon + label + its own underline), so it is hand-composed, the same way
 // screenDialogSurface is where no Dialog master fits either.
-function screenPanelTab(id, glyph, title, active) {
+function screenPanelTab(id, glyph, title, active, provider = null) {
   return frame(id, title, {
     layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', padding: [0, '$--spacing-xs', '$--spacing-xxs', '$--spacing-xs'],
     ...(active ? {stroke: '$--foreground', strokeWidth: {bottom: 2}, strokeAlignment: 'inner'} : {}),
   }, [
-    icon(`${id}-i`, glyph, {size: 12, fill: active ? '$--foreground' : '$--subtle-foreground'}),
+    ...(provider ? [text(`${id}-status`, '●', {fill: '$--agent-working', size: '$--text-caption'}), frame(`${id}-provider`, 'Provider logo', {width: 12, height: 12, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'fit'}}, [])] : [icon(`${id}-i`, glyph, {size: 12, fill: active ? '$--foreground' : '$--subtle-foreground'})]),
     text(`${id}-t`, title, {size: '$--text-subhead', weight: active ? '600' : '400', fill: active ? '$--foreground' : '$--subtle-foreground'}),
   ]);
 }
@@ -800,7 +800,7 @@ function buildWorkspace(tokens) {
     return frame(`ws-agents-${key}`, 'Agent column', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0, fill: '$--background', clip: true}, [
       toolbar(key, count),
       frame(`ws-agtabs-${key}`, 'Tab bar', {width: 'fill_container', height: ROW, layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
-        screenPanelTab(`ws-agtab1-${key}`, 'square-terminal', 'Tab 1', true),
+        screenPanelTab(`ws-agtab1-${key}`, 'square-terminal', '탭 이름과 구성 개선', true, 'claude'),
         screenIconButton(`ws-agtabclose-${key}`, 'x', {size: 20}),
         screenIconButton(`ws-agtabadd-${key}`, 'plus', {size: 20}),
       ]),

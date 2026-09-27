@@ -715,6 +715,7 @@ mod tests {
         let path = root.join("state.json");
         let state = UiStateSnapshot {
             workspace_registrations: vec![WorkspaceRegistration {
+                primary_checkout_id: None,
                 id: "workspace:alpha".to_owned(),
                 label: "Alpha".to_owned(),
                 path: "/repo/alpha".to_owned(),

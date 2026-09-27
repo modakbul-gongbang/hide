@@ -469,11 +469,10 @@ function AgentArea({ checkout, actions }: { checkout: Checkout; actions: Actions
  * not empty. The empty state means there is no tab at all.
  */
 function LocalAgentArea({ checkout, actions }: { checkout: Checkout; actions: Actions }) {
-  const agents = useShellStore((s) => s.agents);
   const hasTabs = checkout.tabs.length > 0;
   return (
     <>
-      <AgentTabBar checkout={checkout} activeTabId={checkout.active_tab_id} agents={agents} actions={actions} />
+      <AgentTabBar checkout={checkout} activeTabId={checkout.active_tab_id} actions={actions} />
       <RelationStatus actions={actions} />
       <FindBar actions={actions} />
       {hasTabs ? (
@@ -547,7 +546,7 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
           ) : null}
         </div>
       )}
-      <AgentTabBar checkout={view.checkout} activeTabId={view.tab?.id ?? null} agents={session?.agents ?? null} device actions={actions} />
+      <AgentTabBar checkout={view.checkout} activeTabId={view.tab?.id ?? null} device actions={actions} />
       <RelationStatus actions={actions} />
       <FindBar actions={actions} />
       <RemotePaneCanvas view={view} connected={connected} actions={actions} />

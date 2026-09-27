@@ -363,6 +363,11 @@ pub enum PaneControlOutcome {
 
 #[derive(Clone, Debug)]
 pub enum RemoteControlAction {
+    RenameTab {
+        tab_id: String,
+        label: String,
+        request_id: String,
+    },
     Pane(PaneControlAction),
     FocusWorkspace {
         workspace_id: String,
@@ -418,6 +423,7 @@ impl RemoteControlAction {
             Self::CreateWorkspace { .. } => "workspace.create",
             Self::CloseTab { .. } => "tab.close",
             Self::MoveTab { .. } => "tab.move",
+            Self::RenameTab { .. } => "tab.rename",
         }
     }
 }
@@ -551,6 +557,14 @@ fn execute_remote_control(
         }
         RemoteControlAction::CloseTab { tab_id } => {
             mutation_request(connector, "tab.close", wire::tab_target_params(tab_id)?)?;
+            (None, None)
+        }
+        RemoteControlAction::RenameTab { tab_id, label, .. } => {
+            mutation_request(
+                connector,
+                "tab.rename",
+                wire::tab_rename_params(tab_id, label)?,
+            )?;
             (None, None)
         }
         RemoteControlAction::MoveTab {
@@ -2093,6 +2107,9 @@ pub fn spawn_remote_control(
         RemoteControlAction::CloseTab { .. } => {
             format!("herdr-core-remote-{target_id}-tab-close")
         }
+        RemoteControlAction::RenameTab { .. } => {
+            format!("herdr-core-remote-{target_id}-tab-rename")
+        }
         RemoteControlAction::MoveTab { .. } => {
             format!("herdr-core-remote-{target_id}-tab-move")
         }
@@ -2136,6 +2153,7 @@ pub fn spawn_local_control(
         RemoteControlAction::CreateWorkspace { .. } => "herdr-core-workspace-create",
         RemoteControlAction::CloseTab { .. } => "herdr-core-tab-close",
         RemoteControlAction::MoveTab { .. } => "herdr-core-tab-move",
+        RemoteControlAction::RenameTab { .. } => "herdr-core-tab-rename",
         _ => return Err(format!("{} is not a local tab action", action.kind())),
     };
     thread::Builder::new()
@@ -3302,6 +3320,31 @@ mod tests {
 
     use super::*;
     use crate::fake_herdr::FakeHerdr;
+
+    #[test]
+    fn tab_rename_uses_the_selected_host_and_reports_refusal() {
+        let host = FakeHerdr::start_with_errors("tab-rename", |method, params| {
+            assert_eq!(method, "tab.rename");
+            assert_eq!(params["tab_id"], "w1:t1");
+            if params["label"] == "refuse" {
+                Err(("not_found".into(), "tab unavailable".into()))
+            } else {
+                Ok(json!({"type":"ok"}))
+            }
+        });
+        for label in ["이름", "", "refuse"] {
+            let result = execute_remote_control(
+                &host.connector(),
+                &RemoteControlAction::RenameTab {
+                    tab_id: "w1:t1".into(),
+                    label: label.into(),
+                    request_id: "r1".into(),
+                },
+            );
+            assert_eq!(result.is_ok(), label != "refuse");
+        }
+        assert_eq!(host.methods(), ["tab.rename", "tab.rename", "tab.rename"]);
+    }
 
     #[test]
     fn nested_split_reopen_applies_the_original_outer_and_inner_geometry() {
