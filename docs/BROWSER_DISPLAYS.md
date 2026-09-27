@@ -10,7 +10,7 @@ There is no Herdr browser pane and no chromux profile behind it, and nothing is 
 | Owner | Holds | Code |
 | --- | --- | --- |
 | The core | Browser View layout, requested address and load stamp, and the native page's reported loading state | `herdr-core/src/view_layout.rs`, `herdr-core/src/runtime/view_areas.rs`, `herdr-core/src/runtime/workspace_control.rs` |
-| hided | The local `file:` event boundary, pane-scoped Browser CLI transport, and native routes into consented SSH devices | `hided/src/server.rs`, `hided/src/file_url.rs`, `hided/src/workspace_cli.rs`, `hided/src/browser_routes.rs`, `hided/src/browser_assets.rs` |
+| hided | The local `file:` event boundary, the checkout-scoped Browser CLI transport, and native routes into consented SSH devices | `hided/src/server.rs`, `hided/src/file_url.rs`, `hided/src/workspace_cli.rs`, `hided/src/browser_routes.rs`, `hided/src/browser_assets.rs` |
 | The web shell | Where each page sits, since only it has the geometry, the toolbar, the overlay freeze, and the notice in a plain browser tab | `web/src/BrowserDisplay.tsx`, `web/src/browserViews.ts`, `web/src/host.ts` |
 | The desktop app | The pages: one `WebContentsView` per display it was asked to show, their navigation, route requests, and their lifetime | `desktop/src/main/browser.ts`, `desktop/src/main/browserSync.ts`, `desktop/src/main/host.ts`, `desktop/src/preload/index.ts` |
 
@@ -21,9 +21,9 @@ The stamp is not saved; a relaunched page loads its address once when it is firs
 
 ## Opening a page
 
-- `hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]` from a connected Herdr pane in the desktop app.
-  The CLI resolves a relative file on the calling machine, gives loopback hosts `http` and other hosts `https`, and submits one pane-scoped action with no Workspace override.
-  The core checks an HTML file against that pane's checkout on its own device and reads it outside the core lock before placing its Browser View.
+- `hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]` from a shell the daemon can bind to a checkout: a connected Herdr pane, or a local process whose working directory is inside a registered checkout (`docs/ARCHITECTURE.md`, hided and the WebSocket boundary).
+  The CLI resolves a relative file on the calling machine, gives loopback hosts `http` and other hosts `https`, and submits one action scoped to the caller's checkout with no Workspace override.
+  The core checks an HTML file against that checkout on its own device and reads it outside the core lock before placing its Browser View.
   The action result confirms View placement, while `hide view status <view-id>` returns `pending`, `loading`, `loaded`, `failed`, `disconnected`, or `unsupported` for its native page.
   `disconnected` means a native page existed for that load but was removed or its desktop renderer disconnected; `unsupported` means no desktop renderer was available for a pending page.
   `--wait` polls that state for at most ten seconds and returns a failure if the page fails, disconnects, or remains pending; it does not reveal a hidden View.

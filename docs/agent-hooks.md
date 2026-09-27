@@ -34,11 +34,13 @@ The same envelope adds Workspace commands only after `hide workspace bootstrap` 
 The helper uses the `hide` CLI beside its own bundled executable, or the CLI on `PATH` for an independently installed helper on an SSH device.
 The app bundle carries that CLI beside the helper; the hook does not start Hide or install a remote hook.
 An ordinary Claude Code or Codex session started in a connected Herdr pane receives the same conditional guidance as a Hide-managed session when Hide's hook is installed in that runtime's configuration on that machine.
-A plain terminal, disconnected pane, unavailable renderer, or unsupported Browser surface receives no Workspace capability claim.
+A disconnected pane, unavailable renderer, or unsupported Browser surface receives no Workspace capability claim.
 The guidance scopes every command to the calling pane's Workspace and lists only capabilities returned by the daemon; `hide workspace info` remains the live check and `hide --help` gives the full syntax.
-The hook creates an owner-only, finite-lived credential reference and includes its path as a shell environment prefix for the listed commands, so Codex tools detached into a shared app-server can still use the same pane-scoped capability.
+The hook creates an owner-only, finite-lived credential reference and includes its path as a shell environment prefix for the listed commands.
 The path is a credential reference and should be handled as private session context, even though it contains no bearer bytes itself.
-The credential's bearer bytes and file contents never enter hook stdout, arguments, or the agent context, and each command rechecks pane membership and renderer availability.
+The credential's bearer bytes and file contents never enter hook stdout, arguments, or the agent context, and each command rechecks the caller's checkout membership and renderer availability.
+The prefix is a convenience, not the only way in: a bare `hide` command bootstraps its own one-shot credential, and a caller the daemon cannot place in a pane is bound to the registered checkout holding its working directory (`docs/ARCHITECTURE.md`, hided and the WebSocket boundary).
+That covers Codex 0.157 with `daemon_auto_start`, where the tool shell and this hook both run inside the shared `codex app-server` daemon under launchd rather than in the pane: the hook may run with the daemon's environment instead of the pane's, so its Workspace guidance can be missing, and the bare commands still reach the checkout the tool shell runs in.
 The SessionStart command hook has an eight-second timeout, including two bounded two-second CLI probes; a failed probe leaves the existing purpose and Memory context intact.
 An issued credential remains unclaimed for at most 30 seconds until a CLI receives and acknowledges a Workspace response.
 The CLI writes the claimed marker only after the daemon acknowledges that claim, so a caller killed before acknowledgement leaves an unclaimed reference that expires.
