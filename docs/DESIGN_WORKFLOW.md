@@ -68,7 +68,9 @@ Every name, path and count in a scene is invented example data, so a capture of 
    Pen has no code export and does not model Radix interaction; the comparison is a human visual judgment, not an automated pixel diff.
    Keep every capture under `agents/runs/<slug>/`; never commit a screenshot, scratch file, or comparison image (see AGENTS.md, Evidence Belongs Outside The Repository).
 8. **One PR.** Land the token/library/screen change and the code change together.
-   The PR shows the review run's comparison images and state captures inline (uploaded, never committed), its rule table as the automated facts, and its judgment list as what the reviewer still decides.
+   The PR body follows `.github/pull_request_template.md`: one before/after image of the actual screen above the fold, captioned with where to look, and the one visual judgment the reviewer has to make; the rule results as automated facts in Evidence.
+   The review run's other comparison images and state captures go in Evidence's folded block (uploaded, never committed); `prd_ship.js screenshots` puts every image it uploads under Summary, so pick the one that stays there and move the rest before publishing.
+   A failed rule, an INCOMPLETE item, or a required check that was not run stays visible in Evidence, never only in a folded block.
 
 ## Reference bundle and review run
 
