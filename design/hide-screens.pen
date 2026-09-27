@@ -15863,7 +15863,7 @@
                                       ]
                                     }
                                   ],
-                                  "width": 260,
+                                  "width": 355,
                                   "height": "fill_container",
                                   "layout": "vertical",
                                   "gap": 0,
@@ -15897,9 +15897,9 @@
                           "strokeAlignment": "inner"
                         }
                       ],
-                      "x": 332,
+                      "x": 237,
                       "y": 0,
-                      "width": 568,
+                      "width": 663,
                       "height": 460,
                       "layout": "horizontal",
                       "gap": 0,
@@ -17921,7 +17921,7 @@
                                       ]
                                     }
                                   ],
-                                  "width": 260,
+                                  "width": 355,
                                   "height": "fill_container",
                                   "layout": "vertical",
                                   "gap": 0,
@@ -17955,9 +17955,9 @@
                           "strokeAlignment": "inner"
                         }
                       ],
-                      "x": 332,
+                      "x": 237,
                       "y": 0,
-                      "width": 568,
+                      "width": 663,
                       "height": 460,
                       "layout": "horizontal",
                       "gap": 0,

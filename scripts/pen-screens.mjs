@@ -757,7 +757,7 @@ function sidePanelToggle(id, count) {
 
 function buildWorkspace(tokens) {
   const SIDEBAR_W = num(tokens, '--size-sidebar-ideal'), MAIN_W = 900, MAIN_H = 460;
-  const ROW = num(tokens, '--size-tab-strip'), GAP = num(tokens, '--spacing-sm'), TOOLS_W = num(tokens, '--size-panel-min');
+  const ROW = num(tokens, '--size-tab-strip'), GAP = num(tokens, '--spacing-sm'), TOOLS_W = num(tokens, '--size-panel-ideal');
   const HAIR = '$--size-hairline', PANEL_W = GAP + 300 + TOOLS_W;
   const rule = {stroke: '$--border', strokeWidth: {bottom: HAIR}, strokeAlignment: 'inner'};
   const TERMINAL = [

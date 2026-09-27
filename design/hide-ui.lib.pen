@@ -30594,7 +30594,7 @@
                               "fill": "$--card"
                             }
                           ],
-                          "width": 260,
+                          "width": 355,
                           "height": "fill_container",
                           "layout": "vertical",
                           "gap": 0,
@@ -30736,7 +30736,7 @@
               "type": "ref",
               "ref": "side-panel",
               "name": "Tools only",
-              "width": 268,
+              "width": 363,
               "descendants": {
                 "side-panel-tabs": {
                   "enabled": false
