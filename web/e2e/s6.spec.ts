@@ -53,11 +53,12 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect(project.locator("[data-workspace-count]")).toHaveText(/1 workspace/);
     await screenshot(page, "s6-main");
 
-    // Its Overview lists the Workspace and both agents; an agent enters the
-    // Workspace at that pane (B2).
+    // Its Overview opens on Tasks, empty while no issue is worked on; the
+    // Agents inbox lists both agents, and an agent enters the Workspace at
+    // that pane (B2).
     await project.click();
-    await expect(page.locator("[data-overview-screen]")).toBeVisible();
-    await expect(page.locator("[data-overview-workspace]")).toHaveCount(1);
+    await expect(page.locator('[data-overview-screen][data-overview-state="empty"]')).toBeVisible();
+    await page.locator('[data-overview-tab="agents"]').click();
     await expect(page.locator("[data-overview-screen] [data-agent-open]")).toHaveCount(2);
     await screenshot(page, "s6-overview");
     await page.locator(`[data-overview-screen] [data-agent-open="${parent}"]`).click();

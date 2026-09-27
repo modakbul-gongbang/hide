@@ -51,10 +51,11 @@ export function countSent(page: Page, last: Map<string, Record<string, unknown>>
 /**
  * A first run opens on Main (S6 D-11); a spec about the Workspace goes in
  * through its Project's Overview (the one named `project`, else the first)
- * to that Project's first Workspace. A Project with no agent has no card on
- * its Overview (web-project-overview B10), so its first checkout is opened
- * from the sidebar's project list, and the sidebar is put back on the list
- * it showed. A page that already shows a Workspace is left where it is.
+ * to that Project's first Workspace: its first card's checkout, or, when the
+ * board has no card (no issue is worked on, web-project-overview B10), the
+ * first checkout in the sidebar's project list, with the sidebar put back on
+ * the list it showed. A page that already shows a Workspace is left where it
+ * is.
  */
 export async function enterWorkspace(page: Page, project?: string): Promise<void> {
   const main = page.locator("[data-main-screen]");
@@ -65,7 +66,9 @@ export async function enterWorkspace(page: Page, project?: string): Promise<void
   await main.locator("[data-main-project]:not([disabled])", project ? { hasText: project } : {}).first().click();
   const overview = page.locator("[data-overview-screen]");
   const card = overview.locator("[data-overview-workspace]").first();
-  await expect(card.or(overview.locator("[data-overview-empty]"))).toBeVisible();
+  // A project whose agents work on no issue has no card on Tasks (its
+  // agents are on the Agents inbox), so its board settles empty.
+  await expect(card.or(page.locator('[data-overview-screen][data-overview-state="empty"]'))).toBeVisible();
   if ((await card.count()) > 0) {
     await card.click();
   } else {

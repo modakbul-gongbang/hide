@@ -86,12 +86,13 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await expect.poll(() => sent.get("focus_checkout")).toBe(focusEvents + 1);
 
     // A plain folder's sidebar row opens its checkout, so its Overview is
-    // reached from All projects (S6 B1), and its Workspace row enters the Workspace (B2).
+    // reached from All projects (S6 B1). No issue is worked on there, so its
+    // board is empty, and the sidebar row enters the Workspace again.
     await page.locator("[data-go-main]").click();
     await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: /^fixture/ }).click();
-    await expect(page.locator("[data-overview-screen]")).toBeVisible();
-    await page.locator("[data-overview-workspace]").first().click();
+    await expect(page.locator('[data-overview-screen][data-overview-state="empty"]')).toBeVisible();
+    await firstRow.click();
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", herdr.tab);
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
 

@@ -258,6 +258,7 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await expect(other.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
     await other.locator('[data-main-tab="projects"]').click();
     await other.locator("[data-main-project]", { hasText: "fixture" }).click();
+    await other.locator('[data-overview-tab="agents"]').click();
     const [, second] = herdr.panes;
     await other.locator(`[data-overview-screen] [data-agent-open="${second}"]`).click();
     await expect(other.locator("[data-workspace-screen]")).toBeVisible();
