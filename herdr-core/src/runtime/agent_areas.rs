@@ -96,6 +96,78 @@ impl Runtime {
         if changed {
             self.persist_workspace_views();
         }
+        // Identity loss can turn a selected delegated canvas into overflow.
+        // Repair every checkout's visible identity and the keyboard together,
+        // without waiting for the next local session snapshot.
+        let mut replacements = Vec::new();
+        for workspace in &self.snapshot.navigator.workspaces {
+            if workspace.device_id != workspace::LOCAL_DEVICE_ID {
+                continue;
+            }
+            for checkout in &workspace.checkouts {
+                let key = (workspace.device_id.clone(), checkout.path.clone());
+                let Some(layout) = self.agent_layout_of(&key) else {
+                    continue;
+                };
+                let waiting = |tab: &TabSnapshot| {
+                    !tab.delegated
+                        && tab
+                            .id
+                            .as_deref()
+                            .is_some_and(|id| layout.tree.display(id).is_none())
+                };
+                let selected_waiting = checkout.tabs.iter().any(|tab| {
+                    waiting(tab)
+                        && tab
+                            .panes
+                            .iter()
+                            .any(|pane| self.snapshot.terminal.pane_id.as_ref() == Some(&pane.id))
+                });
+                let visible_waiting = checkout
+                    .tabs
+                    .iter()
+                    .any(|tab| waiting(tab) && tab.id == checkout.active_tab_id);
+                if !selected_waiting && !visible_waiting {
+                    continue;
+                }
+                let tab = layout.active().and_then(|id| {
+                    checkout
+                        .tabs
+                        .iter()
+                        .find(|tab| tab.id.as_deref() == Some(id))
+                });
+                let tab_id = tab.and_then(|tab| tab.id.clone());
+                let pane = tab.and_then(|tab| {
+                    self.tab_focus_pane_id(
+                        tab.id.as_deref().expect("matched a stable tab"),
+                        tab.panes.first().map(|p| p.id.clone()),
+                    )
+                });
+                replacements.push((checkout.id.clone(), tab_id, selected_waiting, pane));
+            }
+        }
+        for (checkout_id, tab_id, selected_waiting, pane) in replacements {
+            if let Some(id) = &tab_id {
+                self.visible_tab_ids.insert(checkout_id.clone(), id.clone());
+            } else {
+                self.visible_tab_ids.remove(&checkout_id);
+            }
+            if let Some(checkout) = self
+                .snapshot
+                .navigator
+                .workspaces
+                .iter_mut()
+                .flat_map(|workspace| &mut workspace.checkouts)
+                .find(|checkout| checkout.id == checkout_id)
+            {
+                checkout.active_tab_id = tab_id;
+            }
+            if selected_waiting {
+                self.pending_tab_focus = None;
+                self.select_terminal_pane(pane);
+                self.operator_focused_pane_id = None;
+            }
+        }
     }
     /// Common stale-frame boundary for both independently owned columns.
     pub(super) fn area_workspace_is_current(&mut self, key: &WorkspaceKey, column: &str) -> bool {

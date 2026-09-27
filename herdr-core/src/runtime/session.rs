@@ -131,6 +131,19 @@ impl Runtime {
         payload: &SessionSnapshotPayload,
         precomputed: Option<session_sync::PrecomputedCatalog>,
     ) -> bool {
+        // Catalog reconstruction precedes canonical machine-qualified lineage.
+        // Preserve known ownership until that pass, so admission cannot evict
+        // the keyboard from an unchanged delegated canvas at the normal cap.
+        let delegated_tabs = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .flat_map(|checkout| &checkout.tabs)
+            .filter(|tab| tab.delegated)
+            .filter_map(|tab| tab.id.clone())
+            .collect::<HashSet<_>>();
         self.last_session_spaces = Self::session_spaces(payload);
         self.issue_tokens = crate::wire::issue_tokens(payload);
         // The catalog and the root index shell out to git, so the sync
@@ -318,7 +331,7 @@ impl Runtime {
                     process,
                 )),
                 empty: panes.is_empty(),
-                delegated: false,
+                delegated: delegated_tabs.contains(&session_tab.tab_id),
                 panes,
             };
             self.apply_tab_rename(&mut tab);
