@@ -53,7 +53,10 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
   const stored = useUiStore((s) => s.toolsPlacement);
   const [body, setBody] = useState<HTMLElement | null>(null);
   const width = useWidth(body);
-  const sizes = useMemo<PanelSizes>(() => ({ areaMin: tokenPx("--size-workspace-area-min"), toolColumn: tokenPx("--size-panel-ideal"), toolMin: tokenPx("--size-panel-min") }), []);
+  const sizes = useMemo<PanelSizes>(
+    () => ({ areaMin: tokenPx("--size-workspace-area-min"), toolColumn: tokenPx("--size-panel-ideal"), chrome: tokenPx("--spacing-sm") + 2 * tokenPx("--size-hairline") }),
+    [],
+  );
   const opening = useShellStore((s) => (s.editor?.opening ?? []).some((row) => row.checkout_id === checkout?.id));
   const views = (view?.layout?.display_count ?? 0) > 0 || opening;
   const frame = view ? panelFrame({ view, views, body: width, sizes }) : CLOSED;

@@ -487,7 +487,7 @@ function SaveStatusBar({ tabId, path, save, actions }: { tabId: string; path: st
 
 function ConflictBar({ tabId, path, removed, actions }: { tabId: string; path: string; removed: boolean; actions: Actions }) {
   return (
-    <div className="flex items-center gap-sm border-b border-border px-md py-xs text-caption text-warning" data-editor-conflict="true">
+    <div className="flex flex-wrap items-center gap-sm border-b border-border px-md py-xs text-caption text-warning" data-editor-conflict="true">
       <span className="flex-1">
         {removed ? "This file was removed or could not be read back." : "This file changed on disk."} Your draft is preserved.
       </span>

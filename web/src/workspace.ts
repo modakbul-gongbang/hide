@@ -50,8 +50,8 @@ export type PanelSizes = {
   areaMin: number;
   /** The tool column's width. */
   toolColumn: number;
-  /** The narrowest the tool column may be beside a View area before it folds into an overlay. */
-  toolMin: number;
+  /** What the panel's frame takes from its width: the gap on its left and the card's two side hairlines. */
+  chrome: number;
 };
 
 /**
@@ -67,8 +67,9 @@ export type PanelSizes = {
  *   the body's right edge: the open panel's width while it is pinned, even
  *   under an expanded panel, so expanding moves no terminal; else 0, since
  *   the Agent area keeps the body's width under a panel that floats.
- * - `toolsOverlay`: the tools fold into an overlay inside the panel when the
- *   panel cannot give a View area its minimum beside the tool column.
+ * - `toolsOverlay`: in a window too narrow for both, the tools fold into an
+ *   overlay inside the panel; anywhere else the panel's minimum already holds
+ *   a View area beside the tool column.
  */
 export type PanelFrame = {
   shown: PanelState;
@@ -95,7 +96,7 @@ export function panelFrame(input: {
   if (body <= 0) return { shown: view.panel === "expanded" && content === "views" ? "expanded" : "open", content, width: 0, agentsRight: 0, narrow: false, resizable: false, toolsOverlay: false };
   const need = panelMinimum(content, tools, sizes);
   const narrow = body < sizes.areaMin + need;
-  const open = narrow ? body : content === "tools" ? sizes.toolColumn : panelWidth(view.views_over_share, body, need, sizes.areaMin);
+  const open = narrow ? body : content === "tools" ? sizes.toolColumn + sizes.chrome : panelWidth(view.views_over_share, body, need, sizes.areaMin);
   // Only views expand: with none, the panel stays the tool column's width or
   // its own at the empty state, and the agents stay in reach.
   const expanded = narrow || (view.panel === "expanded" && content === "views");
@@ -107,14 +108,14 @@ export function panelFrame(input: {
     agentsRight: view.pinned && !narrow ? open : 0,
     narrow,
     resizable: !expanded && content !== "tools",
-    toolsOverlay: content === "views" && tools && width < sizes.areaMin + sizes.toolMin,
+    toolsOverlay: content === "views" && tools && narrow,
   };
 }
 
 /** The narrowest an open panel may be for what it holds. */
 function panelMinimum(content: PanelFrame["content"], tools: boolean, sizes: PanelSizes): number {
-  if (content === "tools") return sizes.toolColumn;
-  return sizes.areaMin + (content === "views" && tools ? sizes.toolColumn : 0);
+  if (content === "tools") return sizes.chrome + sizes.toolColumn;
+  return sizes.chrome + sizes.areaMin + (content === "views" && tools ? sizes.toolColumn : 0);
 }
 
 /**

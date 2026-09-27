@@ -81,7 +81,7 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect(panel).toHaveAttribute("data-panel-content", "tools");
     await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
     const toolColumn = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--size-panel-ideal")));
-    expect((await panel.boundingBox())!.width).toBeCloseTo(toolColumn, 0);
+    expect((await panel.locator("[data-workspace-tools]").boundingBox())!.width).toBeCloseTo(toolColumn, 0);
     await page.keyboard.press("Meta+KeyK");
     await page.keyboard.type("Close side panel");
     await page.keyboard.press("Enter");

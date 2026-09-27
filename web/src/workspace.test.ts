@@ -39,7 +39,7 @@ describe("tab identity", () => {
 });
 
 describe("the side panel", () => {
-  const sizes = { areaMin: 224, toolColumn: 260, toolMin: 200 };
+  const sizes = { areaMin: 224, toolColumn: 260, chrome: 0 };
   const view = (panel: WorkspaceView["panel"], extra: Partial<WorkspaceView> = {}) => ({ panel, pinned: false, views_over_share: 0.6, tools: true, ...extra });
   const frame = (panel: WorkspaceView["panel"], views: boolean, body: number, extra: Partial<WorkspaceView> = {}) => panelFrame({ view: view(panel, extra), views, body, sizes });
 
@@ -74,14 +74,24 @@ describe("the side panel", () => {
   });
 
   it("takes the whole body in a window too narrow for both, unsaved, and a pinned one floats there", () => {
-    expect(frame("open", true, 707, { pinned: true })).toMatchObject({ shown: "expanded", narrow: true, width: 707, agentsRight: 0, resizable: false });
+    expect(frame("open", true, 707, { pinned: true })).toMatchObject({ shown: "expanded", narrow: true, width: 707, agentsRight: 0, resizable: false, toolsOverlay: true });
+    // With no view the tool column is the panel, never an overlay.
+    expect(frame("open", false, 400)).toMatchObject({ narrow: true, content: "tools", toolsOverlay: false });
     expect(frame("open", true, 708, { pinned: true })).toMatchObject({ shown: "open", narrow: false, agentsRight: 484 });
   });
 
-  it("folds the tools into an overlay when the panel cannot hold a View area beside them", () => {
-    expect(frame("expanded", true, 423).toolsOverlay).toBe(true);
-    expect(frame("expanded", true, 424).toolsOverlay).toBe(false);
-    expect(frame("expanded", true, 424, { tools: false }).toolsOverlay).toBe(false);
+  it("counts its gap and hairlines in every minimum, so a View area and the tool column keep theirs", () => {
+    const framed = { ...sizes, chrome: 10 };
+    const at = (views: boolean, body: number, extra: Partial<WorkspaceView> = {}) => panelFrame({ view: view("open", extra), views, body, sizes: framed });
+    expect(at(false, 1400)).toMatchObject({ content: "tools", width: 270 });
+    expect(at(true, 1400, { views_over_share: 0.2 }).width).toBe(494);
+    expect(at(true, 717)).toMatchObject({ narrow: true });
+  });
+
+  it("folds the tools into an overlay in a window too narrow for both, and only there", () => {
+    expect(frame("expanded", true, 707).toolsOverlay).toBe(true);
+    expect(frame("expanded", true, 708).toolsOverlay).toBe(false);
+    expect(frame("expanded", true, 707, { tools: false }).toolsOverlay).toBe(false);
     expect(frame("open", true, 1400).toolsOverlay).toBe(false);
   });
 

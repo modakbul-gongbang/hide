@@ -63,13 +63,13 @@ test("History opens a scoped patch, then updates after editing the original file
     await expect(page.locator('[data-diff-group="committed"] [data-patch-view] .cm-content')).toContainText("+branch");
     await row.click();
     await expect(page.locator('[data-diff-group="working"]')).toBeVisible();
-    // ⌘⇧B closes the side panel with every tool in it, and brings it back
-    // with the same tools (issue 170).
+    // ⌘⇧B closes the side panel with its tool, and brings it back on the
+    // same tool (issue 170).
     await page.keyboard.press("Meta+Shift+KeyB");
     await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
     await page.keyboard.press("Meta+Shift+KeyB");
-    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
+    await showExplorer(page);
 
     const fileRow = page.locator(`[data-explorer-row="${file}"]`);
     await expect(fileRow).toBeVisible();
@@ -79,6 +79,7 @@ test("History opens a scoped patch, then updates after editing the original file
     await page.keyboard.press("Meta+KeyA");
     await page.keyboard.type("first\nthird\n");
     await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("first\nthird\n");
+    await showTool(page, "changes");
     await row.click();
     await expect(page.locator('[data-patch-view] .cm-content')).toContainText("+third");
     await expect(page.locator('[data-patch-view] .cm-content')).not.toContainText("second <script>");

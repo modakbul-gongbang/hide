@@ -1085,13 +1085,17 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     const toggle = page.locator("[data-tools-toggle]");
 
     // Too narrow for the agents beside the panel: the panel takes the whole
-    // body and the pinned one floats; the View areas that cannot all fit
-    // show the active one with a switcher to the others (B13, issue 170).
-    await page.setViewportSize({ width: Math.round(sidebar + 700), height: 1080 });
+    // body without Expand or Pin and the pinned one floats; the tools fold
+    // into an overlay, closed until asked for; the View areas that cannot
+    // all fit show the active one with a switcher to the others (B12, B13,
+    // issue 170).
+    await page.setViewportSize({ width: Math.round(sidebar + 450), height: 1080 });
     await expect(body).toHaveAttribute("data-workspace-body", "narrow");
     await expect(workspace).toHaveAttribute("data-panel", "expanded");
     await expect(workspace).toHaveAttribute("data-panel-docked", "false");
-    await expect(page.locator('[data-workspace-tools="explorer"]')).toBeVisible();
+    await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    await expect(page.locator("[data-panel-pin], [data-panel-expand]")).toHaveCount(0);
     await expect(page.locator('[data-view-areas="single"]')).toBeVisible();
     await expect(page.locator("[data-view-area-id]")).toHaveCount(1);
     await expect.poll(() => shape(page)).toBe("@(>b.txt)");
@@ -1108,8 +1112,7 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     await page.locator('[role="menu"] [data-menu-item]').nth(1).click();
     await expect.poll(() => shape(page)).toBe("@(>b.txt)");
 
-    // Too narrow for a View area beside the tool column: the tools float
-    // inside the panel, closed until asked for (B12).
+    // Narrower still, the tools stay closed until asked for (B12).
     await page.setViewportSize({ width: Math.round(sidebar + 440), height: 1080 });
     await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
     await expect(toggle).toHaveAttribute("aria-pressed", "false");
