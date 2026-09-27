@@ -12,6 +12,12 @@
 @custom-variant hover (&:hover, &[data-gallery-state~="hover"]);
 @custom-variant focus-visible (&:focus-visible, &[data-gallery-state~="focus"]);
 
+/*
+ * An input with no hover (touch, a pen): a control that waits for the pointer
+ * elsewhere is shown at rest here, since nothing would ever reveal it.
+ */
+@custom-variant hoverless (@media (hover: none));
+
 /* Font stacks are not numeric tokens; the terminal reads --font-mono at mount. */
 @theme {
   --font-sans: Inter, ui-sans-serif, system-ui, sans-serif;

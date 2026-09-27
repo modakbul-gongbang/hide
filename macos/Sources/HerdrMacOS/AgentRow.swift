@@ -329,9 +329,12 @@ struct AgentRow: View {
                     if let counts = presentation.descendantBadge {
                         AgentDescendantBadge(counts: counts)
                     }
-                    Text(presentation.elapsed)
-                        .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
-                        .foregroundStyle(style.muted)
+                    // An empty elapsed is a time nobody measured; nothing stands in for it.
+                    if !presentation.elapsed.isEmpty {
+                        Text(presentation.elapsed)
+                            .hideFont(size: HideTheme.Typography.micro, design: .monospaced)
+                            .foregroundStyle(style.muted)
+                    }
                 }
                 // The second line. The core chose the word or the sentence
                 // from the row's state (PRD D-06); this only draws them. The

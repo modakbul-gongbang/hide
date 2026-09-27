@@ -283,23 +283,64 @@ pub fn agent_group_for(
     }
 }
 
-/// The mark drawn for a row, matching the label plugin's own symbol table.
-fn agent_symbol(
-    demand: AgentDemand,
-    activity: AgentActivity,
-    completed: bool,
-    unread: bool,
-) -> &'static str {
-    match demand {
-        AgentDemand::Error => "\u{d7}",
-        AgentDemand::Question => "?",
-        AgentDemand::Approval => "!",
-        AgentDemand::None => match activity {
-            AgentActivity::Working => "\u{25cf}",
-            AgentActivity::Stopped if completed && unread => "✓",
-            AgentActivity::Stopped => "\u{25cb}",
-            AgentActivity::Unknown => "~",
-        },
+/// The mark a row draws, matching the label plugin's own symbol table. It is
+/// one decision for the row's own symbol and for every count of marks, so a
+/// badge that stands for folded rows says what opening them would show.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RowMark {
+    Error,
+    Approval,
+    Question,
+    Working,
+    Done,
+    Idle,
+    Unknown,
+}
+
+impl RowMark {
+    fn of(agent: &SidebarAgentSnapshot) -> Self {
+        // A root waiting on its children keeps the hollow ring and says so:
+        // its own completion is not the news while a child is still busy, and
+        // the badge beside it says what the children are doing (D-01, D-02).
+        if agent.waiting_on_descendants {
+            return Self::Idle;
+        }
+        let (demand, activity, unread) = axes_of(agent);
+        match demand {
+            AgentDemand::Error => Self::Error,
+            AgentDemand::Question => Self::Question,
+            AgentDemand::Approval => Self::Approval,
+            AgentDemand::None => match activity {
+                AgentActivity::Working => Self::Working,
+                AgentActivity::Stopped if agent.completed && unread => Self::Done,
+                AgentActivity::Stopped => Self::Idle,
+                AgentActivity::Unknown => Self::Unknown,
+            },
+        }
+    }
+
+    fn symbol(self) -> &'static str {
+        match self {
+            Self::Error => "\u{d7}",
+            Self::Approval => "!",
+            Self::Question => "?",
+            Self::Working => "\u{25cf}",
+            Self::Done => "✓",
+            Self::Idle => "\u{25cb}",
+            Self::Unknown => "~",
+        }
+    }
+
+    fn count_into(self, counts: &mut crate::model::MarkCountsSnapshot) {
+        match self {
+            Self::Error => counts.error += 1,
+            Self::Approval => counts.approval += 1,
+            Self::Question => counts.question += 1,
+            Self::Working => counts.working += 1,
+            Self::Done => counts.done += 1,
+            Self::Idle => counts.idle += 1,
+            Self::Unknown => {}
+        }
     }
 }
 
@@ -381,6 +422,7 @@ pub fn sync_checkout_agent_summaries(
             continue;
         }
         let summary = &mut summaries[index];
+        RowMark::of(agent).count_into(&mut summary.marks);
         let group = group_of(agent);
         match group {
             AgentGroup::NeedsYou => summary.needs_you += 1,
@@ -1128,15 +1170,7 @@ fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
         waiting,
     );
     agent.group = group.name().to_owned();
-    // A root waiting on its children keeps the hollow ring and says so: its
-    // own completion is not the news while a child is still busy, and the
-    // badge beside it says what the children are doing (D-01, D-02).
-    agent.symbol = if waiting {
-        "\u{25cb}"
-    } else {
-        agent_symbol(demand, activity, agent.completed, unread)
-    }
-    .to_owned();
+    agent.symbol = RowMark::of(agent).symbol().to_owned();
     // A row the operator still has to deal with is drawn bright; everything
     // already read or merely running is subdued.
     agent.emphasized = matches!(group, AgentGroup::NeedsYou | AgentGroup::Done);
@@ -1184,9 +1218,11 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
     let task = token_text(&agent.tokens, "task", MAX_TOKEN_TEXT_CHARS);
     let progress = token_text(&agent.tokens, "progress", MAX_TOKEN_TEXT_CHARS);
     let expected_reply = token_text(&agent.tokens, "expected_reply", MAX_EXPECTED_REPLY_CHARS);
+    // The label plugin's elapsed time, or empty when it reported none: a time
+    // nobody measured is not drawn as `0s` (PRD sidebar-readability B7).
     let elapsed = token_string(&agent.tokens, "elapsed")
         .filter(|value| valid_elapsed(value))
-        .unwrap_or_else(|| "0s".to_owned());
+        .unwrap_or_default();
 
     let identity_label = task.unwrap_or_else(|| workspace_label.clone());
     let projected = SidebarAgentSnapshot {
@@ -1595,6 +1631,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn an_agent_without_a_reported_elapsed_time_carries_none() {
+        let agents = project_agents(payload(json!([
+            {"pane_id": "measured", "workspace_label": "W", "agent": "codex", "agent_status": "running", "state_change_seq": 1, "tokens": {"elapsed": "3m"}},
+            {"pane_id": "unmeasured", "workspace_label": "W", "agent": "codex", "agent_status": "running", "state_change_seq": 1, "tokens": {}},
+            {"pane_id": "garbled", "workspace_label": "W", "agent": "codex", "agent_status": "running", "state_change_seq": 1, "tokens": {"elapsed": "soon"}}
+        ])))
+        .agents;
+        let elapsed = |pane: &str| {
+            agents
+                .iter()
+                .find(|agent| agent.pane_id == pane)
+                .map(|agent| agent.elapsed.as_str())
+        };
+        assert_eq!(elapsed("measured"), Some("3m"));
+        assert_eq!(elapsed("unmeasured"), Some(""));
+        assert_eq!(elapsed("garbled"), Some(""));
+    }
+
+    #[test]
     fn checkout_purpose_uses_agent_then_pull_request_after_persistent_sources() {
         use crate::model::{
             CheckoutPurposeOrigin, CheckoutPurposeSnapshot, CheckoutSnapshot, PullRequestBadge,
@@ -1784,6 +1839,18 @@ mod tests {
                 summaries[0].agent_summary.unknown
             ),
             (1, 1, 1, 2, 1)
+        );
+        // Each row counts under the mark it draws: the read error keeps its
+        // ×, and the unknown row draws `~`, which no badge claims.
+        assert_eq!(
+            summaries[0].agent_summary.marks,
+            crate::model::MarkCountsSnapshot {
+                error: 1,
+                question: 1,
+                working: 1,
+                done: 1,
+                ..Default::default()
+            }
         );
         assert_eq!(
             summaries[1].agent_summary.representative_pane_id.as_deref(),

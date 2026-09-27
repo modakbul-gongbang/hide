@@ -5,7 +5,7 @@
 // sidebar and any other list of agents (the Overview) cannot disagree.
 
 import { chipTone } from "./lineage";
-import type { AgentRow, DescendantCounts } from "./snapshot";
+import type { AgentRow, MarkCounts } from "./snapshot";
 
 /**
  * Why a row's second line is on screen at rest.
@@ -31,6 +31,17 @@ export function rowLine(agent: Pick<AgentRow, "detail" | "demand" | "unread">): 
   return { text, mode: "quiet" };
 }
 
+/**
+ * The line a sidebar row draws (PRD sidebar-readability D-4, B4, B6): a
+ * request or news only, on one line from the moment it exists, so a pointer,
+ * the keyboard or a selection never adds a line or grows the row. A quiet
+ * sentence is read in the row's tooltip.
+ */
+export function sidebarLine(agent: Pick<AgentRow, "detail" | "demand" | "unread">): RowLine | null {
+  const line = rowLine(agent);
+  return line && line.mode !== "quiet" ? line : null;
+}
+
 /** Whether the line is drawn without a pointer or selection on the row. */
 export function lineShownAtRest(line: RowLine, selected: boolean): boolean {
   return line.mode !== "quiet" || selected;
@@ -53,30 +64,41 @@ export function markTone(agent: Pick<AgentRow, "demand" | "activity" | "emphasiz
   return chipTone({ demand: agent.demand ?? "none", activity: agent.activity ?? "", emphasized: agent.emphasized });
 }
 
-/** One mark and count on the descendant badge. */
-export type BadgePart = { state: keyof DescendantCounts; symbol: string; count: number; tone: string };
+/** A badge's counts: a folded parent's descendants (no `idle`), or a project's or checkout's agents. */
+export type BadgeCounts = Partial<MarkCounts>;
 
-const BADGE_ORDER: { state: keyof DescendantCounts; symbol: string; tone: string }[] = [
+/** One mark and count on a badge. */
+export type BadgePart = { state: keyof MarkCounts; symbol: string; count: number; tone: string };
+
+const BADGE_ORDER: { state: keyof MarkCounts; symbol: string; tone: string }[] = [
   { state: "error", symbol: "×", tone: "text-destructive" },
   { state: "approval", symbol: "!", tone: "text-warning" },
   { state: "question", symbol: "?", tone: "text-warning" },
   { state: "working", symbol: "●", tone: "text-agent-working" },
   { state: "done", symbol: "✓", tone: "text-success" },
+  { state: "idle", symbol: "○", tone: "text-subtle-foreground" },
 ];
 
 /**
  * The badge's marks, worst first, with zero states left out (docs/status-model.md).
  * A ready descendant and one Herdr cannot classify are counted in none.
  */
-export function badgeParts(counts: DescendantCounts | undefined): BadgePart[] {
+export function badgeParts(counts: BadgeCounts | undefined): BadgePart[] {
   if (!counts) return [];
-  return BADGE_ORDER.filter(({ state }) => counts[state] > 0).map((part) => ({ ...part, count: counts[part.state] }));
+  return BADGE_ORDER.filter(({ state }) => (counts[state] ?? 0) > 0).map((part) => ({ ...part, count: counts[part.state] ?? 0 }));
+}
+
+/** A status badge in words, for the accessible name of the row it sits on: `1 question, 2 idle`. */
+export function badgeWords(counts: BadgeCounts | undefined): string {
+  return badgeParts(counts)
+    .map((part) => `${part.count} ${part.state}`)
+    .join(", ");
 }
 
 /** The badge's accessible name: how many live descendants and what they are doing. */
-export function badgeLabel(counts: DescendantCounts | undefined, live: number): string {
-  const parts = badgeParts(counts).map((part) => `${part.count} ${part.state}`);
-  return `${live} live ${live === 1 ? "descendant" : "descendants"}${parts.length > 0 ? `: ${parts.join(", ")}` : ""}`;
+export function badgeLabel(counts: BadgeCounts | undefined, live: number): string {
+  const words = badgeWords(counts);
+  return `${live} live ${live === 1 ? "descendant" : "descendants"}${words ? `: ${words}` : ""}`;
 }
 
 /**
@@ -146,4 +168,22 @@ export function sectionCount(rows: TreeRow[]): number {
 /** The direct children the badge's popover lists, in lineage order, that are still rows. */
 export function directChildren(agent: AgentRow, byPane: (paneId: string) => AgentRow | undefined): AgentRow[] {
   return (agent.lineage_child_pane_ids ?? []).map(byPane).filter((row): row is AgentRow => row !== undefined);
+}
+
+/**
+ * The rows of a lineage drawn root first (`checkoutAgentRows`), less the
+ * descendants of every parent the operator has folded (`lineage_collapsed`
+ * not false), the same core choice the Agents list folds by (PRD
+ * sidebar-readability D-6, B12). A folded parent's badge speaks for what is
+ * left out.
+ */
+export function unfoldedRows<Row extends { agent: Pick<AgentRow, "lineage_collapsed">; depth: number }>(rows: Row[]): Row[] {
+  const drawn: Row[] = [];
+  let foldedAt: number | null = null;
+  for (const row of rows) {
+    if (foldedAt !== null && row.depth > foldedAt) continue;
+    foldedAt = row.agent.lineage_collapsed === false ? null : row.depth;
+    drawn.push(row);
+  }
+  return drawn;
 }

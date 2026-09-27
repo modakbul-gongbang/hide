@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activityLabel, checkoutPresentation, projectRows, pullRequestBadge, relativeActivity } from "./projects";
+import { checkoutPresentation, projectMarks, projectRows, pullRequestBadge, relativeActivity } from "./projects";
 import type { Checkout, GithubStatus, PullRequest, Workspace } from "./snapshot";
 
 function workspace(id: string, extra: Partial<Workspace> = {}): Workspace {
@@ -16,6 +16,8 @@ function workspace(id: string, extra: Partial<Workspace> = {}): Workspace {
     ...extra,
   };
 }
+
+const NO_MARKS = { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 };
 
 describe("projectRows", () => {
   it("draws pinned rows under their header, then the activity list with the device fold", () => {
@@ -52,32 +54,6 @@ describe("activity", () => {
     expect(relativeActivity(now - 5 * 60_000, now)).toBe("5m");
     expect(relativeActivity(now - 3 * 3_600_000, now)).toBe("3h");
     expect(relativeActivity(now - 49 * 3_600_000, now)).toBe("2d");
-  });
-
-  it("counts agents before workspaces", () => {
-    const w = workspace("a", {
-      last_activity_unix_ms: 0,
-      checkouts: [
-        {
-          id: "c1",
-          workspace_id: "a",
-          label: "a",
-          path: "/h/a",
-          branch: "main",
-          purpose: null,
-          is_worktree: false,
-          exists: true,
-          has_panes: true,
-          pull_request: null,
-          tabs: [{ id: "t1", workspace_id: "a", checkout_id: "c1", label: "1", empty: false, delegated: false, panes: [{ id: "p1", herdr_label: null, terminal_title: null, workspace_label: null, cwd: "/h/a", status_label: "", requires_close_confirmation: false, requires_close_status_check: false, identity_label: null }] }],
-          active_tab_id: "t1",
-          strip: [],
-          next_tab_label: "2",
-        },
-      ],
-    });
-    expect(activityLabel(w, [], 120_000)).toBe("1 workspace · 2m");
-    expect(activityLabel(w, [{ id: "x", pane_id: "p1", identity_label: "", agent_kind: "", symbol: "", group: "working", status_label: "", elapsed: "", emphasized: false, unread: false }], 120_000)).toBe("1 agent · 2m");
   });
 });
 
@@ -146,9 +122,22 @@ describe("checkoutPresentation", () => {
     expect(checkoutPresentation(project, checkout({ worktree: null }), now)).toMatchObject({ secondLineReady: false, age: null });
   });
 
-  it("counts the agents once each and lists them by state in the tooltip", () => {
-    const view = checkoutPresentation(project, checkout({ agent_summary: { representative_pane_id: "p1", needs_you: 1, done: 0, working: 2, seen: 1, unknown: 1 } }), now);
-    expect(view.agentCount).toBe(4);
+  it("lists the agents by state in the tooltip", () => {
+    const view = checkoutPresentation(project, checkout({ agent_summary: { representative_pane_id: "p1", needs_you: 1, done: 0, working: 2, seen: 1, unknown: 1, marks: NO_MARKS } }), now);
     expect(view.detail.split("\n")).toEqual(["Needs You: 1 · Working: 2 · Seen: 1 (1 Unknown)", "feature", "/h/repo.worktrees/feature"]);
+  });
+});
+
+describe("projectMarks", () => {
+  it("adds every checkout's marks, and a checkout the core has not summarised yet adds none", () => {
+    const summary = (marks: Partial<typeof NO_MARKS>) => ({ representative_pane_id: null, needs_you: 0, done: 0, working: 0, seen: 0, unknown: 0, marks: { ...NO_MARKS, ...marks } });
+    const project = workspace("repo", {
+      checkouts: [
+        { agent_summary: summary({ question: 1, idle: 2 }) },
+        { agent_summary: summary({ question: 1, working: 3 }) },
+        {},
+      ] as Checkout[],
+    });
+    expect(projectMarks(project)).toEqual({ ...NO_MARKS, question: 2, working: 3, idle: 2 });
   });
 });

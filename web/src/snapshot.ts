@@ -165,7 +165,12 @@ export type CheckoutAgentSummary = {
   working: number;
   seen: number;
   unknown: number;
+  /** How many agents here draw each mark on their own row. */
+  marks: MarkCounts;
 };
+
+/** How many rows draw each status mark (`MarkCountsSnapshot`); a row Herdr cannot classify is in none. */
+export type MarkCounts = { error: number; approval: number; question: number; working: number; done: number; idle: number };
 
 export type PaneRow = {
   id: string;
