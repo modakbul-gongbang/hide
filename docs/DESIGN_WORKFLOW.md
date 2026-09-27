@@ -117,7 +117,8 @@ It draws the sidebar row menu, the Explorer context menu, the device picker, and
 Its web files are `web/src/entry-menu.tsx` and `web/src/DevicePicker.tsx`.
 
 Projects Sidebar is `Screen / Projects Sidebar`.
-It draws the sidebar's Projects tab as the scope picker: the All projects row on top, pinned and activity-ordered projects with the row of the scope on screen selected, checkout rows with their kind glyph, age and agent line, an opened checkout's agent rows, and both inactive folds.
+It draws the sidebar's Projects tab as the scope picker: the All projects row on top, pinned and activity-ordered projects with the row of the scope on screen selected, a Git project’s first Overview child as a checkout-row master instance with a layout-dashboard glyph and empty trailing slots, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds.
+The Overview child owns selection on Overview; a checkout row opens and unfolds, then folds on activation while already selected and unfolded.
 Its web files are `web/src/sidebar.tsx` and `web/src/projects.ts`.
 
 ## How to add a token

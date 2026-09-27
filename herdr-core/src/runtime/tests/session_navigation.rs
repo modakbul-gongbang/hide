@@ -2834,3 +2834,68 @@ fn a_checkout_chosen_with_its_device_moves_both_or_neither() {
         Some(workspace::LOCAL_DEVICE_ID)
     );
 }
+
+#[test]
+fn checkout_row_admits_focus_and_disclosure_together_and_rejects_stale_targets() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![workspace(
+        "project",
+        "Project",
+        "/tmp/project",
+        vec![
+            checkout("project", "first", "/tmp/project", None),
+            checkout("project", "second", "/tmp/second", None),
+        ],
+    )];
+    let activate = |runtime: &mut Runtime, project: &str, checkout: &str, expanded: bool| {
+        runtime.dispatch_json(&serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "focus_checkout",
+            "payload": { "workspace_id": project, "checkout_id": checkout, "expanded": expanded }
+        })).unwrap());
+    };
+    activate(&mut runtime, "project", "first", true);
+    let snapshot = runtime.snapshot();
+    assert_eq!(
+        snapshot.navigator.focused_checkout_id.as_deref(),
+        Some("first")
+    );
+    assert_eq!(snapshot.ui_state.expanded_checkout_ids, ["first"]);
+    activate(&mut runtime, "project", "second", true);
+    let snapshot = runtime.snapshot();
+    assert_eq!(
+        snapshot.navigator.focused_checkout_id.as_deref(),
+        Some("second")
+    );
+    assert_eq!(snapshot.ui_state.expanded_checkout_ids, ["first", "second"]);
+    // Repeating an explicit target converges; closing only removes this row.
+    activate(&mut runtime, "project", "second", true);
+    activate(&mut runtime, "project", "second", false);
+    let snapshot = runtime.snapshot();
+    assert_eq!(
+        snapshot.navigator.focused_checkout_id.as_deref(),
+        Some("second")
+    );
+    assert_eq!(snapshot.ui_state.expanded_checkout_ids, ["first"]);
+    for (project, checkout) in [("missing", "first"), ("project", "missing")] {
+        activate(&mut runtime, project, checkout, true);
+        let snapshot = runtime.snapshot();
+        assert_eq!(
+            snapshot.navigator.focused_workspace_id.as_deref(),
+            Some("project")
+        );
+        assert_eq!(
+            snapshot.navigator.focused_checkout_id.as_deref(),
+            Some("second")
+        );
+        assert_eq!(snapshot.ui_state.expanded_checkout_ids, ["first"]);
+        assert!(snapshot.status.last_error.is_none());
+        assert!(
+            snapshot
+                .status
+                .diagnostics
+                .iter()
+                .any(|entry| entry.kind == "checkout.row_stale")
+        );
+    }
+}

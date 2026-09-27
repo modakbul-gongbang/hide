@@ -157,6 +157,19 @@
         "usage_popover_open": { "type": "boolean" }
       }
     },
+    "focusCheckoutPayload": {
+      "description": "focus_checkout: one admitted focus and optional sidebar disclosure transition. Unknown workspace/checkout refuses the disclosure intent before either value changes.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["workspace_id", "checkout_id"],
+      "properties": {
+        "workspace_id": { "type": "string" },
+        "checkout_id": { "type": "string" },
+        "focus_device": { "type": "boolean" },
+        "display_id": { "type": "string" },
+        "expanded": { "type": "boolean" }
+      }
+    },
     "clientEvent": {
       "type": "object",
       "required": ["schema_version", "kind", "payload"],

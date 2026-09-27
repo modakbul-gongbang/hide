@@ -88,6 +88,9 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     git(worktree, ["commit", "--allow-empty", "-m", "rows"]);
     // The branch description is a purpose the core reads from Git itself.
     git(repo, ["config", "branch.feature/sidebar-rows.description", "Projects 탭 행 다시 그리기"]);
+    const emptyTree = path.join(herdr.root, "repo-empty");
+    git(repo, ["worktree", "add", "-b", "empty", emptyTree]);
+    await workspaceAt(herdr, emptyTree, null);
     const notes = path.join(herdr.root, "notes");
     fs.mkdirSync(notes);
 
@@ -182,11 +185,53 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     // Looking at a row sends nothing: hover, focus and an open menu are the list's own.
     await page.waitForTimeout(300);
     expect([...sent].filter(([kind, count]) => count !== (beforeLooking.get(kind) ?? 0)).map(([kind]) => kind)).toEqual([]);
+    const overview = project.locator("[data-project-overview]");
+    await expect(project.locator("ul").first().locator(":scope > li").first()).toContainText("Overview");
+    await overview.click();
+    await expect(overview).toHaveAttribute("aria-current", "page");
+    await expect(project.locator("[data-project-row]")).not.toHaveAttribute("aria-current");
+    await expect(project.locator("[data-project-row]").locator("xpath=..")).not.toHaveClass(/bg-secondary/);
+    const beforeOpen = new Map(sent);
     await primary.locator("[data-checkout]").click();
     await expect(primary.locator("[data-checkout]")).toHaveAttribute("aria-current", "true");
+    await expect(primaryToggle).toHaveAttribute("aria-expanded", "true");
+    expect((sent.get("focus_checkout") ?? 0) - (beforeOpen.get("focus_checkout") ?? 0)).toBe(1);
+    expect(sent.get("ui_state_update") ?? 0).toBe(beforeOpen.get("ui_state_update") ?? 0);
+    expect(last.get("focus_checkout")?.expanded).toBe(true);
+    await expect(overview).not.toHaveAttribute("aria-current");
+    await screenshot(page, "row-click-expanded");
+    await primary.locator("[data-checkout]").click();
+    await expect(primaryToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(primary.locator("[data-checkout]")).toHaveAttribute("aria-current", "true");
+    await keyboardFocus(page, primary.locator("[data-checkout]"));
+    await page.keyboard.press("Enter");
+    await expect(primaryToggle).toHaveAttribute("aria-expanded", "true");
+    await page.keyboard.press("Space");
+    await expect(primaryToggle).toHaveAttribute("aria-expanded", "false");
+    await keyboardFocus(page, overview);
+    await page.keyboard.press("Enter");
+    await expect(overview).toHaveAttribute("aria-current", "page");
+    await expect(primary.locator("[data-checkout]")).not.toHaveAttribute("aria-current");
+    await screenshot(page, "overview-row-selected");
+    await page.keyboard.press("Space");
+    await expect(overview).toHaveAttribute("aria-current", "page");
+    await primary.locator("[data-checkout]").click();
+    await expect(primaryToggle).toHaveAttribute("aria-expanded", "true");
+    await primary.locator("[data-checkout]").click();
+    await expect(primaryToggle).toHaveAttribute("aria-expanded", "false");
     await expect(primary.locator("[data-purpose]")).toHaveText("메인 체크아웃 정리");
     await rest(page);
     expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(atRest);
+
+    // An agentless checkout uses the same single-line height as Overview;
+    // opening it sends no disclosure intent and leaves the fold slot empty.
+    const emptyRow = project.locator("[data-checkout-row]").filter({ has: page.locator('[data-checkout][aria-label^="empty"]') });
+    const emptyButton = emptyRow.locator("[data-checkout]");
+    await expect(emptyRow.locator("[data-checkout-toggle]")).toHaveCount(0);
+    expect((await emptyButton.boundingBox())!.height).toBe((await overview.boundingBox())!.height);
+    await emptyButton.click();
+    await expect(emptyButton).toHaveAttribute("aria-current", "true");
+    expect(last.get("focus_checkout")?.expanded).toBeUndefined();
 
     // The chevron opens the agent rows below the row: their own marks stand
     // for the checkout's badge, which goes, and the row keeps its purpose,
@@ -223,7 +268,9 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await expect(folderRow).toHaveAttribute("aria-current", "true");
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await expect(feature.locator("[data-checkout]")).not.toHaveAttribute("aria-current", "true");
-    await folderToggle.click();
+    await expect(folder.locator("[data-project-overview]")).toHaveCount(0);
+    await expect(folderToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(featureToggle).toHaveAttribute("aria-expanded", "true");
     await expect(folder.locator(`[data-checkout-agents-open] [data-pane="${notesPane}"]`)).toBeVisible();
     await expect(folder.locator("[data-project-status]")).toBeVisible();
     // B7: an agent that reported no elapsed time draws none rather than a made-up 0s.
@@ -290,6 +337,7 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await projectToggle.click();
     await expect(projectToggle).toHaveAttribute("aria-expanded", "false");
     await expect(project.locator("[data-checkout]")).toHaveCount(0);
+    await expect(overview).toHaveCount(0);
     await open(page, daemon);
     await expect(projectToggle).toHaveAttribute("aria-expanded", "false");
     await expect(project.locator("[data-checkout]")).toHaveCount(0);

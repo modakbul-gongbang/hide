@@ -204,3 +204,13 @@ export function checkoutPresentation(workspace: Workspace, checkout: Checkout, n
     detail: lines.join("\n"),
   };
 }
+
+/** A sidebar activation opens agents unless this Workspace is already open and unfolded. */
+export function checkoutRowExpansion(foldable: boolean, workspaceSelected: boolean, expanded: boolean): boolean | undefined {
+  return foldable ? !(workspaceSelected && expanded) : undefined;
+}
+
+/** Git project headings navigate too, but only their Overview child owns selection. */
+export function overviewRowSelected(workspace: Workspace, overviewProjectId: string | null): boolean {
+  return workspace.is_git === true && workspace.id === overviewProjectId;
+}
