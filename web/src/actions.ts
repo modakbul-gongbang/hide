@@ -1229,7 +1229,7 @@ export function createActions(dispatch: DispatchFn) {
     toggleSidebarView() {
       const order: SidebarMode[] = [...SIDEBAR_MODES];
       const index = order.indexOf(ui().sidebarMode);
-      showSidebarMode(order[(index + 1) % order.length] ?? "agents");
+      showSidebarMode(order[(index + 1) % order.length] ?? "projects");
     },
 
     showSidebarMode,
