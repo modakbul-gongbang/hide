@@ -18,13 +18,13 @@
 // going hidden, a layer opening or any key pressed during the hold ends it.
 
 import type { Actions } from "./actions";
-import { advanceHint, clearHint, holdModifiers, idleHint, modifiersOf, revealedFamily, type HintState } from "./hints";
+import { advanceHint, clearHint, holdModifiers, idleHint, modifiersOf, NO_MODIFIERS, revealedFamily, type HintState } from "./hints";
 import { hostBridge, hostKind } from "./host";
 import { numberedAgents, numberedTabs } from "./numbering";
 import { agentListRows, agentTree, allAgents } from "./navigation";
 import { availableSurfaces, currentSurface, observeProject, observeSurfaces, panelItem, placeLabel, projectItem, reconcileCycle, recentProjectOrder, recentSurfaces, type CycleItem } from "./recent";
 import { contextWorkspaces, remoteContext, remoteView } from "./remote";
-import { hostRegistry, matchHost, numberedCommand, REGISTRY, storedBindings, type CommandId, type Digit, type NumberedFamily } from "./shortcuts";
+import { hostRegistry, isNumberedCommand, matchHost, numberedCommand, REGISTRY, storedBindings, type CommandId, type Digit, type NumberedFamily } from "./shortcuts";
 import { editorFor, focusedCheckout, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type Cycle } from "./ui";
@@ -146,10 +146,10 @@ export function installKeyboard(actions: Actions): () => void {
   let cycleRelease = "Alt";
 
   const run = (id: CommandId, event: KeyboardEvent | null) => {
-    const numbered = numberedCommand(id);
-    if (numbered) {
+    if (isNumberedCommand(id)) {
       // An empty number is nothing, not a diagnostic: the hold hint shows
       // which numbers exist, and pressing past them is an ordinary miss.
+      const numbered = numberedCommand(id)!;
       const target = numberedTarget(numbered.family, numbered.number, useShellStore.getState());
       if (!target) return;
       if (numbered.family === "tabs") actions.focusTab(target, true);
@@ -229,10 +229,6 @@ export function installKeyboard(actions: Actions): () => void {
         return actions.openSettings();
       case "move_to_trash":
         return;
-      case "select_tab_1": case "select_tab_2": case "select_tab_3": case "select_tab_4": case "select_tab_5": case "select_tab_6": case "select_tab_7": case "select_tab_8": case "select_tab_9":
-      case "select_agent_1": case "select_agent_2": case "select_agent_3": case "select_agent_4": case "select_agent_5": case "select_agent_6": case "select_agent_7": case "select_agent_8": case "select_agent_9":
-        // Answered above; listed so a numbered id the guard misses is a type error, not a diagnostic.
-        return;
       default: {
         const never: never = id;
         useShellStore.getState().noteDiagnostic(`shortcut without an action: ${String(never)} (${event?.code ?? "menu"})`);
@@ -264,7 +260,10 @@ export function installKeyboard(actions: Actions): () => void {
     }
     publish();
   };
-  const endHold = () => setHint(clearHint());
+  // A blur or a layer with no hold in progress changes nothing and publishes nothing.
+  const endHold = () => {
+    if (hint.deadline !== null || hint.revealed || hint.modifiers !== NO_MODIFIERS) setHint(clearHint());
+  };
   const MODIFIER_KEYS = new Set(["Meta", "Alt", "Shift", "Control"]);
   const onVisibility = () => {
     if (document.visibilityState === "hidden") endHold();
@@ -400,6 +399,7 @@ export function installKeyboard(actions: Actions): () => void {
     unsubscribeBindings?.();
     unsubscribeLayers();
     if (timer) clearTimeout(timer);
+    ui().setHint(null);
     window.removeEventListener("keydown", onKeyDown, true);
     window.removeEventListener("keyup", onKeyUp, true);
     window.removeEventListener("blur", onBlur);

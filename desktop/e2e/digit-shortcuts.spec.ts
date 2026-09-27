@@ -3,7 +3,8 @@
 // one focus_tab and a number with no tab does nothing; holding ⌘ alone shows
 // each tab's digit at its top right after the delay and moves nothing,
 // releasing hides it, a release before the delay shows nothing, a key
-// pressed during the hold ends it, and losing the window ends it; holding
+// pressed during the hold ends it, losing the window ends it, and a menu or
+// a sheet opening during it ends it; holding
 // ⌥ numbers the Agents rows without moving their time or fold slot, and ⌥2
 // opens the second row. A private Herdr server, hided and Electron app.
 
@@ -167,6 +168,25 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
     await page.evaluate(() => window.dispatchEvent(new Event("blur")));
     await expect(page.locator("[data-keycap]")).toHaveCount(0);
     await page.keyboard.up("Meta");
+
+    // B6: a layer opening during the hold ends it: a tab's context menu,
+    // then the Settings sheet, each with ⌘ still down.
+    await page.keyboard.down("Meta");
+    await expect(tabCaps).toHaveCount(2);
+    await tab(tabs[0]!).click({ button: "right" });
+    await expect(page.getByRole("menuitem", { name: "Rename…", exact: true })).toBeVisible();
+    await expect(page.locator("[data-keycap]")).toHaveCount(0);
+    await page.keyboard.up("Meta");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menuitem", { name: "Rename…", exact: true })).toHaveCount(0);
+    await page.keyboard.down("Meta");
+    await expect(tabCaps).toHaveCount(2);
+    await page.locator("[data-open-settings]").click();
+    await expect(page.locator('[data-settings="true"]')).toBeVisible();
+    await expect(page.locator("[data-keycap]")).toHaveCount(0);
+    await page.keyboard.up("Meta");
+    await page.keyboard.press("Escape");
+    await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
 
     // B5, B2: holding ⌥ alone numbers the Agents rows top to bottom; the
     // time and the fold slot stay put; ⌥2 opens the second row.

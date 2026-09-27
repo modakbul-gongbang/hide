@@ -52,7 +52,8 @@ export function holdModifiers(state: HintState, modifiers: Modifiers, now: numbe
   if (modifiersEqual(state.modifiers, modifiers)) return state;
   const held = anyHeld(modifiers);
   const revealed = held && state.revealed;
-  return { modifiers, revealed, deadline: !held || revealed ? null : now + HINT_DELAY_MS };
+  // An empty set is the one shared idle value, so an ended hold is recognizable by reference.
+  return { modifiers: held ? modifiers : NO_MODIFIERS, revealed, deadline: !held || revealed ? null : now + HINT_DELAY_MS };
 }
 
 /** Time moved to `now`: a hold whose deadline passed reveals. */
