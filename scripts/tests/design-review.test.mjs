@@ -251,3 +251,31 @@ test('a cancel while the current Pen frames export ends the whole review, not ju
   const runs = path.join(f.root, 'agents/runs/task/design/review');
   for (const dir of fs.readdirSync(runs)) assert.equal(fs.existsSync(path.join(runs, dir, 'report.json')), false);
 });
+
+test('a bundle made from a scratch proposal is reviewed against the target\'s own Pen file, and says so', t => {
+  const f = fixture(t);
+  fs.mkdirSync(path.join(f.root, 'scratch'));
+  fs.writeFileSync(path.join(f.root, 'scratch/proposal.pen'), JSON.stringify({version: '2', imports: {ui: '../design/lib.pen'}, children: [{id: 'f-l'}]}));
+  const args = baselineArgs();
+  args.push('--from', 'scratch/proposal.pen');
+  assert.equal(run(f, args).status, 0);
+  fs.writeFileSync(f.log, '');
+  // The fixture has no static contract and no web app, so the run fails; only its Pen part is asserted.
+  run(f, ['review', 'task', '--baseline', bundleOf(f)]);
+  const [call] = fs.readFileSync(f.log, 'utf8').trim().split('\n').map(line => JSON.parse(line));
+  assert.equal(call.file, path.join(f.root, 'design/screens.pen'));
+  const runs = path.join(f.root, 'agents/runs/task/design/review');
+  const [dir] = fs.readdirSync(runs);
+  const report = JSON.parse(fs.readFileSync(path.join(runs, dir, 'report.json'), 'utf8'));
+  assert.equal(report.pen.status, 'RENDERED');
+  assert.equal(report.pen.changedSinceBaseline, null);
+  assert.match(fs.readFileSync(path.join(runs, dir, 'report.md'), 'utf8'), /design\/screens\.pen, while the baseline was made from scratch\/proposal\.pen/);
+});
+
+test('one library reached through a symlinked directory is still one library', t => {
+  const f = fixture(t);
+  fs.symlinkSync(path.join(f.root, 'design'), path.join(f.root, 'alias'));
+  fs.writeFileSync(path.join(f.root, 'design/screens.pen'), JSON.stringify({version: '2', imports: {a: './lib.pen', b: '../alias/lib.pen'}, children: [{id: 'f-l'}]}));
+  const result = run(f, baselineArgs());
+  assert.equal(result.status, 0, result.stderr);
+});

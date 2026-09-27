@@ -122,6 +122,7 @@ function copyPortable(sourceFile, bundle) {
   // (or in a cycle) is copied once.
   const documents = new Map();
   const copyDocument = (file, name) => {
+    file = fs.realpathSync(file);
     const claimed = documents.get(name);
     if (claimed === file) return;
     if (claimed) throw new Error(`Two Pen files would both be ${name} in the bundle: ${claimed} and ${file}; rename one`);
@@ -149,7 +150,7 @@ function copyPortable(sourceFile, bundle) {
     })(document.children ?? []);
     fs.writeFileSync(path.join(bundle, name), `${JSON.stringify(document, null, 2)}\n`);
   };
-  copyDocument(path.resolve(sourceFile), path.basename(sourceFile));
+  copyDocument(sourceFile, path.basename(sourceFile));
   if (assets.size) fs.mkdirSync(path.join(bundle, 'assets'));
   for (const {source, name} of assets.values()) fs.copyFileSync(source, path.join(bundle, name));
 }
