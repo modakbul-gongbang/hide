@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, overviewRowSelected, checkoutPresentation, projectMarks, projectRows, pullRequestBadge, relativeActivity } from "./projects";
+import { cardSingleValue, checkoutCard, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, overviewRowSelected, checkoutPresentation, projectMarks, projectRows, pullRequestBadge, relativeActivity, shownPullRequest } from "./projects";
 import type { Checkout, GithubStatus, PullRequest, Workspace } from "./snapshot";
 
 function workspace(id: string, extra: Partial<Workspace> = {}): Workspace {
@@ -58,13 +58,20 @@ describe("activity", () => {
 });
 
 describe("pullRequestBadge", () => {
-  it("names the decision for a review badge and the lifecycle otherwise", () => {
+  it("names the lifecycle, or the review decision for a pull request under review (D-08)", () => {
     const base = { number: 1, title: "", url: "", is_draft: false };
-    expect(pullRequestBadge({ ...base, badge: "merged", review: null })).toEqual({ label: "merged", color: "text-pr-merged" });
-    expect(pullRequestBadge({ ...base, badge: "open", review: null, is_draft: true })).toEqual({ label: "draft", color: "text-pr-draft" });
-    expect(pullRequestBadge({ ...base, badge: "review", review: "approved" })).toEqual({ label: "approved", color: "text-success" });
-    expect(pullRequestBadge({ ...base, badge: "review", review: "changes_requested" })).toEqual({ label: "changes", color: "text-destructive" });
-    expect(pullRequestBadge({ ...base, badge: "review", review: null })).toEqual({ label: "review", color: "text-warning" });
+    expect(pullRequestBadge({ ...base, badge: "merged", review: null })).toEqual({ label: "Merged", color: "text-pr-merged", draft: false });
+    expect(pullRequestBadge({ ...base, badge: "closed", review: null })).toEqual({ label: "Closed", color: "text-pr-closed", draft: false });
+    expect(pullRequestBadge({ ...base, badge: "open", review: null })).toEqual({ label: "Open", color: "text-pr-open", draft: false });
+    expect(pullRequestBadge({ ...base, badge: "open", review: null, is_draft: true })).toEqual({ label: "Draft", color: "text-pr-draft", draft: false });
+    expect(pullRequestBadge({ ...base, badge: "review", review: "approved" })).toEqual({ label: "Approved", color: "text-success", draft: false });
+    expect(pullRequestBadge({ ...base, badge: "review", review: "changes_requested" })).toEqual({ label: "Changes requested", color: "text-destructive", draft: false });
+    expect(pullRequestBadge({ ...base, badge: "review", review: "review_required" })).toEqual({ label: "Review required", color: "text-muted-foreground", draft: false });
+  });
+
+  it("keeps the decision on a draft under review and says Draft beside it", () => {
+    const base = { number: 1, title: "", url: "", is_draft: true };
+    expect(pullRequestBadge({ ...base, badge: "review", review: "approved" })).toEqual({ label: "Approved", color: "text-success", draft: true });
   });
 });
 
@@ -102,6 +109,15 @@ describe("checkoutPresentation", () => {
     expect(checkoutPresentation(project, checkout({ pull_request: pr({ badge: "review" }) }), now).kind).toBe("pr_open");
   });
 
+  it("draws one shape for a pull request on the row and in its card, a draft under review included", () => {
+    for (const request of [pr(), pr({ is_draft: true }), pr({ badge: "review", is_draft: true }), pr({ badge: "merged" }), pr({ badge: "closed", is_draft: true })]) {
+      const row = checkout({ pull_request: request });
+      const header = checkoutCard(project, row, now).header;
+      expect(header?.kind === "pull_request" ? header.glyph : null).toBe(checkoutPresentation(project, row, now).kind);
+    }
+    expect(checkoutCard(project, checkout({ pull_request: pr({ badge: "review", is_draft: true }) }), now).header).toMatchObject({ glyph: "pr_draft" });
+  });
+
   it("mutes a stale pull request and falls back to the branch when GitHub could not answer", () => {
     expect(checkoutPresentation(project, checkout({ pull_request: pr(), github: github({ stale: true }) }), now)).toMatchObject({ kind: "pr_open", kindTone: "text-muted-foreground" });
     expect(checkoutPresentation(project, checkout({ pull_request: pr(), github: github({ available: false, unavailable_reason: "gh is not signed in" }) }), now).kind).toBe("branch");
@@ -131,6 +147,120 @@ describe("checkoutPresentation", () => {
   it("lists the agents by state in the tooltip", () => {
     const view = checkoutPresentation(project, checkout({ agent_summary: { representative_pane_id: "p1", needs_you: 1, done: 0, working: 2, seen: 1, unknown: 1, marks: NO_MARKS } }), now);
     expect(view.detail.split("\n")).toEqual(["Needs You: 1 · Working: 2 · Seen: 1 (1 Unknown)", "feature", "/h/repo.worktrees/feature"]);
+  });
+});
+
+describe("checkoutCard", () => {
+  const now = 1_000_000_000_000;
+  const project = workspace("repo", { path: "/h/repo", is_git: true });
+  const pr = (extra: Partial<PullRequest> = {}): PullRequest => ({ number: 180, title: "Sidebar readability", url: "https://example.invalid/pull/180", badge: "review", review: "approved", is_draft: false, checks: "passing", ...extra });
+  const summary = (marks: Partial<typeof NO_MARKS>, counts: Partial<{ needs_you: number; done: number; working: number; seen: number }> = {}) => ({
+    representative_pane_id: null,
+    needs_you: 0,
+    done: 0,
+    working: 0,
+    seen: 0,
+    unknown: 0,
+    ...counts,
+    marks: { ...NO_MARKS, ...marks },
+  });
+  const checkout = (extra: Partial<Checkout> = {}): Checkout =>
+    ({
+      id: "c",
+      workspace_id: "w",
+      label: "feature",
+      path: "/h/repo.worktrees/feature",
+      branch: "feature",
+      purpose: null,
+      is_worktree: true,
+      exists: true,
+      has_panes: false,
+      worktree: { branch: "feature", head_sha: "abc1234def", last_commit_unix_seconds: (now - 2 * 3_600_000) / 1000 },
+      pull_request: null,
+      tabs: [],
+      active_tab_id: null,
+      strip: [],
+      next_tab_label: "Tab 1",
+      ...extra,
+    }) as Checkout;
+  const keys = (card: ReturnType<typeof checkoutCard>) => card.rows.map((row) => row.key);
+
+  it("heads a pull request's card with its badge, number, url and title, then every row with a value (B5)", () => {
+    const card = checkoutCard(project, checkout({ pull_request: pr(), agent_summary: summary({ question: 1, working: 2 }, { needs_you: 1, working: 2 }) }), now);
+    expect(card.header).toEqual({
+      kind: "pull_request",
+      badge: { label: "Approved", color: "text-success", draft: false },
+      glyph: "pr_open",
+      number: 180,
+      url: "https://example.invalid/pull/180",
+      title: "Sidebar readability",
+    });
+    expect(card.rows).toEqual([
+      { key: "review", label: "Review", value: "Approved", tone: "text-success" },
+      { key: "checks", label: "Checks", value: "Passing", tone: "text-success" },
+      { key: "branch", label: "Branch", value: "feature" },
+      { key: "agents", label: "Agents", marks: { ...NO_MARKS, question: 1, working: 2 } },
+      { key: "commit", label: "Commit", value: "2h ago" },
+      { key: "path", label: "Path", value: "/h/repo.worktrees/feature" },
+    ]);
+  });
+
+  it("colors Checks by result and leaves the row out when there are none or they are unknown (B6)", () => {
+    expect(checkoutCard(project, checkout({ pull_request: pr({ checks: "failed" }) }), now).rows[1]).toEqual({ key: "checks", label: "Checks", value: "Failed", tone: "text-destructive" });
+    expect(checkoutCard(project, checkout({ pull_request: pr({ checks: "pending" }) }), now).rows[1]).toMatchObject({ value: "Pending", tone: "text-muted-foreground" });
+    expect(keys(checkoutCard(project, checkout({ pull_request: pr({ checks: "none" }) }), now))).toEqual(["review", "branch", "commit", "path"]);
+    expect(keys(checkoutCard(project, checkout({ pull_request: pr({ checks: "unknown" }) }), now))).toEqual(["review", "branch", "commit", "path"]);
+    expect(keys(checkoutCard(project, checkout({ pull_request: pr({ checks: undefined }) }), now))).toEqual(["review", "branch", "commit", "path"]);
+  });
+
+  it("leaves Review out of an open pull request with no decision, and names the others (B6)", () => {
+    expect(keys(checkoutCard(project, checkout({ pull_request: pr({ badge: "open", review: null }) }), now))).toEqual(["checks", "branch", "commit", "path"]);
+    expect(checkoutCard(project, checkout({ pull_request: pr({ review: "changes_requested" }) }), now).rows[0]).toMatchObject({ value: "Changes requested", tone: "text-destructive" });
+    expect(checkoutCard(project, checkout({ pull_request: pr({ review: "review_required" }) }), now).rows[0]).toMatchObject({ value: "Review required", tone: "text-muted-foreground" });
+  });
+
+  it("has no header without a pull request and draws only the rows with a value (B8, D-09)", () => {
+    const plain = checkoutCard(project, checkout(), now);
+    expect(plain.header).toBeNull();
+    expect(keys(plain)).toEqual(["branch", "commit", "path"]);
+    // Git not read yet: neither branch nor commit, no loading row.
+    expect(keys(checkoutCard(project, checkout({ worktree: null }), now))).toEqual(["path"]);
+    // No agents: no Agents row; agents with a zero sum: none either.
+    expect(keys(checkoutCard(project, checkout({ agent_summary: summary({}) }), now))).toEqual(["branch", "commit", "path"]);
+    // A commit whose age is not known has no row.
+    expect(keys(checkoutCard(project, checkout({ worktree: { branch: "feature", head_sha: "abc1234def" } as Checkout["worktree"] }), now))).toEqual(["branch", "path"]);
+  });
+
+  it("names a detached HEAD by its short sha, dates the first minute as now, and a folder has only its path and agents", () => {
+    expect(checkoutCard(project, checkout({ worktree: { branch: null, head_sha: "abc1234def", last_commit_unix_seconds: now / 1000 } as Checkout["worktree"] }), now).rows).toEqual([
+      { key: "branch", label: "Branch", value: "Detached HEAD at abc1234" },
+      { key: "commit", label: "Commit", value: "now" },
+      { key: "path", label: "Path", value: "/h/repo.worktrees/feature" },
+    ]);
+    const folder = workspace("notes", { is_git: false });
+    expect(keys(checkoutCard(folder, checkout({ worktree: null, is_worktree: false, path: "/h/notes", agent_summary: summary({ idle: 1 }, { seen: 1 }) }), now))).toEqual(["agents", "path"]);
+  });
+
+  it("heads a missing folder with Folder missing over its path alone, whatever else is known", () => {
+    const card = checkoutCard(project, checkout({ exists: false, pull_request: pr(), agent_summary: summary({ idle: 1 }, { seen: 1 }) }), now);
+    expect(card.header).toEqual({ kind: "missing", label: "Folder missing" });
+    expect(card.rows).toEqual([{ key: "path", label: "Path", value: "/h/repo.worktrees/feature" }]);
+  });
+
+  it("falls back to a text tooltip only when the card would hold one value and no header (D-09)", () => {
+    const folder = workspace("notes", { is_git: false });
+    expect(cardSingleValue(checkoutCard(folder, checkout({ worktree: null, is_worktree: false, path: "/h/notes" }), now))).toBe("/h/notes");
+    expect(cardSingleValue(checkoutCard(project, checkout(), now))).toBeNull();
+    expect(cardSingleValue(checkoutCard(project, checkout({ exists: false }), now))).toBeNull();
+  });
+
+  it("shows the pull request a stale refresh kept and none an unavailable lookup lost", () => {
+    const github = (extra: Partial<GithubStatus> = {}): GithubStatus =>
+      ({ failure_category: null, available: true, loading: false, stale: false, last_success_at_unix_ms: now, unavailable_reason: null, ...extra }) as GithubStatus;
+    expect(shownPullRequest(checkout({ pull_request: pr(), github: github({ stale: true, available: false }) }))?.number).toBe(180);
+    expect(shownPullRequest(checkout({ pull_request: pr(), github: github({ available: false, unavailable_reason: "gh is not signed in" }) }))).toBeNull();
+    expect(shownPullRequest(checkout({ pull_request: null }))).toBeNull();
+    expect(checkoutCard(project, checkout({ pull_request: pr(), github: github({ available: false, unavailable_reason: "gh is not signed in" }) }), now).header).toBeNull();
   });
 });
 

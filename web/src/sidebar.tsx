@@ -1,26 +1,12 @@
-import {
-  ChevronDownIcon,
-  ChevronRightIcon,
-  CornerUpLeftIcon,
-  FolderGit2Icon,
-  FolderIcon,
-  GitBranchIcon,
-  GitCommitHorizontalIcon,
-  GitMergeIcon,
-  GitPullRequestClosedIcon,
-  GitPullRequestDraftIcon,
-  GitPullRequestIcon,
-  HouseIcon,
-  LayoutGridIcon,
-  LayoutDashboardIcon,
-  SettingsIcon,
-} from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, FolderGit2Icon, FolderIcon, LayoutGridIcon, LayoutDashboardIcon, SettingsIcon } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
 import { EntryContextMenu } from "./components/entry-menu";
 import { SearchField } from "./components/search-field";
 import { Hint } from "./components/ui/tooltip";
+import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
+import { CheckoutCardHint, pullRequestOpenExternal } from "./components/pr-card";
 import { DevicePicker } from "./DevicePicker";
 import { NewWorkspace } from "./NewWorkspace";
 import { badgeWords, unfoldedRows } from "./agentRow";
@@ -35,6 +21,7 @@ import { agentPlaces, agentSections, allAgents, allLineageWorkspaces, allProject
 import { foldedLineage, type FoldedLineage } from "./lineageSummary";
 import {
   activeCheckouts,
+  checkoutCard,
   checkoutHasSecondLine,
   checkoutNameParts,
   checkoutPresentation,
@@ -44,7 +31,7 @@ import {
   inactiveCheckouts,
   projectMarks,
   projectRows,
-  type CheckoutKind,
+  shownPullRequest,
   type CheckoutPresentation,
   type ProjectRow,
 } from "./projects";
@@ -726,16 +713,6 @@ function OverviewRow({ workspace, selected }: { workspace: Workspace; selected: 
 
 const NO_BOARD_ROWS: BoardRow[] = [];
 
-const KIND_ICON: Record<CheckoutKind, typeof GitBranchIcon> = {
-  pr_open: GitPullRequestIcon,
-  pr_draft: GitPullRequestDraftIcon,
-  pr_merged: GitMergeIcon,
-  pr_closed: GitPullRequestClosedIcon,
-  folder: FolderIcon,
-  primary: HouseIcon,
-  detached: GitCommitHorizontalIcon,
-  branch: GitBranchIcon,
-};
 
 /**
  * What a checkout's row draws besides line one, shared by the checkout row and
@@ -785,13 +762,12 @@ const CheckoutRowView = memo(function CheckoutRowView({
   const name = checkout.branch ?? checkout.label;
   const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context);
   const marks = checkout.agent_summary?.marks;
-  const KindIcon = KIND_ICON[view.kind];
   return (
     <li data-checkout-row={checkout.id} data-checkout-open={open ? "true" : undefined} className={cn(open && "rounded-sm bg-muted py-xs")}>
       <EntryContextMenu
         label={`${name} actions`}
         items={() => checkoutMenu(checkout, purposeProblem)}
-        onSelect={(item) => runCheckoutItem(workspace, checkout, item)}
+        onSelect={(item) => runCheckoutItem(actions, workspace, checkout, item)}
         className="group flex items-stretch"
         data-checkout-menu={checkout.id}
       >
@@ -816,7 +792,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
           {/* The row button covers the whole row; a control drawn over it is positioned, so it stacks above.
               Line one is 20 whatever it carries: the 24-high fold toggle overhangs it rather than moving line two. */}
           <span className="pointer-events-none flex h-(--size-sidebar-line) min-w-0 items-center gap-sm">
-            <KindIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />
+            <KindGlyph view={view} deviceId={workspace.device_id} actions={actions} />
             <CheckoutName name={name} focused={focused} />
             <CheckoutBadge checkout={checkout} />
             <span className="flex-1" />
@@ -877,7 +853,7 @@ const FolderRowView = memo(function FolderRowView({
       <EntryContextMenu
         label={`${workspace.label} actions`}
         items={() => folderMenu(workspace, checkout, purposeProblem)}
-        onSelect={(item) => (item === "set_purpose" || item === "delete_worktree" ? runCheckoutItem(workspace, checkout, item) : runProjectItem(actions, workspace, item))}
+        onSelect={(item) => (item === "set_purpose" || item === "delete_worktree" || item === "open_pull_request" ? runCheckoutItem(actions, workspace, checkout, item) : runProjectItem(actions, workspace, item))}
         className="group flex items-stretch"
         data-project-menu={workspace.id}
       >
@@ -927,7 +903,43 @@ const FolderRowView = memo(function FolderRowView({
   );
 });
 
-/** The button under a checkout's whole row: it opens the checkout, and its tooltip carries the pull request, agents, branch and path. */
+/**
+ * The checkout's kind glyph. On a row whose glyph is a pull request's
+ * lifecycle it is a button that opens that pull request (PRD
+ * checkout-pr-glyph-card D-02): a ring in the pull request's color under the
+ * pointer says so, ⌘ asks for the default browser, and the press never
+ * reaches the row button under it, so the checkout neither opens nor
+ * unfolds. Every other kind is the plain icon the row button covers.
+ */
+function KindGlyph({ view, deviceId, actions }: { view: CheckoutPresentation; deviceId: string; actions: Actions }) {
+  const KindIcon = CHECKOUT_KIND_ICON[view.kind];
+  const pr = view.kind.startsWith("pr_") ? view.pullRequest : null;
+  if (!pr) return <KindIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />;
+  return (
+    <button
+      type="button"
+      data-checkout-pr-glyph={pr.number}
+      aria-label={`Open pull request #${pr.number}`}
+      className={cn(
+        "pointer-events-auto relative flex size-(--size-checkout-icon) shrink-0 cursor-pointer items-center justify-center rounded-xs outline-none hover:ring-1 hover:ring-current focus-visible:ring-1 focus-visible:ring-ring",
+        view.kindTone,
+      )}
+      onClick={(event) => {
+        event.stopPropagation();
+        actions.openPullRequest(pr.url, deviceId, pullRequestOpenExternal(event));
+      }}
+    >
+      <KindIcon aria-hidden="true" className="size-(--size-checkout-icon)" />
+    </button>
+  );
+}
+
+/**
+ * The button under a checkout's whole row: it opens the checkout, and the
+ * card it opens on hover and focus carries the pull request, agents, branch
+ * and path (`checkoutCard`); a screen reader reads the same facts as the
+ * sentence `view.detail`.
+ */
 function CheckoutOpenButton({
   workspace,
   checkout,
@@ -945,8 +957,10 @@ function CheckoutOpenButton({
   actions: Actions;
   expanded?: boolean;
 }) {
+  // Read on every render, like `view.detail`: a memo keyed on the checkout would keep the Commit age from the last change to this row.
+  const card = checkoutCard(workspace, checkout, Date.now());
   return (
-    <Hint label={view.detail}>
+    <CheckoutCardHint card={card} description={view.detail} onOpenPullRequest={(url, external) => actions.openPullRequest(url, workspace.device_id, external)}>
       <button
         type="button"
         data-checkout={checkout.id}
@@ -956,7 +970,7 @@ function CheckoutOpenButton({
         className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
         onClick={() => actions.openWorkspace(workspace.device_id, checkout.workspace_id, checkout.id, expanded)}
       />
-    </Hint>
+    </CheckoutCardHint>
   );
 }
 
@@ -1079,7 +1093,11 @@ function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["
   if (item === "remove_project") useUiStore.getState().setWorkspaceDialog({ kind: "remove_project", workspaceId: workspace.id });
 }
 
-function runCheckoutItem(workspace: Workspace, checkout: Checkout, item: MenuItem["id"]) {
+function runCheckoutItem(actions: Actions, workspace: Workspace, checkout: Checkout, item: MenuItem["id"]) {
+  if (item === "open_pull_request") {
+    const pr = shownPullRequest(checkout);
+    if (pr) actions.openPullRequest(pr.url, workspace.device_id, false);
+  }
   if (item === "set_purpose") useUiStore.getState().setWorkspaceDialog({ kind: "purpose", workspaceId: workspace.id, checkoutId: checkout.id });
   if (item === "delete_worktree") useUiStore.getState().setWorkspaceDialog({ kind: "delete_worktree", workspaceId: workspace.id, checkoutId: checkout.id });
 }

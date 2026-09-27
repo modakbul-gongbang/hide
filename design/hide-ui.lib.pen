@@ -33246,6 +33246,958 @@
       "layout": "vertical",
       "gap": "$--spacing-lg",
       "padding": "$--spacing-md"
+    },
+    {
+      "type": "frame",
+      "id": "pr-card-sheet",
+      "name": "Component / PR hover card",
+      "children": [
+        {
+          "type": "frame",
+          "id": "pr-card-sheet-title",
+          "name": "Title block",
+          "children": [
+            {
+              "type": "text",
+              "id": "pr-card-sheet-title-name",
+              "name": "PR hover card (web sidebar c",
+              "content": "PR hover card (web sidebar checkout row)",
+              "fill": "$--foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-title",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "pr-card-sheet-title-spec",
+              "name": "The card a checkout row open",
+              "content": "The card a checkout row opens on hover and keyboard focus in place of its text tooltip (web/src/components/pr-card.tsx, PRD checkout-pr-glyph-card D-03, D-08, D-09, D-12). It is the shell’s tooltip with hoverable content: same delay, stays while the pointer crosses onto it, closes on Escape. The badge line is the pull request’s lifecycle word or its review decision (Open, Draft, Merged, Closed, Approved, Changes requested, Review required), the number, and Open PR, the one control on the card; ⌘ on it opens the default browser. Then the title on up to two lines, a rule, and one row per fact the snapshot has: Review and Checks in their result color, Branch in mono, Agents as the sidebar badge’s marks, Commit as the last commit’s age, Path in mono muted. A row with nothing to say takes no place; a checkout with no pull request has no badge line; a folder that is gone has only Folder missing over its path; a card that would hold one value is the plain text tooltip instead. The row’s glyph is a button only while it is a pull request’s lifecycle, with a ring in that color under the pointer.",
+              "fill": "$--subtle-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "400",
+              "textGrowth": "fixed-width",
+              "width": "fill_container"
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs"
+        },
+        {
+          "type": "frame",
+          "id": "pr-card-sheet-masters",
+          "name": "Master",
+          "children": [
+            {
+              "type": "text",
+              "id": "pr-card-sheet-masters-name",
+              "name": "Master: the card with every ",
+              "content": "Master: the card with every row; each state is a ref",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "pr-card",
+              "name": "Component / PR hover card",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "pr-card-header",
+                  "name": "Badge line",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "pr-card-badge",
+                      "name": "Badge",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "pr-card-badge-icon",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "git-pull-request",
+                          "library": "lucide",
+                          "fill": "$--pr-open"
+                        },
+                        {
+                          "type": "text",
+                          "id": "pr-card-badge-label",
+                          "name": "Open",
+                          "content": "Open",
+                          "fill": "$--pr-open",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "500"
+                        }
+                      ],
+                      "height": 16,
+                      "cornerRadius": "$--radius-xs",
+                      "stroke": "$--border",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "gap": "$--spacing-xs",
+                      "padding": [
+                        0,
+                        "$--spacing-xs"
+                      ],
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "text",
+                      "id": "pr-card-draft",
+                      "name": "Draft",
+                      "content": "Draft",
+                      "fill": "$--pr-draft",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400",
+                      "enabled": false
+                    },
+                    {
+                      "type": "text",
+                      "id": "pr-card-number",
+                      "name": "#180",
+                      "content": "#180",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pr-card-header-gap",
+                      "name": "Gap",
+                      "children": [],
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pr-card-open",
+                      "name": "Open PR",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pr-card-open-label",
+                          "name": "Open PR",
+                          "content": "Open PR",
+                          "fill": "$--pr-open",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "500"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "pr-card-open-icon",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "arrow-up-right",
+                          "library": "lucide",
+                          "fill": "$--pr-open"
+                        }
+                      ],
+                      "gap": "$--spacing-xxs",
+                      "alignItems": "center"
+                    }
+                  ],
+                  "width": "fill_container",
+                  "gap": "$--spacing-sm",
+                  "alignItems": "center"
+                },
+                {
+                  "type": "text",
+                  "id": "pr-card-title",
+                  "name": "사이드바 가독성: 오른쪽 조작, 흔들리지 않는 행,",
+                  "content": "사이드바 가독성: 오른쪽 조작, 흔들리지 않는 행, Projects 계보 접기",
+                  "fill": "$--foreground",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-subhead",
+                  "fontWeight": "500",
+                  "textGrowth": "fixed-width",
+                  "width": "fill_container"
+                },
+                {
+                  "type": "text",
+                  "id": "pr-card-missing",
+                  "name": "Folder missing",
+                  "content": "Folder missing",
+                  "fill": "$--destructive",
+                  "fontFamily": "$--font-ui",
+                  "fontSize": "$--text-subhead",
+                  "fontWeight": "500",
+                  "enabled": false
+                },
+                {
+                  "type": "frame",
+                  "id": "pr-card-rule",
+                  "name": "Rule",
+                  "children": [],
+                  "width": "fill_container",
+                  "height": 1,
+                  "fill": "$--border"
+                },
+                {
+                  "type": "frame",
+                  "id": "pr-card-rows",
+                  "name": "Rows",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "pr-card-row-review",
+                      "name": "Review",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pr-card-label-review",
+                          "name": "Review",
+                          "content": "Review",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400",
+                          "textGrowth": "fixed-width",
+                          "width": 48
+                        },
+                        {
+                          "type": "text",
+                          "id": "pr-card-review",
+                          "name": "Approved",
+                          "content": "Approved",
+                          "fill": "$--success",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "gap": "$--spacing-md",
+                      "alignItems": "start"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pr-card-row-checks",
+                      "name": "Checks",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pr-card-label-checks",
+                          "name": "Checks",
+                          "content": "Checks",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400",
+                          "textGrowth": "fixed-width",
+                          "width": 48
+                        },
+                        {
+                          "type": "text",
+                          "id": "pr-card-checks",
+                          "name": "Passing",
+                          "content": "Passing",
+                          "fill": "$--success",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "gap": "$--spacing-md",
+                      "alignItems": "start"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pr-card-row-branch",
+                      "name": "Branch",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pr-card-label-branch",
+                          "name": "Branch",
+                          "content": "Branch",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400",
+                          "textGrowth": "fixed-width",
+                          "width": 48
+                        },
+                        {
+                          "type": "text",
+                          "id": "pr-card-branch",
+                          "name": "electron-shortcut-bindings",
+                          "content": "electron-shortcut-bindings",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "gap": "$--spacing-md",
+                      "alignItems": "start"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pr-card-row-agents",
+                      "name": "Agents",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pr-card-label-agents",
+                          "name": "Agents",
+                          "content": "Agents",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400",
+                          "textGrowth": "fixed-width",
+                          "width": 48
+                        },
+                        {
+                          "type": "frame",
+                          "id": "pr-card-agents",
+                          "name": "Marks",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "pr-card-agents-question",
+                              "name": "question",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pr-card-agents-question-mark",
+                                  "name": "?",
+                                  "content": "?",
+                                  "fill": "$--warning",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pr-card-agents-question-count",
+                                  "name": "1",
+                                  "content": "1",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pr-card-agents-working",
+                              "name": "working",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pr-card-agents-working-mark",
+                                  "name": "●",
+                                  "content": "●",
+                                  "fill": "$--agent-working",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pr-card-agents-working-count",
+                                  "name": "2",
+                                  "content": "2",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "pr-card-agents-idle",
+                              "name": "idle",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "pr-card-agents-idle-mark",
+                                  "name": "○",
+                                  "content": "○",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "pr-card-agents-idle-count",
+                                  "name": "1",
+                                  "content": "1",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center"
+                            }
+                          ],
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "gap": "$--spacing-md",
+                      "alignItems": "start"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pr-card-row-commit",
+                      "name": "Commit",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pr-card-label-commit",
+                          "name": "Commit",
+                          "content": "Commit",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400",
+                          "textGrowth": "fixed-width",
+                          "width": 48
+                        },
+                        {
+                          "type": "text",
+                          "id": "pr-card-commit",
+                          "name": "2h ago",
+                          "content": "2h ago",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "gap": "$--spacing-md",
+                      "alignItems": "start"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "pr-card-row-path",
+                      "name": "Path",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "pr-card-label-path",
+                          "name": "Path",
+                          "content": "Path",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400",
+                          "textGrowth": "fixed-width",
+                          "width": 48
+                        },
+                        {
+                          "type": "text",
+                          "id": "pr-card-path",
+                          "name": "~/projects/herdr-ide.worktre",
+                          "content": "~/projects/herdr-ide.worktrees/electron-shortcut-bindings",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400",
+                          "textGrowth": "fixed-width",
+                          "width": 276
+                        }
+                      ],
+                      "width": "fill_container",
+                      "gap": "$--spacing-md",
+                      "alignItems": "start"
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs"
+                }
+              ],
+              "reusable": true,
+              "width": 360,
+              "layout": "vertical",
+              "gap": "$--spacing-sm",
+              "padding": "$--spacing-md",
+              "fill": "$--popover",
+              "cornerRadius": "$--radius-md",
+              "stroke": "$--border",
+              "strokeWidth": "$--size-hairline",
+              "strokeAlignment": "inner"
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "pr-card-open-approved-state",
+          "name": "State / Open, approved, checks passing",
+          "children": [
+            {
+              "type": "text",
+              "id": "pr-card-open-approved-state-label",
+              "name": "Open, approved, checks passi",
+              "content": "Open, approved, checks passing",
+              "fill": "$--subtle-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "400"
+            },
+            {
+              "id": "pr-card-open-approved",
+              "type": "ref",
+              "ref": "pr-card",
+              "name": "Card / Open, approved, checks passing",
+              "descendants": {}
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs"
+        },
+        {
+          "type": "frame",
+          "id": "pr-card-draft-failed-state",
+          "name": "State / Draft under review, checks failed",
+          "children": [
+            {
+              "type": "text",
+              "id": "pr-card-draft-failed-state-label",
+              "name": "Draft under review, checks f",
+              "content": "Draft under review, checks failed",
+              "fill": "$--subtle-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "400"
+            },
+            {
+              "id": "pr-card-draft-failed",
+              "type": "ref",
+              "ref": "pr-card",
+              "name": "Card / Draft under review, checks failed",
+              "descendants": {
+                "pr-card-badge-icon": {
+                  "icon": "git-pull-request-draft",
+                  "fill": "$--pr-draft"
+                },
+                "pr-card-badge-label": {
+                  "content": "Draft",
+                  "fill": "$--pr-draft"
+                },
+                "pr-card-number": {
+                  "content": "#183"
+                },
+                "pr-card-title": {
+                  "content": "Sleep idle agents and resume them in the same pane"
+                },
+                "pr-card-review": {
+                  "content": "Review required",
+                  "fill": "$--muted-foreground"
+                },
+                "pr-card-checks": {
+                  "content": "Failed",
+                  "fill": "$--destructive"
+                },
+                "pr-card-branch": {
+                  "content": "prd/agent-sleep"
+                },
+                "pr-card-agents-question": {
+                  "enabled": false
+                },
+                "pr-card-agents-working": {
+                  "enabled": false
+                },
+                "pr-card-commit": {
+                  "content": "3h ago"
+                },
+                "pr-card-path": {
+                  "content": "~/projects/herdr-ide.worktrees/agent-sleep"
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs"
+        },
+        {
+          "type": "frame",
+          "id": "pr-card-changes-pending-state",
+          "name": "State / Changes requested, checks pending",
+          "children": [
+            {
+              "type": "text",
+              "id": "pr-card-changes-pending-state-label",
+              "name": "Changes requested, checks pe",
+              "content": "Changes requested, checks pending",
+              "fill": "$--subtle-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "400"
+            },
+            {
+              "id": "pr-card-changes-pending",
+              "type": "ref",
+              "ref": "pr-card",
+              "name": "Card / Changes requested, checks pending",
+              "descendants": {
+                "pr-card-badge-label": {
+                  "content": "Changes requested",
+                  "fill": "$--destructive"
+                },
+                "pr-card-badge-icon": {
+                  "fill": "$--destructive"
+                },
+                "pr-card-number": {
+                  "content": "#175"
+                },
+                "pr-card-title": {
+                  "content": "Task and Agents views on the web"
+                },
+                "pr-card-review": {
+                  "content": "Changes requested",
+                  "fill": "$--destructive"
+                },
+                "pr-card-checks": {
+                  "content": "Pending",
+                  "fill": "$--muted-foreground"
+                },
+                "pr-card-branch": {
+                  "content": "feat/task-agents-views"
+                },
+                "pr-card-agents-question": {
+                  "enabled": false
+                },
+                "pr-card-agents-idle": {
+                  "enabled": false
+                },
+                "pr-card-agents-working-count": {
+                  "content": "1"
+                },
+                "pr-card-commit": {
+                  "content": "25m ago"
+                },
+                "pr-card-path": {
+                  "content": "~/projects/herdr-ide.worktrees/task-agents-views"
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs"
+        },
+        {
+          "type": "frame",
+          "id": "pr-card-merged-state",
+          "name": "State / Merged: the row is dimmed, the card is not",
+          "children": [
+            {
+              "type": "text",
+              "id": "pr-card-merged-state-label",
+              "name": "Merged: the row is dimmed, t",
+              "content": "Merged: the row is dimmed, the card is not",
+              "fill": "$--subtle-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "400"
+            },
+            {
+              "id": "pr-card-merged",
+              "type": "ref",
+              "ref": "pr-card",
+              "name": "Card / Merged: the row is dimmed, the card is not",
+              "descendants": {
+                "pr-card-badge-icon": {
+                  "icon": "git-merge",
+                  "fill": "$--pr-merged"
+                },
+                "pr-card-badge-label": {
+                  "content": "Merged",
+                  "fill": "$--pr-merged"
+                },
+                "pr-card-number": {
+                  "content": "#168"
+                },
+                "pr-card-title": {
+                  "content": "Scope navigation: All projects, a project, a checkout"
+                },
+                "pr-card-row-review": {
+                  "enabled": false
+                },
+                "pr-card-row-checks": {
+                  "enabled": false
+                },
+                "pr-card-branch": {
+                  "content": "web-scope-navigation"
+                },
+                "pr-card-row-agents": {
+                  "enabled": false
+                },
+                "pr-card-commit": {
+                  "content": "2d ago"
+                },
+                "pr-card-path": {
+                  "content": "~/projects/herdr-ide.worktrees/web-scope-navigation"
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs"
+        },
+        {
+          "type": "frame",
+          "id": "pr-card-no-pr-state",
+          "name": "State / No pull request: no header, only the rows with a value",
+          "children": [
+            {
+              "type": "text",
+              "id": "pr-card-no-pr-state-label",
+              "name": "No pull request: no header, ",
+              "content": "No pull request: no header, only the rows with a value",
+              "fill": "$--subtle-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "400"
+            },
+            {
+              "id": "pr-card-no-pr",
+              "type": "ref",
+              "ref": "pr-card",
+              "name": "Card / No pull request: no header, only the rows with a value",
+              "descendants": {
+                "pr-card-header": {
+                  "enabled": false
+                },
+                "pr-card-title": {
+                  "enabled": false
+                },
+                "pr-card-rule": {
+                  "enabled": false
+                },
+                "pr-card-row-review": {
+                  "enabled": false
+                },
+                "pr-card-row-checks": {
+                  "enabled": false
+                },
+                "pr-card-branch": {
+                  "content": "design/workspace-ux-proposal"
+                },
+                "pr-card-agents-question": {
+                  "enabled": false
+                },
+                "pr-card-agents-working": {
+                  "enabled": false
+                },
+                "pr-card-commit": {
+                  "content": "5h ago"
+                },
+                "pr-card-path": {
+                  "content": "~/projects/herdr-ide.worktrees/design-workspace-ux"
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs"
+        },
+        {
+          "type": "frame",
+          "id": "pr-card-missing-folder-state",
+          "name": "State / Folder missing: the danger header over the path",
+          "children": [
+            {
+              "type": "text",
+              "id": "pr-card-missing-folder-state-label",
+              "name": "Folder missing: the danger h",
+              "content": "Folder missing: the danger header over the path",
+              "fill": "$--subtle-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "400"
+            },
+            {
+              "id": "pr-card-missing-folder",
+              "type": "ref",
+              "ref": "pr-card",
+              "name": "Card / Folder missing: the danger header over the path",
+              "descendants": {
+                "pr-card-header": {
+                  "enabled": false
+                },
+                "pr-card-title": {
+                  "enabled": false
+                },
+                "pr-card-missing": {
+                  "enabled": true
+                },
+                "pr-card-rule": {
+                  "enabled": false
+                },
+                "pr-card-row-review": {
+                  "enabled": false
+                },
+                "pr-card-row-checks": {
+                  "enabled": false
+                },
+                "pr-card-row-branch": {
+                  "enabled": false
+                },
+                "pr-card-row-agents": {
+                  "enabled": false
+                },
+                "pr-card-row-commit": {
+                  "enabled": false
+                },
+                "pr-card-path": {
+                  "content": "~/projects/herdr-ide.worktrees/legacy-shell"
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs"
+        },
+        {
+          "type": "frame",
+          "id": "pr-glyph-state",
+          "name": "State / Glyph: at rest, under the pointer",
+          "children": [
+            {
+              "type": "text",
+              "id": "pr-glyph-state-label",
+              "name": "Glyph: at rest, under the po",
+              "content": "Glyph: at rest, under the pointer",
+              "fill": "$--subtle-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "400"
+            },
+            {
+              "type": "frame",
+              "id": "pr-glyph-row",
+              "name": "Glyphs",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "pr-glyph-rest",
+                  "name": "At rest",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "pr-glyph-rest-icon",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "git-pull-request",
+                      "library": "lucide",
+                      "fill": "$--pr-open"
+                    }
+                  ],
+                  "width": 18,
+                  "height": 18,
+                  "justifyContent": "center",
+                  "alignItems": "center"
+                },
+                {
+                  "type": "frame",
+                  "id": "pr-glyph-hover",
+                  "name": "Under the pointer",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "pr-glyph-hover-icon",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "git-pull-request",
+                      "library": "lucide",
+                      "fill": "$--pr-open"
+                    }
+                  ],
+                  "width": 18,
+                  "height": 18,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "cornerRadius": "$--radius-xs",
+                  "stroke": "$--pr-open",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inner"
+                },
+                {
+                  "type": "frame",
+                  "id": "pr-glyph-hover-draft",
+                  "name": "Draft under the pointer",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "pr-glyph-hover-draft-icon",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "git-pull-request-draft",
+                      "library": "lucide",
+                      "fill": "$--pr-draft"
+                    }
+                  ],
+                  "width": 18,
+                  "height": 18,
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "cornerRadius": "$--radius-xs",
+                  "stroke": "$--pr-draft",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inner"
+                }
+              ],
+              "gap": "$--spacing-lg",
+              "alignItems": "center"
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs"
+        }
+      ],
+      "width": 480,
+      "fill": "$--card",
+      "cornerRadius": "$--radius-md",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-md",
+      "x": 8000,
+      "y": 7264
     }
   ],
   "variables": {
