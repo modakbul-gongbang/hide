@@ -1159,11 +1159,11 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     expect(stack.events.filter((event) => event.kind === "workspace_view").length).toBe(sentBefore);
     await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toEqual(stored);
 
-    // While the narrow panel covers the agents, the close chord closes the
-    // active view wherever the keyboard is (here on the toolbar's panel
-    // toggle), never a tab of the Agent area under it (B13).
+    // The panel toolbar retains the last View keyboard owner, so closing
+    // from its toggle closes that display and leaves the covered agents alone.
     await page.setViewportSize({ width: Math.round(sidebar + 420), height: 1080 });
     await expect(workspace).toHaveAttribute("data-panel", "expanded");
+    await editor(page, 0).click();
     await page.locator("[data-panel-toggle]").focus();
     const herdrBefore = herdrIds(stack.herdr);
     const closes = () => viewEvents(stack).filter((event) => event.payload.action === "close").length;
@@ -1184,13 +1184,13 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     await expect(workspace).toHaveAttribute("data-panel", "closed");
     await expect(page.locator(`[data-pane-view="${pane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toMatchObject({ panel: "closed", pinned: true });
-    // ⌘⇧B opens the panel on its tool with the tools shown, even where they
-    // fold into an overlay (B12, issue 170).
+    // ⌘⇧B restores the panel with its narrow tool overlay still hidden.
+    // Asking for Explorer explicitly opens the overlay (issue 170).
     await page.keyboard.press("Meta+Shift+KeyB");
     await expect(workspace).toHaveAttribute("data-panel", "expanded");
-    await expect(page.locator('[data-tools-overlay="true"] [data-tool="explorer"]')).toBeVisible();
-    await expect(toggle).toHaveAttribute("aria-pressed", "true");
-    // Reveal in Explorer from the palette does the same with the panel closed.
+    await expect(page.locator("[data-tools-overlay]")).toHaveCount(0);
+    await expect(toggle).toHaveAttribute("aria-pressed", "false");
+    // Reveal in Explorer requests its tool with the panel closed.
     await page.locator('[data-panel-toggle="on"]').click();
     await expect(workspace).toHaveAttribute("data-panel", "closed");
     await paletteCommand(page, "Reveal in Explorer", "command:view:reveal");
