@@ -231,7 +231,10 @@ export type CheckoutCardRow =
 /** The card a checkout row opens on hover and focus (PRD checkout-pr-glyph-card D-03, D-08, D-09, D-12). */
 export type CheckoutCard = {
   /** A pull request's badge line, or the danger header of a folder that is gone; null on a plain checkout. */
-  header: { kind: "pull_request"; badge: ReturnType<typeof pullRequestBadge>; number: number; url: string; title: string } | { kind: "missing"; label: string } | null;
+  header:
+    | { kind: "pull_request"; badge: ReturnType<typeof pullRequestBadge>; lifecycle: PullRequest["badge"]; isDraft: boolean; number: number; url: string; title: string }
+    | { kind: "missing"; label: string }
+    | null;
   /** Each row only where its source has a value; a row with nothing to say takes no place. */
   rows: CheckoutCardRow[];
 };
@@ -279,7 +282,7 @@ export function checkoutCard(workspace: Workspace, checkout: Checkout, nowMs: nu
   if (age) rows.push({ key: "commit", label: "Commit", value: age === "now" ? "now" : `${age} ago` });
   rows.push({ key: "path", label: "Path", value: checkout.path });
   return {
-    header: pr ? { kind: "pull_request", badge: pullRequestBadge(pr), number: pr.number, url: pr.url, title: pr.title } : null,
+    header: pr ? { kind: "pull_request", badge: pullRequestBadge(pr), lifecycle: pr.badge, isDraft: pr.is_draft, number: pr.number, url: pr.url, title: pr.title } : null,
     rows,
   };
 }

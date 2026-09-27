@@ -178,7 +178,15 @@ describe("checkoutCard", () => {
 
   it("heads a pull request's card with its badge, number, url and title, then every row with a value (B5)", () => {
     const card = checkoutCard(project, checkout({ pull_request: pr(), agent_summary: summary({ question: 1, working: 2 }, { needs_you: 1, working: 2 }) }), now);
-    expect(card.header).toEqual({ kind: "pull_request", badge: { label: "Approved", color: "text-success", draft: false }, number: 180, url: "https://example.invalid/pull/180", title: "Sidebar readability" });
+    expect(card.header).toEqual({
+      kind: "pull_request",
+      badge: { label: "Approved", color: "text-success", draft: false },
+      lifecycle: "review",
+      isDraft: false,
+      number: 180,
+      url: "https://example.invalid/pull/180",
+      title: "Sidebar readability",
+    });
     expect(card.rows).toEqual([
       { key: "review", label: "Review", value: "Approved", tone: "text-success" },
       { key: "checks", label: "Checks", value: "Passing", tone: "text-success" },
