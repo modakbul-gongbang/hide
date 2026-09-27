@@ -1,0 +1,41 @@
+{
+  "projects-sidebar": {
+    "description": "The sidebar's Projects tab: project, checkout and agent rows.",
+    "file": "design/hide-screens.pen",
+    "sheet": "screen-projects-sidebar",
+    "scene": "projects-sidebar",
+    "selector": "nav[data-sidebar]",
+    "frames": [
+      {"node": "psb-sidebar-l", "theme": "light", "width": 292, "scale": 1, "content": "reference", "state": "rest"},
+      {"node": "psb-sidebar-d", "theme": "dark", "width": 292, "scale": 1, "content": "reference", "state": "rest"}
+    ],
+    "conditions": {
+      "themes": ["light", "dark"],
+      "widths": [292, 240],
+      "contents": ["reference", "long"],
+      "scales": [1, 1.25]
+    },
+    "states": {
+      "rest": "No pointer on the list and no keyboard focus.",
+      "hover-parent": "The pointer on the unfolded parent agent a1.",
+      "focus-parent": "Keyboard focus on the unfolded parent agent a1.",
+      "folded-parent": "a1's children folded with its chevron, so its badge speaks for them.",
+      "checkout-closed": "main's agent rows closed with its chevron, so its status badge counts them."
+    },
+    "rules": {
+      "childIndentPx": 18,
+      "rootsAligned": true,
+      "stableUnderHover": true,
+      "stableUnderFocus": true,
+      "noOverlap": true,
+      "sharedColumns": true,
+      "noSidewaysOverflow": true
+    },
+    "judgment": [
+      "Each reference, current Pen and actual trio: do spacing, weight, color and alignment carry the same intent?",
+      "Every difference visible between Pen and the actual screen: acceptable renderer difference, or drift to fix in Pen or code?",
+      "Long Korean titles at the narrow width: is what the truncation keeps still recognizable?",
+      "Hover and focus captures: is the feedback visible enough without moving anything?"
+    ]
+  }
+}

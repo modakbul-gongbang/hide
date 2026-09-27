@@ -1354,10 +1354,11 @@ function buildProjectsSidebar(tokens) {
       screenIconButton(`psb-settings-${s}`, 'settings'),
     ]);
     const list = frame(`psb-list-${s}`, 'Projects list', {width, layout: 'vertical', padding: [0, xs]}, [
-      allProjectsRow(`psb-all-${s}`, {count: '12 projects'}),
+      // Counts the rows below can produce: one pinned, herdr-ide and sasu, and three folded inactive projects.
+      allProjectsRow(`psb-all-${s}`, {count: '6 projects'}),
       section(`psb-sec-pin-${s}`, 'PINNED · 1'),
       folderRow(`psb-p-notes-${s}`, {name: 'team-notes', marks: {idle: 1}, purpose: '회의록 요약 정리'}),
-      section(`psb-sec-recent-${s}`, 'PROJECTS · RECENT ACTIVITY · 12'),
+      section(`psb-sec-recent-${s}`, 'PROJECTS · RECENT ACTIVITY · 5'),
       projectRow(`psb-p-herdr-${s}`, {name: 'herdr-ide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true, selected: true}),
       group(`psb-g-main-${s}`, [
         checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', marks: {question: 2, working: 4, idle: 1}, purpose: '사이드바 가독성 개선', expanded: true}),
