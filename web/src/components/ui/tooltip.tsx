@@ -47,9 +47,9 @@ const LAYER = '[data-radix-popper-content-wrapper], [role="dialog"], [role="aler
  * press opened. The hover delay that started before the press, and the focus
  * a closing menu hands back to its trigger, would otherwise open it over or
  * after whatever the press opened; Tab to the trigger later still shows it.
- * While open it is registered with the shell as a hint, not an Escape layer:
- * Escape closes it through the tooltip's own dismiss and still reaches the
- * terminal or screen it was meant for, and an Escape the shell consumes
+ * While open it is registered with the shell as a tooltip, not an Escape
+ * layer: Escape closes it through the tooltip's own dismiss and still reaches
+ * the terminal or screen it was meant for, and an Escape the shell consumes
  * closes it from `keyboard.ts` instead.
  */
 function useHintOpen() {
@@ -57,7 +57,7 @@ function useHintOpen() {
   const pressed = useRef(false);
   useEffect(() => {
     if (!open) return;
-    return useUiStore.getState().pushHint(() => setOpen(false));
+    return useUiStore.getState().pushTooltip(() => setOpen(false));
   }, [open]);
   const press = () => {
     pressed.current = true;
