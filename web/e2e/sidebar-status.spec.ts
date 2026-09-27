@@ -11,9 +11,11 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, screenshot } from "./wire";
+import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sidebarOverflow } from "./wire";
 
 test.describe.configure({ timeout: 150_000 });
+
+const LONG_TITLE = "사이드바 가독성 개선과 행 높이 고정을 확인하는 아주 긴 한글 작업 제목 with a long English tail for truncation";
 
 /** Sets and clears the status tokens one pane reports, the way the label plugin does. */
 function report(herdr: HerdrFixture, pane: string, set: Record<string, string>, clear: string[] = []): void {
@@ -44,8 +46,8 @@ test("a root waiting on its child, the badge's child list, and the progress line
     await expect(page.locator('[data-sidebar="agents"]')).toBeVisible({ timeout: 20_000 });
 
     // B1: the parent finished its own turn and its child is working.
-    report(herdr, parent, { status_done: "✓", progress: "하위 작업 위임 후 대기" });
-    report(herdr, child, { status_working: "●", progress: "계보 투영 구현 중" });
+    report(herdr, parent, { status_done: "✓", progress: "하위 작업 위임 후 대기", elapsed: "12m" });
+    report(herdr, child, { status_working: "●", progress: "계보 투영 구현 중", elapsed: "3m" });
     declareChild(herdr, child, parent);
     const parentRow = page.locator(`[data-agent-list] [data-pane="${parent}"]`);
     await expect(parentRow).toHaveAttribute("data-waiting", "true", { timeout: 20_000 });
@@ -112,6 +114,38 @@ test("a root waiting on its child, the badge's child list, and the progress line
     await expect(childRow.locator('[data-agent-line="request"]')).toHaveText("PR 병합 전 검증을 다시 돌려도 될까요?");
     await expect(parentRow.locator("[data-descendant-badge]")).toHaveCount(0);
     await screenshot(page, "sidebar-status-unfolded");
+
+    // sidebar-readability B2, B4, B14, B25: a long Korean and English title is
+    // cut on one line; the pointer and the keyboard move neither row, the
+    // child's request keeps its one line, and the unfolded chevron waits in
+    // a slot kept at rest until the pointer or the keyboard reaches the row.
+    report(herdr, child, { task: LONG_TITLE });
+    const childTitle = childRow.locator("[data-agent-title]");
+    await expect(childTitle).toHaveText(LONG_TITLE, { timeout: 20_000 });
+    const parts = [parentRow.locator("[data-agent-title]"), parentRow.locator("[data-agent-elapsed]"), childTitle, childRow.locator("[data-agent-elapsed]")];
+    const geometry = async () => [...(await rowGeometry(parentRow, childRow, parts)), Math.round((await childRow.boundingBox())!.height)];
+    const toggle = parentRow.locator(`[data-agent-tree-toggle="${parent}"]`);
+    await rest(page);
+    const atRest = await geometry();
+    await expect(toggle).toHaveCSS("opacity", "0");
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
+    await parentRow.hover();
+    await expect(toggle).toHaveCSS("opacity", "1");
+    expect(await geometry()).toEqual(atRest);
+    await childRow.hover();
+    expect(await geometry()).toEqual(atRest);
+    await rest(page);
+    await keyboardFocus(page, toggle);
+    await expect(toggle).toHaveCSS("opacity", "1");
+    expect(await geometry()).toEqual(atRest);
+    await keyboardFocus(page, childRow.locator(`[data-agent-open="${child}"]`));
+    expect(await geometry()).toEqual(atRest);
+    await rest(page);
+    expect(await childTitle.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+    await expect(childRow.locator('[data-agent-line="request"]')).toHaveCSS("white-space", "nowrap");
+    for (const width of ["240px", "var(--size-sidebar-min)"]) expect(await sidebarOverflow(page, width)).toEqual([]);
+    await screenshot(page, "sidebar-status-narrow");
+    await sidebarOverflow(page, "");
     // The chevron folds them away again.
     await parentRow.locator(`[data-agent-tree-toggle="${parent}"]`).click();
     await expect(childRow).toHaveCount(0, { timeout: 15_000 });

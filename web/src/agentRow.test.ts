@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { badgeLabel, badgeParts, branchChip, directChildren, rowAccessibleName, lineShownAtRest, lineTone, markTone, rowLine, sectionCount, sectionTree } from "./agentRow";
+import { badgeLabel, badgeParts, branchChip, directChildren, rowAccessibleName, lineShownAtRest, lineTone, markTone, rowLine, sectionCount, sectionTree, sidebarLine, unfoldedRows } from "./agentRow";
 import type { AgentRow } from "./snapshot";
 
 function row(pane: string, patch: Partial<AgentRow> = {}): AgentRow {
@@ -119,5 +119,29 @@ describe("the tree a group section draws (D-03, B6)", () => {
   it("lists only the direct children still present for the popover", () => {
     const withGone = { ...parent, lineage_child_pane_ids: ["c1", "gone", "c2"] };
     expect(directChildren(withGone, (id) => all.get(id)).map((child) => child.pane_id)).toEqual(["c1", "c2"]);
+  });
+});
+
+describe("the sidebar row's line (sidebar-readability D-4, B4, B6)", () => {
+  it("draws a request and news from the start and never a quiet sentence, read or selected", () => {
+    const asking = row("q", { demand: "approval", detail: "프로덕션 배포를 승인해 주세요", unread: false });
+    expect(sidebarLine(asking)).toEqual({ text: "프로덕션 배포를 승인해 주세요", mode: "request" });
+    expect(sidebarLine(row("n", { detail: "hide 앱을 다시 열었고 정상 실행 중", unread: true }))?.mode).toBe("news");
+    expect(sidebarLine(row("s", { detail: "hide 앱을 다시 열었고 정상 실행 중", unread: false }))).toBeNull();
+    expect(sidebarLine(row("e", { detail: "   " }))).toBeNull();
+  });
+});
+
+describe("the Projects lineage fold (sidebar-readability D-6, B12)", () => {
+  const walk = (rows: [AgentRow, number][]) => unfoldedRows(rows.map(([agent, depth]) => ({ agent, depth }))).map((drawn) => drawn.agent.pane_id);
+
+  it("leaves out every descendant of a folded parent, the default, and draws the next root", () => {
+    expect(walk([[row("a"), 0], [row("b"), 1], [row("c"), 2], [row("d"), 0]])).toEqual(["a", "d"]);
+    expect(walk([[row("a", { lineage_collapsed: true }), 0], [row("b"), 1], [row("d"), 0]])).toEqual(["a", "d"]);
+  });
+
+  it("opens one level at a time: an unfolded parent shows its children and a folded child keeps its own", () => {
+    const open = { lineage_collapsed: false };
+    expect(walk([[row("a", open), 0], [row("b"), 1], [row("c"), 2], [row("e", open), 1], [row("f"), 2], [row("d"), 0]])).toEqual(["a", "b", "e", "f", "d"]);
   });
 });
