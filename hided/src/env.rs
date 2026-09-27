@@ -37,7 +37,7 @@ pub const REGISTRY: &[EnvKey] = &[
     EnvKey {
         key: HERDR_BIN_PATH,
         required: false,
-        format: "absolute path of the herdr binary; Herdr sets it in every pane it manages",
+        format: "absolute path of an executable herdr binary; Herdr sets it in every pane it manages, and a daemon refuses to start on a path that no longer exists",
         absent_behavior: "The first `herdr` on PATH attaches pane terminals; with neither, no pane terminal can attach and the daemon logs it",
     },
     EnvKey {
@@ -371,6 +371,23 @@ fn valid_program_path(path: &Path) -> bool {
     true
 }
 
+/// Why the herdr binary the environment resolved cannot be run, or `None`
+/// when there is none or it runs. Herdr hands every pane the path its server
+/// started from, and that path dies when the app bundle is replaced under a
+/// running server, so a daemon started inside a pane would inherit a name
+/// with nothing behind it and every pane attach would fail one by one. The
+/// check runs where a daemon is about to rely on the binary, not on every
+/// CLI call: a Workspace command never runs herdr.
+pub fn herdr_bin_error(env: &Env) -> Option<String> {
+    let path = env.herdr_bin_path.as_ref()?;
+    (!valid_program_path(path)).then(|| {
+        format!(
+            "{HERDR_BIN_PATH}: {} is not an executable file; the Herdr that set it has moved, so unset it or name the herdr this app ships",
+            path.display()
+        )
+    })
+}
+
 fn first_on_path(path: &str, name: &str) -> Option<PathBuf> {
     path.split(':')
         .filter(|dir| !dir.is_empty())
@@ -434,6 +451,41 @@ mod tests {
         );
         let err = from_map(&[("HOME", "/Users/example"), ("HERDR_BIN_PATH", "")]).unwrap_err();
         assert_eq!(err[0].key, HERDR_BIN_PATH);
+    }
+
+    #[test]
+    fn stale_herdr_bin_path_is_named_and_a_runnable_one_passes() {
+        let dir = tempfile::tempdir().unwrap();
+        let gone = dir.path().join("herdr-runtime/herdr");
+        let env = from_map(&[
+            ("HOME", "/Users/example"),
+            ("HERDR_BIN_PATH", &gone.display().to_string()),
+        ])
+        .unwrap();
+        let error = herdr_bin_error(&env).expect("a path with nothing behind it is an error");
+        assert!(error.starts_with("HERDR_BIN_PATH: "), "{error}");
+        assert!(error.contains(&gone.display().to_string()), "{error}");
+
+        let runnable = dir.path().join("herdr");
+        std::fs::write(&runnable, b"#!/bin/sh\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&runnable, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let env = from_map(&[
+            ("HOME", "/Users/example"),
+            ("HERDR_BIN_PATH", &runnable.display().to_string()),
+        ])
+        .unwrap();
+        assert_eq!(herdr_bin_error(&env), None);
+
+        let env = from_map(&[("HOME", "/Users/example"), ("PATH", "/nonexistent")]).unwrap();
+        assert_eq!(
+            herdr_bin_error(&env),
+            None,
+            "no binary at all is the logged degraded state, not a refusal"
+        );
     }
 
     #[test]
