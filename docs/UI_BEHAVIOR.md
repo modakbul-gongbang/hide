@@ -50,7 +50,17 @@ Closing the panel closes no view, document, or pane, and the keyboard goes back 
 Changing the panel's state only changes space, and expanding never makes a split; a split comes only from a split command or a drop on an edge.
 Inside the panel the View areas behave as they do anywhere else: tabs, splits, preview, dirty state and browser displays, each page inside the panel's bounds.
 
-An Agent tab carries its provider's mark (Claude, Codex) or a neutral terminal mark for any other kind, and never replaces Herdr's own tab name; its tooltip and accessible name carry the kind, the full name, and the agent's state.
+An Agent tab shows the focused pane's status mark, provider logo, then title, using the sidebar row's title and mark rules.
+A custom Herdr label wins; an empty, numeric, or `Tab N` label instead follows the focused pane's agent title, foreground process name, then `Tab N` using Herdr's stable number.
+A plain terminal tab shows the terminal icon and that name; terminal titles are never used to guess a process.
+Local and remote process names are read only for focused panes of attached tabs, outside the runtime lock, on focus or agent-state changes and a 30-second recheck.
+The foreground process is the process-group leader, or the last returned process when the leader is absent; its name is the basename of `argv0`, falling back to `name` only when `argv0` is empty, and to `Tab N` when both are empty.
+The tooltip and accessible name carry the kind, full name and agent state; widths, scrolling, truncation and close behavior stay the same.
+Every Herdr tab's context menu contains New tab, Rename…, Copy name, and Close tab….
+Rename opens an inline field with the displayed name selected: Enter saves to that host's Herdr, an empty name restores automatic naming, and Escape or blur cancels editing.
+While saving, the committed name stays unchanged; a refusal or timeout keeps the entered text with “이름을 저장하지 못했습니다 · 다시 시도” below it, Enter retries, and Escape returns to the prior name.
+Failure details go to diagnostics, with no banner; a successful name survives reconnect while Herdr keeps the tab.
+Copy name copies the displayed name.
 A View tab carries the file-type mark, and a diff tab the comparison mark, so a kind is never told by color alone.
 Its title is cut at the tail to fit, and its tooltip and accessible name carry the kind, the full path, and `Preview` or `Unavailable` while the view is one, so a long path stays readable.
 A dirty view shows a warning-colored mark after its title.

@@ -56,6 +56,7 @@ export function EntryContextMenu<Id extends string>({
   onSelect,
   children,
   className,
+  onCloseAutoFocus,
   ...data
 }: {
   label: string;
@@ -63,6 +64,7 @@ export function EntryContextMenu<Id extends string>({
   onSelect: (id: Id) => void;
   children: ReactNode;
   className?: string;
+  onCloseAutoFocus?: (event: Event) => void;
 } & Record<`data-${string}`, string>) {
   const [entries, setEntries] = useState<MenuEntry<Id>[]>([]);
   return (
@@ -71,7 +73,7 @@ export function EntryContextMenu<Id extends string>({
         {children}
       </ContextMenuTrigger>
       {entries.length ? (
-        <ContextMenuContent aria-label={label} {...data}>
+        <ContextMenuContent aria-label={label} onCloseAutoFocus={onCloseAutoFocus} {...data}>
           <EntryItems items={entries} onSelect={onSelect} parts={{ Item: ContextMenuItem, Separator: ContextMenuSeparator }} />
         </ContextMenuContent>
       ) : null}

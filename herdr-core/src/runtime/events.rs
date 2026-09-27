@@ -160,6 +160,13 @@ pub(super) struct FocusTabPayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct RenameTabPayload {
+    pub(super) request_id: String,
+    pub(super) tab_id: String,
+    pub(super) label: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct ReorderTabPayload {
     pub(super) workspace_id: String,
     pub(super) checkout_id: String,
@@ -887,6 +894,7 @@ pub(super) enum Event {
     FocusCheckout(FocusCheckoutPayload),
     FocusTab(FocusTabPayload),
     ReorderTab(ReorderTabPayload),
+    RenameTab(RenameTabPayload),
     FocusDevice(FocusDevicePayload),
     InactiveCheckoutsToggle(InactiveCheckoutsTogglePayload),
     InactiveProjectsToggle(InactiveProjectsTogglePayload),
@@ -1047,6 +1055,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "create_tab" => decode!(CreateTabPayload, CreateTab),
         "focus_checkout" => decode!(FocusCheckoutPayload, FocusCheckout),
         "focus_tab" => decode!(FocusTabPayload, FocusTab),
+        "rename_tab" => decode!(RenameTabPayload, RenameTab),
         "reorder_tab" => decode!(ReorderTabPayload, ReorderTab),
         "focus_device" => decode!(FocusDevicePayload, FocusDevice),
         "inactive_checkouts_toggle" => {
@@ -1654,6 +1663,7 @@ impl Runtime {
                     Some(PendingViewFocus::new(payload.checkout_id, payload.tab_id));
                 true
             }
+            Event::RenameTab(payload) => self.rename_tab(payload),
             Event::ReorderTab(payload) => self.reorder_tab(payload),
             Event::FocusDevice(payload) => {
                 self.bring_device_forward(payload.device_id);

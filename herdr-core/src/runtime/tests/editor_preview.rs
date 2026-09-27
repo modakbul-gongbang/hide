@@ -73,8 +73,8 @@ fn a_single_click_opens_one_preview_tab_and_the_next_replaces_it_in_place() {
     assert_eq!(
         strip_previews(&runtime, &checkout_id),
         vec![
-            ("w-order:t1".to_owned(), false),
-            ("w-order:t2".to_owned(), false),
+            ("Tab 1".to_owned(), false),
+            ("Tab 2".to_owned(), false),
             ("notes.md".to_owned(), true)
         ]
     );
@@ -330,9 +330,9 @@ fn dragging_a_preview_tab_promotes_it() {
     assert_eq!(
         strip_previews(&runtime, &checkout_id),
         vec![
-            ("w-order:t1".to_owned(), false),
+            ("Tab 1".to_owned(), false),
             ("notes.md".to_owned(), false),
-            ("w-order:t2".to_owned(), false)
+            ("Tab 2".to_owned(), false)
         ]
     );
     assert_eq!(tabs(&runtime), vec![("notes.md".to_owned(), false, false)]);

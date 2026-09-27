@@ -45,6 +45,7 @@ pub struct BackgroundRead<Q, A> {
     read: Arc<dyn Fn(&Q) -> A + Send + Sync>,
     inflight: Option<(Q, Receiver<A>)>,
     settled: Option<(Q, Instant)>,
+    worker: Option<std::thread::JoinHandle<()>>,
 }
 
 impl<Q, A> BackgroundRead<Q, A>
@@ -63,6 +64,7 @@ where
             read: Arc::new(read),
             inflight: None,
             settled: None,
+            worker: None,
         }
     }
 
@@ -116,7 +118,10 @@ where
                     let _ = sender.send(read(&worker_request));
                 });
             match spawned {
-                Ok(_) => self.inflight = Some((request, receiver)),
+                Ok(worker) => {
+                    self.worker = Some(worker);
+                    self.inflight = Some((request, receiver));
+                }
                 // A thread the OS refused is a real failure, not an empty
                 // answer: it is stated once here and the next wake retries.
                 Err(error) => crate::diagnostic!(serde_json::json!({
@@ -127,6 +132,18 @@ where
             }
         }
         answer
+    }
+
+    /// A bounded reader can cancel its batch, then join outside the runtime
+    /// lock so no socket request survives its coordinator's shutdown.
+    pub(crate) fn join_pending(&mut self) {
+        if let Some(worker) = self.worker.take()
+            && worker.join().is_err()
+        {
+            crate::diagnostic!(
+                serde_json::json!({"component":"reader", "kind":"worker.join_failed"})
+            );
+        }
     }
 }
 
