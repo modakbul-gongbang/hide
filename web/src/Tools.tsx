@@ -58,15 +58,16 @@ export function Tools({
     const active = document.activeElement;
     invoker.current = active instanceof HTMLElement && active !== document.body && !panel.current?.contains(active) ? active : null;
     panel.current?.focus({ preventScroll: true });
-    // A press on the column toggle is its to answer, and a dialog the tools
-    // opened (Move to Trash) is part of them. A press elsewhere closes the
-    // overlay and keeps the focus it gives; a press on something that takes
+    // A press on the column toggle is its to answer, and a menu or a dialog
+    // the tools opened (a row's menu, Move to Trash) is part of them. A
+    // press elsewhere closes the overlay and keeps the focus it gives; a
+    // press on something that takes
     // no focus would leave the keyboard nowhere once the overlay is gone, so
     // it goes back where the overlay was asked for (B12). The check waits
     // for the press to have focused what it landed on.
     const outside = (event: PointerEvent) => {
       const target = event.target instanceof Element ? event.target : null;
-      if (!target || panel.current?.contains(target) || target.closest('[data-tools-toggle], [role="dialog"], [role="alertdialog"]')) return;
+      if (!target || panel.current?.contains(target) || target.closest('[data-tools-toggle], [role="menu"], [role="dialog"], [role="alertdialog"]')) return;
       useUiStore.getState().closeTools();
       window.setTimeout(() => {
         const active = document.activeElement;

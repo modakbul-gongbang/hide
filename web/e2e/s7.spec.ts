@@ -1134,6 +1134,17 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     await expect(overlay).toBeVisible();
     await page.locator("[data-document-header]").click({ position: { x: 3, y: 3 } });
     await expect(overlay).toHaveCount(0);
+    // A row's menu is the overlay's own, so choosing from it leaves the
+    // overlay open for what the item started.
+    await toggle.click();
+    await explorerRow(page, stack, "a.txt").click({ button: "right" });
+    await page.locator('[data-explorer-menu] [data-menu-item="rename"]').click();
+    await expect(overlay.locator('[data-explorer-draft="rename"]')).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(overlay.locator("[data-explorer-draft]")).toHaveCount(0);
+    await expect(overlay.locator("[data-explorer-tree]")).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(overlay).toHaveCount(0);
 
     // Widening brings back what the core stores: the pinned panel beside the
     // agents, both areas at their ratio and the tool column; nothing narrow

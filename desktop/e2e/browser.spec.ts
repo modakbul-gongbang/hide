@@ -219,15 +219,16 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   await expect.poll(async () => (await viewOf(`${origin}/a.html`)).visible).toBe(false);
 
   // Two View areas side by side need the Workspace's width: the side panel
-  // is expanded over it and the Explorer steps aside until it is used below.
-  // In this window the panel already covers the body, so its Expand is not
-  // drawn; the palette stores the state for when the Explorer leaves.
+  // is expanded over it. In this window the panel already covers the body,
+  // so its Expand is not drawn and the palette stores the state; the tools
+  // fold into an overlay there, closed until asked for (issue 170).
   await page.keyboard.press("Meta+KeyK");
   await page.keyboard.type("Expand side panel");
   await page.locator('[data-palette-row="command:panel:expanded"]').click();
   await expect(page.locator("[data-palette-input]")).toHaveCount(0);
-  await page.locator('[data-tool-toggle="explorer"][aria-pressed="true"]').click();
-  await expect(page.locator('[data-tool-toggle="explorer"]')).toHaveAttribute("aria-pressed", "false");
+  const toolsShown = page.locator('[data-tools-toggle="on"]');
+  if (await toolsShown.count()) await toolsShown.click();
+  await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
 
   // Split right moves B into a new area: both pages show, neither loaded again.
   await tab(page, "Page B").click({ button: "right" });
@@ -297,7 +298,8 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   await windowShot("browser-load-failed");
 
   // The Explorer opens an HTML file of the checkout as a page.
-  await page.locator('[data-tool-toggle="explorer"]').click();
+  await page.locator('[data-tools-toggle="off"]').click();
+  await page.locator('[data-tool-tab="explorer"]').click();
   await page.locator(`[data-explorer-row="${path.join(checkout, "리포트 1.html")}"]`).click({ button: "right" });
   await page.locator('[data-explorer-menu] [data-menu-item="open-browser"]').click();
   await expect(tab(page, "Local report")).toBeVisible({ timeout: 20_000 });
@@ -309,7 +311,8 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
 
   // Closing B's display ends its renderer process. Without the Explorer both
   // areas show again, B's among them.
-  await page.locator('[data-tool-toggle="explorer"][aria-pressed="true"]').click();
+  await page.locator('[data-tools-toggle="on"]').click();
+  await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
   await expect(tab(page, "Page B")).toBeVisible();
   await tab(page, "Page B").click({ button: "right" });
   await page.locator('[role="menu"] [data-menu-item="close_view"]').click();

@@ -540,14 +540,17 @@ function DraftRowView({
         className="h-auto min-w-0 flex-1 rounded-xs border-primary px-xxs py-none"
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
-          if (event.key === "Enter") {
-            event.preventDefault();
-            finish(true);
-          } else if (event.key === "Escape") {
-            event.preventDefault();
-            finish(false);
+          if (event.key !== "Enter" && event.key !== "Escape") {
+            event.stopPropagation();
+            return;
           }
+          event.preventDefault();
           event.stopPropagation();
+          finish(event.key === "Enter");
+          // The keyboard goes back to the tree the draft sits in, not to the
+          // page, where a floating Explorer could no longer hear its Escape.
+          // The draft is already finished, so the blur this causes is ignored.
+          event.currentTarget.closest<HTMLElement>("[data-explorer-tree]")?.focus({ preventScroll: true });
         }}
         onBlur={() => finish(true)}
       />
