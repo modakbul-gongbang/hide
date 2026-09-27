@@ -440,9 +440,9 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await expect(fontSize).toHaveAttribute("aria-valuenow", "17");
     await page.keyboard.press("Escape");
     await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
-    await expect.poll(() => page.evaluate(() => document.documentElement.style.getPropertyValue("--interface-scale"))).not.toBe("");
+    // The scale is already set at the default size, so wait for its effect, not its presence.
+    await expect.poll(() => probeTextSize(page, "main")).toBeGreaterThan(outsideAtDefault);
     await rest(page);
-    expect(await probeTextSize(page, "main")).toBeGreaterThan(outsideAtDefault);
     expect(await probeTextSize(page, "nav[data-sidebar]")).toBe(12);
     expect(await sidebarTextSizes(page)).toEqual(projectsAtDefault.sizes);
     expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(projectsAtDefault.row);
