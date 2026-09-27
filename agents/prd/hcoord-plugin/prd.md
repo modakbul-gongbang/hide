@@ -25,7 +25,7 @@ hcoord는 sasu에서 나와 hide 저장소 `plugins/hcoord/`의 독립 패키지
 - watch 담당자나 hcoord 참여자 이름은 토큰으로 기록하지 않는다. Observer 인계 뒤에도 자식은 만든 부모 밑에 보인다. 재검토: 다음 PRD에서 "맡고 있다"의 기준(생성 대 watch)을 정할 때 (D-07).
 - sasu 저장소의 hcoord 코드 삭제와 sasu의 설치된 hcoord 호출 전환은 sasu 저장소의 별도 변경이다. 그때까지 sasu 사본은 동결되고 토큰을 쓰지 않는다. 재검토: 이 PRD 머지 직후 sasu에서 (D-15).
 - npm 레지스트리 게시는 하지 않는다. hide 없이 쓰는 사람은 Herdr 플러그인 설치나 checkout에서 설치한다. 재검토: 사용자가 게시 계정과 이름을 정할 때 (D-13).
-- 다른 기기의 부모를 가리키는 토큰은 쓰지 않는다: hide 계보는 기기를 구분하지 않고 pane id로만 부모를 찾아(`sidebar.rs::apply_lineage`) 다른 기기의 같은 id와 충돌한다. 원격 자식은 hide에서 부모 없는 행으로 보인다. 재검토: hide가 기기별 계보를 지원할 때 (D-08).
+- hide가 다른 기기의 부모를 찾아 그 밑에 자식을 그리는 일은 다음 PRD다: 지금 hide 계보는 기기를 구분하지 않고 pane id로만 부모를 찾는다(`sidebar.rs::apply_lineage`). 이 PRD 뒤에도 원격 자식은 hide에서 잠시 부모 없는 행으로 보이지만, 필요한 토큰은 이 PRD부터 기록된다. 재검토: 다음 PRD 착수 시 (D-08, D-17).
 - macOS 앱 소속 서비스 등록(SMAppService, Electron `agentService`)은 쓰지 않는다: ad-hoc 서명 앱에서 동작이 확인되지 않았고 공증은 선행 PRD도 제외했다. 로그인 항목에 "hide"로 보이지 않고, 앱을 지우면 LaunchAgent가 남아 README의 제거 명령으로 지운다. 재검토: 공증 배포가 목표가 될 때 (D-10).
 - Swift 앱에는 hcoord를 넣지 않는다: 선행 PRD가 Swift 셸을 지우며, 그 전까지는 지금처럼 따로 설치한 hcoord를 쓴다 (D-06).
 - hcoord의 명령, 옵션, 출력, ledger 형식, 원격 프로토콜, 상한(MAX_*)은 이 PRD가 명시한 것 외에 바꾸지 않고 새 조율 기능도 더하지 않는다. Windows 지원은 지금처럼 없다 (D-15).
@@ -41,9 +41,9 @@ hcoord는 sasu에서 나와 hide 저장소 `plugins/hcoord/`의 독립 패키지
 | D-04 | hide 앱은 hcoord가 설치되고 데몬이 도는 상태를 스스로 만든다. | 사용자: "hide 앱에서는 무조건 이 plugin이 설치된채로 진행되게 하긴 해야돼" |
 | D-05 | 앱 안의 hcoord는 Electron hide 앱에 이미 있는 Node로 돈다(`ELECTRON_RUN_AS_NODE=1`). 사용자 설치 Node(경로가 박혀 nvm 제거 시 중단, 없는 사용자 있음), Node 따로 번들(+112MB), bun 단일 실행 파일(2026-09-27 실측: `daemon stop` 후 10초 넘게 살아 있고 SIGTERM 3초 무시)은 기각. 같은 날 Electron 44 앱(Node 24.21)에서 데몬 시작·응답·즉시 종료를 확인했다. | 사용자: "그 설치된 node로 하게 하면안돼? 만약 넣으면 아예 새로설치해서 용량을 더 먹고" → 답변 뒤 "ㅇㅇㅇ 그렇게 해보자~" |
 | D-06 | 구현은 `agents/prd/electron-app-swift-removal/prd.md`(Electron이 유일한 배포 앱, Resources에 hided·hide·herdr 내장, ad-hoc 서명, Herdr pin `contracts/herdr-bundle.json`)가 main에 머지된 뒤 그 위에서 한다. Swift 앱 기간에는 따로 설치한 hcoord를 그대로 쓴다. | 위 D-05 답변의 수용; 저장소 사실: 그 PRD의 D-03, D-06, D-08 |
-| D-07 | 토큰 규격: 같은 Herdr 서버에서 hcoord가 자식을 spawn하거나 `--parent`로 register하면 자식 pane에 source `hcoord`로 `parent_pane=<부모 pane id>`를 쓴다. 토큰 이름은 hide의 기존 계약 그대로이고, 참여자가 떠나도(`agent end`) 지우지 않으며 pane과 함께 사라진다. 규격 문서는 `plugins/hcoord`가 소유하고 hide 문서는 인용한다. | 가정: 되돌릴 수 있음; 저장소 사실 `docs/status-model.md` "Where a parent comes from", Herdr CLI 문서(토큰은 source별, 재시작·live handoff 후에도 유지) |
-| D-08 | 부모와 자식이 다른 기기(다른 Herdr 서버)면 토큰을 쓰지 않고 결과에 그 이유를 적는다. | 가정; 저장소 사실 `herdr-core/src/sidebar.rs` apply_lineage의 기기 무구분 pane id 맵 |
-| D-09 | 토큰 기록 실패는 에이전트 시작을 되돌리지 않고, 명령 결과와 ledger event에 따로 보고한다. 같은 intent 재실행은 에이전트를 다시 띄우지 않고 토큰만 다시 쓴다. 데몬 시작 때 ledger에 부모가 있는 살아 있는 같은 서버 참여자 pane에 토큰이 없으면 채운다. | 가정: engineering 규칙 10·11; sasu `implement/herdr.ts` spawnImplementor의 비치명 기록 선례 |
+| D-07 | 토큰 규격: hcoord가 자식을 spawn하거나 `--parent`로 register하면 자식 pane에 source `hcoord`로 `parent_pane=<부모 pane id>`를 쓴다. 토큰 이름은 hide의 기존 계약 그대로이고, 참여자가 떠나도(`agent end`) 지우지 않으며 pane과 함께 사라진다. 규격 문서는 `plugins/hcoord`가 소유하고 hide 문서는 인용한다. | 가정: 되돌릴 수 있음; 저장소 사실 `docs/status-model.md` "Where a parent comes from", Herdr CLI 문서(토큰은 source별, 재시작·live handoff 후에도 유지) |
+| D-08 | 다른 기기의 자식도 부모 밑에 보이게 한다. 부모와 자식이 다른 기기(다른 Herdr 서버)면 hcoord가 자식 기기의 Herdr에 `parent_pane`과 함께 부모 기기의 고유 id `parent_machine=<machine id>`를 쓴다. machine id는 macOS의 IOPlatformUUID, Linux의 `/etc/machine-id`이며, 누구나 hcoord 없이 같은 값을 구할 수 있게 규격 문서가 계산법을 정한다. 같은 기기면 `parent_machine`을 쓰지 않는다. 호스트 이름(네트워크마다 바뀜)과 Herdr 저장 기기 이름(hide 기기 목록과 이름공간이 다름)은 기각. 처음 안(다른 기기면 기록하지 않음)은 사용자 요청으로 기각. | 사용자: "부모 밑에 다른 기기 자식은  안보여? ㅠㅠ 보이게 할 수는 없나!"; 식별자 선택은 가정 |
+| D-09 | 토큰 기록 실패는 에이전트 시작을 되돌리지 않고, 명령 결과와 ledger event에 따로 보고한다. 같은 intent 재실행은 에이전트를 다시 띄우지 않고 토큰만 다시 쓴다. 데몬 시작 때 ledger에 부모가 있는 살아 있는 참여자 pane(다른 기기 포함)에 토큰이 없으면 채운다. | 가정: engineering 규칙 10·11; sasu `implement/herdr.ts` spawnImplementor의 비치명 기록 선례 |
 | D-10 | 자동 실행은 hcoord의 기존 사용자 LaunchAgent(`com.hcoord.daemon`, RunAtLoad, 비정상 종료만 재시작, 수동 정지 표시)를 쓴다. 패키지된 앱은 열릴 때마다 그 LaunchAgent를 앱 실행 파일 + `ELECTRON_RUN_AS_NODE=1` + 번들 CLI로 맞춘다. 응답하는 데몬이 같거나 새 버전이면 건드리지 않고, 없거나 오래됐거나 버전을 말하지 않으면 교체하며, 수동 정지 표시가 있으면 켜지 않는다. SMAppService는 기각(Non-goals). | 가정; 저장소 사실 sasu `cli/src/hcoord/platform.ts` LaunchAgent, 현재 live plist가 nvm node + sasu dist를 가리킴 |
 | D-11 | `hcoord daemon status --json`이 데몬의 hcoord 버전과 로컬 API 버전을 보고한다(D-10의 비교 근거). | 가정; 저장소 사실: 지금 status는 원격 protocol만 보고 |
 | D-12 | 앱은 `~/.hcoord/bin/hcoord`(hcoord가 원격 호출에 이미 쓰는 고정 경로)를 앱 런타임으로 번들 CLI를 실행하는 스크립트로 맞춘다. PATH는 바꾸지 않는다. | 가정; 저장소 사실 sasu `scripts/install-local-skills.mjs:208-224` |
@@ -51,9 +51,9 @@ hcoord는 sasu에서 나와 hide 저장소 `plugins/hcoord/`의 독립 패키지
 | D-14 | Herdr 호출: `HERDR_BIN_PATH`가 있으면 그 바이너리를 쓰고(앱은 번들 herdr를 넘김), 없으면 PATH의 `herdr`. 데몬 환경에 `HERDR_SOCKET_PATH`가 있으면 로컬 기본 서버는 그 소켓이다. | 가정; 관찰 2026-09-27: 격리 소켓을 줘도 hostScope "default"가 변수를 지워 라이브 pane을 읽음 |
 | D-15 | 옮기는 범위: `cli/src/hcoord/*`, hcoord 단위·e2e 테스트와 helper, `docs/hcoord.md`, channel adapter 예제. hcoord가 쓰던 sasu 코드(Herdr 어댑터 일부, launchd 수렴)는 hcoord 안으로 복사하고 sasu에는 sasu가 쓰는 것만 남긴다. `sasu-on-hcoord` e2e는 sasu에 남는다. | 가정; 조사: `platform.ts`·`herdr.ts`·`remote.ts`가 `implement/herdr`·`support/launchd`를 import |
 | D-16 | 검증: `plugins/hcoord`를 pnpm workspace에 넣고 typecheck·단위·e2e를 저장소 검증 명령과 CI의 필수 lane에서 돌린다. 지금은 어떤 lane도 `plugins/` 아래 TS를 보지 않는다. | 가정; 저장소 사실 `pnpm-workspace.yaml`, `.github/workflows/pr.yml` |
-| D-17 | 이 PRD는 두 PRD 중 첫째다(hcoord 이전·토큰 기록·앱 번들과 자동 실행). hide 화면·Fork·SessionStart 안내는 둘째 PRD다. | 대화: "PRD 1: hcoord를 옮기고, pane에 기록하게 하고, hide 앱에 넣기" 안내 뒤 사용자 "ㅇㅇㅇ 그렇게 해보자~" |
+| D-17 | 이 PRD는 두 PRD 중 첫째다(hcoord 이전·토큰 기록·앱 번들과 자동 실행). hide 화면·Fork·SessionStart 안내, 그리고 hide가 (기기, pane id)로 부모를 찾아 다른 기기의 자식을 부모 밑에 그리고 기기 간 같은 pane id가 섞이지 않게 하는 일은 둘째 PRD다. | 대화: "PRD 1: hcoord를 옮기고, pane에 기록하게 하고, hide 앱에 넣기" 안내 뒤 사용자 "ㅇㅇㅇ 그렇게 해보자~" |
 | D-18 | 배포는 `agents/config.json` mode pr(브랜치 접두 gen-prd, CI 감시)로 PR을 열고, 머지는 사용자 확인 뒤에 한다. 자동 머지 권한은 이 PRD에 주어지지 않았다. | 가정; `agents/config.json` |
-| D-19 | 원칙 intake: oh-my-principle 654485f의 `engineering/principles.md` 전체와 `engineering/practices/process.md`를 읽었다. 규칙 14·process 실천은 데몬 소유자를 launchd로 두는 D-10과 B15·B16에, 규칙 4·10은 B7·B12에, 규칙 11은 B7에, 규칙 15는 기존 상한 유지(Non-goals)에, 규칙 1은 sasu 사본 제거를 전환 경로로 둔 Non-goals에 반영됐다. design/principles.md는 새 화면이 없어 번역하지 않았다. | 가정 |
+| D-19 | 원칙 intake: oh-my-principle 654485f의 `engineering/principles.md` 전체와 `engineering/practices/process.md`를 읽었다. 규칙 14·process 실천은 데몬 소유자를 launchd로 두는 D-10과 B13·B14에, 규칙 4·10은 B5·B12·B15에, 규칙 11은 B5에, 규칙 13은 호스트 이름 대신 기기 고유 id를 쓰는 D-08에, 규칙 15는 기존 상한 유지(Non-goals)에, 규칙 1은 sasu 사본 제거를 전환 경로로 둔 Non-goals에 반영됐다. design/principles.md는 새 화면이 없어 번역하지 않았다. | 가정 |
 | D-20 | `HCOORD_HOME`이 설정되면 LaunchAgent label과 plist 경로가 그 데이터 폴더에 묶인 별도 이름이 되어, 기본 설치의 `com.hcoord.daemon`과 겹치지 않는다(격리 검증과 나란한 설치를 위해). | 가정; 저장소 사실: 지금 label은 `com.hcoord.daemon` 고정(`platform.ts:9`) |
 
 ## Behaviors
@@ -63,11 +63,11 @@ hcoord는 sasu에서 나와 hide 저장소 `plugins/hcoord/`의 독립 패키지
 | B1 | `plugins/hcoord`에서 빌드한 `hcoord`가 sasu 판과 같은 명령·옵션·JSON 모양으로 동작하고(status, agent register·spawn·list·show·end, watch, request, inbox, graph, events, daemon start·stop·status), 지금 `~/.hcoord`의 ledger·outbox를 그대로 읽어 기존 참여자·watch·요청이 이어진다. | D-02, D-03, D-15 |
 | B2 | `hcoord agent spawn --parent <P>`로 같은 서버에 자식을 띄우면(worktree spawn 포함) 자식 pane의 토큰에 source `hcoord`로 `parent_pane=<P의 pane id>`가 있고, hide 사이드바는 기존 규칙대로 그 자식을 P 밑에 둔다. | D-01, D-07 |
 | B3 | 이미 떠 있는 pane을 `hcoord agent register --parent <P>`로 등록하면 같은 토큰이 쓰이고, 같은 pane·세션을 다시 등록해도 토큰이 같은 값으로 수렴한다. | D-07, D-09 |
-| B4 | 부모와 자식이 다른 기기면 토큰이 쓰이지 않고, 명령 결과 JSON이 그 이유를 이름으로 말하며, 에이전트 시작·등록은 그대로 성공한다. | D-08 |
+| B4 | 이 Mac의 부모가 `--machine <원격>`으로 원격 기기에 자식을 띄우거나 등록하면, 원격 기기의 Herdr에서 자식 pane의 토큰에 `parent_pane=<부모 pane id>`와 `parent_machine=<이 Mac의 machine id>`가 있다. 같은 기기의 자식에는 `parent_machine`이 없다. 원격 토큰 쓰기가 실패하면 B5와 같이 보고된다. | D-08, D-09 |
 | B5 | 토큰 쓰기가 Herdr 거부나 무응답으로 실패하면 에이전트는 떠 있고, 명령 결과가 토큰 기록 실패와 다음 행동(같은 intent로 재실행)을 말하고, ledger event로 남는다. 같은 intent로 재실행하면 새 pane이나 새 에이전트 없이 토큰만 쓰인다. | D-09 |
-| B6 | 데몬이 시작되면 ledger에 부모가 기록된, 살아 있고 같은 서버에 있는 참여자 pane 중 토큰이 없는 것에 토큰이 채워지고, 채운 수와 실패 수가 로그 event로 남는다. | D-09 |
+| B6 | 데몬이 시작되면 ledger에 부모가 기록된, 살아 있는 참여자 pane(원격 기기 포함, 연결된 기기만) 중 토큰이 없는 것에 토큰이 채워지고, 채운 수와 실패 수가 로그 event로 남는다. | D-09 |
 | B7 | `agent end`로 참여자가 떠나도 자식 pane의 `parent_pane`은 남고, pane이 닫히면 Herdr와 함께 사라진다. | D-07 |
-| B8 | hcoord가 설치되지 않은 머신에서도 `herdr agent list`의 토큰에서 부모 관계를 읽을 수 있고, `plugins/hcoord`의 토큰 규격 문서가 이름·값·작성자·기기 조건·수명을 정하며, hide의 `docs/status-model.md`와 `docs/ARCHITECTURE.md`는 그 문서를 인용한다. | D-01, D-07 |
+| B8 | hcoord가 설치되지 않은 머신에서도 `herdr agent list`의 토큰에서 부모 관계를 읽을 수 있고, `plugins/hcoord`의 토큰 규격 문서가 이름·값·작성자·기기 조건·수명과 machine id 계산법을 정하며, `hcoord daemon status --json`이 자기 기기의 machine id를 보이고, hide의 `docs/status-model.md`와 `docs/ARCHITECTURE.md`는 그 문서를 인용한다. | D-01, D-07 |
 | B9 | `hcoord daemon status --json`이 데몬의 hcoord 버전과 로컬 API 버전을 보이고, 데몬이 꺼져 있으면 지금처럼 오래된 상태임을 표시해 보인다. | D-11 |
 | B10 | 격리 HOME에서 패키지된 hide.app을 처음 열면, 시스템 Node 없이 `com.hcoord.daemon` LaunchAgent가 앱 실행 파일 + `ELECTRON_RUN_AS_NODE=1` + 번들 CLI를 가리키게 되고 `~/.hcoord/bin/hcoord status`가 응답한다. | D-04, D-05, D-10, D-12 |
 | B11 | 같거나 새 버전의 데몬이 이미 응답하면 앱을 열어도 LaunchAgent와 데몬이 바뀌지 않는다. 데몬이 없거나, 오래됐거나, 버전을 말하지 않으면(지금의 sasu 데몬) 앱을 열 때 앱 쪽으로 교체되고, 교체 전 outbox의 letter는 잃지 않는다. | D-10, D-11 |
@@ -97,6 +97,7 @@ hcoord는 sasu에서 나와 hide 저장소 `plugins/hcoord/`의 독립 패키지
 - sasu 사본과 겹치는 기간: sasu의 `hcoord daemon start`나 `install-local-skills.mjs`가 LaunchAgent와 `~/.hcoord/bin/hcoord`를 sasu 쪽으로 되돌릴 수 있다. 앱은 다음 실행 때 B11 규칙으로 되찾고, sasu 정리 변경이 이 경합을 끝낸다. 그 사이 sasu 사본은 고치지 않는다.
 - 로그인 시 자동 시작은 hcoord 자체 지원 표에서도 아직 미검증이다. B13은 격리 label로 검증하고, 실제 로그인 재시작 관찰이 불가하면 그 사실을 결과에 적는다.
 - ad-hoc 서명 앱이 LaunchAgent를 등록할 때 macOS가 "백그라운드 항목 추가됨" 알림을 띄울 수 있다(미확인). 알림 자체는 동작을 막지 않는다.
+- machine id가 같은 기기가 둘일 수 있다(복제한 VM은 `/etc/machine-id`를 공유). 그 경우 다음 PRD의 hide 계보가 잘못된 기기의 pane을 부모로 볼 수 있으며, 규격 문서가 이 한계를 적는다. 원격 토큰 쓰기는 hcoord가 이미 쓰는 `herdr --machine <label>` 경로를 탄다.
 - 두 source가 서로 다른 `parent_pane`을 쓰면 hide는 먼저 찾은 값을 쓴다(`wire.rs`, 문서화된 우선순위 없음). hcoord와 sasu·hide Fork는 같은 부모를 쓰므로 이 PRD 범위에서는 충돌하지 않는다.
 - 실제 관찰의 안전 경계: 격리 HOME, 격리 `HCOORD_HOME`, 격리 Herdr 소켓, B21의 격리 label로만 앱과 데몬을 띄운다. 사용자의 라이브 hcoord 데몬, `~/.hcoord`, `com.hcoord.daemon` LaunchAgent, 라이브 hide·Herdr 창과 pane은 건드리지 않는다.
 - 사용자가 미리 할 일: 없음. npm 게시를 원하면 그때 계정과 패키지 이름이 필요하다.
