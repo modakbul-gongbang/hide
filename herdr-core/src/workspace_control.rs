@@ -19,6 +19,42 @@ pub enum Query {
     ViewList,
 }
 
+/// Who is asking, as the transport proved it. hided hands the core one string
+/// in the pane-id slot: a pane descendant's pane id as Herdr reports it, or,
+/// for a local process it could only bind to a checkout by its kernel-reported
+/// cwd, the encoded form `checkout:<key>:<canonical path>`. `key` is unique per
+/// issued capability so two callers in one checkout never share a retry record.
+/// Herdr pane ids are `w..:p..` and remote ones `remote:<device>:pane:<id>`, so
+/// the prefix cannot collide with a pane.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Caller<'a> {
+    Pane(&'a str),
+    Checkout { key: &'a str, path: &'a str },
+}
+
+const CHECKOUT_CALLER_PREFIX: &str = "checkout:";
+
+impl<'a> Caller<'a> {
+    pub fn parse(id: &'a str) -> Self {
+        id.strip_prefix(CHECKOUT_CALLER_PREFIX)
+            .and_then(|rest| rest.split_once(':'))
+            .filter(|(key, path)| {
+                !key.is_empty()
+                    && key.bytes().all(|byte| byte.is_ascii_alphanumeric())
+                    && path.starts_with('/')
+            })
+            .map_or(Caller::Pane(id), |(key, path)| Caller::Checkout {
+                key,
+                path,
+            })
+    }
+}
+
+/// The caller id hided records for a checkout-bound capability.
+pub fn checkout_caller_id(key: &str, canonical_path: &str) -> String {
+    format!("{CHECKOUT_CALLER_PREFIX}{key}:{canonical_path}")
+}
+
 /// One pane request is one core transition. The transport supplies the pane
 /// identity; no Workspace selector is accepted from the caller.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -287,7 +323,37 @@ pub fn local_file_path(url: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::local_file_path;
+    use super::{Caller, checkout_caller_id, local_file_path};
+
+    #[test]
+    fn caller_ids_round_trip_and_pane_ids_are_left_alone() {
+        let id = checkout_caller_id("0123abcd", "/Users/dev/project");
+        assert_eq!(
+            Caller::parse(&id),
+            Caller::Checkout {
+                key: "0123abcd",
+                path: "/Users/dev/project"
+            }
+        );
+        let colon = checkout_caller_id("k", "/mnt/a:b/c");
+        assert_eq!(
+            Caller::parse(&colon),
+            Caller::Checkout {
+                key: "k",
+                path: "/mnt/a:b/c"
+            }
+        );
+        assert_eq!(Caller::parse("w8P:pM"), Caller::Pane("w8P:pM"));
+        assert_eq!(
+            Caller::parse("remote:mini:pane:w1:p2"),
+            Caller::Pane("remote:mini:pane:w1:p2")
+        );
+        assert_eq!(Caller::parse("checkout:"), Caller::Pane("checkout:"));
+        assert_eq!(
+            Caller::parse("checkout:k:relative"),
+            Caller::Pane("checkout:k:relative")
+        );
+    }
 
     #[test]
     fn file_address_scheme_is_case_insensitive_at_the_workspace_boundary() {

@@ -819,3 +819,137 @@ fn diff_open_requires_a_real_working_tree_change() {
     assert_eq!(views[0].view_id, result.view_id);
     assert_eq!(views[0].kind, "diff");
 }
+
+#[test]
+fn checkout_caller_resolves_the_longest_registered_checkout_containing_its_cwd() {
+    let (mut runtime, _dir) = caller_fixture();
+    runtime.snapshot.navigator.workspaces[0]
+        .checkouts
+        .push(checkout(
+            "workspace-a",
+            "checkout-a-wt",
+            "/checkouts/a/worktrees/wt",
+            None,
+        ));
+    let caller = |key: &str, cwd: &str| crate::workspace_control::checkout_caller_id(key, cwd);
+
+    let nested = runtime
+        .workspace_control_query(
+            "local",
+            &caller("k1", "/checkouts/a/worktrees/wt/src"),
+            Query::Info,
+        )
+        .unwrap();
+    assert_eq!(nested.context.checkout_id, "checkout-a-wt");
+    assert_eq!(nested.context.checkout_path, "/checkouts/a/worktrees/wt");
+    assert_eq!(nested.context.workspace_id, "workspace-a");
+    assert!(nested.views.is_none());
+
+    let parent = runtime
+        .workspace_control_query("local", &caller("k1", "/checkouts/a/src"), Query::ViewList)
+        .unwrap();
+    assert_eq!(parent.context.checkout_id, "checkout-a");
+    assert_eq!(parent.views, Some(Vec::new()));
+
+    let exact = runtime
+        .workspace_control_query("local", &caller("k1", "/checkouts/b"), Query::Info)
+        .unwrap();
+    assert_eq!(exact.context.checkout_id, "checkout-b");
+
+    for outside in ["/checkouts/ab", "/checkouts", "/elsewhere/checkouts/a"] {
+        assert_eq!(
+            runtime
+                .workspace_control_query("local", &caller("k1", outside), Query::Info)
+                .unwrap_err()
+                .reason,
+            "checkout_not_registered",
+            "{outside}"
+        );
+    }
+
+    runtime.snapshot.status.herdr.state = "disconnected".to_owned();
+    assert_eq!(
+        runtime
+            .workspace_control_query("local", &caller("k1", "/checkouts/a"), Query::Info)
+            .unwrap_err()
+            .reason,
+        "checkout_not_registered"
+    );
+}
+
+#[test]
+fn checkout_callers_in_one_checkout_keep_separate_retry_records() {
+    let (mut runtime, _dir) = caller_fixture();
+    let first = crate::workspace_control::checkout_caller_id("k1", "/checkouts/b/src");
+    let second = crate::workspace_control::checkout_caller_id("k2", "/checkouts/b");
+    let expected = runtime
+        .workspace_control_query("local", &first, Query::Info)
+        .unwrap()
+        .context;
+    assert_eq!(
+        runtime
+            .workspace_control_query("local", &second, Query::Info)
+            .unwrap()
+            .context,
+        expected
+    );
+    let request_id = action_id("shared");
+    let opened = runtime
+        .workspace_control_action(
+            "local",
+            &first,
+            &expected,
+            &request_id,
+            Action::OpenBrowser {
+                url: "http://localhost:3000".into(),
+                reveal: false,
+            },
+            Ok(None),
+        )
+        .unwrap();
+    assert!(opened.changed);
+    assert_eq!(opened.context, expected);
+    // The second caller reusing the same request id for another action is not
+    // told the id was reused: the record belongs to the first capability.
+    let selected = runtime
+        .workspace_control_action(
+            "local",
+            &second,
+            &expected,
+            &request_id,
+            Action::Select {
+                view_id: opened.view_id.clone(),
+                reveal: false,
+            },
+            Ok(None),
+        )
+        .unwrap();
+    assert_eq!(selected.view_id, opened.view_id);
+    let views = runtime
+        .workspace_control_query("local", &second, Query::ViewList)
+        .unwrap()
+        .views
+        .unwrap();
+    assert_eq!(views.len(), 1);
+    assert_eq!(views[0].target, "http://localhost:3000");
+
+    // Unregistering the checkout refuses the checkout caller by name, not as a
+    // moved pane.
+    runtime.snapshot.navigator.workspaces[1].checkouts[0].path = "/checkouts/moved".to_owned();
+    assert_eq!(
+        runtime
+            .workspace_control_action(
+                "local",
+                &second,
+                &expected,
+                &action_id("after-move"),
+                Action::Close {
+                    view_id: opened.view_id
+                },
+                Ok(None),
+            )
+            .unwrap_err()
+            .reason,
+        "checkout_not_registered"
+    );
+}
