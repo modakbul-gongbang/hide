@@ -149,6 +149,7 @@ export function installKeyboard(actions: Actions): () => void {
     if (isNumberedCommand(id)) {
       // An empty number is nothing, not a diagnostic: the hold hint shows
       // which numbers exist, and pressing past them is an ordinary miss.
+      // The guard narrows `id` for the switch below; the second lookup is the family and number.
       const numbered = numberedCommand(id)!;
       const target = numberedTarget(numbered.family, numbered.number, useShellStore.getState());
       if (!target) return;

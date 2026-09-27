@@ -17,8 +17,12 @@ describe("the hold hint state (electron-digit-shortcuts-hints D-03, D-04)", () =
 
   it("shows nothing for a hold released before the delay (B8: ⌘C never flashes)", () => {
     const held = holdModifiers(idleHint(), meta, 1000);
-    const released = holdModifiers(held, NO_MODIFIERS, 1050);
+    // A release arrives as a fresh all-false set off the key event; the state keeps the one idle value by reference, which is how the listener tells an ended hold from none.
+    const released = holdModifiers(held, { ...NO_MODIFIERS }, 1050);
     expect(released).toEqual(idleHint());
+    expect(released.modifiers).toBe(NO_MODIFIERS);
+    expect(idleHint().modifiers).toBe(NO_MODIFIERS);
+    expect(clearHint().modifiers).toBe(NO_MODIFIERS);
     expect(advanceHint(released, 2000)).toBe(released);
   });
 

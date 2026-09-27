@@ -284,7 +284,7 @@ const TabButton = memo(function TabButton({
         <Button
           variant="ghost"
           size="icon-sm"
-          className={`shrink-0 hover:bg-popover hover:text-foreground focus-visible:visible group-hover:visible ${active ? "visible" : "invisible"}`}
+          className={`shrink-0 hover:bg-popover hover:text-foreground ${number !== null ? "invisible" : `focus-visible:visible group-hover:visible ${active ? "visible" : "invisible"}`}`}
           aria-label={closeLabel}
           onClick={(event) => {
             event.stopPropagation();
@@ -295,6 +295,7 @@ const TabButton = memo(function TabButton({
         </Button>
       </Hint>
       {active ? <span className="absolute inset-x-0 bottom-0 h-[var(--size-tab-indicator)] bg-primary" /> : null}
+      {/* The digit takes the close control's corner for the length of the hold; the control keeps its space and comes back with the release. */}
       {number !== null ? <Keycap number={number} /> : null}
     </div>
     </Hint>
