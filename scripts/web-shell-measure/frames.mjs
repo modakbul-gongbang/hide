@@ -2,7 +2,9 @@
 // Frame budget on the product web shell over a driven window: a rAF loop
 // injected into the page records every frame's dt while the fixture pane
 // prints a line every 8 ms (the S0 driver). Prints {frames, window, done}.
-import { spawn } from "node:child_process";
+import { spawn, execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { fileURLToPath } from "node:url";
 import { connectPage } from "./cdp.mjs";
 
 const cdpPort = process.env.MEASURE_CDP_PORT;
@@ -32,11 +34,21 @@ await page.evaluate(`
   "started"
 `);
 const seconds = Math.ceil(windowMs / 1000) + 2;
-const driver = spawn(herdrBin, [
-  "pane", "run", paneId,
-  `/usr/bin/python3 -c "import time; end=time.monotonic()+${seconds}; i=0\nwhile time.monotonic()<end:\n print(f'drive {i:05d}',flush=True); i+=1; time.sleep(0.008)"`,
-], { env: process.env, stdio: "ignore" });
-await new Promise((resolve) => driver.on("exit", resolve));
+// Every shown area is driven. cat echoes the measured pane's input while
+// its sibling writer produces the same 8 ms output stream as other panes.
+const drivenPanes = process.env.MEASURE_DRIVEN_PANES?.split(",") ?? [paneId];
+if (!drivenPanes.includes(paneId) || drivenPanes.length > 6) throw new Error("Invalid driven pane set");
+const command = `stty -echo -icanon; /usr/bin/python3 -c "import time; end=time.monotonic()+${seconds}; i=0\nwhile time.monotonic()<end:\n print(f'drive {i:05d}',flush=True); i+=1; time.sleep(0.008)" & cat`;
+const drivers = drivenPanes.map((id) => spawn(herdrBin, ["pane", "run", id, command], { env: process.env, stdio: "ignore" }));
+await Promise.all(drivers.map((driver) => new Promise((resolve, reject) => {
+  driver.on("error", reject);
+  driver.on("exit", (code) => code === 0 ? resolve() : reject(new Error(`driver exited ${code}`)));
+})));
+await new Promise((resolve) => setTimeout(resolve, 2000));
+const { stdout } = await promisify(execFile)(process.execPath, [fileURLToPath(new URL("./echo.mjs", import.meta.url))], {
+  env: { ...process.env, MEASURE_ECHO_REPEATS: "50" }, timeout: 30000, maxBuffer: 1024 * 1024,
+});
+const drivenEcho = JSON.parse(stdout);
 const deadline = Date.now() + windowMs + 10_000;
 while (Date.now() < deadline) {
   if (await page.evaluate("window.__framesDone === true")) break;
@@ -45,4 +57,4 @@ while (Date.now() < deadline) {
 const result = await page.evaluate("({frames: window.__frames, window: window.__framesWindow, done: window.__framesDone})");
 const arrivalsAfter = await page.evaluate("window.__hideProbe.arrivals()");
 page.close();
-console.log(JSON.stringify({ ...result, ws_frames_during_run: arrivalsAfter - arrivalsBefore, driver_exit: driver.exitCode }));
+console.log(JSON.stringify({ ...result, ws_frames_during_run: arrivalsAfter - arrivalsBefore, driver_exit: 0, driven_panes: drivenPanes, workload: "one line per 8 ms per shown pane; 50 echo samples in the measured pane", driven_echo: drivenEcho }));

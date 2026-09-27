@@ -257,7 +257,11 @@ for trial in 1 2 3; do
 done
 python3 "$measure_dir/summarize.py" echo "$MEASURE_RUN_DIR"/echo-{1,2,3}.json > "$MEASURE_RUN_DIR/echo-summary.json"
 
-note 'frames: 120 s driven window'
+export MEASURE_DRIVEN_PANES="$MEASURE_PANE_ID"
+if [[ "$scenario" == areas* ]]; then
+  for pane in "${extra_panes[@]}"; do MEASURE_DRIVEN_PANES+=",$pane"; done
+fi
+note 'frames: 120 s driven window, every shown Agent area'
 reset_fixture
 "$HERDR_BIN_PATH" pane send-keys "$MEASURE_PANE_ID" ctrl+c >/dev/null
 sleep 0.5
@@ -270,6 +274,13 @@ cp "$MEASURE_RUN_DIR/logs/resources-driven.log" "$MEASURE_RUN_DIR/resources-driv
 uptime > "$MEASURE_RUN_DIR/frames-uptime-after.txt"
 "$HERDR_BIN_PATH" pane read "$MEASURE_PANE_ID" --source recent-unwrapped --lines 5 > "$MEASURE_RUN_DIR/frames-pane-tail.txt" || true
 ps -p "$hided_pid" -o pid,%cpu,rss,etime,command > "$MEASURE_RUN_DIR/driven-hided-frames.ps"
+python3 - "$MEASURE_RUN_DIR" <<'PYJSON'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+data = json.loads((root / 'frames.json').read_text())
+(root / 'echo-driven.json').write_text(json.dumps(data['driven_echo']))
+PYJSON
+python3 "$measure_dir/summarize.py" echo "$MEASURE_RUN_DIR/echo-driven.json" > "$MEASURE_RUN_DIR/echo-driven-summary.json"
 python3 "$measure_dir/summarize.py" frames "$MEASURE_RUN_DIR/frames.json" > "$MEASURE_RUN_DIR/frames-summary.json"
 python3 "$measure_dir/memory.py" after-frames "$chrome_pid" "$hided_pid" "$MEASURE_CDP_PORT" > "$MEASURE_RUN_DIR/memory-after-frames.json"
 cat "$MEASURE_RUN_DIR/memory-after-frames.json"
