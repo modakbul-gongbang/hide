@@ -546,6 +546,69 @@ pub(crate) fn read_linked_issue(
         .ok_or_else(|| "GitHub issue was not found".to_owned())
 }
 
+/// Creates an issue in the repository `root` belongs to, the one write Hide
+/// makes to GitHub (Overview › 새 이슈). `gh issue create` prints the new
+/// issue's URL, which names it.
+pub(crate) fn create_issue(
+    root: &Path,
+    title: &str,
+    body: &str,
+) -> Result<crate::issues::IssueSnapshot, String> {
+    let output = gh(
+        Some(root),
+        &["issue", "create", "--title", title, "--body", body],
+    )
+    .map_err(|error| error.reason)?;
+    let url = output
+        .lines()
+        .map(str::trim)
+        .rfind(|line| line.starts_with("https://github.com/"))
+        .ok_or_else(|| {
+            format!(
+                "gh issue create did not print the new issue's URL: {}",
+                output.trim()
+            )
+        })?;
+    let reference = crate::issues::IssueReference::parse(url, None)?;
+    Ok(crate::issues::IssueSnapshot {
+        reference,
+        title: title.to_owned(),
+        url: url.to_owned(),
+        state: "OPEN".into(),
+        project_status: None,
+        updated_at_unix_ms: Some(now_unix_ms()),
+        blocked_by: Vec::new(),
+    })
+}
+
+/// One issue's body, for the Start dialog's first prompt.
+pub(crate) fn issue_body(
+    root: &Path,
+    reference: &crate::issues::IssueReference,
+) -> Result<String, String> {
+    #[derive(serde::Deserialize)]
+    struct Viewed {
+        body: String,
+    }
+    let number = reference.number.to_string();
+    let output = gh(
+        Some(root),
+        &[
+            "issue",
+            "view",
+            &number,
+            "--repo",
+            &reference.repository,
+            "--json",
+            "body",
+        ],
+    )
+    .map_err(|error| error.reason)?;
+    serde_json::from_str::<Viewed>(&output)
+        .map(|viewed| viewed.body)
+        .map_err(|error| format!("gh issue view returned output Hide could not read: {error}"))
+}
+
 fn read_linked_issues(
     root: &Path,
     links: &[&crate::issues::IssueReference],
@@ -981,14 +1044,20 @@ fn run_gh(
         || arguments.starts_with(&["pr", "list"])
         || arguments.starts_with(&["issue", "list"])
         || arguments == ["repo", "view", "--json", "nameWithOwner"]
+        // The one write: a new issue with a title and a body, nothing else.
+        || (arguments.len() == 6
+            && arguments[..3] == ["issue", "create", "--title"]
+            && arguments[4] == "--body")
+        || (arguments.len() == 7
+            && arguments[..2] == ["issue", "view"]
+            && arguments[3] == "--repo"
+            && arguments[5..] == ["--json", "body"])
         || (arguments.len() == 4
             && arguments[..3] == ["api", "graphql", "-f"]
             && (arguments[3].starts_with("query=query HideLinkedIssues {")
                 || arguments[3].starts_with("query=query HideIssueDependencies {"))))
     {
-        return Err(GhFailure::network(
-            "Unsupported read-only gh command".to_owned(),
-        ));
+        return Err(GhFailure::network("Unsupported gh command".to_owned()));
     }
     let mut command = Command::new(binary);
     command

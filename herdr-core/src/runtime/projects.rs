@@ -1855,6 +1855,23 @@ impl Runtime {
             );
             return true;
         }
+        // The link is written into the new worktree's own metadata, in the
+        // form the linking chain reads back (`sync_issues`).
+        let issue = match payload.task_key.as_deref() {
+            None => None,
+            Some(key) => match crate::tasks::issue_token(key) {
+                Some(token) => Some(token),
+                None => {
+                    self.set_error(
+                        "worktree.create_unknown_task",
+                        format!("No task named {key}"),
+                        false,
+                    );
+                    return true;
+                }
+            },
+        };
+        let prompt = payload.agent_kind.as_ref().and(payload.prompt.clone());
         let id = match self.begin_task_operation(
             "worktree_create",
             Some(payload.repository_root.clone()),
@@ -1868,6 +1885,7 @@ impl Runtime {
                 return true;
             }
         };
+        self.set_task_agent_prompt(id, prompt);
         if let Some(operation) = self.snapshot.task_operation.as_mut() {
             operation.device_id = device.clone();
         }
@@ -1879,6 +1897,7 @@ impl Runtime {
             agent_kind: payload.agent_kind,
             focus: true,
             purpose: payload.purpose,
+            issue: if device.is_none() { issue } else { None },
         };
         let context = match device.as_deref() {
             Some(device) => self.device_worktree_target(device),
@@ -2133,6 +2152,7 @@ impl Runtime {
             .as_ref()
             .map(|_| next_tab_label)
             .unwrap_or_else(|| format!("hide {checkout_label}"));
+        let prompt = agent_kind.as_ref().and(payload.prompt.clone());
         let id = match self.begin_task_operation(
             "agent_start",
             Some(workspace_path),
@@ -2146,6 +2166,7 @@ impl Runtime {
                 return true;
             }
         };
+        self.set_task_agent_prompt(id, prompt);
         let request = live::CheckoutTabRequest {
             id,
             checkout_path: payload.checkout_path,
@@ -2284,6 +2305,7 @@ impl Runtime {
             agent_kind: None,
             focus: false,
             purpose: None,
+            issue: None,
         };
         let Some(context) = self.live.as_ref().cloned() else {
             return self.ingest_task_operation_result(

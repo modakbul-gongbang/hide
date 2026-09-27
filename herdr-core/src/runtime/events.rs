@@ -702,6 +702,10 @@ pub(super) struct OverviewOpenSectionPayload {
 pub(super) struct AgentStartInCheckoutPayload {
     pub(super) checkout_path: String,
     pub(super) provider: String,
+    /// The agent's first prompt, sent once the agent is ready (an issue
+    /// started on a checkout that is not a new worktree).
+    #[serde(default)]
+    pub(super) prompt: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -723,6 +727,72 @@ pub(super) struct CreateWorktreePayload {
     pub(super) agent_kind: Option<String>,
     #[serde(default)]
     pub(super) purpose: Option<String>,
+    /// The task the worktree is started from; the worktree is linked to it.
+    #[serde(default)]
+    pub(super) task_key: Option<String>,
+    /// The agent's first prompt, sent once the agent is ready.
+    #[serde(default)]
+    pub(super) prompt: Option<String>,
+}
+
+/// `issue_source_set`: a project's issue source chosen in Settings › Issues;
+/// `auto` returns it to the default (`tasks::source_kind`).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct IssueSourceSetPayload {
+    pub(super) project_path: String,
+    pub(super) source: String,
+}
+
+/// `issue_settings_set`: how starting work from an issue behaves; an absent
+/// field keeps its value.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct IssueSettingsSetPayload {
+    #[serde(default)]
+    pub(super) ai_worktree_name: Option<bool>,
+    #[serde(default)]
+    pub(super) default_agent: Option<String>,
+    #[serde(default)]
+    pub(super) closes_instruction: Option<bool>,
+}
+
+/// `issue_create`: a new issue in the project's source.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct IssueCreatePayload {
+    pub(super) workspace_id: String,
+    pub(super) title: String,
+    #[serde(default)]
+    pub(super) body: String,
+}
+
+/// `issue_detail_request`: one issue's body, for the Start dialog.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct IssueDetailRequestPayload {
+    pub(super) workspace_id: String,
+    pub(super) task_key: String,
+}
+
+/// `issue_set_open`: close or reopen a Local issue.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct IssueSetOpenPayload {
+    pub(super) task_key: String,
+    pub(super) open: bool,
+}
+
+/// `worktree_name_suggest`: ask the background AI to name a worktree started
+/// from an issue. `prefix` is the part the name keeps (`192-`).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WorktreeNameSuggestPayload {
+    pub(super) request_id: String,
+    pub(super) prefix: String,
+    pub(super) title: String,
+    #[serde(default)]
+    pub(super) body: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -971,6 +1041,12 @@ pub(super) enum Event {
     GitWorktreeOpen(GitWorktreeOpenPayload),
     GitWorktreeSetBase(GitWorktreeSetBasePayload),
     CreateWorktree(CreateWorktreePayload),
+    IssueSourceSet(IssueSourceSetPayload),
+    IssueSettingsSet(IssueSettingsSetPayload),
+    IssueCreate(IssueCreatePayload),
+    IssueDetailRequest(IssueDetailRequestPayload),
+    WorktreeNameSuggest(WorktreeNameSuggestPayload),
+    IssueSetOpen(IssueSetOpenPayload),
     SetCheckoutPurpose(SetCheckoutPurposePayload),
     SetCheckoutIssue(SetCheckoutPurposePayload),
     MigrateMainBranch(MigrateMainBranchPayload),
@@ -1142,6 +1218,12 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "git_worktree_open" => decode!(GitWorktreeOpenPayload, GitWorktreeOpen),
         "git_worktree_set_base" => decode!(GitWorktreeSetBasePayload, GitWorktreeSetBase),
         "create_worktree" => decode!(CreateWorktreePayload, CreateWorktree),
+        "issue_source_set" => decode!(IssueSourceSetPayload, IssueSourceSet),
+        "issue_settings_set" => decode!(IssueSettingsSetPayload, IssueSettingsSet),
+        "issue_create" => decode!(IssueCreatePayload, IssueCreate),
+        "issue_detail_request" => decode!(IssueDetailRequestPayload, IssueDetailRequest),
+        "worktree_name_suggest" => decode!(WorktreeNameSuggestPayload, WorktreeNameSuggest),
+        "issue_set_open" => decode!(IssueSetOpenPayload, IssueSetOpen),
         "set_checkout_issue" => decode!(SetCheckoutPurposePayload, SetCheckoutIssue),
         "set_checkout_purpose" => decode!(SetCheckoutPurposePayload, SetCheckoutPurpose),
         "migrate_main_branch" => decode!(MigrateMainBranchPayload, MigrateMainBranch),
@@ -2828,6 +2910,12 @@ impl Runtime {
             }
             Event::CreateWorktree(payload) => self.create_project_worktree(payload),
             Event::SetCheckoutIssue(payload) => self.set_checkout_issue(payload),
+            Event::IssueSourceSet(payload) => self.set_issue_source(payload),
+            Event::IssueSettingsSet(payload) => self.set_issue_settings(payload),
+            Event::IssueCreate(payload) => self.create_issue(payload),
+            Event::IssueDetailRequest(payload) => self.request_issue_detail(payload),
+            Event::WorktreeNameSuggest(payload) => self.suggest_worktree_name(payload),
+            Event::IssueSetOpen(payload) => self.set_issue_open(payload),
             Event::SetCheckoutPurpose(payload) => self.set_checkout_purpose(payload),
             Event::MigrateMainBranch(payload) => self.migrate_main_branch(payload),
             Event::TaskOperationAck(payload) => self.acknowledge_task_operation(payload.id),
@@ -3093,6 +3181,9 @@ impl Runtime {
                     // `agent_sleep_set` owns the setting and the core owns
                     // the sleep records; a shared save carries both through.
                     agent_sleep_after_hours: current.agent_sleep_after_hours,
+                    // Settings › Issues owns these through their own events.
+                    project_issue_sources: current.project_issue_sources,
+                    issue_settings: current.issue_settings,
                     agent_sleep: current.agent_sleep,
                 };
                 // Visibility and popover activity wake the provider reader,

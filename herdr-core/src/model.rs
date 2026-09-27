@@ -38,6 +38,10 @@ pub struct CoreOptions {
     /// never written again; the core is the owner that outlived it.
     #[serde(default)]
     pub shortcut_import_path: Option<String>,
+    /// The file that keeps every project's Local issues (`local_issues.rs`).
+    /// Absent keeps them in memory for the session only, as a test core does.
+    #[serde(default)]
+    pub local_issues_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -68,6 +72,7 @@ pub struct Snapshot {
     pub worktree_removal: Option<WorktreeRemovalSnapshot>,
     pub task_operation: Option<TaskOperationSnapshot>,
     pub explorer_operation: Option<ExplorerOperationSnapshot>,
+    pub issue_work: IssueWorkSnapshot,
     pub find: PaneFindSnapshot,
     pub ui_state: UiStateSnapshot,
     pub ime: ImeSnapshot,
@@ -2073,6 +2078,14 @@ pub struct UiStateSnapshot {
     /// never, the default (PRD D-10).
     #[serde(default)]
     pub agent_sleep_after_hours: Option<u32>,
+    /// Each local project's chosen issue source, `github` or `local`, by the
+    /// project's path; a project without an entry reads its default source
+    /// (`tasks::source_kind`). Set in Settings › Issues.
+    #[serde(default)]
+    pub project_issue_sources: BTreeMap<String, String>,
+    /// How starting work from an issue behaves (Settings › Issues).
+    #[serde(default)]
+    pub issue_settings: IssueSettingsSnapshot,
     /// Each pane's last state change and last look, and the agents Hide has
     /// put to sleep. Persisted with the rest of this store and never on the
     /// wire: the last look of the tab on screen moves every minute, and a
@@ -2132,6 +2145,84 @@ pub(crate) fn default_pane_text_scale() -> f32 {
     DEFAULT_PANE_TEXT_SCALE
 }
 
+/// How starting work from an issue behaves, chosen in Settings › Issues.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct IssueSettingsSnapshot {
+    /// Ask the background AI for the new worktree's name; the deterministic
+    /// name from the issue's number and title stands until it answers.
+    #[serde(default = "default_true")]
+    pub ai_worktree_name: bool,
+    /// The agent the Start dialog selects first: `claude`, `codex` or
+    /// `terminal`.
+    #[serde(default = "default_issue_agent")]
+    pub default_agent: String,
+    /// End the first prompt by asking for a pull request that closes the
+    /// issue, so the PR and the issue link themselves (`Closes #N`).
+    #[serde(default = "default_true")]
+    pub closes_instruction: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_issue_agent() -> String {
+    "claude".into()
+}
+
+impl Default for IssueSettingsSnapshot {
+    fn default() -> Self {
+        Self {
+            ai_worktree_name: true,
+            default_agent: default_issue_agent(),
+            closes_instruction: true,
+        }
+    }
+}
+
+/// The Overview's issue work in flight. Each is one slot a newer request
+/// replaces, like `task_operation`: the web matches a slot to its own request
+/// by id and ignores one it did not ask for.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct IssueWorkSnapshot {
+    pub create: Option<IssueCreateSnapshot>,
+    pub detail: Option<IssueDetailSnapshot>,
+    pub name: Option<WorktreeNameSnapshot>,
+}
+
+/// A new issue on its way to the project's source.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct IssueCreateSnapshot {
+    pub id: u64,
+    pub workspace_id: String,
+    /// `working`, `ready` or `failed`.
+    pub phase: String,
+    /// The created task's key, once it exists.
+    pub task_key: Option<String>,
+    pub message: Option<String>,
+}
+
+/// One issue's body, read for the Start dialog's first prompt.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct IssueDetailSnapshot {
+    pub task_key: String,
+    /// `reading`, `ready` or `failed`.
+    pub phase: String,
+    pub body: Option<String>,
+    pub message: Option<String>,
+}
+
+/// The background AI's name for a worktree started from an issue.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct WorktreeNameSnapshot {
+    /// The web's own id for the request it made.
+    pub request_id: String,
+    /// `working`, `ready` or `failed`.
+    pub phase: String,
+    pub name: Option<String>,
+    pub message: Option<String>,
+}
+
 impl Default for UiStateSnapshot {
     fn default() -> Self {
         Self {
@@ -2171,6 +2262,8 @@ impl Default for UiStateSnapshot {
             conversation_pane_ids: BTreeSet::new(),
             pane_read_records: BTreeMap::new(),
             agent_sleep_after_hours: None,
+            project_issue_sources: BTreeMap::new(),
+            issue_settings: IssueSettingsSnapshot::default(),
             agent_sleep: crate::agent_sleep::AgentSleepStore::default(),
         }
     }
@@ -3161,6 +3254,7 @@ impl Snapshot {
             worktree_removal: None,
             task_operation: None,
             explorer_operation: None,
+            issue_work: IssueWorkSnapshot::default(),
             find: PaneFindSnapshot::default(),
             ui_state: UiStateSnapshot::default(),
             ime: ImeSnapshot {
@@ -3238,6 +3332,7 @@ pub struct RestSections {
     pub worktree_removal: Option<WorktreeRemovalSnapshot>,
     pub task_operation: Option<TaskOperationSnapshot>,
     pub explorer_operation: Option<ExplorerOperationSnapshot>,
+    pub issue_work: IssueWorkSnapshot,
     pub overlay: OverlaySnapshot,
     pub tab: TabSnapshot,
     pub connection: ConnectionSnapshot,
@@ -3270,6 +3365,7 @@ impl RestSections {
             worktree_removal: snapshot.worktree_removal.clone(),
             task_operation: snapshot.task_operation.clone(),
             explorer_operation: snapshot.explorer_operation.clone(),
+            issue_work: snapshot.issue_work.clone(),
             overlay: snapshot.overlay.clone(),
             tab: snapshot.tab.clone(),
             connection: snapshot.connection.clone(),
@@ -3303,6 +3399,7 @@ impl RestSections {
             && self.worktree_removal == snapshot.worktree_removal
             && self.task_operation == snapshot.task_operation
             && self.explorer_operation == snapshot.explorer_operation
+            && self.issue_work == snapshot.issue_work
             && self.overlay == snapshot.overlay
             && self.tab == snapshot.tab
             && self.connection == snapshot.connection
@@ -3444,6 +3541,7 @@ pub struct RestWire<'a> {
     pub worktree_removal: &'a Option<WorktreeRemovalSnapshot>,
     pub task_operation: &'a Option<TaskOperationSnapshot>,
     pub explorer_operation: &'a Option<ExplorerOperationSnapshot>,
+    pub issue_work: &'a IssueWorkSnapshot,
     pub overlay: &'a OverlaySnapshot,
     pub tab: &'a TabSnapshot,
     pub connection: &'a ConnectionSnapshot,
@@ -3473,6 +3571,7 @@ impl<'a> RestWire<'a> {
             worktree_removal: &rest.worktree_removal,
             task_operation: &rest.task_operation,
             explorer_operation: &rest.explorer_operation,
+            issue_work: &rest.issue_work,
             overlay: &rest.overlay,
             tab: &rest.tab,
             connection: &rest.connection,

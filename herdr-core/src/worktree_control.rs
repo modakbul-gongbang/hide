@@ -271,6 +271,10 @@ pub struct WorktreeTaskRequest {
     pub agent_kind: Option<String>,
     pub focus: bool,
     pub purpose: Option<String>,
+    /// The issue token to link the new worktree to (`owner/repo#N` or
+    /// `L-N`), written like `set_checkout_issue` writes one. This machine's
+    /// worktrees only.
+    pub issue: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -285,6 +289,9 @@ pub struct WorktreeTaskOutcome {
     /// clear both failed. The runtime hides this unconfirmed value so the
     /// completed row follows the creation contract and shows its fallback.
     pub unconfirmed_purpose_token: Option<String>,
+    /// Why the requested issue link could not be written; the worktree
+    /// exists either way.
+    pub issue_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -706,6 +713,34 @@ pub fn spawn_issue_write(
         .map_err(|error| format!("issue worker could not be started: {error}"))
 }
 
+/// A Local issue link: the same metadata write as a GitHub one, with no
+/// GitHub read, since the issue is in this Mac's store.
+pub fn spawn_local_issue_write(
+    context: LiveContext,
+    request: PurposeTaskRequest,
+    previous: Option<String>,
+) -> Result<(), String> {
+    thread::Builder::new()
+        .name("herdr-core-local-issue-write".into())
+        .spawn(move || {
+            let result = write_issue_metadata(
+                context.api_connector.as_ref(),
+                &SystemGit,
+                &request,
+                previous.as_deref(),
+            )
+            .map(|()| None);
+            if let Some(runtime) = context.runtime.upgrade() {
+                if let Ok(mut guard) = runtime.lock() {
+                    guard.ingest_issue_operation_result(&request, result);
+                }
+                context.notifier.notify();
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("issue worker could not be started: {error}"))
+}
+
 pub fn spawn_remote_purpose_write(
     context: RemoteControlContext,
     request: PurposeTaskRequest,
@@ -747,6 +782,8 @@ pub struct CheckoutTabRequest {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TaskAgentOutcome {
     Started,
+    /// The agent started, but the first prompt it was given was not sent.
+    StartedWithoutPrompt(String),
     /// Herdr refused, or the agent is not installed; nothing started.
     Failed(String),
     /// Herdr did not answer; the agent may be running. The pane says which.
@@ -774,16 +811,49 @@ fn start_task_agent(
         Ok(guard) => guard.pending_task_agent_start(id),
         Err(_) => return,
     };
-    let Some((pane_id, kind)) = pending else {
+    let Some((pane_id, kind, prompt)) = pending else {
         return;
     };
-    let outcome = launch_agent(connector, local, id, &pane_id, &kind);
+    let mut outcome = launch_agent(connector, local, id, &pane_id, &kind);
+    if let (TaskAgentOutcome::Started, Some(prompt)) = (&outcome, prompt) {
+        outcome = send_first_prompt(connector, id, &pane_id, &prompt);
+    }
     if let Ok(mut guard) = runtime.lock() {
         guard.ingest_task_agent_result(id, outcome);
     } else {
         return;
     }
     notifier.notify();
+}
+
+/// Hands a started agent its first prompt (the issue it was started from).
+/// The agent is running either way, so a refusal is reported on the started
+/// agent rather than as a failed start.
+fn send_first_prompt(
+    connector: &dyn ApiConnector,
+    id: u64,
+    pane_id: &str,
+    prompt: &str,
+) -> TaskAgentOutcome {
+    let params = match wire::agent_prompt_params(pane_id, prompt) {
+        Ok(params) => params,
+        Err(message) => return TaskAgentOutcome::StartedWithoutPrompt(message),
+    };
+    match request_with_correlation_id(
+        connector,
+        &format!("herdr-core:task:{id}:prompt"),
+        "agent.prompt",
+        params,
+        Duration::from_secs(15),
+    )
+    .map_err(|error| error.to_string())
+    .and_then(wire::prompted_agent)
+    {
+        Ok(()) => TaskAgentOutcome::Started,
+        Err(message) => TaskAgentOutcome::StartedWithoutPrompt(format!(
+            "The agent started, but its first prompt was not sent ({message}). Paste it into the pane."
+        )),
+    }
 }
 
 pub fn spawn_task_agent_start(context: WorktreeTarget, id: u64) -> Result<(), String> {
@@ -899,6 +969,7 @@ fn create_checkout_tab(
         pane_id,
         purpose_error: None,
         unconfirmed_purpose_token: None,
+        issue_error: None,
     })
 }
 
@@ -992,9 +1063,25 @@ fn create_worktree_observing_purpose(
             };
             write_created_purpose(connector, &git, &purpose_request)
         });
+        // The issue link is a convenience on top of a good worktree: a
+        // failure to write it is reported, never a failed creation.
+        let issue_error = request.issue.as_ref().filter(|_| local).and_then(|issue| {
+            let issue_request = PurposeTaskRequest {
+                id: request.id,
+                checkout_id: String::new(),
+                repository_root: request.repository_root.clone(),
+                branch: Some(request.branch.clone()),
+                session_workspace_id: Some(created.workspace_id.clone()),
+                purpose: issue.clone(),
+            };
+            write_issue_metadata(connector, &SystemGit, &issue_request, None)
+                .err()
+                .map(|failure| failure.detail)
+        });
         return Ok(WorktreeTaskOutcome {
             path: created.path,
             pane_id: created.pane_id,
+            issue_error,
             purpose_error: purpose_failure
                 .as_ref()
                 .map(|failure| failure.detail.clone()),
@@ -1260,6 +1347,7 @@ fn migrate_branch(
         branch: original.clone(),
         focus: false,
         purpose: None,
+        issue: None,
         ..request.clone()
     };
     match create_worktree(
@@ -1528,6 +1616,7 @@ mod tests {
             agent_kind: None,
             focus: true,
             purpose: None,
+            issue: None,
         }
     }
 

@@ -214,12 +214,97 @@ fn project(
     }
 }
 
+/// The `worktree_name` feature: a short English branch slug for a worktree
+/// started from an issue. The Start dialog fills a deterministic name from the
+/// issue's number and title first and replaces it with this answer only while
+/// the operator has not edited the field, so a slow or absent provider costs
+/// nothing but the better name.
+const WORKTREE_NAME_SYSTEM: &str = "You name git branches for a coding task. \
+Read the issue title and body and answer with a short English kebab-case slug of two to five words \
+that says what the change does, like `sigterm-handler` or `overview-issue-board`. \
+Use only lowercase ASCII letters, digits and hyphens. Do not include an issue number, a prefix such as feat/ or fix/, or quotes.";
+/// The slug's own ceiling; the whole branch name is checked again by Git.
+const WORKTREE_SLUG_LIMIT: usize = 48;
+/// The body the model reads, in characters; the title carries most of it.
+const WORKTREE_NAME_BODY_LIMIT: usize = 2_000;
+
+/// A branch-safe slug: lowercase ASCII words joined by single hyphens.
+pub(crate) fn branch_slug(text: &str) -> String {
+    let mut slug = String::new();
+    for character in text.chars().flat_map(char::to_lowercase) {
+        if character.is_ascii_alphanumeric() {
+            slug.push(character);
+        } else if !slug.is_empty() && !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    let mut slug = slug.trim_matches('-').to_owned();
+    if slug.len() > WORKTREE_SLUG_LIMIT {
+        slug.truncate(WORKTREE_SLUG_LIMIT);
+        if let Some(cut) = slug.rfind('-') {
+            slug.truncate(cut);
+        }
+    }
+    slug.trim_matches('-').to_owned()
+}
+
+/// Asks the operator's background AI for a worktree name. Runs on a worker
+/// thread; the router starts and stops its own provider process.
+pub(crate) fn suggest_worktree_name(
+    settings: &AiSettings,
+    subject: &str,
+    prefix: &str,
+    title: &str,
+    body: &str,
+) -> Result<String, String> {
+    let body: String = body.chars().take(WORKTREE_NAME_BODY_LIMIT).collect();
+    let request = hide_ai::AiRequest {
+        feature_id: "worktree_name",
+        request_id: hide_ai::RequestId(format!("worktree-name-{subject}")),
+        subject_id: subject.to_owned(),
+        system: WORKTREE_NAME_SYSTEM.to_owned(),
+        input: serde_json::json!({ "title": title, "body": body }).to_string(),
+        output_schema: serde_json::json!({
+            "type": "object",
+            "properties": { "slug": { "type": "string", "maxLength": WORKTREE_SLUG_LIMIT } },
+            "required": ["slug"],
+            "additionalProperties": false,
+        }),
+        deadline: Duration::from_secs(30),
+        schema_version: "1",
+    };
+    let router = memory_router(settings);
+    let answer = router
+        .execute(&request, &hide_ai::CancelToken::new())
+        .map_err(|error| format!("{error:?}"))?;
+    let slug = answer
+        .value
+        .get("slug")
+        .and_then(serde_json::Value::as_str)
+        .map(branch_slug)
+        .filter(|slug| !slug.is_empty())
+        .ok_or_else(|| "the answer had no usable name".to_owned())?;
+    Ok(format!("{prefix}{slug}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn models() -> BTreeMap<ProviderId, String> {
         AiSettings::default().models
+    }
+
+    #[test]
+    fn a_slug_is_lowercase_ascii_words_within_the_limit() {
+        assert_eq!(
+            branch_slug("Graceful SIGTERM handler!"),
+            "graceful-sigterm-handler"
+        );
+        assert_eq!(branch_slug("  --Overview v4 보드--  "), "overview-v4");
+        assert_eq!(branch_slug("한국어만"), "");
+        let long = branch_slug(&"word ".repeat(30));
+        assert!(long.len() <= WORKTREE_SLUG_LIMIT && !long.ends_with('-'));
     }
 
     #[test]

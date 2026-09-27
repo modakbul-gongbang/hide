@@ -183,6 +183,7 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
             host_helper_root: None,
             workspace_views_path: None,
             shortcut_import_path: None,
+            local_issues_path: None,
         },
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),
@@ -526,6 +527,7 @@ fn official_remote_session_coordinator_probe() {
             host_helper_root: None,
             workspace_views_path: None,
             shortcut_import_path: None,
+            local_issues_path: None,
         },
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),

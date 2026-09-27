@@ -15,6 +15,7 @@ fn runtime_at(state: &std::path::Path, native: &std::path::Path) -> Runtime {
             host_helper_root: None,
             workspace_views_path: None,
             shortcut_import_path: Some(native.to_string_lossy().into_owned()),
+            local_issues_path: None,
         },
         environment::EnvironmentReport {
             statuses: Vec::new(),

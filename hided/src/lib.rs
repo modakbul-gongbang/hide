@@ -246,6 +246,12 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
                 .display()
                 .to_string(),
         ),
+        local_issues_path: Some(
+            env.state_dir
+                .join("local-issues.json")
+                .display()
+                .to_string(),
+        ),
     };
     let boundary = Arc::new(boundary::Boundary::new(&env.home)?);
     let core = Arc::new(CoreHandle::spawn(options)?);

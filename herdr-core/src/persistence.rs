@@ -111,6 +111,12 @@ struct StoredUiState {
     /// Never; a value that is not one of the choices loads as Never too.
     #[serde(default)]
     agent_sleep_after_hours: Option<u32>,
+    /// Absent in a store written before issue sources could be chosen, which
+    /// loads every project at its default source.
+    #[serde(default)]
+    project_issue_sources: BTreeMap<String, String>,
+    #[serde(default)]
+    issue_settings: crate::model::IssueSettingsSnapshot,
     /// The stamps and the sleeping agents; absent loads as none.
     #[serde(default)]
     agent_sleep: crate::agent_sleep::AgentSleepStore,
@@ -258,6 +264,14 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             agent_sleep_after_hours: stored
                 .agent_sleep_after_hours
                 .filter(|hours| crate::agent_sleep::valid_after_hours(Some(*hours))),
+            project_issue_sources: stored
+                .project_issue_sources
+                .into_iter()
+                .filter(|(_, source)| {
+                    source == crate::tasks::GITHUB || source == crate::tasks::LOCAL
+                })
+                .collect(),
+            issue_settings: stored.issue_settings,
             agent_sleep: {
                 let mut store = stored.agent_sleep;
                 store.after_load();
@@ -318,6 +332,8 @@ pub fn save(
         pane_read_records: state.pane_read_records.clone(),
         pane_terminal_sizes: pane_terminal_sizes.clone(),
         agent_sleep_after_hours: state.agent_sleep_after_hours,
+        project_issue_sources: state.project_issue_sources.clone(),
+        issue_settings: state.issue_settings.clone(),
         agent_sleep: state.agent_sleep.clone(),
     };
     let bytes = serde_json::to_vec_pretty(&stored)

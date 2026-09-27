@@ -22,6 +22,7 @@ pub mod herdr_contract;
 pub mod host_access;
 pub mod issues;
 pub mod live;
+pub mod local_issues;
 mod model;
 mod persistence;
 pub mod pet;

@@ -339,3 +339,226 @@ fn a_pass_that_cannot_read_dependencies_keeps_the_blockers_read_before() {
         Some("issue dependencies: rate limited")
     );
 }
+
+fn event(kind: &str, payload: serde_json::Value) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({"schema_version": 2, "kind": kind, "payload": payload}))
+        .unwrap()
+}
+
+/// A Git project whose `gh` says it has no GitHub remote reads Local issues
+/// by default; a created issue is a task at once, and its checkout links to
+/// it through the number its branch starts with.
+#[test]
+fn a_project_without_github_reads_local_issues_and_links_by_branch_number() {
+    let mut runtime = issue_runtime();
+    {
+        let workspace = &mut runtime.snapshot.navigator.workspaces[0];
+        workspace.checkouts[0].branch_issue = None;
+        workspace.checkouts[0].branch = Some("1-local-work".into());
+    }
+    // What the GitHub reader answers for a repository with no GitHub remote.
+    runtime
+        .github
+        .projects
+        .push(crate::model::GithubProjectSnapshot {
+            root_path: "/repo".into(),
+            status: crate::model::GithubStatusSnapshot {
+                unavailable_reason: Some("none of the git remotes point to GitHub".into()),
+                failure_category: Some("no GitHub remote".into()),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+    runtime.apply_pull_requests();
+    let source = runtime.snapshot.navigator.workspaces[0]
+        .tasks
+        .source
+        .clone()
+        .unwrap();
+    assert_eq!((source.kind.as_str(), source.chosen), ("local", false));
+
+    assert!(runtime.dispatch_json(&event(
+        "issue_create",
+        serde_json::json!({"workspace_id": "w", "title": "로컬 첫 이슈", "body": "본문"}),
+    )));
+    let create = runtime.snapshot().issue_work.create.clone().unwrap();
+    assert_eq!(create.phase, "ready");
+    assert_eq!(create.task_key.as_deref(), Some("local:/repo#1"));
+    let workspace = &runtime.snapshot().navigator.workspaces[0];
+    assert_eq!(workspace.tasks.tasks[0].id.as_deref(), Some("L-1"));
+    assert_eq!(
+        workspace.checkouts[0].task_key.as_deref(),
+        Some("local:/repo#1")
+    );
+
+    // The Start dialog reads the body from the store, with no worker.
+    assert!(runtime.dispatch_json(&event(
+        "issue_detail_request",
+        serde_json::json!({"workspace_id": "w", "task_key": "local:/repo#1"}),
+    )));
+    let detail = runtime.snapshot().issue_work.detail.clone().unwrap();
+    assert_eq!(
+        (detail.phase.as_str(), detail.body.as_deref()),
+        ("ready", Some("본문"))
+    );
+
+    // Closing it keeps it as a closed task.
+    assert!(runtime.dispatch_json(&event(
+        "issue_set_open",
+        serde_json::json!({"task_key": "local:/repo#1", "open": false}),
+    )));
+    assert!(!runtime.snapshot().navigator.workspaces[0].tasks.tasks[0].open);
+}
+
+/// Settings › Issues chooses a project's source and `auto` gives it back;
+/// the choice is part of the saved UI state.
+#[test]
+fn a_chosen_source_wins_over_the_default_and_auto_returns_it() {
+    let mut runtime = issue_runtime();
+    runtime.apply_pull_requests();
+    assert_eq!(
+        runtime.snapshot.navigator.workspaces[0]
+            .tasks
+            .source
+            .as_ref()
+            .unwrap()
+            .kind,
+        "github"
+    );
+    assert!(runtime.dispatch_json(&event(
+        "issue_source_set",
+        serde_json::json!({"project_path": "/repo", "source": "local"}),
+    )));
+    let workspace = &runtime.snapshot().navigator.workspaces[0];
+    let source = workspace.tasks.source.as_ref().unwrap();
+    assert_eq!((source.kind.as_str(), source.chosen), ("local", true));
+    // A GitHub link is not a local one: `acme/project#2` names no local issue.
+    assert_eq!(workspace.checkouts[0].task_key, None);
+    assert!(workspace.checkouts[0].issue.is_none());
+    assert_eq!(
+        runtime
+            .snapshot()
+            .ui_state
+            .project_issue_sources
+            .get("/repo")
+            .map(String::as_str),
+        Some("local")
+    );
+    assert!(runtime.dispatch_json(&event(
+        "issue_source_set",
+        serde_json::json!({"project_path": "/repo", "source": "auto"}),
+    )));
+    assert_eq!(
+        runtime.snapshot.navigator.workspaces[0]
+            .tasks
+            .source
+            .as_ref()
+            .unwrap()
+            .kind,
+        "github"
+    );
+    // An unknown source is refused, not stored.
+    assert!(runtime.dispatch_json(&event(
+        "issue_source_set",
+        serde_json::json!({"project_path": "/repo", "source": "jira"}),
+    )));
+    assert!(runtime.snapshot().ui_state.project_issue_sources.is_empty());
+}
+
+/// A title the store would refuse fails the create slot with the reason; a
+/// GitHub create without a worker says so instead of hanging in `working`.
+#[test]
+fn a_refused_issue_create_settles_its_slot_with_the_reason() {
+    let mut runtime = issue_runtime();
+    runtime.apply_pull_requests();
+    assert!(runtime.dispatch_json(&event(
+        "issue_create",
+        serde_json::json!({"workspace_id": "w", "title": "   "}),
+    )));
+    assert_eq!(
+        runtime.snapshot().issue_work.create.as_ref().unwrap().phase,
+        "failed"
+    );
+    assert!(runtime.dispatch_json(&event(
+        "issue_create",
+        serde_json::json!({"workspace_id": "w", "title": "GitHub issue"}),
+    )));
+    let create = runtime.snapshot().issue_work.create.clone().unwrap();
+    assert_eq!(create.phase, "failed");
+    assert!(create.message.unwrap().contains("No worker"));
+}
+
+/// Issue settings change only the fields sent, and refuse an unknown agent.
+#[test]
+fn issue_settings_change_only_what_was_sent() {
+    let mut runtime = issue_runtime();
+    assert!(runtime.dispatch_json(&event(
+        "issue_settings_set",
+        serde_json::json!({"ai_worktree_name": false}),
+    )));
+    let settings = runtime.snapshot().ui_state.issue_settings.clone();
+    assert!(!settings.ai_worktree_name);
+    assert_eq!(settings.default_agent, "claude");
+    assert!(settings.closes_instruction);
+    // With AI naming off a suggestion is not even asked for.
+    assert!(!runtime.dispatch_json(&event(
+        "worktree_name_suggest",
+        serde_json::json!({"request_id": "r1", "prefix": "1-", "title": "t"}),
+    )));
+    assert!(runtime.snapshot().issue_work.name.is_none());
+    assert!(runtime.dispatch_json(&event(
+        "issue_settings_set",
+        serde_json::json!({"default_agent": "gemini"}),
+    )));
+    assert_eq!(
+        runtime.snapshot().ui_state.issue_settings.default_agent,
+        "claude"
+    );
+}
+
+/// A task's first prompt waits for its agent and is handed out with the
+/// start; a definite failure keeps it for Retry, a start settles it.
+#[test]
+fn a_task_prompt_is_handed_to_its_agent_start_and_kept_for_a_retry() {
+    let mut runtime = runtime();
+    let id = runtime
+        .begin_task_operation(
+            "agent_start",
+            Some("/tmp/hide-prompt".into()),
+            None,
+            None,
+            Some("claude".into()),
+        )
+        .unwrap();
+    runtime.set_task_agent_prompt(id, Some("  Issue #192를 해결해줘  ".into()));
+    assert!(runtime.ingest_task_operation_result(
+        id,
+        Ok(live::WorktreeTaskOutcome {
+            path: "/tmp/hide-prompt".into(),
+            pane_id: "w1:p9".into(),
+            purpose_error: None,
+            unconfirmed_purpose_token: None,
+            issue_error: None,
+        }),
+    ));
+    let pending = runtime.pending_task_agent_start(id).unwrap();
+    assert_eq!(pending.2.as_deref(), Some("Issue #192를 해결해줘"));
+    assert!(
+        runtime.ingest_task_agent_result(id, live::TaskAgentOutcome::Failed("no claude".into()))
+    );
+    assert!(runtime.task_agent_prompt.is_some(), "kept for Retry");
+    runtime
+        .snapshot
+        .task_operation
+        .as_mut()
+        .unwrap()
+        .agent_phase = Some("starting".into());
+    assert!(runtime.ingest_task_agent_result(
+        id,
+        live::TaskAgentOutcome::StartedWithoutPrompt("agent_blocked".into())
+    ));
+    assert!(runtime.task_agent_prompt.is_none());
+    let operation = runtime.snapshot().task_operation.clone().unwrap();
+    assert_eq!(operation.agent_phase.as_deref(), Some("started"));
+    assert_eq!(operation.agent_message.as_deref(), Some("agent_blocked"));
+}
