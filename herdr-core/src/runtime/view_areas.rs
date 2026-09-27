@@ -418,10 +418,11 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_mut() else {
             return Err(LayoutError::UnknownArea(key.1.clone()));
         };
-        let layout = &mut store.views.entry(&key.0, &key.1).layout;
-        let stamp = layout.next_stamp(now);
-        let (value, changed) = change(layout, stamp)?;
-        if changed {
+        let entry = store.views.entry(&key.0, &key.1);
+        let stamp = entry.layout.next_stamp(now);
+        let (value, changed) = change(&mut entry.layout, stamp)?;
+        let panel_changed = entry.close_empty_panel();
+        if changed || panel_changed {
             store.generation += 1;
             self.persist_workspace_views();
         }
@@ -1784,7 +1785,7 @@ impl Runtime {
                 requested,
                 now,
             );
-            stored |= changed;
+            stored |= changed | view.close_empty_panel();
             unshown.extend(
                 capped
                     .into_iter()
