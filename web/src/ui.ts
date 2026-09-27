@@ -13,7 +13,7 @@ export type { ToolsPlacement, ViewFocusRequest } from "./viewLayout";
 
 export type SidebarMode = "agents" | "projects";
 
-/** The order ⌘E walks. The Explorer is not one of them: it lives in the right
+/** The order the sidebar switch walks. The Explorer is not one of them: it lives in the right
  * panel where the core's `right_panel_section` says it does (D-13). */
 export const SIDEBAR_MODES: readonly SidebarMode[] = ["agents", "projects"];
 

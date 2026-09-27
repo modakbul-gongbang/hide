@@ -56,6 +56,7 @@ import {
   menuEdge,
   neighbourArea,
   resizeTarget,
+  shownTool,
   viewCommands,
   viewLayoutPayload,
   workspaceKey,
@@ -296,6 +297,17 @@ export function createActions(dispatch: DispatchFn) {
     }
     askForTools(view);
     if (view.panel === "closed" || !view.tools) setWorkspaceView({ tools: true });
+  };
+
+  /**
+   * ⌘E (issue 170): shows the side panel on the Explorer with the column
+   * visible, or hides the column when the Explorer already shows there.
+   */
+  const toggleExplorer = () => {
+    const view = workspaceViewOf(rest());
+    if (!view) return diagnostic("toggle Explorer: no Workspace in front");
+    if (shownTool(view, ui().toolsPlacement) === "explorer") return setToolsShown(false);
+    showTool("explorer");
   };
 
   /**
@@ -1189,6 +1201,8 @@ export function createActions(dispatch: DispatchFn) {
     showSidebarMode,
 
     toggleRightPanel,
+
+    toggleExplorer,
 
     setWorkspaceView,
 

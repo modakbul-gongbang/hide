@@ -68,6 +68,16 @@ struct PaneShortcutSettingsTests {
         }
     }
 
+    @Test func aKeyTheWebShellKeepsInTheSharedSetIsIgnoredHere() {
+        let resolution = PaneShortcutPolicy.resolve(stored: [
+            "toggle_sidebar_view": "command+shift+e",
+            "split_right": "command+option+r",
+        ])
+
+        #expect(resolution.diagnostic == nil)
+        #expect(resolution.bindings[.splitRight]?.canonical == "command+option+r")
+    }
+
     @Test func validPersistedBindingsRestoreWithNativeMenuEquivalents() {
         let resolution = PaneShortcutPolicy.resolve(stored: [
             "split_right": "cmd+option+r",

@@ -232,6 +232,12 @@ enum PaneShortcutPolicy {
         "command+w",
     ])
 
+    /// Keys the web shell keeps in this shared set for a command this app
+    /// does not run from it: the sidebar switch, which lost ⌘E to the
+    /// Explorer there (issue 170). They are accepted, ignored here, and kept
+    /// when this app saves the set.
+    static let webOnlyKeys: Set<String> = ["toggle_sidebar_view"]
+
     static var defaults: [PaneCommand: PaneShortcut] {
         Dictionary(uniqueKeysWithValues: PaneCommand.allCases.map { ($0, $0.defaultShortcut) })
     }
@@ -240,7 +246,7 @@ enum PaneShortcutPolicy {
         guard !stored.isEmpty else {
             return PaneShortcutResolution(bindings: defaults, diagnostic: nil)
         }
-        let knownKeys = Set(PaneCommand.allCases.map(\.rawValue))
+        let knownKeys = Set(PaneCommand.allCases.map(\.rawValue)).union(webOnlyKeys)
         let unknownKeys = Set(stored.keys).subtracting(knownKeys)
         guard unknownKeys.isEmpty else {
             return fallback("Unknown pane shortcut keys were ignored: \(unknownKeys.sorted().joined(separator: ", ")).")

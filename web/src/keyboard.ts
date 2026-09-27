@@ -145,6 +145,8 @@ export function installKeyboard(actions: Actions): () => void {
         return actions.toggleLeftSidebar();
       case "toggle_sidebar_view":
         return actions.toggleSidebarView();
+      case "toggle_explorer":
+        return actions.toggleExplorer();
       case "find_in_pane": {
         // One chord, two surfaces, chosen by where the operator works: the
         // View area they are in finds in its document, anywhere else the
