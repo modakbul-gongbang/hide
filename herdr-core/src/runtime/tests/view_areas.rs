@@ -625,7 +625,7 @@ fn a_document_the_full_views_cannot_hold_shows_once_a_view_is_closed() {
     let full = tree(&mut runtime);
     assert_eq!(full.display_count, MAX_VIEW_DISPLAYS);
     assert!(!shown(&mut runtime));
-    layout(&mut runtime, serde_json::json!({"changes": true}));
+    layout(&mut runtime, serde_json::json!({"tool": "changes"}));
     assert_eq!(reported(&runtime), 1, "reported once, not on every pass");
 
     let first = areas(&full)[0].2[0].id.clone();
@@ -1420,7 +1420,7 @@ fn a_restart_restores_the_view_tree_and_marks_a_missing_file_unavailable() {
     );
     layout(
         &mut runtime,
-        serde_json::json!({"panel": "expanded", "changes": true}),
+        serde_json::json!({"panel": "expanded", "tool": "changes"}),
     );
     let before = tree(&mut runtime);
     drop(runtime);
@@ -1472,8 +1472,12 @@ fn a_restart_restores_the_view_tree_and_marks_a_missing_file_unavailable() {
     );
     let view = restarted.snapshot.workspace_view.clone().unwrap();
     assert_eq!(
-        (view.panel, view.changes),
-        (crate::workspace_views::PanelState::Expanded, true)
+        (view.panel, view.tool, view.tools),
+        (
+            crate::workspace_views::PanelState::Expanded,
+            crate::workspace_views::Tool::Changes,
+            true
+        )
     );
     assert_eq!(active_label(&restarted).as_deref(), Some("a.md"));
 

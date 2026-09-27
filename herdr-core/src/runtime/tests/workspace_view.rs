@@ -1,5 +1,5 @@
 use super::*;
-use crate::workspace_views::PanelState;
+use crate::workspace_views::{PanelState, Tool};
 
 // PRD S6: a shell with separate Agent and View areas keeps each Workspace's
 // document beside its terminals, its layout and tools, and brings them back
@@ -323,39 +323,37 @@ fn the_side_panel_closes_and_opens_without_closing_a_view() {
     );
 }
 
-/// Issue 170: a tool shown while the panel is closed opens the panel with
-/// it, a reveal too, and a payload that names the panel keeps its word.
+/// Issue 170, revised: the column holds one tool; choosing one while the
+/// panel is closed opens the panel on it with the column shown, a reveal too,
+/// and a payload that names the panel keeps its word.
 #[test]
-fn a_tool_shown_while_the_panel_is_closed_opens_the_panel() {
+fn a_tool_chosen_while_the_panel_is_closed_opens_the_panel_on_it() {
     let (runtime, _checkout_id, directory) = strip_checkout("tool-opens");
     let mut runtime = with_views(runtime, &views_path("tool-opens"));
     let tools = |runtime: &Runtime| {
         let view = runtime.snapshot.workspace_view.as_ref().unwrap();
-        (view.explorer, view.changes)
+        (view.tool, view.tools)
     };
-    // A new Workspace keeps the Explorer on while its panel is closed.
+    // A new Workspace starts closed, on the Explorer with the column shown.
     assert_eq!(panel(&runtime).0, PanelState::Closed);
-    assert_eq!(tools(&runtime), (true, false));
+    assert_eq!(tools(&runtime), (Tool::Explorer, true));
     assert!(!runtime.snapshot.ui_state.right_panel_visible);
 
-    // History pressed while it is closed opens it with History alone.
-    layout(&mut runtime, serde_json::json!({"changes": true}));
+    layout(&mut runtime, serde_json::json!({"tool": "changes"}));
     assert_eq!(panel(&runtime).0, PanelState::Open);
-    assert_eq!(
-        tools(&runtime),
-        (false, true),
-        "only the pressed tool opens"
-    );
+    assert_eq!(tools(&runtime), (Tool::Changes, true));
     assert!(runtime.snapshot.ui_state.right_panel_visible);
-    // While it shows, a tool is added beside the other.
-    layout(&mut runtime, serde_json::json!({"explorer": true}));
-    assert_eq!(tools(&runtime), (true, true));
+    // One tool at a time: choosing the other swaps it.
+    layout(&mut runtime, serde_json::json!({"tool": "explorer"}));
+    assert_eq!(tools(&runtime), (Tool::Explorer, true));
+
+    // Hiding the column keeps the tool that comes back, and the panel.
+    layout(&mut runtime, serde_json::json!({"tools": false}));
+    assert_eq!(tools(&runtime), (Tool::Explorer, false));
+    assert_eq!(panel(&runtime).0, PanelState::Open);
+    assert!(!runtime.snapshot.ui_state.right_panel_visible);
 
     layout(&mut runtime, serde_json::json!({"panel": "closed"}));
-    assert!(
-        !runtime.snapshot.ui_state.right_panel_visible,
-        "a closed panel's tools read nothing"
-    );
     layout(
         &mut runtime,
         serde_json::json!({"reveal": directory.join("notes.md").to_string_lossy()}),
@@ -363,24 +361,23 @@ fn a_tool_shown_while_the_panel_is_closed_opens_the_panel() {
     assert_eq!(panel(&runtime).0, PanelState::Open);
     assert_eq!(
         tools(&runtime),
-        (true, false),
-        "a reveal opens it with the Explorer alone"
+        (Tool::Explorer, true),
+        "a reveal shows the column on the Explorer"
     );
 
     layout(
         &mut runtime,
-        serde_json::json!({"panel": "closed", "explorer": true}),
+        serde_json::json!({"panel": "closed", "tool": "changes"}),
     );
     assert_eq!(panel(&runtime).0, PanelState::Closed);
+    assert_eq!(tools(&runtime), (Tool::Changes, true));
 
-    // A payload naming both tools opens it with both.
-    layout(
-        &mut runtime,
-        serde_json::json!({"explorer": true, "changes": true}),
-    );
-    assert_eq!(tools(&runtime), (true, true));
+    // Showing the column opens a closed panel on the tool it holds.
+    layout(&mut runtime, serde_json::json!({"tools": true}));
+    assert_eq!(panel(&runtime).0, PanelState::Open);
+    assert_eq!(tools(&runtime), (Tool::Changes, true));
 
-    // `reveal_path` opens a closed panel with the Explorer alone too.
+    // `reveal_path` opens a closed panel on the Explorer too.
     layout(&mut runtime, serde_json::json!({"panel": "closed"}));
     let checkout_id = runtime
         .snapshot
@@ -397,56 +394,53 @@ fn a_tool_shown_while_the_panel_is_closed_opens_the_panel() {
     ));
     assert_eq!(runtime.snapshot.status.last_error, None);
     assert_eq!(panel(&runtime).0, PanelState::Open);
-    assert_eq!(tools(&runtime), (true, false));
+    assert_eq!(tools(&runtime), (Tool::Explorer, true));
 }
 
-/// D-05, A5: the tools are the Workspace's, and the one global panel every
-/// existing reader gates on follows them.
+/// D-05, A5: the tool is the Workspace's, and the one global panel every
+/// existing reader gates on follows it; an unknown value is refused.
 #[test]
 fn workspace_tools_drive_the_panel_the_changes_reader_gates_on() {
     let (runtime, _checkout_id, _directory) = strip_checkout("tools");
     let mut runtime = with_views(runtime, &views_path("tools"));
-    layout(
-        &mut runtime,
-        serde_json::json!({"explorer": false, "changes": true}),
-    );
-    let view = runtime
-        .snapshot
-        .workspace_view
-        .clone()
-        .expect("front Workspace");
-    assert!(!view.explorer && view.changes);
+    layout(&mut runtime, serde_json::json!({"tool": "changes"}));
     assert!(runtime.snapshot.ui_state.right_panel_visible);
     assert_eq!(
         runtime.snapshot.ui_state.right_panel_section,
         RightPanelSection::Changes
     );
 
-    layout(&mut runtime, serde_json::json!({"explorer": true}));
+    layout(&mut runtime, serde_json::json!({"tool": "explorer"}));
     assert_eq!(
         runtime.snapshot.ui_state.right_panel_section,
         RightPanelSection::Explorer
     );
 
-    layout(
-        &mut runtime,
-        serde_json::json!({"explorer": false, "changes": false}),
-    );
+    layout(&mut runtime, serde_json::json!({"tools": false}));
     assert!(!runtime.snapshot.ui_state.right_panel_visible);
 
-    runtime.dispatch_json(&explorer_event(
-        "workspace_view",
-        serde_json::json!({"panel": "sideways"}),
-    ));
-    assert_eq!(
-        runtime
-            .snapshot
-            .status
-            .last_error
-            .as_ref()
-            .map(|error| error.kind.as_str()),
-        Some("workspace_view.unknown_panel")
-    );
+    for (payload, kind) in [
+        (
+            serde_json::json!({"panel": "sideways"}),
+            "workspace_view.unknown_panel",
+        ),
+        (
+            serde_json::json!({"tool": "terminal"}),
+            "workspace_view.unknown_tool",
+        ),
+    ] {
+        runtime.dispatch_json(&explorer_event("workspace_view", payload));
+        assert_eq!(
+            runtime
+                .snapshot
+                .status
+                .last_error
+                .as_ref()
+                .map(|error| error.kind.as_str()),
+            Some(kind)
+        );
+    }
+    assert!(!runtime.snapshot.ui_state.right_panel_visible);
 }
 
 /// B19: the daemon opens a checkout's root after the first snapshot names
@@ -607,25 +601,25 @@ fn returning_to_a_workspace_without_agent_tabs_keeps_its_active_view_tab() {
     assert_eq!(active_label(&runtime).as_deref(), Some("notes.md"));
 }
 
-/// B10, AGENTS.md one event per action: revealing a file shows the Explorer
+/// B10, AGENTS.md one event per action: revealing a file shows the column on the Explorer
 /// and unfolds its folders in the same `workspace_view`, and a path outside
 /// the Workspace is refused without showing anything.
 #[test]
 fn a_reveal_shows_the_explorer_and_unfolds_the_folders_in_one_event() {
     let (runtime, _checkout_id, directory) = strip_checkout("reveal");
     let mut runtime = with_views(runtime, &views_path("reveal"));
-    layout(&mut runtime, serde_json::json!({"explorer": false}));
+    layout(&mut runtime, serde_json::json!({"tools": false}));
     let root = directory.to_string_lossy().into_owned();
 
     runtime.dispatch_json(&explorer_event(
         "workspace_view",
-        serde_json::json!({"explorer": true, "reveal": "/elsewhere/a.txt"}),
+        serde_json::json!({"reveal": "/elsewhere/a.txt"}),
     ));
     assert!(runtime.snapshot.status.last_error.is_some());
-    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().explorer);
+    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().tools);
     runtime.dispatch_json(&explorer_event(
         "workspace_view",
-        serde_json::json!({"explorer": true, "reveal": format!("{root}/../elsewhere/a.txt")}),
+        serde_json::json!({"reveal": format!("{root}/../elsewhere/a.txt")}),
     ));
     assert_eq!(
         runtime
@@ -637,13 +631,13 @@ fn a_reveal_shows_the_explorer_and_unfolds_the_folders_in_one_event() {
         Some("workspace_view.reveal_outside"),
         "a path that climbs out of the Workspace is refused, not unfolded"
     );
-    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().explorer);
+    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().tools);
 
     layout(
         &mut runtime,
-        serde_json::json!({"explorer": true, "reveal": format!("{root}/src/deep/a.rs")}),
+        serde_json::json!({"reveal": format!("{root}/src/deep/a.rs")}),
     );
-    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().explorer);
+    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().tools);
     let expanded = &runtime.snapshot.ui_state.expanded_paths;
     assert!(expanded.contains(&format!("{root}/src")));
     assert!(expanded.contains(&format!("{root}/src/deep")));
@@ -819,7 +813,7 @@ fn workspace_tools_never_reach_the_older_settings_file() {
     let mut runtime = with_views(runtime, &views_path("settings"));
     layout(
         &mut runtime,
-        serde_json::json!({"explorer": !saved.0, "changes": false}),
+        serde_json::json!({"tool": "explorer", "tools": !saved.0}),
     );
     assert_eq!(runtime.snapshot.ui_state.right_panel_visible, !saved.0);
     let written = runtime.ui_state_to_save();

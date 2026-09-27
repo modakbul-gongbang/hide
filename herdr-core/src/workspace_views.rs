@@ -5,7 +5,7 @@
 //! checkout path, because a Herdr workspace id is not stable across a Herdr
 //! restart and one checkout can hold tabs from several Herdr workspaces. The
 //! state is Hide's own presentation - whether and how the side panel shows,
-//! which tools are open, the panel's width, and the View area tree with its displays
+//! which tool it holds and whether the tool column shows, the panel's width, and the View area tree with its displays
 //! ([`crate::view_layout`]) - and never a terminal layout: Herdr keeps panes,
 //! splits and zoom.
 //!
@@ -16,7 +16,9 @@
 //! written as schema 2 by the next save. A file this build cannot read, of
 //! another version or one whose migration fails, is moved aside, never
 //! overwritten, and the defaults load. An entry written before the side
-//! panel (issue 170) restarts into the panel state that shows the same things.
+//! panel (issue 170) restarts into the panel state that shows the same things,
+//! and one written with two independent tool flags restarts on the tool it
+//! showed.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;
@@ -72,6 +74,28 @@ impl PanelState {
     }
 }
 
+/// The one tool the side panel's tool column holds (issue 170, "Side panel
+/// hierarchy, revised"): the Explorer or History, never both. Choosing one
+/// swaps it; hiding the column keeps which one comes back.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Tool {
+    #[default]
+    Explorer,
+    /// History, the checkout's changes.
+    Changes,
+}
+
+impl Tool {
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "explorer" => Some(Self::Explorer),
+            "changes" => Some(Self::Changes),
+            _ => None,
+        }
+    }
+}
+
 /// The three layouts a Workspace stored before the side panel, read only to
 /// restart into the panel state that shows the same things.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -91,15 +115,19 @@ pub struct WorkspaceView {
     /// unpinning and resizing a pinned panel resize the terminals once. A
     /// window too narrow for both floats a pinned panel without storing it.
     pub pinned: bool,
-    pub explorer: bool,
-    pub changes: bool,
+    /// The tool the column holds, kept while the column is hidden.
+    pub tool: Tool,
+    /// Whether the tool column shows beside the View areas, or as the whole
+    /// panel while no view is open.
+    pub tools: bool,
     pub views_over_share: f32,
     pub last_used_unix_ms: u64,
     pub layout: Layout,
 }
 
 /// A stored entry as any build since schema 2 wrote it: the side panel's
-/// fields, or the layout and boundary that came before them.
+/// fields, or the layout and boundary that came before them, with the one
+/// tool and its column or the two tool flags that came before those.
 #[derive(Deserialize)]
 struct StoredView {
     device_id: String,
@@ -108,6 +136,10 @@ struct StoredView {
     panel: Option<PanelState>,
     #[serde(default)]
     pinned: bool,
+    #[serde(default)]
+    tool: Option<Tool>,
+    #[serde(default)]
+    tools: Option<bool>,
     #[serde(default = "default_explorer")]
     explorer: bool,
     #[serde(default)]
@@ -136,13 +168,17 @@ impl StoredView {
                 (panel, pinned, self.views_over_share.or(share))
             }
         };
+        let (tool, tools) = match (self.tool, self.tools) {
+            (Some(tool), Some(tools)) => (tool, tools),
+            _ => legacy_tool(self.explorer, self.changes),
+        };
         WorkspaceView {
             device_id: self.device_id,
             path: self.path,
             panel,
             pinned,
-            explorer: self.explorer,
-            changes: self.changes,
+            tool,
+            tools,
             views_over_share: share.unwrap_or(DEFAULT_VIEWS_OVER_SHARE),
             last_used_unix_ms: self.last_used_unix_ms,
             layout: self.layout,
@@ -169,6 +205,17 @@ fn legacy_panel(
     }
 }
 
+/// The tool an entry stored with two independent flags restarts on: the
+/// Explorer when it showed, since it won the panel while both did, else
+/// History when that showed; with neither the column is hidden and the
+/// Explorer is the one it brings back.
+fn legacy_tool(explorer: bool, changes: bool) -> (Tool, bool) {
+    match (explorer, changes) {
+        (false, true) => (Tool::Changes, true),
+        (explorer, _) => (Tool::Explorer, explorer),
+    }
+}
+
 fn default_explorer() -> bool {
     true
 }
@@ -180,8 +227,8 @@ impl WorkspaceView {
             path: path.to_owned(),
             panel: PanelState::default(),
             pinned: false,
-            explorer: default_explorer(),
-            changes: false,
+            tool: Tool::default(),
+            tools: true,
             views_over_share: DEFAULT_VIEWS_OVER_SHARE,
             last_used_unix_ms: 0,
             layout: Layout::default(),
@@ -326,13 +373,14 @@ impl V1View {
             area.active = active.or_else(|| area.displays.last().map(|display| display.id.clone()));
         }
         let (panel, pinned, share) = legacy_panel(self.mode, self.agent_share, false);
+        let (tool, tools) = legacy_tool(self.explorer, self.changes);
         WorkspaceView {
             device_id: self.device_id,
             path: self.path,
             panel,
             pinned,
-            explorer: self.explorer,
-            changes: self.changes,
+            tool,
+            tools,
             views_over_share: share.unwrap_or(DEFAULT_VIEWS_OVER_SHARE),
             last_used_unix_ms: self.last_used_unix_ms,
             layout,
@@ -508,7 +556,8 @@ mod tests {
         let entry = views.entry("local", "/repo");
         entry.panel = PanelState::Expanded;
         entry.pinned = true;
-        entry.changes = true;
+        entry.tool = Tool::Changes;
+        entry.tools = false;
         entry.views_over_share = 0.3;
         let layout = &mut entry.layout;
         for (path, kind, committed, preview) in [
@@ -604,11 +653,11 @@ mod tests {
             (
                 view.panel,
                 view.pinned,
-                view.explorer,
-                view.changes,
+                view.tool,
+                view.tools,
                 view.last_used_unix_ms
             ),
-            (PanelState::Open, true, false, true, 7)
+            (PanelState::Open, true, Tool::Changes, true, 7)
         );
         assert!((view.views_over_share - 0.6).abs() < 1e-6);
         assert_eq!(view.layout.area_count(), 1);
@@ -750,6 +799,60 @@ mod tests {
         let written = fs::read_to_string(&path).unwrap();
         assert!(!written.contains("\"mode\""));
         assert!(!written.contains("agent_share"));
+        assert_eq!(load(&path, 2).0, loaded);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// Issue 170, revised: an entry stored with two tool flags restarts on
+    /// the one tool it showed, the Explorer winning as it did while both
+    /// showed, and the next save writes only the tool and its column.
+    #[test]
+    fn a_workspace_stored_with_two_tool_flags_restarts_on_one_tool() {
+        let root = scratch("legacy-tools");
+        let path = root.join("workspace-views.json");
+        let entry = |path: &str, explorer: bool, changes: bool| {
+            serde_json::json!({
+                "device_id": "local", "path": path, "panel": "open",
+                "explorer": explorer, "changes": changes,
+            })
+        };
+        fs::write(
+            &path,
+            serde_json::json!({
+                "schema_version": 2,
+                "workspaces": [
+                    entry("/both", true, true),
+                    entry("/explorer", true, false),
+                    entry("/history", false, true),
+                    entry("/neither", false, false),
+                    {"device_id": "local", "path": "/unset", "panel": "open"},
+                ]
+            })
+            .to_string(),
+        )
+        .unwrap();
+
+        let (loaded, _) = load(&path, 1);
+
+        let tools: Vec<_> = loaded
+            .workspaces
+            .iter()
+            .map(|view| (view.path.as_str(), view.tool, view.tools))
+            .collect();
+        assert_eq!(
+            tools,
+            vec![
+                ("/both", Tool::Explorer, true),
+                ("/explorer", Tool::Explorer, true),
+                ("/history", Tool::Changes, true),
+                ("/neither", Tool::Explorer, false),
+                ("/unset", Tool::Explorer, true),
+            ]
+        );
+        save(&path, &loaded).unwrap();
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(!written.contains("\"explorer\":"));
+        assert!(!written.contains("\"changes\":"));
         assert_eq!(load(&path, 2).0, loaded);
         let _ = fs::remove_dir_all(&root);
     }

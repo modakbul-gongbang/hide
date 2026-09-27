@@ -182,8 +182,10 @@ pub struct WorkspaceViewSnapshot {
     pub panel: crate::workspace_views::PanelState,
     /// The panel docked beside the agents rather than over them.
     pub pinned: bool,
-    pub explorer: bool,
-    pub changes: bool,
+    /// The one tool the tool column holds, kept while the column is hidden.
+    pub tool: crate::workspace_views::Tool,
+    /// Whether the tool column shows.
+    pub tools: bool,
     /// The open panel's width, as a share of the Workspace body's.
     pub views_over_share: f32,
     /// The shell reported drawing this panel over the whole body (a narrow
