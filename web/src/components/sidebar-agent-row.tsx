@@ -42,7 +42,10 @@ export function FoldLane() {
  * no branch chip, while a child drawn under a parent elsewhere keeps it.
  *
  * Nothing here grows or moves on hover, focus, selection or an open menu:
- * those change a fill, a ring and the chevron's opacity only.
+ * those change a fill, a ring and the chevron's opacity only. The title is
+ * 12/400 in every state; attention and selection brighten it rather than
+ * thicken it (PRD sidebar-typography D-02). Line one is 20 high and line two
+ * 16, so a row is 28 or 44 with its padding (D-03).
  */
 export const SidebarAgentRow = memo(function SidebarAgentRow({
   agent,
@@ -106,14 +109,14 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           onClick={() => onOpen(agent.pane_id)}
         />
       </Hint>
-      <span className="pointer-events-none flex min-h-(--size-control-sm) shrink-0 items-center gap-xs">
+      <span className="pointer-events-none flex min-h-(--size-sidebar-line) shrink-0 items-center gap-xs">
         <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.waiting_on_descendants ? "waiting" : agent.status_label} />
         <AgentMark kind={agent.agent_kind} />
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="flex min-h-(--size-control-sm) min-w-0 items-center gap-xs">
+        <span className="flex min-h-(--size-sidebar-line) min-w-0 items-center gap-xs">
           {/* The row button's name already reads all of this out. */}
-          <span aria-hidden="true" className={cn("pointer-events-none min-w-0 flex-auto truncate", titleTone, (attention || selected) && "font-medium")} data-agent-title="true">
+          <span aria-hidden="true" className={cn("pointer-events-none min-w-0 flex-auto truncate", titleTone)} data-agent-title="true">
             {agent.identity_label}
           </span>
           {branch ? (
@@ -138,7 +141,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           ) : null}
           {/* An empty elapsed is a time nobody measured, and nothing stands in for it. */}
           {agent.elapsed ? (
-            <span aria-hidden="true" className="pointer-events-none shrink-0 font-mono text-micro text-muted-foreground" data-agent-elapsed="true">
+            <span aria-hidden="true" className="pointer-events-none shrink-0 font-mono text-caption text-muted-foreground" data-agent-elapsed="true">
               {agent.elapsed}
             </span>
           ) : null}
@@ -149,7 +152,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
               aria-expanded={!folded}
               data-agent-tree-toggle={agent.pane_id}
               className={cn(
-                "relative flex h-(--size-control-sm) w-(--size-lineage-chevron) shrink-0 items-center justify-center rounded-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring",
+                "relative flex h-(--size-sidebar-line) w-(--size-lineage-chevron) shrink-0 items-center justify-center rounded-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring",
                 !folded && REVEALED_CONTROL,
               )}
               onClick={() => onToggleTree(agent.pane_id)}
@@ -161,12 +164,12 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           )}
         </span>
         {line ? (
-          <span aria-hidden="true" data-agent-line={line.mode} className={cn("pointer-events-none truncate text-caption", lineTone(line, agent.demand))}>
+          <span aria-hidden="true" data-agent-line={line.mode} className={cn("pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail)", lineTone(line, agent.demand))}>
             {line.text}
           </span>
         ) : null}
         {place ? (
-          <span aria-hidden="true" data-agent-place={place} className="pointer-events-none truncate text-caption text-muted-foreground">
+          <span aria-hidden="true" data-agent-place={place} className="pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail) text-muted-foreground">
             {place}
           </span>
         ) : null}

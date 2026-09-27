@@ -154,8 +154,11 @@
   --size-form-control: 36px;
   --size-settings-field: 28px;
   --size-settings-control-w: 200px;
-  --size-checkout-row: 36px;
-  --size-checkout-row-detailed: 44px;
+  --size-checkout-row: 32px;
+  --size-checkout-row-detailed: 48px;
+  --size-project-row: 36px;
+  --size-sidebar-line: 20px;
+  --size-sidebar-line-detail: 16px;
   --size-overview-group-header: 52px;
   --size-checkout-icon: 14px;
   --size-checkout-metadata-inset: 22px;
@@ -183,7 +186,6 @@
   --size-hint-horizontal-padding: 4px;
   --size-pr-icon: 14px;
   --size-lineage-elbow-y: 13px;
-  --size-compact-agent-leading-inset: 13px;
   --size-compact-agent-row-vpad: 5px;
   --size-agent-badge-compact: 16px;
   --size-icon-button-standard: 32px;
@@ -219,6 +221,16 @@
   --size-icon: 14px;
   --size-icon-sm: 12px;
   --size-icon-lg: 20px;
+}
+
+.interface-scale-exempt {
+  --interface-scale: 1;
+  --text-micro: 10px;
+  --text-caption: 11px;
+  --text-body: 12px;
+  --text-subhead: 13px;
+  --text-title: 14px;
+  --text-headline: 18px;
 }
 
 /* `.light` and `.dark` also scope a subtree, so one page can show both (the dev gallery). */

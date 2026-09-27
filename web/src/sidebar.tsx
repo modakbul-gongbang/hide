@@ -32,6 +32,8 @@ import { WeeklyUsage } from "./components/weekly-usage";
 import { agentPlaces, agentSections, allAgents, allProjectsCount, liveDescendantCounts, type ListedAgent } from "./navigation";
 import {
   activeCheckouts,
+  checkoutHasSecondLine,
+  checkoutNameParts,
   checkoutPresentation,
   checkoutRowExpansion,
   overviewRowSelected,
@@ -72,7 +74,10 @@ export function Sidebar({ actions }: { actions: Actions }) {
   if (!visible) return null;
 
   return (
-    <nav className="flex h-full w-[var(--size-sidebar-ideal)] shrink-0 flex-col bg-sidebar text-foreground" data-sidebar={mode}>
+    // The sidebar keeps its own text sizes whatever Appearance's interface
+    // font is (PRD sidebar-typography D-05): `interface-scale-exempt` is the
+    // generated rule in tokens.css that declares the sizes again at scale 1.
+    <nav className="interface-scale-exempt flex h-full w-[var(--size-sidebar-ideal)] shrink-0 flex-col bg-sidebar text-foreground" data-sidebar={mode}>
       <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm px-md text-caption">
         {SIDEBAR_MODES.map((candidate) => (
           <button
@@ -146,7 +151,7 @@ function AgentList({ actions }: { actions: Actions }) {
     <ul className="min-h-0 flex-1 overflow-auto px-xs" data-agent-list="true">
       {tree.sections.map((section) => (
         <li key={section.group} data-agent-group={section.group}>
-          <div className="px-sm pb-xxs pt-sm text-micro font-semibold uppercase text-muted-foreground" id={`agent-group-${section.group}`}>
+          <div className="px-sm pb-xxs pt-sm text-micro font-medium text-muted-foreground" id={`agent-group-${section.group}`}>
             {section.label} · {section.count}
           </div>
           <ul aria-labelledby={`agent-group-${section.group}`}>
@@ -315,13 +320,13 @@ function AllProjectsRow({ selected }: { selected: boolean }) {
         data-all-projects="true"
         aria-current={selected ? "page" : undefined}
         className={cn(
-          "flex min-h-(--size-control-regular) w-full items-center gap-sm rounded-sm pr-xs pl-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+          "flex min-h-(--size-project-row) w-full items-center gap-sm rounded-sm pr-xs pl-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
           selected ? "bg-secondary" : "hover:bg-accent",
         )}
         onClick={() => useUiStore.getState().setScreen({ kind: "main" })}
       >
         <LayoutGridIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
-        <span className="min-w-0 flex-1 truncate text-title font-semibold text-foreground">All projects</span>
+        <span className="min-w-0 flex-1 truncate text-subhead font-semibold text-foreground">All projects</span>
         <RowEnd>
           <span className="text-body text-muted-foreground">
             {count} {count === 1 ? "project" : "projects"}
@@ -347,7 +352,7 @@ function rowKey(row: ProjectRow): string {
 const ProjectRowView = memo(function ProjectRowView({ row, context }: { row: ProjectRow; context: ListContext }) {
   if (row.kind === "header") {
     return (
-      <li className="px-sm pt-sm pb-xxs text-micro font-semibold uppercase text-muted-foreground" data-section={row.title}>
+      <li className="px-sm pt-sm pb-xxs text-micro font-medium text-muted-foreground" data-section={row.title}>
         {row.title} · {row.count}
       </li>
     );
@@ -498,7 +503,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
         data-project-menu={workspace.id}
       >
         <div
-          className="flex min-h-(--size-control-regular) w-full items-center gap-xs rounded-sm pr-xs hover:bg-accent"
+          className="flex min-h-(--size-project-row) w-full items-center gap-xs rounded-sm pr-xs hover:bg-accent"
           style={{ paddingLeft: PROJECT_COLUMN }}
         >
           <button
@@ -509,7 +514,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
             onClick={() => useUiStore.getState().setScreen({ kind: "overview", projectId: workspace.id })}
           >
             <ProjectIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
-            <span data-row-name="true" className="min-w-0 flex-1 truncate text-title font-semibold text-foreground">{workspace.label}</span>
+            <span data-row-name="true" className="min-w-0 flex-1 truncate text-subhead font-semibold text-foreground">{workspace.label}</span>
             {/* The project's badge stays while its checkouts are open: it is the project's own summary. */}
             <StatusBadge counts={marks} data-project-status={workspace.id} />
           </button>
@@ -556,8 +561,8 @@ function OverviewRow({ workspace, selected }: { workspace: Workspace; selected: 
         data-project-overview={workspace.id}
         aria-current={selected ? "page" : undefined}
         className={cn(
-          "flex min-h-(--size-checkout-row) w-full items-center gap-sm rounded-sm pr-xs text-left text-subhead text-foreground outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
-          selected ? "bg-secondary font-semibold" : "font-medium hover:bg-accent",
+          "flex min-h-(--size-checkout-row) w-full items-center gap-sm rounded-sm pr-xs text-left text-body text-foreground outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
+          selected ? "bg-secondary font-medium" : "hover:bg-accent",
         )}
         style={{ paddingLeft: CHECKOUT_COLUMN }}
         onClick={() => useUiStore.getState().setScreen({ kind: "overview", projectId: workspace.id })}
@@ -586,17 +591,15 @@ const KIND_ICON: Record<CheckoutKind, typeof GitBranchIcon> = {
 /**
  * What a checkout's row draws besides line one, shared by the checkout row and
  * a folder's one row: its agent rows open only where agents run and the
- * operator opened them. Line two is the purpose, and it is kept wherever
- * agents run even before the core has a purpose to put there, because an
- * agent's title becomes the purpose once it is known and the row must not
- * grow when it arrives; opening the agents never grows or shrinks the row.
+ * operator opened them. Line two is the purpose and exists only while there
+ * is one (PRD sidebar-typography D-04); opening the agents never grows or
+ * shrinks the row.
  */
 function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: CheckoutPresentation, context: ListContext) {
   const foldable = context.disclosure && agentRows.length > 0;
   const open = foldable && context.openCheckouts.includes(checkout.id);
   const purpose = checkout.purpose?.text ?? null;
-  const secondLine = view.secondLineReady && (purpose !== null || agentRows.length > 0);
-  return { foldable, open, purpose, secondLine };
+  return { foldable, open, purpose, secondLine: checkoutHasSecondLine(view, purpose) };
 }
 
 /**
@@ -604,8 +607,7 @@ function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: Che
  * ends in its agents' status badge while their rows are folded, then the fold
  * slot, whose chevron opens those rows while agents run in it. Line two is
  * the purpose, and the last-commit age ends the row's last line on the time
- * column: line two's when the row has one, line one's on a row with neither a
- * purpose nor agents, which is one line.
+ * column: line two's when the row has a purpose, line one's otherwise.
  * Opened, its rows and it share a small group fill, and the rows' own marks
  * stand for the badge.
  */
@@ -630,7 +632,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
   const marks = checkout.agent_summary?.marks;
   const KindIcon = KIND_ICON[view.kind];
   return (
-    <li data-checkout-row={checkout.id} data-checkout-open={open ? "true" : undefined} className={cn(open && "rounded-sm bg-muted")}>
+    <li data-checkout-row={checkout.id} data-checkout-open={open ? "true" : undefined} className={cn(open && "rounded-sm bg-muted py-xs")}>
       <EntryContextMenu
         label={`${name} actions`}
         items={() => checkoutMenu(checkout, purposeProblem)}
@@ -659,9 +661,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
           {/* The row button covers the whole row; a control drawn over it is positioned, so it stacks above. */}
           <span className="pointer-events-none flex min-w-0 items-center gap-sm">
             <KindIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />
-            <span aria-hidden="true" data-row-name="true" className={cn("min-w-0 truncate text-subhead text-foreground", focused ? "font-semibold" : "font-medium")}>
-              {name}
-            </span>
+            <CheckoutName name={name} focused={focused} />
             <CheckoutBadge checkout={checkout} />
             <span className="flex-1" />
             <RowEnd>
@@ -717,7 +717,7 @@ const FolderRowView = memo(function FolderRowView({
   const marks = checkout.agent_summary?.marks;
   const { foldable, open, purpose, secondLine } = checkoutDisclosure(checkout, agentRows, view, context);
   return (
-    <li data-project={workspace.id} data-checkout-open={open ? "true" : undefined} className={cn(inset, open && "rounded-sm bg-muted")}>
+    <li data-project={workspace.id} data-checkout-open={open ? "true" : undefined} className={cn(inset, open && "rounded-sm bg-muted py-xs")}>
       <EntryContextMenu
         label={`${workspace.label} actions`}
         items={() => folderMenu(workspace, checkout, purposeProblem)}
@@ -728,7 +728,7 @@ const FolderRowView = memo(function FolderRowView({
         <div
           className={cn(
             "relative flex w-full flex-col justify-center gap-xxs rounded-sm pr-xs",
-            secondLine ? "min-h-(--size-checkout-row-detailed)" : "min-h-(--size-control-regular)",
+            secondLine ? "min-h-(--size-checkout-row-detailed)" : "min-h-(--size-project-row)",
             focused ? "bg-secondary" : "hover:bg-accent",
           )}
           style={{ paddingLeft: PROJECT_COLUMN }}
@@ -744,7 +744,7 @@ const FolderRowView = memo(function FolderRowView({
           />
           <span className="pointer-events-none flex min-w-0 items-center gap-sm">
             <FolderIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />
-            <span aria-hidden="true" data-row-name="true" className="min-w-0 truncate text-title font-semibold text-foreground">
+            <span aria-hidden="true" data-row-name="true" className="min-w-0 truncate text-subhead font-semibold text-foreground">
               {workspace.label}
             </span>
             <CheckoutBadge checkout={checkout} />
@@ -822,6 +822,25 @@ function CheckoutBadge({ checkout }: { checkout: Checkout }) {
   return null;
 }
 
+/**
+ * A checkout's name at 12/400, 500 while its Workspace is in front, with its
+ * path prefix (`prd/`) muted so the part that tells checkouts apart reads
+ * first (PRD sidebar-typography D-02, D-06).
+ */
+function CheckoutName({ name, focused }: { name: string; focused: boolean }) {
+  const { prefix, rest } = checkoutNameParts(name);
+  return (
+    <span aria-hidden="true" data-row-name="true" className={cn("min-w-0 truncate text-body text-foreground", focused && "font-medium")}>
+      {prefix ? (
+        <span className="text-muted-foreground" data-name-prefix="true">
+          {prefix}
+        </span>
+      ) : null}
+      {rest}
+    </span>
+  );
+}
+
 /** A checkout's last-commit age, drawn on the time column of whichever line ends the row. */
 function CheckoutAge({ age }: { age: string }) {
   return (
@@ -834,13 +853,12 @@ function CheckoutAge({ age }: { age: string }) {
 /**
  * A checkout's line two: its purpose, and the last-commit age ending on the
  * time column over an empty fold slot, as line one ends. A folder's line two
- * has no age: a plain folder has no commit. Until a purpose is known the line
- * keeps its place empty.
+ * has no age: a plain folder has no commit.
  */
 function PurposeLine({ purpose, origin, age }: { purpose: string | null; origin: string | undefined; age: string | null }) {
   return (
     // The row is already inset to its glyph, so line two starts one glyph and gap further, under the name.
-    <span aria-hidden="true" className="pointer-events-none flex min-h-(--size-badge-height) min-w-0 items-center gap-sm pl-(--size-checkout-metadata-inset) text-caption">
+    <span aria-hidden="true" className="pointer-events-none flex min-h-(--size-sidebar-line-detail) min-w-0 items-center gap-sm pl-(--size-checkout-metadata-inset) text-caption leading-(--size-sidebar-line-detail)">
       <span className="min-w-0 flex-1 truncate text-muted-foreground" data-purpose={purpose === null ? undefined : origin}>
         {purpose}
       </span>
@@ -864,7 +882,7 @@ function PurposeLine({ purpose, origin, age }: { purpose: string | null; origin:
 function OpenAgentRows({ checkoutId, agentRows, inset, context }: { checkoutId: string; agentRows: BoardRow[]; inset: string; context: ListContext }) {
   const rows = context.disclosure ? unfoldedRows(agentRows) : agentRows;
   return (
-    <ul data-checkout-agents-open={checkoutId} className="pb-xs">
+    <ul data-checkout-agents-open={checkoutId}>
       {rows.map((row) => (
         <SidebarAgentRow
           key={row.agent.pane_id}
