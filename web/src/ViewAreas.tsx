@@ -105,7 +105,7 @@ function useTree(): Tree {
 /**
  * The front Workspace's View areas, in the side panel. With no display they
  * are drawn only while a file of this checkout is opening; otherwise the
- * panel holds its tools or its empty state (`panelFrame`). `trailing` is what
+ * panel holds its tools or closes (`panelFrame`). `trailing` is what
  * the panel's strip carries at its right end when no tool column is there to
  * carry it.
  */

@@ -382,7 +382,8 @@ That projection is never saved: `core-state.json` keeps the right panel it held 
 A new Workspace starts with its panel closed on the Explorer with the column shown, so the panel toggle, ⌘⇧B or a file open shows it.
 The panel sits over the Agent area's right side (issue 170), `views_over_share` of the body's width (0.2..0.8): unpinned, the Agent area keeps its size underneath, so opening, closing, resizing or expanding the panel moves no PTY; `pinned` docks it, and the agents' terminals resize once to end at its left edge.
 Pinned is not a fourth state: it is stored beside `panel` and the width, and a pinned panel still closes, opens and expands.
-The last view leaving changes nothing the core stores; the web draws a panel with no view as the tool column alone or as the empty state.
+The last view leaving keeps the tool column alone when tools are enabled; otherwise the core closes and persists the panel in the same transition.
+Hiding the final tool column also closes the panel, so the panel content is views or tools, never empty.
 An entry stored before the panel, with S6's `mode` (and `agent_share`, `views_over_agents`) instead of `panel`, is read into the nearest state (`legacy_panel`): `agents` as closed, or open when its View areas floated over the agents; `together` as pinned open at `1 - agent_share`; `views` as expanded; the next save writes only the new keys, and the schema stays 2 because the change adds keys.
 
 Schema 2 of that file (PRD S7) stores each Workspace's View areas as a binary split tree (`layout`, rules in `herdr-core/src/view_layout.rs`).
@@ -453,8 +454,8 @@ The one viewport fact the core hears is `panel_covers`: whether the Workspace th
 The page sends it only when that fact differs from both the `workspace_view.covered` the core echoes and its own last report (`panelCoversToSend`), so a crossing is sent once and never per resize, and two pages that disagree each send once instead of undoing each other; the page forgets its last report when it draws another Workspace or its connection goes down, so a report the core dropped or never received goes again, and nothing is sent before the body is measured.
 While the Workspace screen is not drawn (All projects, an Overview) the page sends nothing and the core keeps the last fact until the front moves, so an agent of that Workspace chosen there is uncovered as it would be on screen; the cost is that a window widened meanwhile still closes that pinned panel once, and one narrowed meanwhile leaves the chosen agent under it.
 The core takes it only for the Workspace in front, so a report that crossed a move of the front changes nothing, holds it in memory (`WorkspaceViewStore::covered`, never in the file) and drops it when the front moves, so it only ever affects the panel of the Workspace it describes.
-What the panel draws is `panelFrame` in `web/src/workspace.ts`, from the core's entry and the body's width alone: the View areas while a view is open or a file of the checkout is opening, else the tool column alone at its own width, else the empty state; the core's single empty area stays as the layout's root.
-The Agent area is placed absolutely in the Workspace body and ends at the body's right edge, or at the panel's left edge while it is pinned; the panel is an absolutely placed sibling over it (`SidePanel` in `web/src/WorkspaceScreen.tsx`), so the Agent area stays mounted and live beside it and its terminals neither park nor resize, and `viewAreaInUse` routes a chord by where the keyboard is.
+What the panel draws is `panelFrame` in `web/src/workspace.ts`, from the core's entry and the body's width alone: the View areas while a view is open or a file of the checkout is opening, else the tool column alone at its own width, with neither rendered as a closed panel; the core's single empty area stays as the layout's root.
+The Agent area is placed absolutely in the Workspace body and ends at the body's right edge, or at the panel's left edge while it is pinned; the panel is an absolutely placed sibling over it (`SidePanel` in `web/src/WorkspaceScreen.tsx`), so the Agent area stays mounted and live beside it and its terminals neither park nor resize, and the page records the keyboard owner from focus and pointer events, including native page focus from the desktop host, to route a chord.
 The Agent area is its own stacking context, so nothing it raises draws over the panel, and it is inert while an expanded panel covers it.
 The panel's left edge drags a guide and sends one `views_over_share`, or `tools_share` for a panel holding only the tools, on release, so the panel itself does not move during a drag; a browser display's slot inside the panel reports its rect like any other, a resize that lands reaches the page through the slot's ResizeObserver, and closing the panel unmounts the slots, which hides their pages without closing them.
 The web also owns the pixel rule, because it has the geometry: an edge takes a drop, and a Split item or an Open to the side from the only area is enabled, only when the target area's size along the split axis is at least twice `--size-workspace-area-min` (a `row` split) or twice `--size-view-area-min-height` (a `column` split) plus the divider, and the split stays within `layout.limits`; the core owns the counts and the depth and refuses whatever passes them.
@@ -655,6 +656,9 @@ Signing with a real identity, notarization, auto-update, installers, a tray item
 
 `web/src/shortcuts.ts` is one table, command to chord per host, matched on `KeyboardEvent.code` at the window capture phase ahead of xterm and Chrome's defaults and never during IME composition (`web/src/keyboard.ts`).
 The `⌘/` sheet is generated from the table.
+The close chord uses the page's recorded keyboard owner: the focused View display first, otherwise the owned visible pane, with tools, absent or retired owners producing a diagnostic and no close.
+It never closes a whole tab; tab controls and their menus name that intent explicitly.
+The explicit Close pane command still closes the core's focused pane through the same confirmation path.
 ⌘F follows where the operator works: inside a View area it opens the document's find, anywhere else the focused terminal pane's find bar, even with an editor open beside it; Escape and × end the pane search and give the keyboard back to that pane.
 Settings > Shortcuts rebinds the seven pane commands (split right and down, zoom, close pane, larger, smaller and reset text) in the running host's own set.
 Each host keeps its set in the core apart from the other's, because the hosts reserve different keys: a browser's in `ui_state.browser_shortcut_bindings`, and the desktop app's in `ui_state.shortcut_bindings`, the macOS chord set, in the removed native app's text form (`command+shift+return`) and command names (`increase_text_size`), with `toggle_conversation` kept but never run here; a save that omits `browser_shortcut_bindings` keeps it.
@@ -672,7 +676,7 @@ The e2e covers each path alone (a Playwright chord, a main-process menu click, o
 | Command | macOS | Browser | Electron |
 | --- | --- | --- | --- |
 | New tab | ⌘T | ⌥T (moved: Chrome reserves ⌘T) | ⌘T |
-| Close tab | ⌘W | ⌥W (moved) | ⌘W |
+| Close focused View or pane | ⌘W | ⌥W (moved) | ⌘W |
 | Reopen closed tab | ⌘⇧T | ⌥⇧T (moved) | ⌘⇧T |
 | New workspace | ⌘⇧N | ⌥⇧N (moved) | ⌘⇧N |
 | Next / previous recent panel (Recent Panels) | ⌃Tab / ⌃⇧Tab | ⌥` / ⌥⇧` (moved) | ⌃Tab / ⌃⇧Tab, committed on releasing ⌃ |
@@ -682,7 +686,7 @@ The e2e covers each path alone (a Playwright chord, a main-process menu click, o
 | Save file | ⌘S | ⌘S | ⌘S |
 | Toggle left sidebar, Toggle side panel, Find in pane, Keep open | ⌘B, ⌘⇧B, ⌘F, ⌘⇧K | same chords | same chords |
 | Toggle sidebar view | ⌘E | none by default; bindable in Settings | none by default; bindable in Settings, kept in the macOS set |
-| Toggle Explorer | - | ⌘E | ⌘E |
+| Toggle tools | - | ⌘E | ⌘E |
 | Split right / down | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D |
 | Zoom pane | ⌘⌥↩ | ⌘⌥↩ | ⌘⌥↩ |
 | Close pane | ⌘⇧W | ⌥⇧W (moved: Chrome reserves ⌘⇧W) | ⌘⇧W |
