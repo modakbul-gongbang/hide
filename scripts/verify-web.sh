@@ -23,9 +23,9 @@ cd "$(dirname "$0")/.."
 pnpm install --frozen-lockfile
 
 pnpm --dir plugins/hcoord typecheck
+pnpm --dir plugins/hcoord build
 pnpm --dir plugins/hcoord test
 pnpm --dir plugins/hcoord test:e2e
-pnpm --dir plugins/hcoord build
 
 for package in web desktop; do
     pnpm --dir "$package" typecheck
