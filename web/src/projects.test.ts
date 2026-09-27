@@ -193,12 +193,13 @@ describe("checkout row lines (PRD sidebar-typography D-04, D-06)", () => {
       now,
     );
 
-  it("draws line two only for a purpose, agents or not", () => {
+  it("draws line two only for a purpose or a raised-from parent, agents or not", () => {
     const withAgents = read({ agent_summary: { representative_pane_id: null, needs_you: 0, done: 0, working: 2, seen: 0, unknown: 0, marks: { ...NO_MARKS, working: 2 } } });
-    expect(checkoutHasSecondLine(withAgents, null)).toBe(false);
-    expect(checkoutHasSecondLine(withAgents, "사이드바 가독성 개선")).toBe(true);
-    expect(checkoutHasSecondLine(read(), "purpose")).toBe(true);
-    expect(checkoutHasSecondLine(read({ worktree: null }), "purpose")).toBe(false);
+    expect(checkoutHasSecondLine(withAgents, null, null)).toBe(false);
+    expect(checkoutHasSecondLine(withAgents, "사이드바 가독성 개선", null)).toBe(true);
+    expect(checkoutHasSecondLine(withAgents, null, "메인 체크아웃 정리에서")).toBe(true);
+    expect(checkoutHasSecondLine(read(), "purpose", null)).toBe(true);
+    expect(checkoutHasSecondLine(read({ worktree: null }), "purpose", null)).toBe(false);
   });
 
   it("mutes a name's path prefix up to its first slash", () => {

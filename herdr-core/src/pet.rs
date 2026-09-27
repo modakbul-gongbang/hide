@@ -284,6 +284,8 @@ mod tests {
             state_change_seq: None,
             session_id: None,
             spawned_from_pane_id: None,
+            declared_parent_pane_id: None,
+            spawned_from_machine_id: None,
             delegated: false,
             descendant_counts: crate::model::DescendantCountsSnapshot::default(),
             waiting_on_descendants: false,

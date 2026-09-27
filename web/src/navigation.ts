@@ -5,6 +5,7 @@
 // has no session to show. Nothing here is counted that the snapshot does not
 // carry, and a device that cannot answer says so instead of showing zeros.
 
+import { sectionCount, sectionTree, directChildren, type TreeRow } from "./agentRow";
 import type { BoardProject } from "./projectBoard";
 import { folderCheckout } from "./projects";
 import { focusedRemoteDevice, frontCheckout, type AgentRow, type Device, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
@@ -110,13 +111,24 @@ export type ListedAgent = { agent: AgentRow; device: string | null };
  * last reported is not current.
  */
 export function allAgents(remote: RemoteStatus[] | undefined, devices: Device[] | undefined, localAgents: AgentRow[]): ListedAgent[] {
-  const listed: ListedAgent[] = localAgents.map((agent) => ({ agent, device: null }));
+  const local = devices?.find((row) => row.kind !== "remote");
+  const listed: ListedAgent[] = localAgents.map((agent) => ({
+    agent: { ...agent, device_id: local?.id ?? "local", device_label: local?.label ?? "This Mac" },
+    device: null,
+  }));
   for (const status of remote ?? []) {
     if (status.state !== "connected") continue;
     const device = deviceLabel(devices, status.target_id);
-    for (const agent of status.session?.agents ?? []) listed.push({ agent, device });
+    for (const agent of status.session?.agents ?? []) {
+      listed.push({ agent: { ...agent, device_id: status.target_id, device_label: device }, device });
+    }
   }
   return listed;
+}
+
+/** Every connected workspace, local and remote, with its device id intact. */
+export function allLineageWorkspaces(local: Workspace[] | undefined, remote: RemoteStatus[] | undefined): Workspace[] {
+  return [...(local ?? []), ...(remote ?? []).filter((status) => status.state === "connected").flatMap((status) => status.session?.workspaces ?? [])];
 }
 
 function deviceLabel(devices: Device[] | undefined, targetId: string): string {
@@ -406,4 +418,48 @@ export function openingProgress(rest: SnapshotRest | null, opening: Opening): "l
   const error = rest?.status?.last_error;
   if (error && error.occurred_at !== opening.errorBefore) return error.message;
   return null;
+}
+
+/**
+ * The sections and the rows each draws, from one index per device: pane ids
+ * are scoped to the device that reported them, so a lineage never crosses
+ * devices.
+ */
+export type AgentTree = {
+  sections: { group: string; label: string; rows: TreeRow[]; count: number }[];
+  children: (device: string | null, agent: AgentRow) => AgentRow[];
+};
+
+export function agentTree(listed: ListedAgent[]): AgentTree {
+  const byDevice = new Map<string | null, AgentRow[]>();
+  for (const { agent, device } of listed) {
+    const rows = byDevice.get(device) ?? [];
+    rows.push(agent);
+    byDevice.set(device, rows);
+  }
+  const index = new Map([...byDevice].map(([device, rows]) => [device, new Map(rows.map((row) => [row.pane_id, row]))]));
+  const counts = new Map([...byDevice].map(([device, rows]) => [device, liveDescendantCounts(rows)]));
+  const deviceOf = new Map(listed.map((row) => [row.agent, row.device]));
+  const lookup = (device: string | null, paneId: string) => index.get(device)?.get(paneId);
+  const descendantsOf = (device: string | null, paneId: string) => counts.get(device)?.get(paneId) ?? 0;
+  const sections = agentSections(listed.map((row) => row.agent))
+    .map((section) => {
+      const roots = section.agents.filter((agent) => !agent.delegated);
+      const rows = sectionTree(roots.map((agent) => ({ agent, device: deviceOf.get(agent) ?? null })), lookup, descendantsOf);
+      return { group: section.group, label: section.label, rows, count: sectionCount(rows) };
+    })
+    .filter((section) => section.rows.length > 0);
+  return {
+    sections,
+    children: (device: string | null, agent: AgentRow) => directChildren(agent, (paneId) => lookup(device, paneId)),
+  };
+}
+
+/**
+ * Every row the Agents list draws, top to bottom across its sections: the
+ * order ⌥1-9 numbers (PRD electron-digit-shortcuts-hints D-02). A folded
+ * parent's descendants are not rows, so they take no number.
+ */
+export function agentListRows(tree: AgentTree): TreeRow[] {
+  return tree.sections.flatMap((section) => section.rows);
 }

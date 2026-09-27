@@ -4,9 +4,12 @@ import { AgentMark } from "../AgentMark";
 import { branchChip, lineTone, markTone, rowAccessibleName, sidebarLine } from "../agentRow";
 import { cn } from "../lib/utils";
 import type { AgentRow } from "../snapshot";
+import type { FoldedLineage } from "../lineageSummary";
 import { DescendantBadge } from "./agent-row";
+import { DeviceChip } from "./device-chip";
 import { StatusMark } from "./status-mark";
 import { Badge } from "./ui/badge";
+import { Keycap } from "./ui/keycap";
 import { Hint } from "./ui/tooltip";
 
 /**
@@ -45,7 +48,9 @@ export function FoldLane() {
  * those change a fill, a ring and the chevron's opacity only. The title is
  * 12/400 in every state; attention and selection brighten it rather than
  * thicken it (PRD sidebar-typography D-02). Line one is 20 high and line two
- * 16, so a row is 28 or 44 with its padding (D-03).
+ * 16, so a row is 28 or 44 with its padding (D-03). `number` is the digit an
+ * ⌥ hold shows at the row's top right (PRD electron-digit-shortcuts-hints B5),
+ * floating over the time and the fold slot, which stay where they are.
  */
 export const SidebarAgentRow = memo(function SidebarAgentRow({
   agent,
@@ -59,6 +64,8 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   onToggleTree,
   inset,
   branchShown = true,
+  foldedLineage,
+  number = null,
 }: {
   agent: AgentRow;
   device: string | null;
@@ -77,12 +84,16 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   inset: string;
   /** False where the row above already names the row's checkout. */
   branchShown?: boolean;
+  /** Derived C lines and the same-checkout portion that remains in the badge. */
+  foldedLineage?: FoldedLineage;
+  /** The digit a modifier hold shows on this row, or null while none shows. */
+  number?: number | null;
 }) {
   const main = useRef<HTMLButtonElement>(null);
   const line = sidebarLine(agent);
   const branch = branchShown ? branchChip(agent) : null;
   const folded = agent.lineage_collapsed !== false;
-  const foldable = onToggleTree !== null && childRows.length > 0;
+  const foldable = onToggleTree !== null && (agent.lineage_child_pane_ids?.length ?? 0) > 0;
   const attention = agent.group === "needs_you" || agent.unread;
   const titleTone = agent.delegated && !attention ? "text-subtle-foreground" : attention || agent.emphasized || selected ? "text-foreground" : "text-subtle-foreground";
   const hint = [device ? `${agent.identity_label} · ${device}` : agent.identity_label, agent.detail?.trim(), place].filter(Boolean).join("\n");
@@ -125,13 +136,11 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
             </Badge>
           ) : null}
           {device ? (
-            <Badge aria-hidden="true" variant="outline" className="pointer-events-none min-w-0 max-w-2/5 shrink" data-device-chip={device}>
-              <span className="truncate">{device}</span>
-            </Badge>
+            <DeviceChip label={device} className="pointer-events-none max-w-2/5" />
           ) : null}
           {descendants > 0 && folded ? (
             <DescendantBadge
-              agent={agent}
+              agent={foldedLineage ? { ...agent, descendant_counts: foldedLineage.badgeCounts } : agent}
               descendants={descendants}
               childRows={childRows}
               onOpenChild={onOpen}
@@ -173,7 +182,25 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
             {place}
           </span>
         ) : null}
+        {folded && foldedLineage ? (
+          <span className="pointer-events-none flex min-w-0 flex-col" aria-hidden="true" data-checkout-lines={agent.pane_id}>
+            {foldedLineage.lines.map((summary) => (
+              <span key={summary.key} className="flex min-h-(--size-badge-height) min-w-0 items-center gap-xs text-caption" data-checkout-line={summary.branch}>
+                <StatusMark symbol={summary.symbol} className={markTone(summary.agent)} />
+                <span className="min-w-0 flex-1 truncate font-mono text-subtle-foreground">{summary.branch}</span>
+                {summary.pullRequest !== null ? <span className="shrink-0 text-muted-foreground">#{summary.pullRequest}</span> : null}
+                {summary.device ? <DeviceChip label={summary.device} className="max-w-2/5" /> : null}
+              </span>
+            ))}
+            {foldedLineage.overflow > 0 ? (
+              <span className="min-h-(--size-badge-height) truncate pl-(--size-lineage-indent) text-caption text-muted-foreground" data-checkout-line-overflow={foldedLineage.overflow}>
+                +{foldedLineage.overflow}
+              </span>
+            ) : null}
+          </span>
+        ) : null}
       </span>
+      {number !== null ? <Keycap number={number} /> : null}
     </li>
   );
 });

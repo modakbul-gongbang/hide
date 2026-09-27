@@ -32,6 +32,7 @@ import {
 } from "./cli";
 import type { DesktopEnv } from "./env";
 import { readJsonFile, writeJsonFile } from "./jsonFile";
+import { bundledHcoord, hcoordEnvironment, installHcoordShim, parseHcoordEnsure } from "./hcoord";
 import { loadFailureFields, type HostLog } from "./log";
 import { ChildRunner, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
@@ -106,7 +107,7 @@ export class DesktopHost {
       (workspace, id, load) => this.releaseBrowserRoute(workspace, id, load),
     );
     this.openWindow();
-    void this.discover("launch");
+    void this.prepareHcoord().finally(() => this.discover("launch"));
   }
 
   /** A second launch or a Dock click: bring the window back, and look again when nothing is attached. */
@@ -249,16 +250,49 @@ export class DesktopHost {
     return herdr ? { ...this.env.inherited, HERDR_BIN_PATH: herdr } : this.env.inherited;
   }
 
-  private runCli(file: string, args: readonly string[], timeoutMs: number): Promise<ChildResult> {
-    // A call queued behind the one quit killed never starts; it answers as a
-    // child that could not start, which every caller already reads as a stop.
+  /**
+   * Converges the packaged coordinator independently of hided. A refusal is
+   * logged and the window continues, because no coordinator failure can own
+   * the desktop host's lifecycle.
+   */
+  private async prepareHcoord(): Promise<void> {
+    const resources = this.bundledDir();
+    if (resources === null) return;
+    try {
+      const bundle = bundledHcoord(resources, process.execPath);
+      installHcoordShim(this.env.home, bundle);
+      const result = parseHcoordEnsure(await this.runChild(
+        bundle.executable,
+        [bundle.cli, "daemon", "ensure", "--json"],
+        20_000,
+        hcoordEnvironment(this.env.inherited, this.env.home, bundle),
+      ));
+      if (!result.ok) {
+        this.log.event("hcoord.prepare_failed", { detail: result.reason });
+      } else if (result.manualStop) {
+        this.log.event("hcoord.manual_stop", { changed: false });
+      } else {
+        this.log.event("hcoord.ready", { changed: result.changed, version: result.version });
+      }
+    } catch (error) {
+      this.log.event("hcoord.prepare_failed", { detail: String(error) });
+    }
+  }
+
+  private runChild(file: string, args: readonly string[], timeoutMs: number, env: Record<string, string | undefined>): Promise<ChildResult> {
     const run = this.cliChain.then(() =>
       this.quitting
         ? { code: null, signal: null, stdout: "", stderr: "", timedOut: false, spawnError: "host is quitting" }
-        : this.runner.run(file, args, timeoutMs, this.childEnvironment()),
+        : this.runner.run(file, args, timeoutMs, env),
     );
     this.cliChain = run.catch(() => undefined);
     return run;
+  }
+
+  private runCli(file: string, args: readonly string[], timeoutMs: number): Promise<ChildResult> {
+    // A call queued behind the one quit killed never starts; it answers as a
+    // child that could not start, which every caller already reads as a stop.
+    return this.runChild(file, args, timeoutMs, this.childEnvironment());
   }
 
   private fail(attempt: number, reason: FailureReason, detail: string): void {

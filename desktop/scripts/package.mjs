@@ -55,6 +55,7 @@ for (const entry of fs.readdirSync(out)) {
 // Release hided embeds web/dist, so the web shell is built first; the cargo
 // wrapper reuses the machine's toolchain and keeps output in this worktree.
 run("pnpm", ["--dir", "web", "build"], { stdio: "inherit" });
+run("pnpm", ["--dir", "plugins/hcoord", "build"], { stdio: "inherit" });
 run("bash", ["scripts/verify-cargo.sh", "release"], { stdio: "inherit" });
 const herdr = run("zsh", ["scripts/fetch-herdr-runtime.sh"]);
 
@@ -88,6 +89,14 @@ const extraResource = shipped.map(([name, source]) => {
   fs.chmodSync(target, 0o755);
   return target;
 });
+const hcoordBuild = path.join(repo, "plugins", "hcoord", "dist");
+if (!fs.existsSync(path.join(hcoordBuild, "hcoord", "cli.js"))) {
+  throw new Error(`cannot package hide.app: built hcoord CLI is missing (${path.join(hcoordBuild, "hcoord", "cli.js")})`);
+}
+const stagedHcoord = path.join(staged, "hcoord");
+fs.mkdirSync(stagedHcoord, { recursive: true });
+fs.cpSync(hcoordBuild, path.join(stagedHcoord, "dist"), { recursive: true });
+extraResource.push(stagedHcoord);
 const notices = path.join(resources, "THIRD_PARTY_NOTICES");
 if (!fs.existsSync(notices)) throw new Error(`third-party notices are missing: ${notices}`);
 extraResource.push(notices);
@@ -118,6 +127,33 @@ for (const [name] of shipped) {
   const file = path.join(bundledResources, name);
   fs.accessSync(file, fs.constants.X_OK);
   if (!fs.statSync(file).isFile()) throw new Error(`${name} did not land as a file in ${bundledResources}`);
+}
+const bundledHcoord = path.join(bundledResources, "hcoord", "dist", "hcoord", "cli.js");
+if (!fs.statSync(bundledHcoord).isFile()) throw new Error(`built hcoord CLI did not land in ${bundledResources}`);
+
+// The packaged daemon runs in Electron's Node runtime. Execute the exact
+// bundle before signing so a disabled RunAsNode fuse fails the package by
+// name instead of shipping an app whose login daemon cannot start.
+const appExecutable = path.join(appPath, "Contents", "MacOS", "hide");
+let runAsNode;
+try {
+  runAsNode = run(appExecutable, [bundledHcoord, "version", "--json"], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    timeout: 10_000,
+  });
+} catch (error) {
+  fs.rmSync(appPath, { recursive: true, force: true });
+  throw new Error(`cannot package hide.app: Electron RunAsNode fuse did not execute bundled hcoord: ${String(error)}`);
+}
+let hcoordProbe;
+try { hcoordProbe = JSON.parse(runAsNode); }
+catch {
+  fs.rmSync(appPath, { recursive: true, force: true });
+  throw new Error("cannot package hide.app: Electron RunAsNode fuse returned invalid hcoord JSON");
+}
+if (hcoordProbe?.ok !== true || typeof hcoordProbe?.value?.hcoordVersion !== "string") {
+  fs.rmSync(appPath, { recursive: true, force: true });
+  throw new Error("cannot package hide.app: Electron RunAsNode fuse did not confirm the bundled hcoord version");
 }
 
 run("/usr/bin/codesign", ["--force", "--deep", "--sign", "-", "--timestamp=none", appPath], { stdio: "inherit" });

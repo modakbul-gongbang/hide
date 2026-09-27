@@ -7,7 +7,7 @@
 // `menuBindings` resolves with the rules the shell's listener runs.
 
 import type { MenuItemConstructorOptions } from "electron";
-import { effectiveRegistry, REGISTRY, type Chord, type Command, type CommandId, type EffectiveRegistry } from "../../../web/src/shortcuts";
+import { effectiveRegistry, isNumberedCommand, REGISTRY, type Chord, type Command, type CommandId, type EffectiveRegistry } from "../../../web/src/shortcuts";
 
 const KEY_NAMES: Record<string, string> = {
   Enter: "Return",
@@ -43,8 +43,11 @@ export function accelerator(chord: Chord): string {
 
 /**
  * Which commands each menu carries, in order; null is a separator. The
- * cycles (held-modifier ⌃Tab and ⌥Tab walks) and Move to Trash (a chord
- * the terminal keeps) have no click form and stay keyboard-only.
+ * cycles (held-modifier ⌃Tab and ⌥Tab walks), Move to Trash (a chord the
+ * terminal keeps) and the numbered ⌘1-9 / ⌥1-9 selections (whose target is
+ * the screen order the page knows, so the page answers them and no
+ * accelerator here may take the press first) have no click form and stay
+ * keyboard-only.
  */
 export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pane" | "Help", readonly (CommandId | null)[]>> = {
   app: ["settings"],
@@ -74,6 +77,7 @@ export const KEYBOARD_ONLY: readonly CommandId[] = [
   "recent_project",
   "previous_recent_project",
   "move_to_trash",
+  ...REGISTRY.map((command) => command.id).filter(isNumberedCommand),
 ];
 
 function commandItem(command: Command, send: (id: CommandId) => void): MenuItemConstructorOptions {

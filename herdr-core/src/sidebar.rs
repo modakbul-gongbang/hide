@@ -117,6 +117,9 @@ pub struct SessionAgentPayload {
     /// Present only on an agent started through `agent.new` with a source pane.
     #[serde(default)]
     pub spawned_from_pane_id: Option<String>,
+    /// Stable identity of a parent on another machine, recorded by hcoord.
+    #[serde(default)]
+    pub spawned_from_machine_id: Option<String>,
     #[serde(default)]
     pub state_change_seq: Option<u64>,
     #[serde(default)]
@@ -927,6 +930,7 @@ pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapsh
     crate::model::AgentChipSnapshot {
         pane_id: agent.pane_id.clone(),
         label: agent.identity_label.clone(),
+        checkout_label: agent.checkout_label.clone(),
         detail: agent.detail.clone(),
         status_word_visible: agent.status_word_visible,
         agent_kind: agent.agent_kind.clone(),
@@ -1277,6 +1281,10 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
             .map(|session| session.value.clone())
             .filter(|value| !value.trim().is_empty()),
         spawned_from_pane_id: non_empty(agent.spawned_from_pane_id.as_deref()).map(str::to_owned),
+        declared_parent_pane_id: non_empty(agent.spawned_from_pane_id.as_deref())
+            .map(str::to_owned),
+        spawned_from_machine_id: non_empty(agent.spawned_from_machine_id.as_deref())
+            .map(str::to_owned),
         delegated: false,
         descendant_counts: crate::model::DescendantCountsSnapshot::default(),
         waiting_on_descendants: false,

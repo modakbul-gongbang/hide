@@ -322,16 +322,20 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await folderToggle.click();
     await expect(folder.locator("[data-checkout-agents-open]")).toHaveCount(0);
 
-    // sidebar-readability B12, B13, B9: a parent in Projects folds its
-    // children with the core's lineage state, the one Agents folds by. The
-    // worktree's agent becomes the primary agent's child: folded by default,
-    // the parent carries the badge and an always-shown chevron; unfolding is
-    // one agent_tree_toggle and nothing else, the child is drawn under its
-    // parent, and its own checkout still lists it.
+    // sidebar-readability B12, B13, B9 and hcoord-plugin B20, B22: a parent in
+    // Projects folds its children with the core's lineage state, the one
+    // Agents folds by. The worktree's agent becomes the primary agent's child:
+    // folded by default, its other-checkout child is a C line rather than a
+    // descendant badge, and the parent keeps an always-shown chevron.
+    // Unfolding is one agent_tree_toggle and nothing else, the C line gives way
+    // to the child row under its parent, and its own checkout still lists it.
     execFileSync(herdr.bin, ["pane", "report-metadata", rowsPane, "--source", "e2e-lineage", "--token", `parent_pane=${mainPane}`], { env: herdr.env, timeout: 30_000 });
     await primaryToggle.click();
     const parentRow = primary.locator(`[data-checkout-agents-open] [data-pane="${mainPane}"]`);
-    await expect(parentRow.locator("[data-descendant-badge]")).toHaveAttribute("data-descendant-badge", "1", { timeout: 20_000 });
+    await expect(parentRow.locator("[data-descendant-badge]")).toHaveCount(0, { timeout: 20_000 });
+    const checkoutLine = parentRow.locator('[data-checkout-line="feature/sidebar-rows"]');
+    await expect(checkoutLine).toBeVisible();
+    await expect(checkoutLine).toContainText("feature/sidebar-rows");
     const lineageToggle = parentRow.locator(`[data-agent-tree-toggle="${mainPane}"]`);
     await expect(lineageToggle).toHaveAttribute("aria-expanded", "false");
     await rest(page);
@@ -343,6 +347,7 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     expect(last.get("agent_tree_toggle")?.pane_id).toBe(mainPane);
     const childUnderParent = primary.locator(`[data-checkout-agents-open] [data-pane="${rowsPane}"]`);
     await expect(childUnderParent).toHaveAttribute("data-depth", "1", { timeout: 15_000 });
+    await expect(checkoutLine).toHaveCount(0);
     await expect(parentRow.locator("[data-descendant-badge]")).toHaveCount(0);
     await expect(feature.locator(`[data-checkout-agents-open] [data-pane="${rowsPane}"]`)).toHaveAttribute("data-depth", "0");
     // Checked once the list has redrawn, so a frame sent behind the toggle has arrived too.

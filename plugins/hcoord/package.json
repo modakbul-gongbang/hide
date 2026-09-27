@@ -1,0 +1,24 @@
+{
+  "name": "hide-hcoord",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Herdr-native agent coordination and lineage",
+  "type": "commonjs",
+  "bin": {
+    "hcoord": "bin/hcoord"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "install:remote": "node scripts/install.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test \"test/unit/*.test.mjs\"",
+    "test:e2e": "node --test \"test/e2e/*.test.mjs\""
+  },
+  "devDependencies": {
+    "@types/node": "^22.14.0",
+    "typescript": "^5.8.0"
+  },
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

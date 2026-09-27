@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  DIGITS,
   EDITABLE_PANE_COMMANDS,
   REGISTRY,
   bindingProblem,
@@ -7,9 +8,13 @@ import {
   displayChord,
   displayCommand,
   effectiveRegistry,
+  familyModifiers,
   hostRegistry,
   isChromeReserved,
+  isNumberedCommand,
   matchHost,
+  numberedCommand,
+  sheetRows,
   parseChord,
   parseMacosChord,
   serializeChord,
@@ -65,8 +70,54 @@ describe("shortcut registry", () => {
       move_to_trash: "⌘⌫",
       settings: "⌘,",
       shortcuts: "⌘/",
+      // ⌘n selects the nth tab and ⌥n the nth Agents row (electron-digit-shortcuts-hints D-02).
+      ...Object.fromEntries(DIGITS.map((digit) => [`select_tab_${digit}`, `⌘${digit}`])),
+      ...Object.fromEntries(DIGITS.map((digit) => [`select_agent_${digit}`, `⌥${digit}`])),
     };
     expect(Object.fromEntries(REGISTRY.map((command) => [command.id, displayCommand(command.id, "electron")]))).toEqual(macosSet);
+  });
+
+  describe("numbered commands (electron-digit-shortcuts-hints D-02, B3, B4)", () => {
+    it("holds nine of each family, on the desktop host only", () => {
+      const numbered = REGISTRY.filter((command) => numberedCommand(command.id));
+      expect(numbered).toHaveLength(18);
+      for (const command of numbered) expect(command.browser, command.id).toBeNull();
+      expect(numberedCommand("select_tab_3")).toEqual({ family: "tabs", number: 3 });
+      expect(numberedCommand("select_agent_9")).toEqual({ family: "agents", number: 9 });
+      expect(numberedCommand("new_tab")).toBeNull();
+      expect(isNumberedCommand("select_tab_1")).toBe(true);
+      expect(isNumberedCommand("text_reset")).toBe(false);
+    });
+
+    it("answers ⌘n and ⌥n in the desktop app and nothing in a browser", () => {
+      expect(matchHost(press("Digit2", { meta: true }), REGISTRY, "electron")?.id).toBe("select_tab_2");
+      expect(matchHost(press("Digit7", { alt: true }), REGISTRY, "electron")?.id).toBe("select_agent_7");
+      expect(matchHost(press("Digit2", { meta: true, shift: true }), REGISTRY, "electron")).toBeNull();
+      expect(matchHost(press("Digit2", { meta: true }), REGISTRY, "browser")).toBeNull();
+      expect(matchHost(press("Digit2", { alt: true }), REGISTRY, "browser")).toBeNull();
+    });
+
+    it("names each family's shared modifiers per host, for the hold hint", () => {
+      expect(familyModifiers("tabs", REGISTRY, "electron")).toEqual({ meta: true, alt: false, shift: false, ctrl: false });
+      expect(familyModifiers("agents", REGISTRY, "electron")).toEqual({ meta: false, alt: true, shift: false, ctrl: false });
+      expect(familyModifiers("tabs", REGISTRY, "browser")).toBeNull();
+      expect(familyModifiers("agents", REGISTRY, "browser")).toBeNull();
+    });
+
+    it("refuses a pane chord bound onto a numbered one by that command's name", () => {
+      expect(bindingProblem("split_right", { code: "Digit3", meta: true }, REGISTRY, "electron")).toBe("⌘3 is already Select tab 3.");
+      expect(bindingProblem("split_right", { code: "Digit3", alt: true, meta: true }, REGISTRY, "electron")).toBeNull();
+      expect(effectiveRegistry({ split_right: "command+3" }, "electron").diagnostic).toContain("already Select tab 3");
+    });
+
+    it("folds each family into one sheet row with its range, absent in a browser", () => {
+      const tabs = sheetRows("Tabs", REGISTRY, "electron");
+      expect(tabs.map((row) => row.id)).toEqual(["new_tab", "close_tab", "reopen_closed_tab", "select_tab_1"]);
+      expect(tabs.at(-1)).toMatchObject({ title: "Select tab 1-9", chord: "⌘1 … ⌘9" });
+      expect(sheetRows("Navigate", REGISTRY, "electron").find((row) => row.id === "select_agent_1")).toMatchObject({ title: "Select agent 1-9", chord: "⌥1 … ⌥9" });
+      expect(sheetRows("Tabs", REGISTRY, "browser").at(-1)).toMatchObject({ id: "select_tab_1", chord: null });
+      expect(sheetRows("Panes", REGISTRY, "browser").find((row) => row.id === "close_pane")).toMatchObject({ chord: "⌥⇧W", moved: true, movedFrom: "⌘⇧W" });
+    });
   });
 
   it("binds every electron chord once", () => {

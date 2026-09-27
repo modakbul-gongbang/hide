@@ -215,12 +215,13 @@ export function overviewRowSelected(workspace: Workspace, overviewProjectId: str
 }
 
 /**
- * Whether a checkout row draws line two: only for a purpose, once Git has
- * been read (PRD sidebar-typography D-04). Agents alone never earn a line;
- * the row's age then ends line one.
+ * Whether a checkout row draws line two: only when it has something to say,
+ * a purpose or the parent its agents were raised from, once Git has been read
+ * (PRD sidebar-typography D-04). Agents alone never earn a line; the row's age
+ * then ends line one.
  */
-export function checkoutHasSecondLine(view: Pick<CheckoutPresentation, "secondLineReady">, purpose: string | null): boolean {
-  return view.secondLineReady && purpose !== null;
+export function checkoutHasSecondLine(view: Pick<CheckoutPresentation, "secondLineReady">, purpose: string | null, raisedFrom: string | null): boolean {
+  return view.secondLineReady && (purpose !== null || raisedFrom !== null);
 }
 
 /**

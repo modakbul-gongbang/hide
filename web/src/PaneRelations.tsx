@@ -6,8 +6,9 @@ import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { EntryPointMenu, type MenuEntry } from "./components/entry-menu";
 import { StatusMark } from "./components/status-mark";
+import { DeviceChip } from "./components/device-chip";
 import { chipTitle, chipTone, directChildren, parentStep, relationEntries, relationState } from "./lineage";
-import type { PaneRow } from "./snapshot";
+import type { PaneRow, SnapshotRest, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 
@@ -54,6 +55,8 @@ export function ReturnToParent({ pane, actions }: { pane: PaneRow; actions: Acti
  */
 export function ChildChipRow({ pane, actions }: { pane: PaneRow; actions: Actions }) {
   const chips = directChildren(pane);
+  const rest = useShellStore((s) => s.rest);
+  const parentLocation = paneLocation(rest, pane.id);
   const relation = useUiStore((s) => s.relation);
   const outcome = useShellStore((s) => s.rest?.status?.pane_focus_request);
   if (chips.length === 0) return null;
@@ -67,7 +70,10 @@ export function ChildChipRow({ pane, actions }: { pane: PaneRow; actions: Action
     >
       {chips.map((chip) => {
         const pending = state?.phase === "pending" && relation?.targetPaneId === chip.pane_id;
-        const title = chipTitle(chip);
+        const childLocation = paneLocation(rest, chip.pane_id);
+        const label = childLocation?.checkout !== parentLocation?.checkout && chip.checkout_label ? chip.checkout_label : chip.label;
+        const device = childLocation && childLocation.deviceId !== parentLocation?.deviceId ? childLocation.deviceLabel : null;
+        const title = chipTitle({ ...chip, label });
         return (
           <Hint key={chip.pane_id} label={title} reveals>
           <button
@@ -85,13 +91,29 @@ export function ChildChipRow({ pane, actions }: { pane: PaneRow; actions: Action
           >
             <StatusMark symbol={pending ? "…" : chip.symbol} className={chipTone(chip)} />
             <AgentMark kind={chip.agent_kind} />
-            <span className="truncate">{chip.label}</span>
+            <span className="truncate">{label}</span>
+            {device ? <DeviceChip label={device} className="max-w-2/5" /> : null}
           </button>
           </Hint>
         );
       })}
     </div>
   );
+}
+
+function paneLocation(rest: SnapshotRest | null, paneId: string): { checkout: string; deviceId: string; deviceLabel: string } | null {
+  const workspaces: Workspace[] = [
+    ...(rest?.navigator?.workspaces ?? []),
+    ...(rest?.status?.remote ?? []).filter((status) => status.state === "connected").flatMap((status) => status.session?.workspaces ?? []),
+  ];
+  for (const workspace of workspaces) {
+    for (const checkout of workspace.checkouts) {
+      if (!checkout.tabs.some((tab) => tab.panes.some((candidate) => candidate.id === paneId))) continue;
+      const deviceLabel = rest?.navigator?.devices?.find((device) => device.id === workspace.device_id)?.label ?? (workspace.device_id === "local" ? "This Mac" : workspace.device_id);
+      return { checkout: checkout.id, deviceId: workspace.device_id, deviceLabel };
+    }
+  }
+  return null;
 }
 
 /**

@@ -357,6 +357,69 @@ function screenDevicePickerRow(id, {name, detail, selected}) {
   return screenMenuItem(id, name, {glyph: 'server', reason: detail, shortcut: selected ? '✓' : undefined});
 }
 
+// The approved R1 remote-device treatment: the existing Badge shape, a server
+// glyph, and the real device display name. It is shared by folded lineage
+// summaries, the child list, and pane-header child chips.
+function screenDeviceChip(id, name) {
+  return frame(id, 'Device chip', {layout: 'horizontal', gap: '$--spacing-xxs', padding: [0, '$--spacing-xs'], height: 16, alignItems: 'center', cornerRadius: '$--radius-xs', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
+    icon(`${id}-g`, 'server', {size: 10, fill: '$--muted-foreground'}),
+    text(`${id}-t`, name, {size: '$--text-micro', fill: '$--subtle-foreground', weight: '500'}),
+  ]);
+}
+
+function screenLineageSummary(tokens, id, {status, branch, pr, device, more}) {
+  const marks = {
+    working: ['●', '$--agent-working'], done: ['✓', '$--success'], question: ['?', '$--warning'], seen: ['○', '$--muted-foreground'],
+  };
+  const [symbol, fill] = marks[status];
+  return frame(id, 'Other checkout lineage', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', padding: [0, '$--spacing-xs', 0, 40]}, [
+    screenStatusMark(tokens, `${id}-m`, symbol, fill),
+    text(`${id}-b`, branch, {size: '$--text-caption', fill: '$--subtle-foreground'}),
+    ...(pr ? [text(`${id}-pr`, pr, {size: '$--text-caption', fill: '$--muted-foreground', mono: true})] : []),
+    ...(device ? [screenDeviceChip(`${id}-d`, device)] : []),
+    ...(more ? [text(`${id}-more`, `+${more}`, {size: '$--text-caption', fill: '$--muted-foreground', mono: true})] : []),
+  ]);
+}
+
+function screenLineageDetails(tokens, suffix) {
+  const children = [
+    {status: 'working', title: '레이아웃 재구조화', branch: 'web-view-overlay', age: '4m'},
+    {status: 'done', title: '패널 디자인 검토', branch: 'web-side-panel', age: '13m'},
+    {status: 'done', title: '원격 분리', branch: 'hcoord-decouple', device: 'mini', age: '1h'},
+  ];
+  const popover = frame(`main-lineage-pop-${suffix}`, 'Children list', {width: num(tokens, '--size-agent-children-popover'), layout: 'vertical', fill: '$--popover', cornerRadius: '$--radius-md', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner', padding: ['$--spacing-xxs', 0]}, [
+    ...children.map((child, index) => frame(`main-lineage-pop${index}-${suffix}`, 'Child', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: ['$--spacing-xs', '$--spacing-sm'], ...(index === 0 ? {fill: '$--accent'} : {})}, [
+      screenStatusMark(tokens, `main-lineage-pop${index}-m-${suffix}`, child.status === 'working' ? '●' : '✓', child.status === 'working' ? '$--agent-working' : '$--success'),
+      frame(`main-lineage-pop${index}-txt-${suffix}`, 'Text', {layout: 'vertical', gap: 0}, [
+        text(`main-lineage-pop${index}-t-${suffix}`, child.title, {size: '$--text-caption'}),
+        frame(`main-lineage-pop${index}-sub-${suffix}`, 'Sub', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+          text(`main-lineage-pop${index}-s-${suffix}`, child.status === 'working' ? 'Working' : 'Done', {size: '$--text-caption', fill: '$--muted-foreground'}),
+          text(`main-lineage-pop${index}-b-${suffix}`, child.branch, {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
+          ...(child.device ? [screenDeviceChip(`main-lineage-pop${index}-d-${suffix}`, child.device)] : []),
+        ]),
+      ]),
+      frame(`main-lineage-pop${index}-gap-${suffix}`, 'Spacer', {width: 'fill_container', height: 1}, []),
+      text(`main-lineage-pop${index}-a-${suffix}`, child.age, {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
+    ])),
+    frame(`main-lineage-pop-rule-${suffix}`, 'Rule', {width: 'fill_container', height: 1, fill: '$--border'}, []),
+    text(`main-lineage-pop-open-${suffix}`, '하위 에이전트 펼치기', {size: '$--text-caption', fill: '$--subtle-foreground'}),
+  ]);
+  const chip = (child, index) => frame(`main-lineage-chip${index}-${suffix}`, 'Child chip', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', padding: [0, '$--spacing-xs'], height: 20, cornerRadius: '$--radius-sm', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
+    screenStatusMark(tokens, `main-lineage-chip${index}-m-${suffix}`, child.status === 'working' ? '●' : '✓', child.status === 'working' ? '$--agent-working' : '$--success'),
+    text(`main-lineage-chip${index}-b-${suffix}`, child.branch, {size: '$--text-caption', fill: '$--subtle-foreground', mono: true}),
+    ...(child.device ? [screenDeviceChip(`main-lineage-chip${index}-d-${suffix}`, child.device)] : []),
+  ]);
+  const pane = frame(`main-lineage-pane-${suffix}`, 'Pane header lineage', {width: 640, layout: 'vertical', cornerRadius: '$--radius-sm', clip: true, stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
+    frame(`main-lineage-pane-h-${suffix}`, 'Pane header', {width: 640, height: num(tokens, '--size-pane-header'), layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-sm'], fill: '$--secondary'}, [
+      screenStatusMark(tokens, `main-lineage-pane-m-${suffix}`, '○', '$--agent-working'),
+      text(`main-lineage-pane-t-${suffix}`, '카드 상태 시트 설계', {size: '$--text-caption'}),
+    ]),
+    frame(`main-lineage-pane-c-${suffix}`, 'Children', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: ['$--spacing-xs', '$--spacing-sm'], fill: '$--secondary'}, children.map(chip)),
+    frame(`main-lineage-pane-b-${suffix}`, 'Body', {height: 64, fill: '$--card'}, []),
+  ]);
+  return frame(`main-lineage-details-${suffix}`, 'Lineage detail states', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'start'}, [popover, pane]);
+}
+
 // The weekly usage chip at the sidebar's foot (web/src/components/weekly-usage.tsx):
 // the master draws Claude Code's mark, so only another provider's mark is named.
 function screenUsageChip(id, {provider, value}) {
@@ -378,10 +441,14 @@ function screenSidebar(tokens, id, suffix, agents) {
     ]),
     text(`${id}-seen-${suffix}`, 'Seen · 2', {size: '$--text-micro', fill: '$--muted-foreground', weight: '500'}),
     // Agents' rows name their project and checkout on a fixed context line.
-    ...agents.map((agent, index) => screenSidebarAgentRow(`${id}-agent${index}-${suffix}`, {
-      title: agent.title, symbol: agent.symbol ?? '●', color: agent.statusColor ?? '$--agent-working', age: agent.age ?? '3m', place: agent.place ?? 'herdr-ide › main',
-      width: num(tokens, '--size-sidebar-ideal') - 2 * num(tokens, '--spacing-md'),
-    })),
+    ...agents.flatMap((agent, index) => [
+      screenSidebarAgentRow(`${id}-agent${index}-${suffix}`, {
+        title: agent.title, symbol: agent.symbol ?? '●', color: agent.statusColor ?? '$--agent-working', age: agent.age ?? '3m', place: agent.place ?? 'herdr-ide › main',
+        device: agent.device, badge: agent.badge, fold: agent.fold,
+        width: num(tokens, '--size-sidebar-ideal') - 2 * num(tokens, '--spacing-md'),
+      }),
+      ...(agent.summaries ?? []).map((summary, summaryIndex) => screenLineageSummary(tokens, `${id}-agent${index}-summary${summaryIndex}-${suffix}`, summary)),
+    ]),
     frame(`${id}-newws-${suffix}`, 'New workspace', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: ['$--spacing-sm', 0]}, [
       icon(`${id}-newwsi-${suffix}`, 'plus', {size: 12, fill: '$--muted-foreground'}),
       text(`${id}-newwst-${suffix}`, '새 워크스페이스 ⌥⇧N', {size: '$--text-caption', fill: '$--muted-foreground'}),
@@ -472,8 +539,13 @@ function buildMain(tokens) {
   const {taskCard, stageColumn, doneColumn, arrow, legend, chain} = taskBoardParts(tokens);
   function build(suffix) {
     const sidebar = screenSidebar(tokens, 'main-sidebar', suffix, [
-      {title: '두 번째 에이전트', status: 'Working'},
-      {title: 'Agent one', status: 'Seen', symbol: '○', statusColor: '$--muted-foreground'},
+      {title: '카드 상태 시트 설계', status: 'Waiting', symbol: '○', badge: '●1', fold: 'folded', summaries: [
+        {status: 'working', branch: 'web-view-overlay', pr: '#173'},
+        {status: 'done', branch: 'web-side-panel', pr: '#170', more: 1},
+      ]},
+      {title: '조용한 순찰 기능 개발', status: 'Seen', symbol: '○', statusColor: '$--muted-foreground', fold: 'folded', summaries: [
+        {status: 'done', branch: 'hcoord-decouple', device: 'mini'},
+      ]},
     ]);
     const width = 1500;
     const board = frame(`main-list-${suffix}`, 'All projects', {width, layout: 'vertical', gap: '$--spacing-md'}, [
@@ -537,7 +609,7 @@ function buildMain(tokens) {
         text(`main-dunconnected-d-${suffix}`, '의존 관계를 그릴 태스크가 없음', {size: '$--text-caption', fill: '$--muted-foreground'}),
       ]),
     ]);
-    return [sidebar, frame(`main-views-${suffix}`, 'Views', {layout: 'vertical', gap: '$--spacing-xl'}, [board, dependencies])];
+    return [sidebar, frame(`main-views-${suffix}`, 'Views', {layout: 'vertical', gap: '$--spacing-xl'}, [screenLineageDetails(tokens, suffix), board, dependencies])];
   }
   return screenSheet('screen-main', 'Screen / Main', 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx, TaskBoards.tsx, WaitingBand.tsx: All projects, the scope the sidebar’s top row opens - its title with Add project, the facts line (the project count, and the open-PR and merged totals only when every project can give its part), the waiting band while an agent waits, the Tasks · Agents · Projects tabs, every project’s tasks on one board, and a project with agents and no task source gathered under it; its Dependencies mode names each card’s project above its title and draws a blocker in another project as an arrow. The Projects view is the project list grouped by device.', s => build(s), s => build(s));
 }
@@ -1309,15 +1381,16 @@ function buildProjectsSidebar(tokens) {
   // Line one is the name, 12/400 with its path prefix muted (500 while its
   // Workspace is in front), the badge while the agent rows are folded (always,
   // on a folder, whose badge is its project's) and the fold slot; line two is
-  // the purpose and the last-commit age, drawn only for a purpose. A row
-  // without one is one line with its age there, and a missing folder has none.
+  // the purpose (after the parent it was raised from, if any) and the
+  // last-commit age, drawn only when one of them exists. A row without either
+  // is one line with its age there, and a missing folder has none.
   // Pen draws no ellipsis, so a long name or purpose is written already cut the
   // way the row truncates it.
-  function checkoutRow(id, {name, kind = 'branch', age, purpose, marks, expanded = false, selected = false}) {
+  function checkoutRow(id, {name, kind = 'branch', age, purpose, raisedFrom, marks, expanded = false, selected = false}) {
     const k = KIND[kind];
     const project = kind === 'folder';
     const agents = Boolean(marks);
-    const secondLine = Boolean(purpose);
+    const secondLine = Boolean(purpose || raisedFrom);
     const slash = name.indexOf('/');
     const [prefix, rest] = project || slash <= 0 ? ['', name] : [name.slice(0, slash + 1), name.slice(slash + 1)];
     // Line one starts with the master's mark slot and a gap before the glyph.
@@ -1340,7 +1413,7 @@ function buildProjectsSidebar(tokens) {
       IXwZI: {opacity: agents && !expanded ? 1 : 0},
       o6XLUj: {enabled: secondLine, width: inner},
       yfur4: {width: markSlot + sm},
-      D37Vr: purpose ? {content: purpose, enabled: true} : {enabled: false},
+      D37Vr: raisedFrom || purpose ? {content: raisedFrom ? `↰ ${raisedFrom}에서${purpose ? ` · ${purpose}` : ''}` : purpose, enabled: true} : {enabled: false},
       'line2-age': secondLine && age ? {content: age, enabled: true} : {enabled: false},
     });
   }
@@ -1355,6 +1428,13 @@ function buildProjectsSidebar(tokens) {
   // lineage step further per level, the context already said by the rows above.
   function agentRow(id, {status, depth = 0, ...options}) {
     return screenSidebarAgentRow(id, {symbol: SYMBOL[status], color: STATUS[status], inset: nameColumn + depth * indent, width: row, ...options});
+  }
+
+  function foldedAgent(id, options, summaries) {
+    return frame(id, 'Folded agent with other checkouts', {layout: 'vertical', width: row}, [
+      agentRow(`${id}-row`, options),
+      ...summaries.map((summary, index) => screenLineageSummary(tokens, `${id}-summary${index}`, summary)),
+    ]);
   }
 
   // An opened checkout and its agent rows, on one small group fill.
@@ -1400,11 +1480,14 @@ function buildProjectsSidebar(tokens) {
         agentRow(`psb-a1c1-${s}`, {title: '컴포넌트 구…', status: 'working', provider: 'codex', age: '42s', depth: 1, branch: 'feat/ui'}),
         agentRow(`psb-a1c2-${s}`, {title: '한글 가독성 확인', status: 'seen', age: '38s', depth: 1}),
         // A folded parent waiting on its children: ring in Working, the badge, the chevron shown.
-        agentRow(`psb-a2-${s}`, {title: '후속 UX 계획 인터뷰', status: 'working', age: '2m', badge: '?1 ●1', fold: 'folded'}),
+        foldedAgent(`psb-a2-${s}`, {title: '후속 UX 계획 인터뷰', status: 'working', age: '2m', badge: '?1', fold: 'folded'}, [
+          {status: 'working', branch: 'agent-sleep', pr: '#183'},
+          {status: 'done', branch: 'hcoord-decouple', device: 'mini'},
+        ]),
         agentRow(`psb-a3-${s}`, {title: '배포 전 확인', status: 'asking', age: '30s', line: '프로덕션 배포 전에 변경 내용을 확인해…', bright: true}),
       ]),
-      checkoutRow(`psb-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', marks: {question: 1}, purpose: '#155 browser display (WebCon…'}),
-      checkoutRow(`psb-c4-${s}`, {name: 'quick/154-search-palette', kind: 'draft', age: '1h', marks: {done: 1}, purpose: '#154 ⌘K search palette UI'}),
+      checkoutRow(`psb-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', marks: {question: 1}, raisedFrom: 'main', purpose: '#155 browser display (WebCon…'}),
+      checkoutRow(`psb-c4-${s}`, {name: 'quick/154-search-palette', kind: 'draft', age: '1h', marks: {done: 1}, raisedFrom: 'main', purpose: '#154 ⌘K search palette UI'}),
       checkoutRow(`psb-c1-${s}`, {name: 'electron-shortcut-bindings', kind: 'open', age: '2h', marks: {working: 1}, purpose: 'Electron desktop host for the we…'}),
       checkoutRow(`psb-c5-${s}`, {name: 'design/workspace-ux-prop…', age: '5h', purpose: 'Workspace UX 제안과 상태 소유…'}),
       checkoutRow(`psb-c6-${s}`, {name: 'fix/registered-projects-only', age: '1d'}),
@@ -1428,7 +1511,7 @@ function buildProjectsSidebar(tokens) {
     ]);
     return [frame(`psb-sidebar-${s}`, 'Sidebar', {width, layout: 'vertical', fill: '$--sidebar', clip: true}, [header, list, footer])];
   }
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose; a checkout without one is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.', build, build);
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent; a checkout without either is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. A folded parent keeps its own-checkout descendants in the badge and draws one C-style line per other checkout, with the R1 server-glyph device chip. A checkout raised by an external root prefixes line two with the parent checkout. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.', build, build);
 }
 
 // -- assembly ---------------------------------------------------------------------
