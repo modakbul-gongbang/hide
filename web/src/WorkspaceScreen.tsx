@@ -18,7 +18,7 @@ import { Tools } from "./Tools";
 import { useUiStore } from "./ui";
 import { ViewAreas } from "./ViewAreas";
 import { shownTool } from "./viewLayout";
-import { PANEL_STATES, agentEntries, panelCoversToSend, panelFrame, panelShareAt, panelWidth, workspaceViewOf, type PanelFrame, type PanelSizes, type PanelState, type Tool, type WorkspaceView } from "./workspace";
+import { PANEL_STATES, panelCoversToSend, panelFrame, panelShareAt, panelWidth, workspaceViewOf, type PanelFrame, type PanelSizes, type PanelState, type Tool, type WorkspaceView } from "./workspace";
 import { hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
 
@@ -475,9 +475,16 @@ function AgentArea({ checkout, actions }: { checkout: Checkout; actions: Actions
   return <LocalAgentArea checkout={checkout} actions={actions} />;
 }
 
+/**
+ * The strip lists only the checkout's operator tabs, but the canvas draws
+ * whichever tab the core made visible: a tab holding nothing but delegated
+ * children stays off the strip while the sidebar still reaches it (PRD
+ * hide-orchestrator B1, B4), so a checkout whose only tab is delegated is
+ * not empty. The empty state means there is no tab at all.
+ */
 function LocalAgentArea({ checkout, actions }: { checkout: Checkout; actions: Actions }) {
   const agents = useShellStore((s) => s.agents);
-  const hasTabs = agentEntries(checkout).length > 0;
+  const hasTabs = checkout.tabs.length > 0;
   return (
     <>
       <AgentTabBar checkout={checkout} activeTabId={checkout.active_tab_id} agents={agents} actions={actions} />
