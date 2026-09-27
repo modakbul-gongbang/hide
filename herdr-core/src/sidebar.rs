@@ -8,6 +8,7 @@ use crate::model::{PaneLayoutDirection, PaneReadRecord, SidebarAgentSnapshot};
 /// Event provenance belongs to the local replica, not the external wire.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SessionTabFocus {
+    pub generation: u64,
     pub workspace_id: String,
     pub tab_id: String,
     pub revision: u64,

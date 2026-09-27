@@ -100,6 +100,56 @@ fn event(kind: &str, data: Value) -> ReplicaEvent {
 }
 
 #[test]
+fn creation_focus_cause_is_retired_when_another_workspace_takes_focus() {
+    let mut value = two_tab_snapshot();
+    let second: Value = serde_json::from_str(&snapshot().to_string().replace("w1", "w2")).unwrap();
+    for field in ["workspaces", "tabs", "panes", "layouts"] {
+        value[field]
+            .as_array_mut()
+            .unwrap()
+            .extend(second[field].as_array().unwrap().clone());
+    }
+    let mut replica = SessionReplica::from_snapshot(&value).unwrap();
+    let mut tab = value["tabs"][1].clone();
+    tab["focused"] = json!(true);
+    replica
+        .apply(
+            event("tab_created", json!({"type":"tab_created","tab":tab})),
+            ApplyMode::Reconcile,
+        )
+        .unwrap();
+    replica
+        .apply(
+            event(
+                "tab_focused",
+                json!({"type":"tab_focused","workspace_id":"w1","tab_id":"w1:t2"}),
+            ),
+            ApplyMode::Strict,
+        )
+        .unwrap();
+    assert!(replica.project().tab_focus.unwrap().creation);
+    for workspace in ["w2", "w1"] {
+        replica
+            .apply(
+                event(
+                    "workspace_focused",
+                    json!({"type":"workspace_focused","workspace_id":workspace}),
+                ),
+                ApplyMode::Strict,
+            )
+            .unwrap();
+        assert_eq!(
+            replica.project().focused_workspace_id.as_deref(),
+            Some(workspace)
+        );
+        assert!(
+            replica.project().tab_focus.is_none(),
+            "a return cannot resurrect the old creation cause"
+        );
+    }
+}
+
+#[test]
 fn creation_focus_pairing_survives_bootstrap_and_blocked_publication() {
     for bootstrap in [false, true] {
         for explicit_before_layout in [false, true] {

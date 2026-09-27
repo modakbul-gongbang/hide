@@ -2,8 +2,11 @@
 
 use super::*;
 
+static NEXT_REPLICA_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
 #[derive(Clone)]
 pub(crate) struct SessionReplica {
+    generation: u64,
     pub(crate) state: ProjectionState,
     /// The last projection whose dependency ranges were confirmed. Pending
     /// topology is kept in `state`, while this copy is what the runtime is
@@ -69,6 +72,7 @@ impl SessionReplica {
 
     pub(crate) fn from_decoded(state: ProjectionState) -> Result<Self, SessionFetchError> {
         let replica = Self {
+            generation: NEXT_REPLICA_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             published_state: state.clone(),
             state,
             pending_layouts: BTreeSet::new(),
@@ -659,6 +663,17 @@ impl SessionReplica {
             }
             (Err(error), _) => return Err(error),
         };
+        // A different authoritative focus owner retires its predecessor's
+        // cause, so returning to that tab cannot resurrect a creation marker.
+        if candidate.state.tab_focus.as_ref().is_some_and(|focus| {
+            candidate.state.focused_workspace_id.as_ref() != Some(&focus.workspace_id)
+                || !candidate.state.workspaces.iter().any(|workspace| {
+                    workspace.workspace_id == focus.workspace_id
+                        && workspace.active_tab_id == focus.tab_id
+                })
+        }) {
+            candidate.state.tab_focus = None;
+        }
         candidate.applied_events = candidate.applied_events.saturating_add(1);
         let publish = candidate.refresh_published_state()?;
         *self = candidate;
@@ -995,6 +1010,7 @@ impl SessionReplica {
                 }
                 workspace.active_tab_id = input_tab_id.clone();
                 self.state.tab_focus = Some(crate::sidebar::SessionTabFocus {
+                    generation: self.generation,
                     workspace_id: input_workspace_id.clone(),
                     creation: self.pending_creation_focuses.remove(&input_tab_id),
                     tab_id: input_tab_id,
@@ -1302,6 +1318,7 @@ impl SessionReplica {
             })
         {
             self.state.tab_focus = Some(crate::sidebar::SessionTabFocus {
+                generation: self.generation,
                 workspace_id: tab.workspace_id.clone(),
                 tab_id: tab.tab_id.clone(),
                 revision: self.applied_events.saturating_add(1),

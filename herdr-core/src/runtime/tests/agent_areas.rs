@@ -208,6 +208,7 @@ fn creation_provenance_preserves_canvas_after_admission_and_same_tab_refocus_is_
     ingest(&mut runtime, &tabs);
     let mut payload = tab_order_payload("/agent-groups", &tabs, &tabs, "w-order:t4");
     payload.tab_focus = Some(crate::sidebar::SessionTabFocus {
+        generation: 1,
         workspace_id: "w-order".into(),
         tab_id: "w-order:t4".into(),
         revision: 1,
@@ -230,6 +231,38 @@ fn creation_provenance_preserves_canvas_after_admission_and_same_tab_refocus_is_
         checkout_active_tab_id(&runtime, &checkout).as_deref(),
         Some("w-order:t4")
     );
+}
+
+#[test]
+fn raw_snapshot_does_not_rearm_a_consumed_focus_event_after_local_timeout() {
+    let (mut runtime, checkout) = setup();
+    let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+    let mut event = tab_order_payload("/agent-groups", &tabs, &tabs, "w-order:t2");
+    event.tab_focus = Some(crate::sidebar::SessionTabFocus {
+        generation: 1,
+        workspace_id: "w-order".into(),
+        tab_id: "w-order:t2".into(),
+        revision: 1,
+        creation: false,
+    });
+    runtime.ingest_session(Ok(event.clone()));
+    runtime.dispatch_json(&focus_tab_event(&checkout, "w-order:t1"));
+    runtime.expire_pending_view_focus(u64::MAX);
+    let mut raw = event.clone();
+    raw.tab_focus = None;
+    runtime.ingest_session(Ok(raw));
+    runtime.ingest_session(Ok(event.clone()));
+    runtime.sync_workspace_view();
+    assert_eq!(layout(&runtime).active(), Some("w-order:t1"));
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout).as_deref(),
+        Some("w-order:t1")
+    );
+    // A reconnect's new stream cannot collide with the previous revision.
+    event.tab_focus.as_mut().unwrap().generation = 2;
+    runtime.ingest_session(Ok(event));
+    runtime.sync_workspace_view();
+    assert_eq!(layout(&runtime).active(), Some("w-order:t2"));
 }
 
 #[test]

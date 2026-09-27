@@ -1019,7 +1019,11 @@ impl Runtime {
                 .focus_event
                 .as_ref()
                 .is_some_and(|event| self.herdr_tab_focus_seen.as_ref() != Some(event));
-        self.herdr_tab_focus_seen = herdr.focus_event.clone();
+        // Raw close/status snapshots have no stream stamp. They cannot make a
+        // previously consumed event fresh; a new replica has a new generation.
+        if let Some(event) = &herdr.focus_event {
+            self.herdr_tab_focus_seen = Some(event.clone());
+        }
         self.herdr_focused_tab_seen = herdr.focused_tab_id.clone();
         let selected_pane_id = self.snapshot.terminal.pane_id.clone();
         // The catalog is rebuilt whole on every pass, so a checkout absent
