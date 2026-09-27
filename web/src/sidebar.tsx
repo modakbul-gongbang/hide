@@ -777,8 +777,9 @@ const CheckoutRowView = memo(function CheckoutRowView({
             actions={actions}
             expanded={checkoutRowExpansion(foldable, context.workspaceScreen && focused, open)}
           />
-          {/* The row button covers the whole row; a control drawn over it is positioned, so it stacks above. */}
-          <span className="pointer-events-none flex min-w-0 items-center gap-sm">
+          {/* The row button covers the whole row; a control drawn over it is positioned, so it stacks above.
+              Line one is 20 whatever it carries: the 24-high fold toggle overhangs it rather than moving line two. */}
+          <span className="pointer-events-none flex h-(--size-sidebar-line) min-w-0 items-center gap-sm">
             <KindIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />
             <CheckoutName name={name} focused={focused} />
             <CheckoutBadge checkout={checkout} />
@@ -861,7 +862,7 @@ const FolderRowView = memo(function FolderRowView({
             actions={actions}
             expanded={checkoutRowExpansion(foldable, context.workspaceScreen && focused, open)}
           />
-          <span className="pointer-events-none flex min-w-0 items-center gap-sm">
+          <span className="pointer-events-none flex h-(--size-sidebar-line) min-w-0 items-center gap-sm">
             <FolderIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />
             <span aria-hidden="true" data-row-name="true" className="min-w-0 truncate text-subhead font-semibold text-foreground">
               {workspace.label}
