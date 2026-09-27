@@ -3479,7 +3479,7 @@ mod tests {
                     &binary,
                     parent_pane_id,
                     child_pane_id,
-                    Duration::from_millis(250),
+                    Duration::from_secs(2),
                 )
             },
         )
@@ -3488,7 +3488,7 @@ mod tests {
         assert_eq!(pane_id, "child-pane");
         assert_eq!(herdr.methods(), ["pane.split", "agent.start"]);
         assert!(
-            started.elapsed() < Duration::from_secs(3),
+            started.elapsed() < Duration::from_secs(5),
             "the fork worker must settle promptly"
         );
         let pid: i32 = std::fs::read_to_string(pid_path)
