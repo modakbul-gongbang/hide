@@ -9,13 +9,23 @@
 // menu's commands arrive through the host bridge into the same `run`: a
 // chord the listener answers is consumed here, so the menu's own
 // accelerator for it never fires as well.
+//
+// The same listener watches the modifiers for the hold hint (PRD
+// electron-digit-shortcuts-hints D-03, D-04): every keydown and keyup feeds
+// the pure state in `hints.ts`, one timer advances its deadline, and only
+// the family it reveals (`tabs`, `agents` or none) is published to the ui
+// store, so an unrevealed hold renders nothing. Losing the window, a page
+// going hidden, a layer opening or any key pressed during the hold ends it.
 
 import type { Actions } from "./actions";
+import { advanceHint, clearHint, holdModifiers, idleHint, modifiersOf, NO_MODIFIERS, revealedFamily, type HintState } from "./hints";
 import { hostBridge, hostKind } from "./host";
+import { numberedAgents, numberedTabs } from "./numbering";
+import { agentListRows, agentTree, allAgents } from "./navigation";
 import { availableSurfaces, currentSurface, observeProject, observeSurfaces, panelItem, placeLabel, projectItem, reconcileCycle, recentProjectOrder, recentSurfaces, type CycleItem } from "./recent";
 import { contextWorkspaces, remoteContext, remoteView } from "./remote";
-import { hostRegistry, matchHost, REGISTRY, storedBindings, type CommandId } from "./shortcuts";
-import { editorFor, type SnapshotRest } from "./snapshot";
+import { hostRegistry, isNumberedCommand, matchHost, numberedCommand, REGISTRY, storedBindings, type CommandId, type Digit, type NumberedFamily } from "./shortcuts";
+import { editorFor, focusedCheckout, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type Cycle } from "./ui";
 import { drawnViews, installKeyboardOwner, keyboardOwner } from "./viewFocus";
@@ -97,6 +107,31 @@ export function reconcileHeldCycle(cycle: Cycle, rest: SnapshotRest | null): Cyc
   return kept && kept.items.length > 1 ? { ...cycle, ...kept } : null;
 }
 
+/**
+ * The strip ⌘n numbers: the checkout the Agent area draws, a selected
+ * device's own view or this machine's focused checkout (PRD
+ * electron-digit-shortcuts-hints B1).
+ */
+function stripCheckout(rest: SnapshotRest | null) {
+  const remote = remoteContext(rest);
+  if (remote) return remoteView(remote.session)?.checkout ?? null;
+  return focusedCheckout(rest);
+}
+
+/** The Agents list's rows in draw order, the same list the sidebar builds (B2). */
+function agentRows(state: { rest: SnapshotRest | null; agents: Parameters<typeof allAgents>[2] }) {
+  return agentListRows(agentTree(allAgents(state.rest?.status?.remote, state.rest?.navigator?.devices, state.agents)));
+}
+
+/** What ⌘n or ⌥n selects now, or null when nothing holds that number. */
+export function numberedTarget(family: NumberedFamily, number: Digit, state: { rest: SnapshotRest | null; agents: Parameters<typeof allAgents>[2] }): string | null {
+  if (family === "tabs") {
+    const checkout = stripCheckout(state.rest);
+    return checkout ? (numberedTabs(checkout).get(number) ?? null) : null;
+  }
+  return numberedAgents(agentRows(state)).get(number) ?? null;
+}
+
 function advance(cycle: Cycle, backward: boolean): Cycle {
   const count = cycle.items.length;
   return { ...cycle, index: (cycle.index + (backward ? -1 : 1) + count) % count };
@@ -111,6 +146,17 @@ export function installKeyboard(actions: Actions): () => void {
   let cycleRelease = "Alt";
 
   const run = (id: CommandId, event: KeyboardEvent | null) => {
+    if (isNumberedCommand(id)) {
+      // An empty number is nothing, not a diagnostic: the hold hint shows
+      // which numbers exist, and pressing past them is an ordinary miss.
+      // The guard narrows `id` for the switch below; the second lookup is the family and number.
+      const numbered = numberedCommand(id)!;
+      const target = numberedTarget(numbered.family, numbered.number, useShellStore.getState());
+      if (!target) return;
+      if (numbered.family === "tabs") actions.focusTab(target, true);
+      else actions.openAgent(target);
+      return;
+    }
     switch (id) {
       case "new_tab":
         return actions.createTab();
@@ -191,7 +237,55 @@ export function installKeyboard(actions: Actions): () => void {
     }
   };
 
+  // The hold hint. `hint` is the pure state; `timer` wakes `advance` at its
+  // deadline; `publish` hands the ui store the family the state reveals and
+  // nothing else, so a hold that never reveals costs no render.
+  let hint: HintState = idleHint();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const publish = () => {
+    const { registry } = hostRegistry(useShellStore.getState().rest?.ui_state, host);
+    ui().setHint(revealedFamily(hint, registry, host));
+  };
+  const setHint = (next: HintState) => {
+    if (next === hint) return;
+    hint = next;
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    if (hint.deadline !== null) {
+      timer = setTimeout(() => {
+        timer = null;
+        setHint(advanceHint(hint, performance.now()));
+      }, Math.max(0, hint.deadline - performance.now()));
+    }
+    publish();
+  };
+  // A blur or a layer with no hold in progress changes nothing and publishes nothing.
+  const endHold = () => {
+    if (hint.deadline !== null || hint.revealed || hint.modifiers !== NO_MODIFIERS) setHint(clearHint());
+  };
+  const MODIFIER_KEYS = new Set(["Meta", "Alt", "Shift", "Control"]);
+  const onVisibility = () => {
+    if (document.visibilityState === "hidden") endHold();
+  };
+  // A layer opening over the page ends the hold (B6): the keycaps name
+  // what a chord would select, and a sheet, a menu, a dialog or a cycle
+  // is what the keyboard now belongs to.
+  const layerOpen = (state: ReturnType<typeof ui>) =>
+    state.overlay !== "none" || state.escapeLayers.length > 0 || state.workspaceDialog !== null || state.pendingClose !== null || state.pendingTrash !== null || state.cycle !== null;
+  const unsubscribeLayers = useUiStore.subscribe((state, previous) => {
+    if (layerOpen(state) && !layerOpen(previous)) endHold();
+  });
+
   const onKeyDown = (event: KeyboardEvent) => {
+    if (MODIFIER_KEYS.has(event.key)) {
+      if (!layerOpen(ui())) setHint(holdModifiers(hint, modifiersOf(event), performance.now()));
+    } else if (hint.deadline !== null || hint.revealed) {
+      // A key during the hold is the chord itself (⌘2, ⌘C): the hint ends
+      // now and comes back only with a fresh hold (B6, B8).
+      endHold();
+    }
     if (event.isComposing || event.keyCode === 229) return;
     // A Shortcuts row that is recording owns the next chord, Escape included:
     // no command runs while the operator is showing the recorder a key.
@@ -254,6 +348,7 @@ export function installKeyboard(actions: Actions): () => void {
   // A project with no surface to restore comes forward as its checkout does
   // from the sidebar, which is also how a device's project comes forward.
   const onKeyUp = (event: KeyboardEvent) => {
+    if (MODIFIER_KEYS.has(event.key)) setHint(holdModifiers(hint, modifiersOf(event), performance.now()));
     if (event.key !== cycleRelease) return;
     const cycle = ui().cycle;
     if (!cycle) return;
@@ -269,6 +364,7 @@ export function installKeyboard(actions: Actions): () => void {
   // is committed for a chord the operator did not finish here.
   const onBlur = () => {
     if (ui().cycle) ui().setCycle(null);
+    endHold();
   };
 
   // A menu item names a command id; one this registry does not know is a
@@ -301,12 +397,17 @@ export function installKeyboard(actions: Actions): () => void {
   window.addEventListener("keydown", onKeyDown, true);
   window.addEventListener("keyup", onKeyUp, true);
   window.addEventListener("blur", onBlur);
+  document.addEventListener("visibilitychange", onVisibility);
   return () => {
     removeKeyboardOwner();
     unsubscribeMenu?.();
     unsubscribeBindings?.();
+    unsubscribeLayers();
+    if (timer) clearTimeout(timer);
+    ui().setHint(null);
     window.removeEventListener("keydown", onKeyDown, true);
     window.removeEventListener("keyup", onKeyUp, true);
     window.removeEventListener("blur", onBlur);
+    document.removeEventListener("visibilitychange", onVisibility);
   };
 }

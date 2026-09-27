@@ -127,7 +127,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     for (const runtime of ["claude-code", "codex"] as const) {
       const localContext = await hookFromPane(local, run.env.HIDE_STATE_DIR!, null, runtime, `local-${runtime}-hook`);
       expect(localContext.status).toBe(0);
-      expect(localContext.context).toContain("Hide Workspace control is available for this connected pane");
+      expect(localContext.context).toContain("Hide Workspace control is available for this session's checkout");
       expect(localContext.context).toContain("file open <path>");
       expect(localContext.context).toContain("browser open <url-or-path>");
       const remoteBeforeConnection = await hookFromPane(remote, path.join(run.root, "remote-cli-state"), bridge, runtime, `disconnected-${runtime}-hook`);
@@ -140,6 +140,19 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     });
     expect(plain.status).toBe(0);
     expect(plain.stdout).not.toContain("Hide Workspace control is available");
+    // Outside any pane but inside a registered checkout (a Codex shared daemon,
+    // a plain terminal): the daemon binds the caller by its cwd and the hook
+    // names that checkout.
+    const noPaneEnv: NodeJS.ProcessEnv = { ...local.env, HIDE_STATE_DIR: run.env.HIDE_STATE_DIR! };
+    delete noPaneEnv.HERDR_PANE_ID;
+    const plainInCheckout = spawnSync(HOOK_CLI, ["hook", "--runtime", "codex", "--event", "SessionStart", "--memory-injection", "--source", "hide-subagents@5"], {
+      cwd: path.join(local.root, "fixture"),
+      env: noPaneEnv,
+      input: "{}", encoding: "utf8", timeout: 10_000,
+    });
+    expect(plainInCheckout.status).toBe(0);
+    expect(plainInCheckout.stdout).toContain("Hide Workspace control is available for this session's checkout");
+    expect(plainInCheckout.stdout).toContain(fs.realpathSync(path.join(local.root, "fixture")));
     const state = JSON.parse(fs.readFileSync(path.join(run.env.HIDE_STATE_DIR!, "hided.json"), "utf8")) as { port: number; token: string };
     await page.evaluate(async ({ port, token, socket }) => {
       await new Promise<void>((resolve, reject) => {
@@ -166,7 +179,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     for (const runtime of ["claude-code", "codex"] as const) {
       const session = await hookFromPane(remote, path.join(run.root, "remote-cli-state"), bridge, runtime, `remote-${runtime}-hook`);
       expect(session.status).toBe(0);
-      expect(session.context).toContain("Hide Workspace control is available for this connected pane");
+      expect(session.context).toContain("Hide Workspace control is available for this session's checkout");
       expect(session.context).toContain("browser open <url-or-path>");
       const reference = session.context.match(/HIDE_CAP_REF='([^']+)'/)?.[1];
       expect(reference).toBeTruthy();

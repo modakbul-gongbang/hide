@@ -7,6 +7,7 @@ import type { Relation } from "./lineage";
 import type { Opening } from "./navigation";
 import type { SettingsTab } from "./settings";
 import type { CycleItem } from "./recent";
+import type { NumberedFamily } from "./shortcuts";
 import { placementForWidth, type ToolsPlacement, type ViewFocusRequest, type ViewWorkspace } from "./viewLayout";
 
 export type { ToolsPlacement, ViewFocusRequest } from "./viewLayout";
@@ -163,6 +164,13 @@ type UiStore = {
   /** True while a Shortcuts row is recording: the window listener then runs no command. */
   recordingShortcut: boolean;
   /**
+   * The numbered family a modifier hold has revealed (`hints.ts`): the tabs
+   * of the strip in front or the Agents list's rows carry their number
+   * while it is set. Published by the window listener only on a change, so
+   * an unrevealed hold renders nothing.
+   */
+  hint: NumberedFamily | null;
+  /**
    * Escape handlers of the layers open inside an overlay, innermost last. The
    * window listener answers Escape with the innermost one first, so a nested
    * confirmation closes before the sheet behind it.
@@ -206,6 +214,7 @@ type UiStore = {
   setOpening: (opening: Opening | null) => void;
   setWatchedRemoval: (removal: { deviceId: string; path: string; afterId: number } | null) => void;
   setRecordingShortcut: (recording: boolean) => void;
+  setHint: (hint: NumberedFamily | null) => void;
   /** Registers an Escape layer and returns its removal. */
   pushEscape: (handler: () => void) => () => void;
   /** Registers an open hint's close and returns its removal. */
@@ -237,6 +246,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   opening: null,
   watchedRemoval: null,
   recordingShortcut: false,
+  hint: null,
   escapeLayers: [],
   hints: [],
   // Moving by hand drops an open still waiting for its Workspace, so a late
@@ -284,6 +294,9 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setOpening: (opening) => set({ opening }),
   setWatchedRemoval: (watchedRemoval) => set({ watchedRemoval }),
   setRecordingShortcut: (recordingShortcut) => set({ recordingShortcut }),
+  setHint: (hint) => {
+    if (get().hint !== hint) set({ hint });
+  },
   pushEscape: (handler) => {
     set({ escapeLayers: [...get().escapeLayers, handler] });
     return () => set({ escapeLayers: get().escapeLayers.filter((layer) => layer !== handler) });

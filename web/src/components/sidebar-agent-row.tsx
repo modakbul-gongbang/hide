@@ -7,6 +7,7 @@ import type { AgentRow } from "../snapshot";
 import { DescendantBadge } from "./agent-row";
 import { StatusMark } from "./status-mark";
 import { Badge } from "./ui/badge";
+import { Keycap } from "./ui/keycap";
 import { Hint } from "./ui/tooltip";
 
 /**
@@ -42,7 +43,10 @@ export function FoldLane() {
  * no branch chip, while a child drawn under a parent elsewhere keeps it.
  *
  * Nothing here grows or moves on hover, focus, selection or an open menu:
- * those change a fill, a ring and the chevron's opacity only.
+ * those change a fill, a ring and the chevron's opacity only. `number` is
+ * the digit an ⌥ hold shows at the row's top right (PRD
+ * electron-digit-shortcuts-hints B5), floating over the time and the fold
+ * slot, which stay where they are.
  */
 export const SidebarAgentRow = memo(function SidebarAgentRow({
   agent,
@@ -56,6 +60,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   onToggleTree,
   inset,
   branchShown = true,
+  number = null,
 }: {
   agent: AgentRow;
   device: string | null;
@@ -74,6 +79,8 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   inset: string;
   /** False where the row above already names the row's checkout. */
   branchShown?: boolean;
+  /** The digit a modifier hold shows on this row, or null while none shows. */
+  number?: number | null;
 }) {
   const main = useRef<HTMLButtonElement>(null);
   const line = sidebarLine(agent);
@@ -171,6 +178,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           </span>
         ) : null}
       </span>
+      {number !== null ? <Keycap number={number} /> : null}
     </li>
   );
 });

@@ -30,12 +30,14 @@ Nothing parses the rest of the command, and the helper does not pass the marker 
 ## What the hook returns and reports back
 
 On `SessionStart`, the helper writes one runtime JSON envelope whose `hookSpecificOutput.additionalContext` combines the existing one-line worktree-purpose instruction with the bounded Project Memory capsule when Memory is enabled.
-The same envelope adds Workspace commands only after `hide workspace bootstrap` and `hide workspace info` confirm a live, renderer-connected pane and report its actual capabilities.
+The same envelope adds Workspace commands only after `hide workspace bootstrap` and `hide workspace info` confirm a renderer-connected Workspace for the caller and report its actual capabilities.
+The probe does not need a pane id: the daemon binds a caller inside a Herdr pane to that pane, and any other local caller, such as a tool shell or hook inside Codex's shared app-server daemon or a plain terminal, to the registered checkout holding its cwd (`docs/ARCHITECTURE.md`, the Workspace CLI).
+The guidance names that checkout path, so a session can read which Workspace its commands reach.
 The helper uses the `hide` CLI beside its own bundled executable, or the CLI on `PATH` for an independently installed helper on an SSH device.
 The app bundle carries that CLI beside the helper; the hook does not start Hide or install a remote hook.
 An ordinary Claude Code or Codex session started in a connected Herdr pane receives the same conditional guidance as a Hide-managed session when Hide's hook is installed in that runtime's configuration on that machine.
-A disconnected pane, unavailable renderer, or unsupported Browser surface receives no Workspace capability claim.
-The guidance scopes every command to the calling pane's Workspace and lists only capabilities returned by the daemon; `hide workspace info` remains the live check and `hide --help` gives the full syntax.
+A disconnected pane, a cwd outside every registered checkout, an unavailable renderer, or an unsupported Browser surface receives no Workspace capability claim.
+The guidance scopes every command to the caller's checkout Workspace and lists only capabilities returned by the daemon; `hide workspace info` remains the live check and `hide --help` gives the full syntax.
 The hook creates an owner-only, finite-lived credential reference and includes its path as a shell environment prefix for the listed commands.
 The path is a credential reference and should be handled as private session context, even though it contains no bearer bytes itself.
 The credential's bearer bytes and file contents never enter hook stdout, arguments, or the agent context, and each command rechecks the caller's checkout membership and renderer availability.
