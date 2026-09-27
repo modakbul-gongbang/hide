@@ -1651,6 +1651,27 @@ impl Runtime {
             }
         };
 
+        // A stale sidebar row has no action left to offer. Reject the whole
+        // open/disclosure intent before focus, persistence or visit effects.
+        if let Event::FocusCheckout(payload) = &event
+            && !self.snapshot.navigator.workspaces.iter().any(|workspace| {
+                workspace.id == payload.workspace_id
+                    && workspace
+                        .checkouts
+                        .iter()
+                        .any(|checkout| checkout.id == payload.checkout_id)
+            })
+        {
+            self.push_diagnostic(
+                "checkout.row_stale",
+                format!(
+                    "Checkout {} is not available in {}",
+                    payload.checkout_id, payload.workspace_id
+                ),
+            );
+            return true;
+        }
+
         let cleared_error = self.snapshot.status.last_error.take().is_some();
         let intent = self
             .separate_view_areas()

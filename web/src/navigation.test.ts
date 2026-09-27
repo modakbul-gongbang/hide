@@ -182,6 +182,25 @@ describe("an open from Main or an Overview", () => {
     expect(openingProgress(rest("c2"), toPane)).toBe("landed");
   });
 
+  it("waits for focus and disclosure together when returning from Overview", () => {
+    const opening = { target: { workspaceId: "w", checkoutId: "c2", deviceId: "local", path: "/w2", expanded: true }, errorBefore: null, failure: null };
+    // Focus can already match while Overview is visible; the old folded snapshot cannot land.
+    expect(openingProgress(rest("c2"), opening)).toBeNull();
+    const accepted = { ...rest("c2"), ui_state: { expanded_checkout_ids: ["c2"] } } as unknown as SnapshotRest;
+    expect(openingProgress(accepted, opening)).toBe("landed");
+    expect(openingProgress({ ...accepted, navigator: rest("c1").navigator }, opening)).toBeNull();
+  });
+
+  it("silently cancels a vanished local row, with or without agents", () => {
+    for (const expanded of [true, undefined]) {
+      const opening = { target: { workspaceId: "w", checkoutId: "gone", deviceId: "local", path: "/gone", expanded }, errorBefore: null, failure: null };
+      expect(openingProgress(rest("c1"), opening)).toBe("cancelled");
+      expect(openingProgress(null, opening)).toBeNull();
+    }
+    const wrongProject = { target: { workspaceId: "gone", checkoutId: "c1", deviceId: "local", path: "/w" }, errorBefore: null, failure: null };
+    expect(openingProgress(rest("c1"), wrongProject)).toBe("cancelled");
+  });
+
   it("reads a newer core error as the refusal and ignores the one from before", () => {
     const opening = { target: { checkoutId: "c2", deviceId: "local", path: "/w2" }, errorBefore: 5, failure: null };
     expect(openingProgress(rest("c1", 5), opening)).toBeNull();

@@ -164,9 +164,10 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await expect(overview).toBeVisible();
     await expect(overview).toHaveAttribute("data-overview-state", "board");
     await expect(overview).toHaveAttribute("data-overview-view", "tasks");
-    // The sidebar marks the scope on screen: this project's row, not All
-    // projects and not a checkout.
-    await expect(repoRow).toHaveAttribute("aria-current", "page");
+    // The Overview child marks this scope; the project header only navigates.
+    const overviewRow = repoRow.locator("xpath=ancestor::li[@data-project]").locator("[data-project-overview]");
+    await expect(overviewRow).toHaveAttribute("aria-current", "page");
+    await expect(repoRow).not.toHaveAttribute("aria-current", "page");
     await expect(page.locator("[data-all-projects]")).not.toHaveAttribute("aria-current", "page");
     await expect(page.locator('[data-project-list] [data-checkout][aria-current="true"]')).toHaveCount(0);
 

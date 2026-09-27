@@ -373,7 +373,7 @@ export function startupScreen(rest: SnapshotRest | null, hasFront: boolean): "wo
 }
 
 /** What All projects, an Overview or the Agents list asked to bring forward (B2, B12, B21). */
-export type OpenTarget = { checkoutId: string; deviceId: string; path: string | null } | { paneId: string };
+export type OpenTarget = { checkoutId: string; deviceId: string; path: string | null; workspaceId?: string; expanded?: boolean } | { paneId: string };
 
 /**
  * A Workspace or agent asked for and not yet in front. The screen changes
@@ -391,14 +391,18 @@ export function openingLanded(rest: SnapshotRest | null, target: OpenTarget): bo
   const front = frontCheckout(rest);
   if (!front) return false;
   if ("paneId" in target) return front.tabs.some((tab) => tab.panes.some((pane) => pane.id === target.paneId));
+  if (target.expanded !== undefined && (rest?.ui_state?.expanded_checkout_ids ?? []).includes(target.checkoutId) !== target.expanded) return false;
   if (front.id === target.checkoutId) return true;
   // A device project with no Herdr workspace yet gets one at its folder, under a new id.
   return target.path !== null && front.path === target.path && (rest?.navigator?.focused_device_id ?? "local") === target.deviceId;
 }
 
-/** Where an open stands: "landed", the core's refusal, or null while it is on its way. */
+/** A vanished local target is cancelled silently; other refusals keep their existing message. */
 export function openingProgress(rest: SnapshotRest | null, opening: Opening): "landed" | string | null {
-  if (openingLanded(rest, opening.target)) return "landed";
+  const target = opening.target;
+  if (rest?.navigator?.workspaces && "checkoutId" in target && target.deviceId === "local" && target.workspaceId !== undefined
+    && !rest.navigator.workspaces.some((workspace) => workspace.id === target.workspaceId && workspace.checkouts.some((checkout) => checkout.id === target.checkoutId))) return "cancelled";
+  if (openingLanded(rest, target)) return "landed";
   const error = rest?.status?.last_error;
   if (error && error.occurred_at !== opening.errorBefore) return error.message;
   return null;
