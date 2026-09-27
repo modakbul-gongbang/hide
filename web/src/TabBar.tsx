@@ -9,9 +9,7 @@ import { Input } from "./components/ui/input";
 import { Keycap } from "./components/ui/keycap";
 import { Hint, Tooltip, TooltipTrigger, TooltipContent } from "./components/ui/tooltip";
 import type { AsyncOperation, Checkout, StripTab } from "./snapshot";
-import { numberOf, numberedTabs } from "./numbering";
 import { useShellStore } from "./store";
-import { useUiStore } from "./ui";
 import type { AreaTabInteraction } from "./AreaTree";
 
 // The sole Agent tab rendering unit, reused by every local and device area.
@@ -25,14 +23,11 @@ export function closingSuffix(targetId: string, kind: "tab.close" | "pane.close"
   return operations.some((op) => op.kind === kind && op.target_id === targetId && IN_FLIGHT.has(op.phase));
 }
 
-export function AgentTab({ entry, checkout, interaction, actions, renaming, onCancelRename }: { entry: StripTab; checkout: Checkout; interaction: AreaTabInteraction; actions: Actions; renaming: boolean; onCancelRename: () => void }) {
+export function AgentTab({ number, entry, checkout, interaction, actions, renaming, onCancelRename }: { number: number | null; entry: StripTab; checkout: Checkout; interaction: AreaTabInteraction; actions: Actions; renaming: boolean; onCancelRename: () => void }) {
   const operations = useShellStore((s) => s.rest?.status?.async_operations) ?? NONE;
-  const numbered = useUiStore((s) => s.hint === "tabs");
-  const numbers = numbered ? numberedTabs(checkout) : null;
   const agent = checkout.tabs.find((row) => row.id === entry.source_id)?.agent;
   const identity = `${agent ? `${agent.agent_kind} agent` : "Terminal"} tab ${entry.label}${agent ? ` · ${agent.status_label}` : ""}`;
-  return <TabButton entry={entry} editor={renaming ? <TabRenameInput key={entry.source_id} entry={entry} actions={actions} onCancel={onCancelRename} /> : null} identity={identity} mark={<>{agent ? <StatusMark symbol={agent.symbol} className={markTone(agent)} data-tab-status={agent.status_label} /> : null}<AgentMark kind={agent?.agent_kind} /></>} number={numbers ? numberOf(numbers, entry.source_id) : null} active={interaction.selected} areaActive={interaction.areaActive} closing={closingSuffix(entry.source_id, "tab.close", operations)} closeLabel={`Close tab ${entry.label}`} dragging={interaction.dragging} onSelect={interaction.select} onClose={() => actions.closeTab(entry.source_id)} onPointerDown={interaction.press} />;
-
+  return <TabButton entry={entry} editor={renaming ? <TabRenameInput key={entry.source_id} entry={entry} actions={actions} onCancel={onCancelRename} /> : null} identity={identity} mark={<>{agent ? <StatusMark symbol={agent.symbol} className={markTone(agent)} data-tab-status={agent.status_label} /> : null}<AgentMark kind={agent?.agent_kind} /></>} number={number} active={interaction.selected} areaActive={interaction.areaActive} closing={closingSuffix(entry.source_id, "tab.close", operations)} closeLabel={`Close tab ${entry.label}`} dragging={interaction.dragging} onSelect={interaction.select} onClose={() => actions.closeTab(entry.source_id)} onPointerDown={interaction.press} />;
 }
 
 const RENAME_FAILURE = "이름을 저장하지 못했습니다 · 다시 시도";

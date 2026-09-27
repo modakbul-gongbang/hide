@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { AgentLayout } from "./agentLayout";
 import type { TreeRow } from "./agentRow";
 import { numberedTarget } from "./keyboard";
 import { numberedAgents, numberedTabs, numberOf } from "./numbering";
@@ -29,6 +30,30 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
     expect(numberOf(numbered, "t10")).toBeNull();
     expect(numberOf(numbered, "f1")).toBeNull();
     expect(numberOf(numbered, "t4")).toBe(4);
+  });
+
+  it("uses placed area order for both keycaps and numbered focus after a move", () => {
+    const checkout = { ...checkoutWith(["t1", "t2", "waiting"]), path: "/fixture" };
+    const layout: AgentLayout = {
+      root: { split: { id: "s1", axis: "row", ratio: .5,
+        first: { area: { id: "a1", active: "t2", displays: [{ id: "t2" }] } },
+        second: { area: { id: "a2", active: "t1", displays: [{ id: "t1" }] } },
+      } },
+      active_area: "a2", canvases: {}, limits: { areas: 6, depth: 3, displays: 64 }, display_count: 2,
+    };
+    const rest = {
+      navigator: { focused_checkout_id: "c1", focused_workspace_id: "w1", focused_device_id: "local", devices: [], workspaces: [{ id: "w1", checkouts: [checkout] }] },
+      workspace_view: { device_id: "local", path: checkout.path, agent_layout: layout },
+    } as unknown as SnapshotRest;
+    const numbers = numberedTabs(checkout, layout);
+    expect([...numbers]).toEqual([[1, "t2"], [2, "t1"]]);
+    expect(numberOf(numbers, "waiting")).toBeNull();
+    expect(numberedTarget("tabs", 1, { rest, agents: [] })).toBe("t2");
+    expect(numberedTarget("tabs", 2, { rest, agents: [] })).toBe("t1");
+    expect(numberedTarget("tabs", 3, { rest, agents: [] })).toBeNull();
+    // The layout from a different Workspace cannot number this checkout.
+    rest.workspace_view!.path = "/other";
+    expect(numberedTarget("tabs", 1, { rest, agents: [] })).toBe("t1");
   });
 
   it("numbers the Agents list's drawn rows top to bottom, folded children left out", () => {

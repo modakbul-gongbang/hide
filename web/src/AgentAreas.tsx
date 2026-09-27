@@ -12,6 +12,8 @@ import { hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
 import type { Checkout } from "./snapshot";
 import { useShellStore } from "./store";
+import { numberOf, numberedTabs } from "./numbering";
+import { useUiStore } from "./ui";
 import { AgentTab } from "./TabBar";
 import { agentEntries, workspaceViewOf } from "./workspace";
 
@@ -19,6 +21,7 @@ const SharedAgentTree = createAreaTree<AgentItem>("agent");
 export function AgentAreas({ checkout, actions, deviceId = "local", remoteBody }: { checkout: Checkout; actions: Actions; deviceId?: string; remoteBody?: React.ReactNode }) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const saved = useShellStore((s) => workspaceViewOf(s.rest)?.agent_layout);
+  const numbered = useUiStore((s) => s.hint === "tabs");
   const entries = agentEntries(checkout);
   const remote = deviceId !== "local";
   const remoteLayout = useMemo<AgentLayout>(() => ({
@@ -27,6 +30,7 @@ export function AgentAreas({ checkout, actions, deviceId = "local", remoteBody }
   }), [checkout]);
   const layout = remote ? remoteLayout : saved;
   if (!layout) return <AreaEmpty state="agent-layout-missing" text="Waiting for Agent areas…" />;
+  const numbers = numbered ? numberedTabs(checkout, layout) : null;
   const workspace = { device_id: deviceId, path: checkout.path };
   const label = (id: string) => entries.find((entry) => entry.source_id === id)?.label ?? id;
   const adapter: AreaAdapter<AgentItem> = {
@@ -41,7 +45,7 @@ export function AgentAreas({ checkout, actions, deviceId = "local", remoteBody }
     },
     tab: (item, interaction) => {
       const entry = entries.find((row) => row.source_id === item.id);
-      return entry ? <AgentTab entry={entry} checkout={checkout} renaming={renaming === item.id} onCancelRename={() => setRenaming(null)} interaction={interaction} actions={actions} /> : null;
+      return entry ? <AgentTab number={numbers ? numberOf(numbers, item.id) : null} entry={entry} checkout={checkout} renaming={renaming === item.id} onCancelRename={() => setRenaming(null)} interaction={interaction} actions={actions} /> : null;
     },
     body: (item, area) => <>
       {area.id === layout.active_area ? <><RelationStatus actions={actions} /><FindBar actions={actions} /></> : null}

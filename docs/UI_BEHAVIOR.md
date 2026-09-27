@@ -77,6 +77,9 @@ An explicit local `--reveal` brings that Workspace and the opened View forward, 
 
 ### Agent areas
 
+Electron’s numbered tab shortcuts and hold keycaps share the saved Agent area tree order, then each bar’s left-to-right tab order.
+Moving or reordering a tab updates both numbers together; waiting overflow tabs have no number.
+
 At most 64 normal Agent tabs are placed, in up to six areas and three split levels.
 New tab, Reopen that needs a tab, and protected replacement close count pending admissions and refuse before any external effect when full; the existing one-line notice asks the operator to close a tab.
 After an ambiguous creation reply, Hide checks the request marker once without resending the mutation.
