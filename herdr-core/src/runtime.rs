@@ -1346,6 +1346,27 @@ impl Runtime {
                 occurred_at: unix_milliseconds(),
             });
         }
+        // A stored width the drag could not have produced (a hand-edited
+        // store) is not drawn; the sidebar opens at its default.
+        if !crate::model::sidebar_width_fits(snapshot.ui_state.sidebar_width) {
+            let message = format!(
+                "Stored sidebar width {} is outside {}..={}; the default was used",
+                snapshot.ui_state.sidebar_width,
+                crate::model::SIDEBAR_WIDTH_MIN,
+                crate::model::SIDEBAR_WIDTH_MAX
+            );
+            crate::diagnostic!(serde_json::json!({
+                "component": "ui_state",
+                "kind": "ui_state.sidebar_width_out_of_range",
+                "message": message,
+            }));
+            snapshot.status.diagnostics.push(DiagnosticSnapshot {
+                kind: "ui_state.sidebar_width_out_of_range".to_owned(),
+                message,
+                occurred_at: unix_milliseconds(),
+            });
+            snapshot.ui_state.sidebar_width = crate::model::default_sidebar_width();
+        }
         let workspace_views = options.workspace_views_path.as_ref().map(|path| {
             let (store, diagnostics) = WorkspaceViewStore::open(
                 PathBuf::from(path),

@@ -2004,6 +2004,12 @@ pub struct UiStateSnapshot {
     /// The web shell's color theme.
     #[serde(default)]
     pub theme: ThemePreference,
+    /// The Projects and Agents sidebar's width in CSS pixels, dragged on its
+    /// right edge and kept within `SIDEBAR_WIDTH_MIN..=SIDEBAR_WIDTH_MAX`
+    /// (PRD sidebar-typography D-08, D-09). A store written before the drag
+    /// existed loads at the default.
+    #[serde(default = "default_sidebar_width")]
+    pub sidebar_width: u32,
     /// The interface font size, in points, that the Appearance slider sets.
     /// It scales the shell's own chrome - every `hideFont` call site - and
     /// nothing else. A pane's terminal bytes are sized by `pane_text_scales`
@@ -2143,6 +2149,7 @@ impl Default for UiStateSnapshot {
             device_registrations: Vec::new(),
             accent_hex: default_accent_hex(),
             theme: ThemePreference::Dark,
+            sidebar_width: default_sidebar_width(),
             font_size: default_font_size(),
             pane_text_scales: BTreeMap::new(),
             editor_text_scale: DEFAULT_PANE_TEXT_SCALE,
@@ -2219,6 +2226,20 @@ pub(crate) fn default_local_device_id() -> String {
 
 pub(crate) fn default_accent_hex() -> String {
     "#B9FF66".to_owned()
+}
+
+/// The narrowest and widest sidebar the drag lands on (`--size-sidebar-min`
+/// and `--size-sidebar-max` in design/tokens.json); a width outside is refused.
+pub const SIDEBAR_WIDTH_MIN: u32 = 220;
+pub const SIDEBAR_WIDTH_MAX: u32 = 440;
+
+/// The sidebar's width until the operator drags it (`--size-sidebar-ideal`).
+pub(crate) fn default_sidebar_width() -> u32 {
+    292
+}
+
+pub(crate) fn sidebar_width_fits(width: u32) -> bool {
+    (SIDEBAR_WIDTH_MIN..=SIDEBAR_WIDTH_MAX).contains(&width)
 }
 
 pub(crate) fn default_font_size() -> f32 {
