@@ -418,7 +418,8 @@ An entry stored before the panel, with S6's `mode` (and `agent_share`, `views_ov
 The same schema-2 entry adds a defaulted `agent_layout` key for local Agent areas.
 Externally created tabs join the active area's bar without replacing a shown canvas, including when creation focuses the new tab in Herdr.
 The replica carries the creation cause and a focus-event revision with the authoritative workspace focus, including during partial publication and bootstrap replay.
-One pending creation pairing per live tab is consumed by its first `tab_focused` event; a later explicit focus, even on that same tab, gets a new revision and is followed.
+One pending creation pairing per live tab is consumed by its first `tab_focused` event; a later `tab_focused` event gets a new revision and is followed.
+The pinned Herdr emits no event for a focus command that leaves its current tab unchanged; Hide cannot observe that no-op command.
 This metadata remains inside the core projection, adds no terminal-output work, and is removed with its tab; local New and Reopen intents retain their existing focus claim.
 Agent admission counts the shared 64-item limit together with pending creates, placements, reopen and replacement-close effects.
 Request-specific claims reserve slots before the worker starts; reconciliation places acknowledged local effects before external arrivals and does not expire uncertain claims by time.
