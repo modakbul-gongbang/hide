@@ -1073,6 +1073,57 @@ pub(crate) fn pane_swap_params(first: &str, second: &str) -> Result<Value, Strin
     })
 }
 
+/// One agent as Herdr reports it right now, for the check agent sleep makes
+/// just before it ends the agent's process.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct AgentState {
+    pub(crate) agent: Option<String>,
+    pub(crate) status: String,
+    pub(crate) state_change_seq: u64,
+}
+
+pub(crate) fn agent_target_params(target: &str) -> Result<Value, String> {
+    params(req::AgentTarget {
+        target: target.into(),
+    })
+}
+
+pub(crate) fn agent_state(value: Value) -> Result<AgentState, String> {
+    let missing = "agent.get response is missing agent";
+    match response(value, missing)? {
+        res::ResponseResult::AgentInfo { agent } => Ok(AgentState {
+            agent: agent.agent,
+            status: agent.agent_status.to_string(),
+            state_change_seq: agent.state_change_seq,
+        }),
+        _ => Err(missing.into()),
+    }
+}
+
+/// Which process group holds a pane's terminal, and which is its shell's.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PaneProcessGroup {
+    pub(crate) shell_pid: Option<u32>,
+    pub(crate) foreground_process_group_id: Option<u32>,
+}
+
+pub(crate) fn pane_process_info_params(pane_id: &str) -> Result<Value, String> {
+    params(req::PaneProcessInfoParams {
+        pane_id: Some(pane_id.into()),
+    })
+}
+
+pub(crate) fn pane_process_group(value: Value) -> Result<PaneProcessGroup, String> {
+    let missing = "pane.process_info response is missing process_info";
+    match response(value, missing)? {
+        res::ResponseResult::PaneProcessInfo { process_info, .. } => Ok(PaneProcessGroup {
+            shell_pid: process_info.shell_pid,
+            foreground_process_group_id: process_info.foreground_process_group_id,
+        }),
+        _ => Err(missing.into()),
+    }
+}
+
 pub(crate) fn started_agent(value: Value) -> Result<String, String> {
     let missing = "agent.start response is missing agent pane";
     match response(value, missing)? {

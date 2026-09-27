@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+mod agent_sleep;
 mod agents;
 mod attachments;
 mod device_catalog;
@@ -27,6 +28,7 @@ mod workspace_view;
 pub use hosts::WorkspaceRemoteRoute;
 pub use snapshot_delta::serialize_snapshot_delta;
 
+use agent_sleep::{AgentSleepSetPayload, AgentWakePayload};
 use events::*;
 use operations::*;
 use view_areas::{BrowserOpenPayload, BrowserStatePayload, ViewLayoutPayload};
@@ -634,6 +636,36 @@ fn sync_pane_status(workspaces: &mut [WorkspaceSnapshot], agents: &[SidebarAgent
             changed = true;
         }
     }
+    // What the pane body and its menu say about sleep follows the same row,
+    // and a pane whose agent left takes neither with it.
+    let sleep_by_pane = agents
+        .iter()
+        .map(|agent| {
+            (
+                agent.pane_id.as_str(),
+                (agent.sleep.clone(), crate::agent_sleep::sleep_action(agent)),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    for pane in workspaces
+        .iter_mut()
+        .flat_map(|workspace| workspace.checkouts.iter_mut())
+        .flat_map(|checkout| checkout.tabs.iter_mut())
+        .flat_map(|tab| tab.panes.iter_mut())
+    {
+        let (sleep, sleep_action) = sleep_by_pane
+            .get(pane.id.as_str())
+            .cloned()
+            .unwrap_or((None, None));
+        if pane.sleep != sleep {
+            pane.sleep = sleep;
+            changed = true;
+        }
+        if pane.sleep_action != sleep_action {
+            pane.sleep_action = sleep_action;
+            changed = true;
+        }
+    }
     changed |= crate::sidebar::sync_checkout_agent_summaries(workspaces, agents);
     changed |= sync_strip_agent_identity(workspaces, agents);
     changed |= crate::project_context::sort_projects(workspaces, agents);
@@ -1119,6 +1151,13 @@ pub struct Runtime {
     /// new` blocks until the agent has started, so without this a second
     /// activation during that wait would bill a second session.
     forks_in_flight: HashSet<String>,
+    /// When the agent sleep decision may run next; the coordinator ticks every
+    /// 250 ms and the decision runs once a minute (PRD agent-sleep).
+    agent_sleep_next_decision_unix_ms: u64,
+    /// Panes whose agent would not end, and until when they are left alone (B8).
+    agent_sleep_backoff: HashMap<String, agent_sleep::Backoff>,
+    /// Panes whose typed input was dropped while asleep, logged once each (B12).
+    agent_sleep_dropped_input: HashSet<String>,
     fork_sequence: u64,
     /// The machine's TCP listeners, refreshed on their own window by the
     /// session-sync coordinator. Held here rather than in the snapshot because
@@ -1396,6 +1435,9 @@ impl Runtime {
             next_tab_move_generation: 0,
             unresolved_active_tabs: BTreeSet::new(),
             forks_in_flight: HashSet::new(),
+            agent_sleep_next_decision_unix_ms: 0,
+            agent_sleep_backoff: HashMap::new(),
+            agent_sleep_dropped_input: HashSet::new(),
             fork_sequence: 0,
             listening_ports: crate::model::ListeningPortsSnapshot::default(),
             worktree_catalog: crate::model::WorktreeCatalogSnapshot::default(),
@@ -1566,7 +1608,15 @@ impl Runtime {
             event,
             Event::FocusCheckout(_) | Event::FocusPane(_) | Event::FocusTab(_)
         );
-        let changed = self.apply(event) || cleared_error;
+        let visible_tab_before = chooses_workspace
+            .then(|| self.focused_visible_tab_id())
+            .flatten();
+        let mut changed = self.apply(event) || cleared_error;
+        // A committed visit to another tab wakes what sleeps there (PRD
+        // agent-sleep B12); a refused one moved nothing.
+        if chooses_workspace && self.snapshot.status.last_error.is_none() {
+            changed |= self.agent_sleep_visit(visible_tab_before.as_deref());
+        }
         // The areas follow the event that moved the screen, in the same
         // frame (D-08); terminal input and output and a document's
         // keystrokes never move them, so they skip the pass.
@@ -1651,6 +1701,8 @@ fn project_layout_panes(
                 // axis and the lineage are applied; see `sync_pane_lineage`.
                 children: None,
                 lineage_path: Vec::new(),
+                sleep: None,
+                sleep_action: None,
             }
         })
         .collect()

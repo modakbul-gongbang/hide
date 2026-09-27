@@ -1,4 +1,6 @@
 pub mod agent_hooks;
+mod agent_sleep;
+mod agent_sleep_herdr;
 mod ai;
 mod changes;
 mod device_catalog;

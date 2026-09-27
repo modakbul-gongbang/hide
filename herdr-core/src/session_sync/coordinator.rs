@@ -223,7 +223,11 @@ fn run_coordinator(
                 .unwrap_or(0);
             if let Some(runtime) = context.runtime.upgrade() {
                 let changed = match runtime.lock() {
-                    Ok(mut guard) => guard.tick_async_operations(now_unix_ms),
+                    Ok(mut guard) => {
+                        let changed = guard.tick_async_operations(now_unix_ms);
+                        // Agent sleep is this machine's alone (PRD agent-sleep).
+                        changed | (context.is_local() && guard.tick_agent_sleep(now_unix_ms))
+                    }
                     Err(_) => false,
                 };
                 drop(runtime);

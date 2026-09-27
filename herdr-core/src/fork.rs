@@ -81,7 +81,20 @@ const MAX_NAME_CHARACTERS: usize = 32;
 /// long keeps a readable head and a digest of the whole name, which is what
 /// keeps two forks of different panes apart after the truncation.
 pub fn fork_name(parent_pane_id: &str, nonce: &str) -> String {
-    let full = format!("fork-{}-{}", sanitize(parent_pane_id), sanitize(nonce));
+    bounded_name(format!(
+        "fork-{}-{}",
+        sanitize(parent_pane_id),
+        sanitize(nonce)
+    ))
+}
+
+/// The name a woken agent gets when it had none of its own: one per pane,
+/// inside Herdr's rule by the same folding and truncation a fork name uses.
+pub fn wake_name(pane_id: &str) -> String {
+    bounded_name(format!("wake-{}", sanitize(pane_id)))
+}
+
+fn bounded_name(full: String) -> String {
     if full.len() <= MAX_NAME_CHARACTERS {
         return full;
     }

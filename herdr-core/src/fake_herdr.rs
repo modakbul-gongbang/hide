@@ -66,6 +66,16 @@ impl FakeHerdr {
         name: &str,
         mut respond: impl FnMut(&str, &Value) -> Value + Send + 'static,
     ) -> Self {
+        Self::start_with_errors(name, move |method, params| Ok(respond(method, params)))
+    }
+
+    /// Like [`FakeHerdr::start`], but a request may be refused: `Err((code,
+    /// message))` is written as Herdr's error envelope, which the client
+    /// reads as `ApiError::Remote`.
+    pub(crate) fn start_with_errors(
+        name: &str,
+        mut respond: impl FnMut(&str, &Value) -> Result<Value, (String, String)> + Send + 'static,
+    ) -> Self {
         let root = PathBuf::from("/tmp").join(format!(
             "herdr-core-fake-{name}-{}-{}",
             std::process::id(),
@@ -102,14 +112,15 @@ impl FakeHerdr {
                             .as_str()
                             .expect("fake herdr request names a method")
                             .to_owned();
-                        let result = respond(&method, &request["params"]);
+                        let response = match respond(&method, &request["params"]) {
+                            Ok(result) => wire::checked_response_fixture(&request["id"], result),
+                            Err((code, message)) => serde_json::json!({
+                                "id": request["id"],
+                                "error": {"code": code, "message": message}
+                            }),
+                        };
                         requests.lock().unwrap().push(request.clone());
-                        writeln!(
-                            stream,
-                            "{}",
-                            wire::checked_response_fixture(&request["id"], result)
-                        )
-                        .expect("write fake herdr response");
+                        writeln!(stream, "{response}").expect("write fake herdr response");
                     }
                 })
                 .expect("spawn fake herdr thread")

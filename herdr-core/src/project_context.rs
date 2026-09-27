@@ -355,6 +355,8 @@ mod tests {
                         ports: vec![],
                         children: None,
                         lineage_path: Vec::new(),
+                        sleep: None,
+                        sleep_action: None,
                     })
                     .collect(),
             }],

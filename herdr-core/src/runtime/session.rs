@@ -1503,6 +1503,12 @@ impl Runtime {
         fetched: Result<SessionSnapshotPayload, SessionFetchError>,
         precomputed: Option<session_sync::PrecomputedCatalog>,
     ) -> bool {
+        // Sleeping agents Herdr no longer lists are drawn from their records
+        // before anything below reads the agents (PRD agent-sleep B10).
+        let mut fetched = fetched;
+        if let Ok(payload) = fetched.as_mut() {
+            self.settle_agent_sleep(payload);
+        }
         // The session update is this runtime's only regular tick, so it is
         // also where a notification Herdr never answered stops being pending.
         // Doing it first lets this same update be read as an external focus
@@ -1917,6 +1923,7 @@ impl Runtime {
             changed = true;
         }
         if let Some(mut agents) = agents {
+            self.stamp_agent_sleep(&mut agents);
             self.place_agents_in_navigator(&mut agents);
             // The lineage is built before the read axis is applied, because
             // the read fingerprint carries what each row's descendants are

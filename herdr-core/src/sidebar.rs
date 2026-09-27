@@ -1158,6 +1158,17 @@ fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
         agent_requires_close_confirmation(activity, demand, agent.blocked);
     agent.requires_close_status_check =
         agent_requires_close_status_check(activity, demand, agent.blocked);
+    // A sleeping agent keeps its group, order and read axis; only its mark
+    // and word say that its process is gone until it is opened (PRD B10).
+    if let Some(sleep) = &agent.sleep {
+        agent.symbol = crate::agent_sleep::SLEEPING_SYMBOL.to_owned();
+        agent.status_label = crate::agent_sleep::status_label(sleep).to_owned();
+    }
+}
+
+/// Re-derives every drawn value of a row whose sleep mark was just set.
+pub fn rederive(agent: &mut SidebarAgentSnapshot) {
+    derive_from_axes(agent);
 }
 
 fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, String> {
@@ -1242,6 +1253,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         raised_hint: None,
         spawn_origin_pane_id: None,
         lineage_collapsed: false,
+        sleep: None,
     };
     Ok(projected)
 }
@@ -1712,6 +1724,8 @@ mod tests {
                         ports: vec![],
                         children: None,
                         lineage_path: Vec::new(),
+                        sleep: None,
+                        sleep_action: None,
                     })
                     .collect(),
                 id: None,

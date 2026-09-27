@@ -701,6 +701,33 @@ pub struct SidebarAgentSnapshot {
     /// something to read.
     pub spawn_origin_pane_id: Option<String>,
     pub lineage_collapsed: bool,
+    /// Present while Hide has ended this agent's process and holds its
+    /// conversation to resume (`agent_sleep.rs`). It rides beside `group`,
+    /// never as a group or transport value, and is absent from the wire when
+    /// the agent is awake, so the Swift snapshot keeps its keys (PRD D-16).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sleep: Option<AgentSleepSnapshot>,
+}
+
+/// What a sleeping agent's row and pane say about it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct AgentSleepSnapshot {
+    /// `sleeping`, `waking` or `failed`.
+    pub state: String,
+    /// Why the last wake failed, in the operator's words; only on `failed`.
+    pub reason: Option<String>,
+    /// When the agent last changed state before it slept, for "Resuming the
+    /// conversation from <elapsed>".
+    pub since_unix_ms: u64,
+    /// The agent's last progress sentence, kept from before it slept.
+    pub progress: Option<String>,
+}
+
+/// Whether the pane menu's Sleep agent can run now, and why not (PRD B15).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct AgentSleepActionSnapshot {
+    pub available: bool,
+    pub reason: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -1139,6 +1166,14 @@ pub struct PaneSnapshot {
     /// The breadcrumb: this pane's ancestors root first, then this pane. It
     /// is empty for a lineage root, which is what leaves its header plain.
     pub lineage_path: Vec<LineageStepSnapshot>,
+    /// The sleeping agent this pane holds, when it holds one; the pane body
+    /// draws it in place of the terminal (PRD B12, B14, B15).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sleep: Option<AgentSleepSnapshot>,
+    /// Whether this pane's agent can be put to sleep from its menu, present
+    /// only on a local pane holding an awake agent (PRD B15).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sleep_action: Option<AgentSleepActionSnapshot>,
 }
 
 /// What a pane header says about the work its agent delegated.
@@ -1916,6 +1951,17 @@ pub struct UiStateSnapshot {
     // The store owns persistence; the shell only reads the derived unread axis.
     #[serde(default, skip_serializing)]
     pub pane_read_records: BTreeMap<String, PaneReadRecord>,
+    /// How long an agent may go untouched before Hide ends its process and
+    /// keeps its conversation to resume: 12, 24 or 72 hours, or `None` for
+    /// never, the default (PRD D-10).
+    #[serde(default)]
+    pub agent_sleep_after_hours: Option<u32>,
+    /// Each pane's last state change and last look, and the agents Hide has
+    /// put to sleep. Persisted with the rest of this store and never on the
+    /// wire: the last look of the tab on screen moves every minute, and a
+    /// field that did would resend the navigator to every client.
+    #[serde(default, skip_serializing)]
+    pub agent_sleep: crate::agent_sleep::AgentSleepStore,
 }
 
 /// One pane's read mark: the state the operator was looking at the last time
@@ -2006,6 +2052,8 @@ impl Default for UiStateSnapshot {
             editor_text_scale: DEFAULT_PANE_TEXT_SCALE,
             conversation_pane_ids: BTreeSet::new(),
             pane_read_records: BTreeMap::new(),
+            agent_sleep_after_hours: None,
+            agent_sleep: crate::agent_sleep::AgentSleepStore::default(),
         }
     }
 }
