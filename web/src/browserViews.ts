@@ -128,8 +128,8 @@ const OVERLAY_SELECTOR = [
   '[role="dialog"]',
   '[role="alertdialog"]',
   '[data-slot$="-overlay"]',
-  "[data-view-drop]",
-  "[data-view-drag-tab]",
+  "[data-area-drop]",
+  "[data-area-drag-tab]",
 ].join(",");
 
 function overlayRects(): BrowserRect[] {
@@ -199,7 +199,7 @@ class BrowserSyncLoop {
     // Radix layers and the Recent cycle mount as children of the body; a tab
     // drag marks the root.
     new MutationObserver(() => this.schedule()).observe(document.body, { childList: true });
-    new MutationObserver(() => this.schedule()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-view-drag"] });
+    new MutationObserver(() => this.schedule()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-view-drag", "data-agent-drag"] });
     window.addEventListener("resize", () => this.schedule());
   }
 

@@ -14,6 +14,9 @@ export type AreaTabInteraction = { selected: boolean; areaActive: boolean; dragg
 export type DrawnArea<I extends AreaItem> = { layout: AreaLayout<I>; geometry: Geometry; sizes: LayoutSizes };
 export type AreaAdapter<I extends AreaItem> = {
   words: AreaWords;
+  barAttributes?: Record<string, string>;
+  shown?: (area: Area<I>) => I | null;
+  splitUnavailable?: string;
   label: (item: I) => string;
   sameContent: (a: I, b: I) => boolean;
   tab: (item: I, interaction: AreaTabInteraction) => React.ReactNode;
@@ -21,6 +24,7 @@ export type AreaAdapter<I extends AreaItem> = {
   empty: (area: Area<I>) => React.ReactNode;
   floating: (item: I) => React.ReactNode;
   menu: (id: string, geometry: Geometry, sizes: LayoutSizes) => MenuEntry<string>[];
+  onMenuCloseAutoFocus?: (event: Event) => void;
   runMenu: (command: string, id: string) => void;
   focus: (id: string) => void;
   focusArea: (id: string) => void;
@@ -143,7 +147,7 @@ function AreaTree({ layout, adapter, trailing = null, children }: { layout: Area
   const resolve = (displayId: string) => (client: Point): DropTarget => {
     if (!body) return { kind: "none", reason: null };
     const origin = body.getBoundingClientRect();
-    return dropTarget({
+    const target = dropTarget({
       layout: layoutRef.current,
       geometry: geometryRef.current,
       sizes,
@@ -153,6 +157,7 @@ function AreaTree({ layout, adapter, trailing = null, children }: { layout: Area
       words: adapter.words,
       point: { x: client.x - origin.left, y: client.y - origin.top },
     });
+    return target.kind === "edge" && adapter.splitUnavailable ? { kind: "none", reason: adapter.splitUnavailable } : target;
   };
 
   const live = session.phase !== "idle";
@@ -388,12 +393,13 @@ function Separator({ split, box }: { split: AreaSplit<I>; box: DividerBox }) {
 
 function AreaView({ area, index, count, switcher }: { area: Area<I>; index: number; count: number; switcher: boolean }) {
   const tree = useTree();
-  const display = area.displays.find((row) => row.id === area.active) ?? null;
+  const display = tree.adapter.shown ? tree.adapter.shown(area) : area.displays.find((row) => row.id === area.active) ?? null;
   const active = tree.layout.active_area === area.id;
   // The operator's pointer, or Tab, into a display makes it the one they
   // work in; a focus the page moved itself asks for nothing (B20).
   const claim = () => {
-    if (display) tree.focus(display.id);
+    if (display && locateDisplay(tree.layout.root, display.id)) tree.focus(display.id);
+    else if (!active) tree.adapter.focusArea(area.id);
   };
   return (
     <section
@@ -444,7 +450,7 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; a
     return () => observer.disconnect();
   }, [area.active, area.displays.length]);
   return (
-    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch border-b border-border" data-area-tab-bar={area.id} {...data("tab-bar", area.id)}>
+    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch border-b border-border" data-area-tab-bar={area.id} {...data("tab-bar", area.id)} {...tree.adapter.barAttributes}>
       <div ref={strip} role="tablist" aria-label={`${tree.adapter.tabListLabel}, area ${index + 1} of ${count}`} className="flex min-w-0 items-stretch overflow-x-auto">
         {area.displays.map((display) => (
           <EntryContextMenu
@@ -452,11 +458,12 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; a
             label={`${tree.adapter.label(display)} ${tree.adapter.words.item} actions`}
             items={() => tree.menu(display.id)}
             onSelect={(id) => tree.adapter.runMenu(id, display.id)}
+            onCloseAutoFocus={tree.adapter.onMenuCloseAutoFocus}
             className="flex shrink-0"
             data-tab-menu={display.id}
             data-area-item={display.id}
           >
-            {tree.adapter.tab(display, { selected: display.id === area.active, areaActive: active, dragging: tree.draggingId === display.id, press: (event) => tree.press(display.id, event), select: () => { if (!tree.takeClick()) tree.focus(display.id); } })}
+            {tree.adapter.tab(display, { selected: display.id === (tree.adapter.shown ? tree.adapter.shown(area)?.id : area.active), areaActive: active, dragging: tree.draggingId === display.id, press: (event) => tree.press(display.id, event), select: () => { if (!tree.takeClick()) tree.focus(display.id); } })}
           </EntryContextMenu>
         ))}
       </div>
@@ -464,7 +471,7 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; a
         <button
           type="button"
           aria-label={tree.adapter.newTabLabel}
-          {...data("new-tab", area.id)}
+          {...data("new-tab", area.id)} {...(column === "agent" ? { "data-new-agent-tab": "true" } : {})}
           className="flex min-w-[var(--size-tab-overflow-control)] shrink-0 items-center justify-center text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent"
           onClick={() => tree.adapter.newTab(area.id)}
         >

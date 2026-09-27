@@ -7,7 +7,6 @@ import {
   dividerPaneId,
   focusedCheckout,
   layoutForTab,
-  visibleTab,
   type LayoutNode,
   type PaneLayout,
   type PaneRow,
@@ -32,9 +31,8 @@ type PaneProps = {
   actions: Actions;
 };
 
-export function PaneCanvas({ actions }: { actions: Actions }) {
+export function PaneCanvas({ actions, tab }: { actions: Actions; tab: Tab | null }) {
   const checkout = useShellStore((s) => focusedCheckout(s.rest));
-  const tab = visibleTab(checkout);
   const layout = useShellStore((s) => layoutForTab(s.rest, tab?.id ?? null));
   const transportRows = useShellStore((s) => s.rest?.terminal?.panes);
   const scales = useShellStore((s) => s.rest?.ui_state?.pane_text_scales);
@@ -129,13 +127,14 @@ const TabCanvas = memo(function TabCanvas({
   scales: Record<string, number>;
   actions: Actions;
 }) {
+  const focusedPaneId = useShellStore((s) => s.focusedPaneId);
   const panes = new Map(tab.panes.map((pane) => [pane.id, pane]));
   const transports = new Map(transportRows.map((row) => [row.pane_id, row]));
   const props: PaneProps = {
     panes,
     transports,
     scales,
-    focusedPaneId: layout.focused_pane_id,
+    focusedPaneId: focusedPaneId ?? "",
     actions,
   };
   const root: LayoutNode = layout.zoomed ? { type: "pane", pane_id: layout.focused_pane_id } : layout.root;

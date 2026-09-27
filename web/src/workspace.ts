@@ -33,6 +33,7 @@ export type WorkspaceView = {
   resumed?: boolean;
   /** The View areas (S7); absent only from a core that predates them. */
   layout?: ViewLayoutSnapshot;
+  agent_layout?: import("./agentLayout").AgentLayout;
 };
 
 /** The three panel states, in the order the toolbar menu and the palette offer them: the menu's name for each, and the palette's command to reach it. */

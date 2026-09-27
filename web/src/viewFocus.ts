@@ -1,10 +1,11 @@
 // Page-local keyboard ownership and measured View geometry. Focus is recorded
 // when it changes, never inferred from document.activeElement at chord time.
 
-import { locateDisplay, workspaceKey, type Geometry, type LayoutSizes, type ViewFrame } from "./viewLayout";
+import { locateDisplay, workspaceKey } from "./viewLayout";
 import { browserBridge } from "./host";
 import { frontCheckout } from "./snapshot";
 import { useShellStore } from "./store";
+import { areaFrame, noteAreaFrame, type DrawnViews } from "./areaFrames";
 import { workspaceViewOf } from "./workspace";
 
 export type KeyboardOwner =
@@ -92,21 +93,19 @@ export function closeShortcutPolicy(input: {
  * and layout, which every View action names and acts on, contract 4.1), and
  * the geometry and token sizes they were measured with.
  */
-export type DrawnViews = ViewFrame & { geometry: Geometry; sizes: LayoutSizes };
-
-let drawn: DrawnViews | null = null;
+export type { DrawnViews } from "./areaFrames";
 
 /**
  * The View areas report every draw here as it is committed, and null when
  * they leave the screen, so an action reads the frame the operator sees.
  */
 export function noteDrawnViews(views: DrawnViews | null): void {
-  drawn = views;
+  noteAreaFrame("view", views);
 }
 
 /** What the View areas last drew, or null while none show. */
 export function drawnViews(): DrawnViews | null {
-  return drawn;
+  return areaFrame("view");
 }
 
 export { focusFromKeyboard, installFocusModality } from "./areaFocus";
