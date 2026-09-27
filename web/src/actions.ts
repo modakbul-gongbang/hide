@@ -761,6 +761,11 @@ export function createActions(dispatch: DispatchFn) {
       updateUiState({ font_size: size });
     },
 
+    /** The width a sidebar drag or its reset lands on, sent once per gesture (PRD sidebar-typography D-09). */
+    setSidebarWidth(width: number) {
+      updateUiState({ sidebar_width: width });
+    },
+
     /** `host`'s pane chords, replaced as a whole; the other host's set is untouched. */
     setPaneShortcuts(host: HostKind, bindings: Record<string, string>) {
       updateUiState(host === "electron" ? { shortcut_bindings: bindings } : { browser_shortcut_bindings: bindings });

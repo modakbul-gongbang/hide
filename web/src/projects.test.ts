@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cardSingleValue, checkoutCard, checkoutRowExpansion, overviewRowSelected, checkoutPresentation, projectMarks, projectRows, pullRequestBadge, relativeActivity, shownPullRequest } from "./projects";
+import { cardSingleValue, checkoutCard, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, overviewRowSelected, checkoutPresentation, projectMarks, projectRows, pullRequestBadge, relativeActivity, shownPullRequest } from "./projects";
 import type { Checkout, GithubStatus, PullRequest, Workspace } from "./snapshot";
 
 function workspace(id: string, extra: Partial<Workspace> = {}): Workspace {
@@ -293,5 +293,50 @@ describe("sidebar row activation", () => {
     expect(overviewRowSelected(project, "other")).toBe(false);
     expect(overviewRowSelected(project, null)).toBe(false);
     expect(overviewRowSelected(workspace("notes", { is_git: false }), "notes")).toBe(false);
+  });
+});
+
+describe("checkout row lines (PRD sidebar-typography D-04, D-06)", () => {
+  const project = workspace("p", { is_git: true });
+  const now = Date.UTC(2026, 8, 27);
+  const read = (extra: Partial<Checkout> = {}) =>
+    checkoutPresentation(
+      project,
+      {
+        id: "c",
+        workspace_id: "w",
+        label: "feature",
+        path: "/h/p/feature",
+        branch: "feature",
+        purpose: null,
+        is_worktree: true,
+        exists: true,
+        has_panes: false,
+        worktree: { branch: "feature", head_sha: "abc1234", last_commit_unix_seconds: now / 1000 - 3600 },
+        pull_request: null,
+        tabs: [],
+        active_tab_id: null,
+        strip: [],
+        next_tab_label: "Tab 1",
+        ...extra,
+      } as Checkout,
+      now,
+    );
+
+  it("draws line two only for a purpose or a raised-from parent, agents or not", () => {
+    const withAgents = read({ agent_summary: { representative_pane_id: null, needs_you: 0, done: 0, working: 2, seen: 0, unknown: 0, marks: { ...NO_MARKS, working: 2 } } });
+    expect(checkoutHasSecondLine(withAgents, null, null)).toBe(false);
+    expect(checkoutHasSecondLine(withAgents, "사이드바 가독성 개선", null)).toBe(true);
+    expect(checkoutHasSecondLine(withAgents, null, "메인 체크아웃 정리에서")).toBe(true);
+    expect(checkoutHasSecondLine(read(), "purpose", null)).toBe(true);
+    expect(checkoutHasSecondLine(read({ worktree: null }), "purpose", null)).toBe(false);
+  });
+
+  it("mutes a name's path prefix up to its first slash", () => {
+    expect(checkoutNameParts("prd/sidebar-typography")).toEqual({ prefix: "prd/", rest: "sidebar-typography" });
+    expect(checkoutNameParts("gen-prd/a/b")).toEqual({ prefix: "gen-prd/", rest: "a/b" });
+    expect(checkoutNameParts("main")).toEqual({ prefix: "", rest: "main" });
+    expect(checkoutNameParts("/abs")).toEqual({ prefix: "", rest: "/abs" });
+    expect(checkoutNameParts("trailing/")).toEqual({ prefix: "", rest: "trailing/" });
   });
 });

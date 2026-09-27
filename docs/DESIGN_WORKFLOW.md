@@ -28,7 +28,7 @@ It is excluded from the production build `hided` serves.
 
 The gallery also renders production screens on synthetic scenes, one document per scene because a scene seeds the app's own stores.
 `/gallery?scene=projects-sidebar` is the shell's real `Sidebar` and `createActions` over `web/src/gallery/sceneData.ts`, a snapshot with the content `Screen / Projects Sidebar` draws; its folds go through the real actions and the scene answers them as the core would.
-Its query takes `theme` (`light`, `dark`), `width` (the sidebar's CSS width), `scale` (the interface text scale) and `content` (`reference`, or `long` for long Korean titles).
+Its query takes `theme` (`light`, `dark`), `width` (the sidebar's CSS width, seeded as the core's `ui_state.sidebar_width`), `scale` (the interface text scale, which reaches only what lies outside the sidebar, since the sidebar keeps its sizes at every scale) and `content` (`reference`, or `long` for long Korean titles).
 Every name, path and count in a scene is invented example data, so a capture of it is safe to publish.
 
 ## The flow: scratch to one PR
@@ -103,7 +103,7 @@ One run, in this order, with each step's real result in `agents/runs/<slug>/desi
 2. The current Pen: the bundle's nodes exported from the target's Pen file in this checkout, so a proposal bundle is set against what the checkout now carries.
 3. The production screen: the command starts its own Vite dev server and headless Chromium, opens the target's gallery scene under each selected condition, and measures the bundle's rules there through `web/e2e/sidebar-geometry.mjs`, the same geometry the e2e specs assert on.
    The rules are the bundle's, never values read back from the code under review: `childIndentPx` (a child's status mark and title start that many pixels per level right of its list's roots), `rootsAligned`, `stableUnderHover` and `stableUnderFocus` (no row moves or resizes while any one row is hovered or keyboard-focused), `noOverlap` (no part of a row overlaps another or runs past the row, no text spills), `sharedColumns` (one column for every time and badge end, one for every chevron) and `noSidewaysOverflow`.
-4. Comparisons: for each bundle frame, the reference, the current Pen and the actual screen side by side, captured under that frame's width, theme, text scale, content and state and labelled with them; an image whose width is not the frame's is reported as a different condition, never scaled to look alike.
+4. Comparisons: for each bundle frame, the reference, the current Pen and the actual screen side by side, captured under that frame's width, theme, text scale, content and state (a target without `scales` in its conditions is measured at scale 1, as `projects-sidebar` is, because the sidebar does not follow the scale) and labelled with them; an image whose width is not the frame's is reported as a different condition, never scaled to look alike.
 5. State sheets: every selected condition and state no Pen frame draws (a narrow width, a larger text size, long titles, hover, focus, a folded parent, a closed checkout) as captures of the actual screen only, labelled as such.
 
 The exit status is 0 for PASS, 1 for FAIL (the static contract or a rule failed) and 3 for INCOMPLETE: a missing Pen or Pen login, a node Pen did not export, a bundle file that no longer matches its hash, or a browser step that did not finish.

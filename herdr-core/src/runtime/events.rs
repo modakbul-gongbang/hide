@@ -573,6 +573,9 @@ pub(super) struct UiStateUpdatePayload {
     pub(super) device_registrations: Option<Vec<crate::model::DeviceRegistration>>,
     #[serde(default)]
     pub(super) accent_hex: Option<String>,
+    /// Absent keeps the width: only the web shell's drag and reset send it.
+    #[serde(default)]
+    pub(super) sidebar_width: Option<u32>,
     #[serde(default)]
     pub(super) font_size: Option<f32>,
     /// Ephemeral observation hints for the core-owned provider usage timer.
@@ -3061,6 +3064,24 @@ impl Runtime {
                     accent_hex: payload.accent_hex.unwrap_or(current.accent_hex),
                     // `theme_set` owns the theme; a shared UI-state save carries it through.
                     theme: current.theme,
+                    // A width outside the drag's range keeps the last one; the
+                    // shell never sends it, so there is nothing to show.
+                    sidebar_width: match payload.sidebar_width {
+                        Some(width) if crate::model::sidebar_width_fits(width) => width,
+                        Some(width) => {
+                            self.push_diagnostic(
+                                "ui_state.sidebar_width_out_of_range",
+                                format!(
+                                    "Sidebar width {width} is outside {}..={}; kept {}",
+                                    crate::model::SIDEBAR_WIDTH_MIN,
+                                    crate::model::SIDEBAR_WIDTH_MAX,
+                                    current.sidebar_width
+                                ),
+                            );
+                            current.sidebar_width
+                        }
+                        None => current.sidebar_width,
+                    },
                     font_size: payload.font_size.unwrap_or(current.font_size),
                     // The zoom chords own this map; a navigator or keyboard
                     // save must not erase it, for the same reason the pet
