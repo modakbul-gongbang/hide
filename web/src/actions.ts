@@ -1017,7 +1017,7 @@ export function createActions(dispatch: DispatchFn) {
       const focusDevice = (rest()?.navigator?.focused_device_id ?? "local") !== "local" ? { focus_device: true } : {};
       const ids = { workspace_id: surface.workspaceId, checkout_id: surface.checkoutId };
       expectSurface(surface.key);
-      beginOpening({ checkoutId: checkout.id, deviceId: "local", path: checkout.path });
+      beginOpening({ checkoutId: checkout.id, deviceId: "local", path: checkout.path, workspaceId: surface.workspaceId });
       if (surface.kind === "herdr") {
         dispatch({ schema_version: 2, kind: "focus_tab", payload: { ...ids, tab_id: surface.id, ...focusDevice } });
         return;
