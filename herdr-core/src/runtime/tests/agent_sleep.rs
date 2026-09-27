@@ -291,3 +291,53 @@ fn an_end_that_fails_leaves_the_agent_awake() {
     assert!(row(&runtime).get("sleep").is_none());
     assert_ne!(row(&runtime)["symbol"], "\u{263e}");
 }
+
+/// B4-B6: the minute decision ends an agent that sat seen and off screen
+/// past the chosen hours, never the one on screen, at most once a minute,
+/// and not at all while the setting is Never.
+#[test]
+fn the_minute_decision_sleeps_only_an_off_screen_agent_past_the_chosen_hours() {
+    let (mut runtime, _) = live_tab_order_runtime(CHECKOUT);
+    let mut payload = session(Some(4));
+    payload.agents.push(
+        serde_json::from_value(serde_json::json!({
+            "pane_id": "w-order:t1:p", "agent": "codex", "agent_status": "idle",
+            "state_change_seq": 2, "cwd": CHECKOUT,
+            "agent_session": {"kind": "id", "value": "on-screen-session"}
+        }))
+        .unwrap(),
+    );
+    runtime.ingest_session(Ok(payload));
+    let later = unix_milliseconds() + 13 * 60 * 60 * 1000;
+    let ending = |runtime: &Runtime| {
+        runtime
+            .snapshot()
+            .ui_state
+            .agent_sleep
+            .records
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+
+    assert!(!runtime.tick_agent_sleep(later));
+    assert!(ending(&runtime).is_empty(), "Never sleeps nothing");
+
+    runtime.dispatch_json(&event(
+        "agent_sleep_set",
+        serde_json::json!({"after_hours": 24}),
+    ));
+    runtime.tick_agent_sleep(later);
+    assert!(ending(&runtime).is_empty(), "13 hours is not 24");
+
+    runtime.dispatch_json(&event(
+        "agent_sleep_set",
+        serde_json::json!({"after_hours": 12}),
+    ));
+    runtime.tick_agent_sleep(later);
+    assert_eq!(ending(&runtime), [SLEEPER], "t1 is on screen, t2 is not");
+    assert!(
+        row(&runtime).get("sleep").is_none(),
+        "awake until the end lands"
+    );
+}
