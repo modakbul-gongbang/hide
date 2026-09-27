@@ -470,6 +470,7 @@ impl Runtime {
                     placement.preview,
                     placement.beside,
                     Some(&placement.area),
+                    placement.replace.as_deref(),
                 );
                 if in_front {
                     self.snapshot.ui_state.selected_path = Some(request.path.clone());
@@ -551,6 +552,7 @@ impl Runtime {
                     placement.preview,
                     placement.beside,
                     Some(&placement.area),
+                    placement.replace.as_deref(),
                 );
             }
             if in_front {

@@ -6,6 +6,8 @@ import type { Device, EditorSnapshot, RemoteSession, RemoteStatus, SnapshotRest,
 import { useShellStore, type DaemonInfo } from "./store";
 import { draftExported, unstoredDeviceDrafts } from "./settings";
 import { useUiStore } from "./ui";
+import { noteKeyboardOwner } from "./viewFocus";
+import { frontCheckout } from "./snapshot";
 import type { WorkspaceView } from "./workspace";
 
 const LOCAL_PANE = "w1:p1";
@@ -151,6 +153,7 @@ function deviceViews(panel: WorkspaceView["panel"]): WorkspaceView {
 }
 
 function seed(value: SnapshotRest) {
+  noteKeyboardOwner({ kind: "none" });
   useShellStore.setState({ rest: null, agents: [], focusedPaneId: null });
   useShellStore.getState().applyFrame({ type: "snapshot", payload: { revision: 1, rest: value } });
 }
@@ -231,17 +234,19 @@ describe("commands with an SSH device selected", () => {
     seed(rest("studio", "stale"));
     const { sent, actions } = recorder();
     actions.split("down");
-    actions.closeTab();
+    actions.closeTab("remote:studio:tab:w9:t1");
     expect(sent).toHaveLength(0);
     expect(useUiStore.getState().notice?.text).toContain("Studio Mac is not connected");
   });
 
-  it("closes the device Workspace's active view with the close chord while its side panel is expanded, connected or not", () => {
+  it("closes the device Workspace's active view with the close chord while its View area owns the keyboard, connected or not", () => {
     for (const state of ["connected", "stale"]) {
       useUiStore.setState({ notice: null, pendingClose: null });
       seed({ ...rest("studio", state), workspace_view: deviceViews("expanded") });
       const { sent, actions } = recorder();
-      actions.closeTab();
+      useUiStore.setState({ screen: { kind: "workspace" } });
+      noteKeyboardOwner({ kind: "view", workspace: frontCheckout(useShellStore.getState().rest)!.id, areaId: "a1" });
+      actions.closeFocused();
       expect(sent).toHaveLength(1);
       expect(sent[0]).toMatchObject({
         kind: "view_layout",
@@ -252,10 +257,10 @@ describe("commands with an SSH device selected", () => {
     }
   });
 
-  it("closes the device's Herdr tab with the close chord while its side panel is closed", () => {
+  it("closes the device's Herdr tab only when its explicit control names it", () => {
     seed({ ...rest("studio"), workspace_view: deviceViews("closed") });
     const { sent, actions } = recorder();
-    actions.closeTab();
+    actions.closeTab("remote:studio:tab:w9:t1");
     expect(sent).toHaveLength(0);
     expect(useUiStore.getState().pendingClose).toMatchObject({ kind: "tab", id: "remote:studio:tab:w9:t1", targetId: "studio" });
   });

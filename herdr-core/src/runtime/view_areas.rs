@@ -78,6 +78,8 @@ pub(super) struct ViewWorkspace {
 pub(super) struct BrowserOpenPayload {
     url: String,
     #[serde(default)]
+    area_id: Option<String>,
+    #[serde(default)]
     workspace: Option<ViewWorkspace>,
     #[serde(default)]
     pane_id: Option<String>,
@@ -188,6 +190,7 @@ pub(super) struct ViewPlacement {
     pub(super) area: String,
     pub(super) preview: bool,
     pub(super) beside: bool,
+    pub(super) replace: Option<String>,
 }
 
 /// What the last reconcile saw, so an unchanged editor costs a comparison.
@@ -415,10 +418,11 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_mut() else {
             return Err(LayoutError::UnknownArea(key.1.clone()));
         };
-        let layout = &mut store.views.entry(&key.0, &key.1).layout;
-        let stamp = layout.next_stamp(now);
-        let (value, changed) = change(layout, stamp)?;
-        if changed {
+        let entry = store.views.entry(&key.0, &key.1);
+        let stamp = entry.layout.next_stamp(now);
+        let (value, changed) = change(&mut entry.layout, stamp)?;
+        let panel_changed = entry.close_empty_panel();
+        if changed || panel_changed {
             store.generation += 1;
             self.persist_workspace_views();
         }
@@ -463,9 +467,10 @@ impl Runtime {
                     Ok(()) => display_limit(layout, pending),
                 },
             }
-        } else if layout
-            .displays()
-            .any(|display| display.shows(path, kind, committed))
+        } else if self.new_tab_target(key, false).is_some()
+            || layout
+                .displays()
+                .any(|display| display.shows(path, kind, committed))
         {
             None
         } else if preview
@@ -490,6 +495,17 @@ impl Runtime {
             }
             None => true,
         }
+    }
+
+    fn new_tab_target(&self, key: &WorkspaceKey, beside: bool) -> Option<String> {
+        if beside {
+            return None;
+        }
+        let area = self.view_layout_of(key)?.active_area();
+        area.displays
+            .iter()
+            .find(|d| Some(&d.id) == area.active.as_ref() && d.is_new_tab())
+            .map(|d| d.id.clone())
     }
 
     /// `file_open` with View areas: `beside` asks for the area next to the
@@ -537,21 +553,23 @@ impl Runtime {
             return;
         }
         self.snapshot.ui_state.selected_path = Some(path.to_owned());
+        let replace = self.new_tab_target(&key, beside);
         match prepared {
             super::editor::PreparedFileTab::Open(tab_id) => {
-                self.place_document(&key, &tab_id, preview, beside, None);
+                self.place_document(&key, &tab_id, preview, beside, None, replace.as_deref());
             }
             read @ super::editor::PreparedFileTab::Read { .. } => {
                 if let Some(tab_id) =
                     self.insert_file_tab(read, workspace_id, checkout_id, path, preview)
                 {
-                    self.place_document(&key, &tab_id, preview, beside, None);
+                    self.place_document(&key, &tab_id, preview, beside, None, replace.as_deref());
                 }
             }
             super::editor::PreparedFileTab::Reading { root, channel } => {
                 // A display that shows the file but could not read it is
                 // focused now, and the read fills its tab (S6 B20).
                 let shown = !beside
+                    && replace.is_none()
                     && self.focus_view_document(&key, path, DisplayKind::File, None, !preview);
                 let placement = (!shown).then(|| ViewPlacement {
                     area: self
@@ -561,6 +579,7 @@ impl Runtime {
                     key: key.clone(),
                     preview,
                     beside,
+                    replace,
                 });
                 self.start_document_open(
                     root,
@@ -611,11 +630,12 @@ impl Runtime {
         ) {
             return true;
         }
+        let replace = self.new_tab_target(&key, beside);
         let tab_id = Self::diff_tab_id(workspace_id, checkout_id, path, committed);
         if !self.snapshot.editor.tabs.iter().any(|tab| tab.id == tab_id) {
             self.insert_diff_tab(workspace_id, checkout_id, path, committed, preview);
         }
-        self.place_document(&key, &tab_id, preview, beside, None)
+        self.place_document(&key, &tab_id, preview, beside, None, replace.as_deref())
     }
 
     /// Focuses the display of a document that was focused last, keeping it
@@ -668,6 +688,7 @@ impl Runtime {
         preview: bool,
         beside: bool,
         area: Option<&str>,
+        replace: Option<&str>,
     ) -> bool {
         let Some((path, kind, committed)) = self
             .snapshot
@@ -703,6 +724,48 @@ impl Runtime {
         };
         if beside {
             return self.place_beside(key, &base, tab_id, &path, kind, committed);
+        }
+        if let Some(id) = replace {
+            // The read belongs to the empty tab captured at open. A close or
+            // navigation meanwhile must never overwrite the operator's newer work.
+            let placed = self.change_view_layout(key, |layout, stamp| {
+                if !layout.display(id).is_some_and(Display::is_new_tab) {
+                    return Err(LayoutError::UnknownDisplay(id.to_owned()));
+                }
+                let area_id = layout
+                    .area_of(id)
+                    .ok_or_else(|| LayoutError::UnknownDisplay(id.to_owned()))?
+                    .id
+                    .clone();
+                // An existing copy in this area gives way; other areas keep theirs.
+                let twins: Vec<_> = layout
+                    .area(&area_id)
+                    .unwrap()
+                    .displays
+                    .iter()
+                    .filter(|d| d.id != id && d.shows(&path, kind, committed))
+                    .map(|d| d.id.clone())
+                    .collect();
+                for twin in twins {
+                    layout.remove(&twin);
+                }
+                let display = layout.display_mut(id).unwrap();
+                display.kind = kind;
+                display.path = path.clone();
+                display.tab_id = Some(tab_id.to_owned());
+                display.committed =
+                    (kind == DisplayKind::Diff).then_some(committed.unwrap_or(false));
+                display.url = None;
+                display.title = None;
+                display.load = 0;
+                display.preview = false;
+                layout.focus(id, stamp)?;
+                Ok(((), true))
+            });
+            if let Err(error) = placed {
+                self.refuse_placement(key, tab_id, error);
+            }
+            return true;
         }
         if self.focus_view_document(key, &path, kind, committed, !preview) {
             return true;
@@ -1128,8 +1191,9 @@ impl Runtime {
             workspace,
             pane_id,
             request_id,
+            area_id,
         } = payload;
-        let outcome = self.place_browser(&url, workspace, pane_id.as_deref());
+        let outcome = self.place_browser(&url, workspace, pane_id.as_deref(), area_id.as_deref());
         if let Err(message) = &outcome {
             self.set_error("browser.open_refused", message.clone(), false);
         }
@@ -1166,11 +1230,12 @@ impl Runtime {
         url: &str,
         workspace: Option<ViewWorkspace>,
         pane_id: Option<&str>,
+        area_id: Option<&str>,
     ) -> Result<(WorkspaceKey, String), String> {
         if !self.separate_view_areas() {
             return Err("This shell does not draw View areas".to_owned());
         }
-        if !browser_address(url) {
+        if !url.is_empty() && !browser_address(url) {
             return Err(UNLOADABLE_ADDRESS.to_owned());
         }
         let key = match (workspace, pane_id) {
@@ -1194,7 +1259,9 @@ impl Runtime {
                 let shown = layout
                     .displays()
                     .find(|display| {
-                        display.kind == DisplayKind::Browser && display.url.as_deref() == Some(url)
+                        !url.is_empty()
+                            && display.kind == DisplayKind::Browser
+                            && display.url.as_deref() == Some(url)
                     })
                     .map(|display| display.id.clone());
                 if let Some(display_id) = shown {
@@ -1204,7 +1271,7 @@ impl Runtime {
                     }
                     return Ok((display_id, true));
                 }
-                let area = layout.active_area().id.clone();
+                let area = area_id.unwrap_or(&layout.active_area().id).to_owned();
                 let display = layout.new_browser_display(url, load);
                 let display_id = display.id.clone();
                 layout.insert(&area, display, stamp)?;
@@ -1718,7 +1785,7 @@ impl Runtime {
                 requested,
                 now,
             );
-            stored |= changed;
+            stored |= changed | view.close_empty_panel();
             unshown.extend(
                 capped
                     .into_iter()
@@ -1851,6 +1918,12 @@ impl Runtime {
             }
         }
         visible
+    }
+
+    pub(super) fn new_tab_visible(&self) -> bool {
+        self.visible_view_displays()
+            .iter()
+            .any(|display| display.is_new_tab())
     }
 
     /// The diffs on screen, which the Changes read takes with its own
@@ -2056,6 +2129,9 @@ impl Runtime {
 /// A page's name on its tab: its title once it has one, else its host (for
 /// a file, its file name), else its address.
 fn browser_label(display: &Display) -> String {
+    if display.is_new_tab() {
+        return "New tab".to_owned();
+    }
     if let Some(title) = display.title.as_deref().filter(|title| !title.is_empty()) {
         return title.to_owned();
     }

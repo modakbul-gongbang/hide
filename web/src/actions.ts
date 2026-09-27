@@ -44,7 +44,7 @@ import { fileUrl } from "./browserViews";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
-import { drawnViews, viewAreaInUse } from "./viewFocus";
+import { closeShortcutPolicy, drawnViews, keyboardOwner } from "./viewFocus";
 import {
   activeDisplay,
   adjacentInOrder,
@@ -265,7 +265,7 @@ export function createActions(dispatch: DispatchFn) {
   /** A narrow panel's overlay opens for the tool asked for, including with the panel that the same event opens. */
   const askForTools = (view: WorkspaceView) => {
     ui().openTools();
-    if (view.panel === "closed") ui().askTools();
+    if (view.panel === "closed" || !view.tools) ui().askTools();
   };
 
   /**
@@ -299,27 +299,24 @@ export function createActions(dispatch: DispatchFn) {
     if (view.panel === "closed" || !view.tools) setWorkspaceView({ tools: true });
   };
 
-  /**
-   * ⌘E (issue 170): shows the side panel on the Explorer with the column
-   * visible, or hides the column when the Explorer already shows there.
-   */
+  /** ⌘E opens tools, closes tools-only, or toggles the column beside views. */
   const toggleExplorer = () => {
     const view = workspaceViewOf(rest());
-    if (!view) return diagnostic("toggle Explorer: no Workspace in front");
-    if (shownTool(view, ui().toolsPlacement) === "explorer") return setToolsShown(false);
-    showTool("explorer");
+    if (!view) return diagnostic("toggle tools: no Workspace in front");
+    if (view.panel === "closed") {
+      askForTools(view);
+      return setWorkspaceView({ panel: "open", tools: true });
+    }
+    if ((view.layout?.display_count ?? 0) === 0) return setWorkspaceView({ panel: "closed" });
+    setToolsShown(shownTool(view, ui().toolsPlacement) === null);
   };
 
-  /**
-   * ⌘⇧B: closes the side panel when it shows, expanded or not, else opens it
-   * at its width on its tool with the column shown (issue 170).
-   */
+  /** ⌘⇧B hides or restores the content, keeping the chosen tool and column. */
   const toggleRightPanel = () => {
     const view = workspaceViewOf(rest());
     if (!view) return diagnostic("toggle side panel: no Workspace in front");
     if (view.panel !== "closed") return setWorkspaceView({ panel: "closed" });
-    askForTools(view);
-    setWorkspaceView({ panel: "open", tools: true });
+    setWorkspaceView({ panel: "open", ...((view.layout?.display_count ?? 0) === 0 ? { tools: true } : {}) });
   };
 
   /**
@@ -1055,12 +1052,24 @@ export function createActions(dispatch: DispatchFn) {
       });
     },
 
-    closeTab(tabId?: string) {
-      // The close chord closes the active display when the View area holds
-      // the keyboard or is all that shows, on this machine or a device, and
-      // the Agent tab otherwise.
-      const display = tabId ? null : activeDisplayNow();
-      if (display && viewAreaInUse(rest())) return closeView(display.display.id);
+    closeFocused() {
+      const owner = keyboardOwner();
+      const frame = frameNow();
+      const area = owner.kind === "view" && frame ? findArea(frame.layout.root, owner.areaId) : null;
+      const checkout = frontCheckout(rest());
+      const tab = remoteContext(rest()) ? remoteView(remoteContext(rest())?.session ?? null)?.tab : current()?.tab;
+      const target = closeShortcutPolicy({
+        owner,
+        workspace: ui().screen?.kind === "workspace" ? checkout?.id ?? null : null,
+        displayId: workspaceViewOf(rest())?.panel !== "closed" ? area?.active ?? null : null,
+        paneIds: tab?.panes.map((pane) => pane.id) ?? [],
+      });
+      if (target.kind === "view") return closeView(target.id);
+      if (target.kind === "pane") return this.closePane(target.id);
+      diagnostic(`close_shortcut: ${target.reason}`);
+    },
+
+    closeTab(tabId: string) {
       if (remoteContext(rest())) {
         const host = remoteHost("Close tab");
         if (!host) return;
@@ -1089,7 +1098,8 @@ export function createActions(dispatch: DispatchFn) {
       const here = current();
       if (!here?.tab || !id) return diagnostic("close_pane: no focused pane");
       const pane = here.tab.panes.find((row) => row.id === id);
-      requestClose("pane", id, pane ? [pane] : [], null, useShellStore.getState().agents);
+      if (!pane) return diagnostic("close_pane: the pane is no longer visible");
+      requestClose("pane", id, [pane], null, useShellStore.getState().agents);
     },
 
     /** The operator chose "Stop work and close" on the confirmation. */
@@ -1167,7 +1177,7 @@ export function createActions(dispatch: DispatchFn) {
       // A pane's text size is this page's drawing, stored in the core's ui
       // state by pane id; a remote pane is sized the same way and nothing is
       // sent to its host.
-      if (editorFor(useShellStore.getState().editor) && viewAreaInUse(rest())) {
+      if (editorFor(useShellStore.getState().editor) && keyboardOwner().kind === "view") {
         dispatch({ schema_version: 2, kind: "editor_text_scale", payload: { direction } });
         return;
       }
@@ -1227,7 +1237,9 @@ export function createActions(dispatch: DispatchFn) {
 
     /** The side panel closed, open or expanded; none of them closes a view (issue 170). */
     setPanel(panel: PanelState) {
-      setWorkspaceView({ panel });
+      const view = workspaceViewOf(rest());
+      const needsTools = panel !== "closed" && (view?.layout?.display_count ?? 0) === 0 && !view?.tools;
+      setWorkspaceView({ panel, ...(needsTools ? { tools: true } : {}) });
     },
 
     /** Docks the side panel beside the agents, or floats it over them again: one terminal resize either way. */
@@ -1373,10 +1385,10 @@ export function createActions(dispatch: DispatchFn) {
      * or the one a page that asked for a new window belongs to. An address
      * the Workspace already shows is focused and loaded again.
      */
-    openBrowser(url: string, workspace?: ViewWorkspace) {
+    openBrowser(url: string, workspace?: ViewWorkspace, areaId?: string) {
       const target = workspace ?? frontViewWorkspace();
       if (!target) return diagnostic("browser_open: no Workspace in front");
-      dispatch({ schema_version: 2, kind: "browser_open", payload: { url, workspace: { device_id: target.device_id, path: target.path } } });
+      dispatch({ schema_version: 2, kind: "browser_open", payload: { url, workspace: { device_id: target.device_id, path: target.path }, ...(areaId ? { area_id: areaId } : {}) } });
     },
 
     /** Explorer "Open in Browser" on an HTML file of this machine's checkout. */

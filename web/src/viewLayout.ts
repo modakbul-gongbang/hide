@@ -486,6 +486,7 @@ export function menuEdge(id: ViewMenuId): Edge | null {
 
 /** What a display is, for its tooltip and accessible name (B21): kind, full path and state. */
 export function displayIdentity(display: ViewDisplaySnapshot): string {
+  if (display.kind === "browser" && !display.url) return "New tab";
   if (display.kind === "browser") return `Page: ${display.title ? `${display.title} · ` : ""}${display.url ?? ""}`;
   const kind = display.kind === "diff" ? `${display.committed ? "Branch" : "Working"} diff` : "File";
   const reason = display.reason ? `: ${display.reason}` : "";

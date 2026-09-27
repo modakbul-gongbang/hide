@@ -33,12 +33,12 @@ describe("the side panel", () => {
     expect(frame("expanded", true, 1400, { pinned: true })).toMatchObject({ width: 1400, agentsRight: 840 });
   });
 
-  it("is only as wide as the tool column while no view is open, and says nothing is open only without a tool", () => {
+  it("is only as wide as the tool column while no view is open, and closes when neither views nor tools remain", () => {
     expect(frame("open", false, 1400)).toMatchObject({ content: "tools", width: 260, resize: "tools_share", need: 260 });
     expect(frame("expanded", false, 1400)).toMatchObject({ shown: "open", content: "tools", width: 260 });
-    expect(frame("open", false, 1400, { tools: false })).toMatchObject({ content: "empty", width: 840, resize: "views_over_share" });
-    // Only views expand, so the empty state never covers the agents.
-    expect(frame("expanded", false, 1400, { tools: false })).toMatchObject({ shown: "open", content: "empty", width: 840 });
+    expect(frame("open", false, 1400, { tools: false })).toMatchObject({ shown: "closed", width: 0, agentsRight: 0, resize: null });
+    // No empty surface, even when the previous panel was expanded.
+    expect(frame("expanded", false, 1400, { tools: false })).toMatchObject({ shown: "closed", width: 0, agentsRight: 0 });
   });
 
   it("resizes the tools-only panel to a width of its own, never under the tool column or over the agents' minimum", () => {
