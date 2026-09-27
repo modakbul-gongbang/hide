@@ -26,6 +26,7 @@ import { NewWorkspace } from "./NewWorkspace";
 import { badgeWords, unfoldedRows } from "./agentRow";
 import { Badge } from "./components/ui/badge";
 import { cn } from "./lib/utils";
+import { numberOf, numberedAgents } from "./numbering";
 import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow } from "./components/sidebar-agent-row";
 import { StatusBadge } from "./components/status-badge";
@@ -140,6 +141,11 @@ function AgentList({ actions }: { actions: Actions }) {
   const tree = useMemo(() => agentTree(listed, lineageWorkspaces), [listed, lineageWorkspaces]);
   const placeOf = useMemo(() => agentPlaces(workspaces, remote, devices), [workspaces, remote, devices]);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
+  // An ⌥ hold numbers the drawn rows top to bottom (PRD
+  // electron-digit-shortcuts-hints B5); the numbers exist only while it
+  // shows, so the memoized rows are untouched by an unrevealed hold.
+  const numbered = useUiStore((s) => s.hint === "agents");
+  const numbers = useMemo(() => (numbered ? numberedAgents(tree.sections.flatMap((section) => section.rows)) : null), [numbered, tree]);
   // Before the first snapshot nothing is known, so an empty list would be a claim.
   if (!loaded) return <ListLoading />;
   if (tree.sections.length === 0) {
@@ -167,6 +173,7 @@ function AgentList({ actions }: { actions: Actions }) {
                 onToggleTree={actions.toggleAgentTree}
                 inset="var(--spacing-xs)"
                 foldedLineage={tree.presentation(row.agent)}
+                number={numbers ? numberOf(numbers, row.agent.pane_id) : null}
               />
             ))}
           </ul>
@@ -224,7 +231,6 @@ function agentTree(listed: ListedAgent[], workspaces: Workspace[]) {
     presentation: (agent: AgentRow) => presentations.get(agent.pane_id)!,
   };
 }
-
 /** The first snapshot has not arrived: neither an empty list nor a zero is known yet. */
 function ListLoading() {
   return (

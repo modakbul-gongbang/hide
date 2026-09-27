@@ -76,6 +76,7 @@ import {
   storedKey,
   type Chord,
   type CommandId,
+  sheetRows,
 } from "./shortcuts";
 import type { AgentHookRuntime, Device } from "./snapshot";
 import { latestDraft } from "./editor/draft";
@@ -1006,6 +1007,25 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
         <Row label={<span className="text-subtle-foreground">Toggle Conversation</span>}>
           <Status tone="muted">macOS app only; the web shell has no conversation view</Status>
         </Row>
+      </Group>
+      <Group
+        title="Numbered chords"
+        note={
+          host === "electron"
+            ? "The number is the order on screen: tabs left to right, Agents rows top to bottom, first to ninth. Hold ⌘ or ⌥ to see it. These chords are fixed; a pane chord bound onto one is refused."
+            : "The desktop app's ⌘1-9 and ⌥1-9; a browser keeps its own ⌘1-9, so this host has no numbered chords."
+        }
+        data-settings-group="numbered-chords"
+      >
+        {sheetRows("Tabs", registry, host)
+          .concat(sheetRows("Navigate", registry, host))
+          .filter((row) => row.id.startsWith("select_"))
+          .map((row) => (
+            <Row key={row.id} label={row.title}>
+              <Kbd data-shortcut-effective={row.id}>{row.chord ?? "-"}</Kbd>
+              {row.chord === null ? <Status tone="muted">not on this host</Status> : null}
+            </Row>
+          ))}
       </Group>
       {diagnostic ? <Note tone="warn" data-shortcut-diagnostic="true">{diagnostic}</Note> : null}
       {saving ? <Note tone="pending">Saving…</Note> : null}

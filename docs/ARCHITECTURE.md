@@ -700,12 +700,18 @@ The Electron column is the macOS chord set the desktop app uses, with ⌘/ kept 
 Each surface reads the running host's column (`web/src/host.ts`: `window.hideHost` means the desktop app): the window listener, the ⌘/ sheet, which drops the "moved for Chrome" note there, and every hint that names a chord.
 The desktop app menu is built from the same column with the stored macOS set applied (`desktop/src/main/menu.ts`): the shell reports the set over the bridge when it changes and the menu is rebuilt only when its chords do; a click reaches the same `run` path as a chord, and a chord the listener answers calls `preventDefault` in the page.
 The held-modifier cycles (⌃Tab and ⌥Tab, ⇧ for backward) walk while the modifier is down and commit one focus when it is released; the desktop e2e drives both through the app.
+The numbered chords (`select_tab_1..9`, `select_agent_1..9`) exist only in the Electron column: their target is the screen order the page knows (`web/src/numbering.ts`: the strip's Herdr tabs of the checkout the Agent area draws, the rows the Agents list draws from the same `agentTree`), so the page answers them and the app menu carries no item or accelerator for them (`KEYBOARD_ONLY`); a pane chord rebound onto ⌘n is refused as that command's.
+The hold hint is a pure state machine (`web/src/hints.ts`, ported from the removed native app's `HideHintState`: one modifier set, one deadline, revealed after 150 ms of the exact hold) fed by the same window listener from keydown, keyup, blur and visibilitychange, and cleared by any key during the hold or by a layer opening in the ui store; the listener publishes only the family the state reveals (`ui.hint`: `tabs`, `agents` or null), computed from the registry's chords for the running host, so a browser reveals nothing and an unrevealed hold renders nothing.
+The keycap is `web/src/components/ui/keycap.tsx`, an absolutely positioned overlay the tab strip and the sidebar agent row draw only while their family is revealed.
+The ⌘/ sheet folds each family into one row with its range (`sheetRows`), and Settings > Shortcuts lists both read-only.
 The design relies on Electron handing a key to the page first and to the menu only when the page leaves it unhandled, so one press runs one command; that order is an assumption, not a verified fact here.
 The e2e covers each path alone (a Playwright chord, a main-process menu click, one `create_tab` each), neither reaches NSMenu, and a native keystroke against the app has not been checked: if one press runs twice, the listener stops answering the chords the menu owns in Electron.
 
 | Command | macOS | Browser | Electron |
 | --- | --- | --- | --- |
 | New tab | ⌘T | ⌥T (moved: Chrome reserves ⌘T) | ⌘T |
+| Select tab 1-9 (the nth tab of the strip in front) | ⌘1-⌘9 | none (Chrome keeps ⌘1-9); the sheet says not on this host | ⌘1-⌘9 |
+| Select agent 1-9 (the nth row the Agents list draws) | ⌥1-⌥9 | none | ⌥1-⌥9 |
 | Close focused View or pane | ⌘W | ⌥W (moved) | ⌘W |
 | Reopen closed tab | ⌘⇧T | ⌥⇧T (moved) | ⌘⇧T |
 | New workspace | ⌘⇧N | ⌥⇧N (moved) | ⌘⇧N |

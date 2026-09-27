@@ -14,6 +14,14 @@
 // Chords match on `KeyboardEvent.code`, not `key`: macOS turns ⌥-letters into
 // dead keys and symbols (⌥T is "†"), and a physical position is what the
 // operator's fingers know.
+//
+// The numbered commands (PRD electron-digit-shortcuts-hints D-02) are the
+// desktop app's ⌘1-9 (the nth tab of the strip in front) and ⌥1-9 (the nth
+// row the sidebar's Agents list draws). Chrome keeps ⌘1-9 for its own tabs
+// and a page cannot claim ⌥-digits reliably either, so the browser column has
+// none: the sheet says so and nothing is intercepted there. The number itself
+// is the screen order at the moment of the press, assigned by the web shell
+// (`numbering.ts`), and the hold hint (`hints.ts`) shows that order.
 
 import type { HostKind } from "./host";
 
@@ -53,7 +61,52 @@ export type CommandId =
   | "text_smaller"
   | "text_reset"
   | "settings"
-  | "shortcuts";
+  | "shortcuts"
+  | NumberedCommandId;
+
+export type Digit = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+export const DIGITS: readonly Digit[] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+
+/** What a numbered chord selects: a tab of the strip in front, or a row of the Agents list. */
+export type NumberedFamily = "tabs" | "agents";
+export type NumberedCommandId = `select_tab_${Digit}` | `select_agent_${Digit}`;
+
+type NumberedFamilySpec = {
+  family: NumberedFamily;
+  prefix: "select_tab" | "select_agent";
+  title: string;
+  group: Command["group"];
+  /** The modifiers every chord of the family shares on the desktop host; the hold hint reveals the family on exactly these. */
+  modifiers: Omit<Chord, "code">;
+};
+
+export const NUMBERED_FAMILIES: readonly NumberedFamilySpec[] = [
+  { family: "tabs", prefix: "select_tab", title: "Select tab", group: "Tabs", modifiers: { meta: true } },
+  { family: "agents", prefix: "select_agent", title: "Select agent", group: "Navigate", modifiers: { alt: true } },
+];
+
+function numberedEntries(spec: NumberedFamilySpec): Command[] {
+  return DIGITS.map((digit) => ({
+    id: `${spec.prefix}_${digit}` as NumberedCommandId,
+    title: `${spec.title} ${digit}`,
+    group: spec.group,
+    browser: null,
+    electron: { code: `Digit${digit}`, ...spec.modifiers },
+    moved: false,
+  }));
+}
+
+/** The family and number a command id names, or null for every other command. */
+export function numberedCommand(id: CommandId): { family: NumberedFamily; number: Digit } | null {
+  const match = /^(select_tab|select_agent)_([1-9])$/.exec(id);
+  if (!match) return null;
+  const spec = NUMBERED_FAMILIES.find((row) => row.prefix === match[1]);
+  return spec ? { family: spec.family, number: Number(match[2]) as Digit } : null;
+}
+
+export function isNumberedCommand(id: CommandId): id is NumberedCommandId {
+  return numberedCommand(id) !== null;
+}
 
 export type Command = {
   id: CommandId;
@@ -74,11 +127,13 @@ export const REGISTRY: readonly Command[] = [
   { id: "new_tab", title: "New tab", group: "Tabs", browser: { code: "KeyT", alt: true }, electron: { code: "KeyT", meta: true }, moved: true, movedFrom: "⌘T" },
   { id: "close_tab", title: "Close focused view or pane", group: "Tabs", browser: { code: "KeyW", alt: true }, electron: { code: "KeyW", meta: true }, moved: true, movedFrom: "⌘W" },
   { id: "reopen_closed_tab", title: "Reopen closed tab", group: "Tabs", browser: { code: "KeyT", alt: true, shift: true }, electron: { code: "KeyT", meta: true, shift: true }, moved: true, movedFrom: "⌘⇧T" },
+  ...numberedEntries(NUMBERED_FAMILIES[0]!),
   { id: "new_workspace", title: "New workspace", group: "Navigate", browser: { code: "KeyN", alt: true, shift: true }, electron: { code: "KeyN", meta: true, shift: true }, moved: true, movedFrom: "⌘⇧N" },
   { id: "recent_panel", title: "Next recent panel", group: "Navigate", browser: { code: "Backquote", alt: true }, electron: { code: "Tab", ctrl: true }, moved: true, movedFrom: "⌃Tab" },
   { id: "previous_recent_panel", title: "Previous recent panel", group: "Navigate", browser: { code: "Backquote", alt: true, shift: true }, electron: { code: "Tab", ctrl: true, shift: true }, moved: true, movedFrom: "⌃⇧Tab" },
   { id: "recent_project", title: "Next recent project", group: "Navigate", browser: { code: "Tab", alt: true }, electron: { code: "Tab", alt: true }, moved: false },
   { id: "previous_recent_project", title: "Previous recent project", group: "Navigate", browser: { code: "Tab", alt: true, shift: true }, electron: { code: "Tab", alt: true, shift: true }, moved: false },
+  ...numberedEntries(NUMBERED_FAMILIES[1]!),
   { id: "search", title: "Search", group: "Navigate", browser: { code: "KeyK", meta: true }, electron: { code: "KeyK", meta: true }, moved: false },
   { id: "open_file", title: "Open file", group: "Navigate", browser: { code: "KeyP", meta: true }, electron: { code: "KeyP", meta: true }, moved: false },
   { id: "project_home", title: "Project home", group: "Navigate", browser: { code: "KeyH", meta: true, shift: true }, electron: { code: "KeyH", meta: true, shift: true }, moved: false },
@@ -268,11 +323,12 @@ export function serializeMacosChord(chord: Chord): string | null {
   return [chord.meta && "command", chord.ctrl && "control", chord.alt && "option", chord.shift && "shift", key].filter(Boolean).join("+");
 }
 
-/** Chords macOS or the app keeps on the desktop host. */
-const MACOS_RESERVED: readonly Chord[] = [
-  ...["KeyQ", "KeyH", "KeyM", "KeyS", "KeyW", "Comma"].map((code) => ({ code, meta: true })),
-  ...Array.from({ length: 9 }, (_, index) => ({ code: `Digit${index + 1}`, meta: true })),
-];
+/**
+ * Chords macOS or the app keeps on the desktop host. ⌘1-9 are not here: the
+ * registry's own numbered commands hold them, so a pane chord bound onto one
+ * is refused as that command's, by name.
+ */
+const MACOS_RESERVED: readonly Chord[] = ["KeyQ", "KeyH", "KeyM", "KeyS", "KeyW", "Comma"].map((code) => ({ code, meta: true }));
 
 /** The key a command's chord is stored under in `host`'s set. */
 export function storedKey(id: CommandId, host: HostKind): string {
@@ -417,4 +473,62 @@ export function displayCommand(id: CommandId, host: HostKind, registry: readonly
   const command = registry.find((row) => row.id === id);
   const chord = command ? hostChord(command, host) : null;
   return chord ? displayChord(chord) : "";
+}
+
+/**
+ * A numbered family's chords on `host` in number order, or null where the
+ * host has none: the hold hint reveals a family when the held modifiers are
+ * exactly its chords' (PRD electron-digit-shortcuts-hints D-03, D-04).
+ */
+export function familyChords(family: NumberedFamily, registry: readonly Command[], host: HostKind): Chord[] | null {
+  const spec = NUMBERED_FAMILIES.find((row) => row.family === family);
+  if (!spec) return null;
+  const chords = DIGITS.map((digit) => {
+    const command = registry.find((row) => row.id === `${spec.prefix}_${digit}`);
+    return command ? hostChord(command, host) : null;
+  });
+  return chords.every((chord): chord is Chord => chord !== null) ? chords : null;
+}
+
+/** The modifiers a family's chords share on `host`, as a chord without a key, or null where the host has none. */
+export function familyModifiers(family: NumberedFamily, registry: readonly Command[], host: HostKind): Omit<Chord, "code"> | null {
+  const chords = familyChords(family, registry, host);
+  if (!chords) return null;
+  const [first] = chords;
+  const modifiers = { meta: !!first!.meta, alt: !!first!.alt, shift: !!first!.shift, ctrl: !!first!.ctrl };
+  const shared = chords.every((chord) => !!chord.meta === modifiers.meta && !!chord.alt === modifiers.alt && !!chord.shift === modifiers.shift && !!chord.ctrl === modifiers.ctrl);
+  return shared ? modifiers : null;
+}
+
+/** One line of the ⌘/ sheet: a command, or a numbered family folded into one row with its range. */
+export type SheetRow = { id: CommandId; title: string; chord: string | null; moved: boolean; movedFrom?: string; passthrough?: string };
+
+/**
+ * The sheet's rows for `group` on `host`, in registry order, with each
+ * numbered family folded into one row ("Select tab 1-9", "⌘1 … ⌘9"), or a
+ * null chord where the host has none (B3, B4).
+ */
+export function sheetRows(group: Command["group"], registry: readonly Command[], host: HostKind): SheetRow[] {
+  const rows: SheetRow[] = [];
+  const folded = new Set<NumberedFamily>();
+  for (const command of registry) {
+    if (command.group !== group) continue;
+    const numbered = numberedCommand(command.id);
+    if (!numbered) {
+      const chord = hostChord(command, host);
+      rows.push({ id: command.id, title: command.title, chord: chord ? displayChord(chord) : null, moved: command.moved, movedFrom: command.movedFrom, passthrough: command.passthrough });
+      continue;
+    }
+    if (folded.has(numbered.family)) continue;
+    folded.add(numbered.family);
+    const spec = NUMBERED_FAMILIES.find((row) => row.family === numbered.family)!;
+    const chords = familyChords(numbered.family, registry, host);
+    rows.push({
+      id: command.id,
+      title: `${spec.title} ${DIGITS[0]}-${DIGITS[DIGITS.length - 1]}`,
+      chord: chords ? `${displayChord(chords[0]!)} … ${displayChord(chords[chords.length - 1]!)}` : null,
+      moved: false,
+    });
+  }
+  return rows;
 }

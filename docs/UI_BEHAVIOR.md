@@ -198,6 +198,7 @@ Web owner: `web/src/PaneView.tsx` (`SleepBody`), `web/src/sleep.ts`, `web/src/Pa
 The Agents explorer groups every current agent, this machine's and each connected device's, under Needs You, Done, Working, and Seen, and leaves an empty group out; a device's row names its device before the agent kind, and a device that is not connected lists nothing it only last reported.
 Each group lists its root rows; a delegated row is drawn only beneath its parent, indented one step per level and muted, while the operator has that parent unfolded.
 A group's heading counts every agent it speaks for, its roots and all their live descendants whether folded or not, so each agent is counted once, under its root's heading.
+In the desktop app ⌥1 to ⌥9 open the first to ninth row the list draws, top to bottom across the groups, exactly as clicking that row does; the order is the list's whether or not the sidebar shows it, a folded child takes no number, and a number with no row does nothing.
 Descendants start folded; the parent's chevron folds and unfolds them, and the choice is the core's `expanded_agent_pane_ids`, so it survives a restart and is the same fold wherever the parent is drawn, in Agents or under its checkout in Projects.
 The chevron is at the row's right end and exists only on a row with children: folded, it is always shown; unfolded, it shows under the pointer, while focus is inside the row, and always on an input with no hover, in a slot kept at rest so nothing beside it moves.
 A leaf row keeps the same slot empty, so every agent row's time ends on one column and every chevron stands on one.
@@ -625,7 +626,13 @@ Unread weight is never reused to mean parent, child, delegated, or selected.
 Every icon-only control has a tooltip and an accessible name carrying the same words as the tooltip.
 A chorded tooltip reads the label followed by the shortcut chord; a chordless control shows only the label.
 There is no native platform tooltip layered underneath the shared one; the shared tooltip is the only tooltip in the main shell.
-Tooltip hover has a short reveal delay, and an exact modifier hold reveals shortcut hints faster than a hover tooltip does; releasing the modifier, deactivating the app, or opening a sheet clears hints.
+Tooltip hover has a short reveal delay, and an exact modifier hold reveals shortcut hints faster than a hover tooltip does.
+In the desktop app, holding ⌘ alone floats each tab's number at its top right in the agent tab strip in front, and holding ⌥ alone floats each Agents-list row's number at its top right: a keycap in the popover colors with a border, a small shadow and one mono digit, positioned over the tab or row rather than in it, so a title, an inline Rename field, a row's time, and its fold slot never move.
+The number is the screen order at that moment, first to ninth, left to right for tabs and top to bottom for the rows the Agents list draws (a folded parent's descendants are not rows), and an item past the ninth carries none.
+The hint appears only after a short hold of the exact modifier; releasing it before then shows nothing, so a ⌘C never flashes numbers.
+Releasing the modifier, adding another, pressing any key during the hold (including the numbered chord itself), losing the window, hiding the page, or opening a sheet, menu, dialog, palette, or cycle clears the numbers at once; the same modifiers still held after that show nothing until they are released and held again.
+The keycaps and the hover tooltip never share space: a tooltip hangs beside its trigger and a keycap sits inside the trigger's own box.
+A browser host has no numbered chords, so holding ⌘ or ⌥ there shows nothing.
 Pane focus, active tab, tab order, zoom state, and disappearing anchors all update which controls can show a hint or tooltip; pointer exit, mouse down, scroll, key down, losing key window status, and anchor removal all dismiss an open tooltip.
 
 Destructive buttons are named by their result (`Move to Trash`, `Close 3 panes and remove`, `Stop work and close`), never by a generic "Delete" or "OK" that hides the consequence; the non-destructive option is the default/cancel action.

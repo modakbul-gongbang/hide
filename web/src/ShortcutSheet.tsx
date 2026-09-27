@@ -3,13 +3,15 @@ import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "./
 import { Kbd } from "./components/ui/kbd";
 import { Hint } from "./components/ui/tooltip";
 import { hostKind } from "./host";
-import { displayChord, hostChord, resolvedRegistry, storedBindings, type Command } from "./shortcuts";
+import { resolvedRegistry, sheetRows, storedBindings, type Command } from "./shortcuts";
 import { useShellStore } from "./store";
 
 // The sheet is generated from the registry (PRD S2 B11): every mapping of the
 // running host by group, a "moved for Chrome" note on the chords Chrome
 // reserves (browser only), and a passthrough note on the one chord the
-// terminal keeps.
+// terminal keeps. The numbered ⌘1-9 and ⌥1-9 selections fold into one row
+// each with their range, and read "not on this host" in a browser, which
+// has no such chords (PRD electron-digit-shortcuts-hints B3, B4).
 
 const GROUPS: Command["group"][] = ["Tabs", "Navigate", "Panels", "Panes", "Help"];
 
@@ -39,16 +41,17 @@ export function ShortcutSheet({ actions }: { actions: Actions }) {
             <section key={group} className="mb-md">
               <h3 className="mb-xs text-caption uppercase text-muted-foreground">{group}</h3>
               <ul>
-                {registry.filter((command) => command.group === group).map((command) => (
-                  <li key={command.id} className="flex items-center gap-md py-xxs" data-shortcut={command.id}>
-                    <span className="min-w-0 flex-1 truncate">{command.title}</span>
-                    {host === "browser" && command.moved ? (
-                      <Hint label={`Chrome reserves ${command.movedFrom}`}>
-                        <span className="text-caption text-warning">moved for Chrome ({command.movedFrom})</span>
+                {sheetRows(group, registry, host).map((row) => (
+                  <li key={row.id} className="flex items-center gap-md py-xxs" data-shortcut={row.id}>
+                    <span className="min-w-0 flex-1 truncate">{row.title}</span>
+                    {host === "browser" && row.moved ? (
+                      <Hint label={`Chrome reserves ${row.movedFrom}`}>
+                        <span className="text-caption text-warning">moved for Chrome ({row.movedFrom})</span>
                       </Hint>
                     ) : null}
-                    {command.passthrough ? <span className="text-caption text-muted-foreground">{command.passthrough}</span> : null}
-                    <Kbd>{hostChord(command, host) ? displayChord(hostChord(command, host)!) : "-"}</Kbd>
+                    {row.passthrough ? <span className="text-caption text-muted-foreground">{row.passthrough}</span> : null}
+                    {row.chord === null && row.id.startsWith("select_") ? <span className="text-caption text-muted-foreground" data-shortcut-absent={row.id}>not on this host</span> : null}
+                    <Kbd>{row.chord ?? "-"}</Kbd>
                   </li>
                 ))}
               </ul>
