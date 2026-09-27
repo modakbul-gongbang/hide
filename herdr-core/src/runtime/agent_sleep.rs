@@ -505,6 +505,8 @@ impl Runtime {
         }
         self.sync_pane_status_from_agents(&agents);
         self.snapshot.navigator.agents = agents;
+        // A pane's child chips carry the child's mark.
+        self.sync_pane_lineage();
         true
     }
 
