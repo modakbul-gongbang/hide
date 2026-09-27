@@ -170,8 +170,14 @@ mod tests {
         assert!(context.starts_with(
             "Hide Workspace control is available for this session's checkout `/srv/project`."
         ));
-        assert!(context.contains("HIDE_CAP_REF='/srv/state/pane-capabilities/ref.json' '/opt/hide/hide'"));
-        assert!(context.contains("browser open <url-or-path> [--reveal] [--wait], view close <view-id>"));
+        assert!(
+            context
+                .contains("HIDE_CAP_REF='/srv/state/pane-capabilities/ref.json' '/opt/hide/hide'")
+        );
+        assert!(
+            context
+                .contains("browser open <url-or-path> [--reveal] [--wait], view close <view-id>")
+        );
         assert!(!context.contains("file open"));
     }
 
