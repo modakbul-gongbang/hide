@@ -29362,7 +29362,7 @@
               "type": "text",
               "id": "side-panel-sheet-title-spec",
               "name": "Issue 170, \"Side panel hiera",
-              "content": "Issue 170, \"Side panel hierarchy, revised\": every control sits once, on the container it changes. The panel is a --card surface at the Workspace’s full height beside a toolbar that spans only the agent column, drawn over the agents until Pin docks it: a --spacing-sm gap in --background on its left (the resize grip when pinned), --radius-lg on its top-left corner, a --border hairline, no shadow. Row 1, at the toolbar row’s height: each View area’s tabs followed by its New tab, then the tool-column toggle (pressed while the tools show), Expand, Pin and the panel toggle. Closed, the panel toggle stays in that top-right spot in the toolbar with the open-view count. Row 2, level with the agents’ tab strip: the active document’s header, and over the tool column the Explorer and History icon tabs; one tool shows, with no title row and no ×. With no view open the card is the tool column and row 1 holds the tool tabs, Pin and the panel toggle. In a narrow window Expand and Pin are hidden and the tools open as the temporary overlay.",
+              "content": "Issue 170, \"Side panel hierarchy, revised\": every control sits once, on the container it changes. The panel is a --card surface at the Workspace’s full height beside a toolbar that spans only the agent column, drawn over the agents until Pin docks it: a --spacing-sm gap in --background on its left, --radius-lg on its top-left corner, a --border hairline, no shadow. Row 1, at the toolbar row’s height: each View area’s tabs followed by its New tab, then the tool-column toggle (pressed while the tools show), Expand, Pin and the panel toggle. Closed, the panel toggle stays in that top-right spot in the toolbar with the open-view count. Row 2, level with the agents’ tab strip: the active document’s header, and over the tool column the Explorer and History icon tabs; one tool shows, with no title row and no ×. Hovering the gap, or dragging it, shows the resize grip in every state with a width, the tools-only panel included, over the agents or pinned: a --size-hairline line in --muted-foreground at --opacity-secondary with a centred --size-icon-button-toolbar pill (--card, --border hairline, --radius-md) holding arrow-left-right at --size-icon-sm in --muted-foreground; it replaces the primary guide. With no view open the card is the tool column and row 1 holds the tool tabs, Pin and the panel toggle. In a narrow window Expand and Pin are hidden and the tools open as the temporary overlay.",
               "fill": "$--subtle-foreground",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
@@ -29862,6 +29862,148 @@
         },
         {
           "type": "frame",
+          "id": "side-panel-sheet-master-grip",
+          "name": "Master / Resize grip - the edge hovered",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-master-grip-name",
+              "name": "Resize grip - the edge hover",
+              "content": "Resize grip - the edge hovered",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "side-panel-grip",
+              "name": "Component / Side panel grip",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "id": "side-panel-grip-line-top",
+                  "name": "Line",
+                  "width": 1,
+                  "height": "fill_container",
+                  "fill": "$--muted-foreground",
+                  "opacity": 0.72
+                },
+                {
+                  "type": "frame",
+                  "id": "side-panel-grip-pill",
+                  "name": "Pill",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "side-panel-grip-glyph",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 12,
+                      "height": 12,
+                      "icon": "arrow-left-right",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    }
+                  ],
+                  "width": 24,
+                  "height": 24,
+                  "fill": "$--card",
+                  "stroke": "$--border",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inner",
+                  "cornerRadius": "$--radius-md",
+                  "layout": "horizontal",
+                  "justifyContent": "center",
+                  "alignItems": "center"
+                },
+                {
+                  "type": "rectangle",
+                  "id": "side-panel-grip-line-bottom",
+                  "name": "Line",
+                  "width": 1,
+                  "height": "fill_container",
+                  "fill": "$--muted-foreground",
+                  "opacity": 0.72
+                }
+              ],
+              "reusable": true,
+              "width": 24,
+              "height": 480,
+              "layout": "vertical",
+              "gap": 0,
+              "alignItems": "center"
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-state-grip-rest",
+          "name": "State / Resize grip at rest (nothing shows; the edge still takes the pointer)",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-state-grip-rest-name",
+              "name": "Resize grip at rest (nothing",
+              "content": "Resize grip at rest (nothing shows; the edge still takes the pointer)",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "side-panel-grip-rest",
+              "type": "ref",
+              "ref": "side-panel-grip",
+              "name": "At rest",
+              "descendants": {
+                "side-panel-grip-line-top": {
+                  "enabled": false
+                },
+                "side-panel-grip-pill": {
+                  "enabled": false
+                },
+                "side-panel-grip-line-bottom": {
+                  "enabled": false
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-state-grip-drag",
+          "name": "State / Resize grip while dragging (kept as hovered)",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-state-grip-drag-name",
+              "name": "Resize grip while dragging (",
+              "content": "Resize grip while dragging (kept as hovered)",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "side-panel-grip-drag",
+              "type": "ref",
+              "ref": "side-panel-grip",
+              "name": "Dragging"
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
           "id": "side-panel-sheet-master-panel",
           "name": "Master / Over the agents, one file open, Explorer showing",
           "children": [
@@ -29882,23 +30024,11 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "side-panel-grip",
-                  "name": "Resize grip (the gap)",
-                  "children": [
-                    {
-                      "type": "rectangle",
-                      "id": "side-panel-grip-line",
-                      "name": "Grip guide",
-                      "enabled": false,
-                      "width": 2,
-                      "height": 480,
-                      "fill": "$--primary"
-                    }
-                  ],
+                  "id": "side-panel-gap",
+                  "name": "Gap",
+                  "children": [],
                   "width": 8,
-                  "height": "fill_container",
-                  "layout": "horizontal",
-                  "justifyContent": "center"
+                  "height": "fill_container"
                 },
                 {
                   "type": "frame",
@@ -30627,6 +30757,17 @@
                   "stroke": "$--border",
                   "strokeWidth": "$--size-hairline",
                   "strokeAlignment": "inner"
+                },
+                {
+                  "id": "side-panel-edge-grip",
+                  "type": "ref",
+                  "ref": "side-panel-grip",
+                  "name": "Resize grip",
+                  "enabled": false,
+                  "layoutPosition": "absolute",
+                  "x": -8,
+                  "y": 0,
+                  "height": 480
                 }
               ],
               "reusable": true,
@@ -30662,7 +30803,7 @@
               "ref": "side-panel",
               "name": "Pinned, grip hovered",
               "descendants": {
-                "side-panel-grip-line": {
+                "side-panel-edge-grip": {
                   "enabled": true
                 },
                 "side-panel-strip-actions/side-panel-pin": {
@@ -30770,6 +30911,78 @@
                 },
                 "side-panel-tool-lane": {
                   "enabled": false
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-state-tools-only-pinned",
+          "name": "State / No view open, pinned, the edge hovered as the resize grip",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-state-tools-only-pinned-name",
+              "name": "No view open, pinned, the ed",
+              "content": "No view open, pinned, the edge hovered as the resize grip",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "side-panel-tools-only-pinned",
+              "type": "ref",
+              "ref": "side-panel",
+              "name": "Tools only, pinned, grip hovered",
+              "width": 363,
+              "descendants": {
+                "side-panel-tabs": {
+                  "enabled": false
+                },
+                "side-panel-row-1-tools": {
+                  "enabled": true
+                },
+                "side-panel-row-1-gap": {
+                  "enabled": true
+                },
+                "side-panel-row-1": {
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    "$--spacing-xxs"
+                  ]
+                },
+                "side-panel-strip-actions/side-panel-tools-toggle": {
+                  "enabled": false
+                },
+                "side-panel-strip-actions/side-panel-expand": {
+                  "enabled": false
+                },
+                "side-panel-views": {
+                  "enabled": false
+                },
+                "side-panel-tools": {
+                  "width": "fill_container",
+                  "strokeWidth": 0
+                },
+                "side-panel-tool-lane": {
+                  "enabled": false
+                },
+                "side-panel-edge-grip": {
+                  "enabled": true
+                },
+                "side-panel-strip-actions/side-panel-pin": {
+                  "fill": "$--secondary"
+                },
+                "side-panel-strip-actions/side-panel-pin/ZIZFR": {
+                  "icon": "pin-off",
+                  "fill": "$--foreground"
                 }
               }
             }
