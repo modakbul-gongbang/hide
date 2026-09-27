@@ -1,25 +1,11 @@
-import {
-  ChevronDownIcon,
-  ChevronRightIcon,
-  FolderGit2Icon,
-  FolderIcon,
-  GitBranchIcon,
-  GitCommitHorizontalIcon,
-  GitMergeIcon,
-  GitPullRequestClosedIcon,
-  GitPullRequestDraftIcon,
-  GitPullRequestIcon,
-  HouseIcon,
-  LayoutGridIcon,
-  LayoutDashboardIcon,
-  SettingsIcon,
-} from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, FolderGit2Icon, FolderIcon, LayoutGridIcon, LayoutDashboardIcon, SettingsIcon } from "lucide-react";
 import { memo, useMemo, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
 import { EntryContextMenu } from "./components/entry-menu";
 import { SearchField } from "./components/search-field";
 import { Hint } from "./components/ui/tooltip";
+import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
 import { CheckoutCardHint, pullRequestOpenExternal } from "./components/pr-card";
 import { DevicePicker } from "./DevicePicker";
 import { NewWorkspace } from "./NewWorkspace";
@@ -42,7 +28,6 @@ import {
   projectMarks,
   projectRows,
   shownPullRequest,
-  type CheckoutKind,
   type CheckoutPresentation,
   type ProjectRow,
 } from "./projects";
@@ -575,16 +560,6 @@ function OverviewRow({ workspace, selected }: { workspace: Workspace; selected: 
 
 const NO_BOARD_ROWS: BoardRow[] = [];
 
-const KIND_ICON: Record<CheckoutKind, typeof GitBranchIcon> = {
-  pr_open: GitPullRequestIcon,
-  pr_draft: GitPullRequestDraftIcon,
-  pr_merged: GitMergeIcon,
-  pr_closed: GitPullRequestClosedIcon,
-  folder: FolderIcon,
-  primary: HouseIcon,
-  detached: GitCommitHorizontalIcon,
-  branch: GitBranchIcon,
-};
 
 /**
  * What a checkout's row draws besides line one, shared by the checkout row and
@@ -782,7 +757,7 @@ const FolderRowView = memo(function FolderRowView({
  * unfolds. Every other kind is the plain icon the row button covers.
  */
 function KindGlyph({ view, deviceId, actions }: { view: CheckoutPresentation; deviceId: string; actions: Actions }) {
-  const KindIcon = KIND_ICON[view.kind];
+  const KindIcon = CHECKOUT_KIND_ICON[view.kind];
   const pr = view.kind.startsWith("pr_") ? view.pullRequest : null;
   if (!pr) return <KindIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />;
   return (
@@ -827,7 +802,8 @@ function CheckoutOpenButton({
   actions: Actions;
   expanded?: boolean;
 }) {
-  const card = useMemo(() => checkoutCard(workspace, checkout, Date.now()), [workspace, checkout]);
+  // Read on every render, like `view.detail`: a memo keyed on the checkout would keep the Commit age from the last change to this row.
+  const card = checkoutCard(workspace, checkout, Date.now());
   return (
     <CheckoutCardHint card={card} description={view.detail} onOpenPullRequest={(url, external) => actions.openPullRequest(url, workspace.device_id, external)}>
       <button

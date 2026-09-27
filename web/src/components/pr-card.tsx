@@ -1,25 +1,17 @@
-import { ArrowUpRightIcon, GitMergeIcon, GitPullRequestClosedIcon, GitPullRequestDraftIcon, GitPullRequestIcon } from "lucide-react";
-import { useRef, useState, type MouseEvent, type ReactNode } from "react";
+import { ArrowUpRightIcon } from "lucide-react";
+import type { MouseEvent, ReactNode } from "react";
 import { badgeParts } from "../agentRow";
 import { cn } from "../lib/utils";
 import { cardSingleValue, type CheckoutCard } from "../projects";
-import type { PullRequest } from "../snapshot";
+import { CHECKOUT_KIND_ICON } from "./checkout-icon";
 import { BadgeMarks } from "./status-badge";
 import { Badge } from "./ui/badge";
-import { useEscapeLayer } from "./ui/layer";
-import { Hint, Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { Hint, Tooltip, TooltipContent, TooltipTrigger, useHintOpen } from "./ui/tooltip";
 
 /** What a press on the card's link means: ⌘ asks for the default browser (PRD checkout-pr-glyph-card D-02). */
 export function pullRequestOpenExternal(event: MouseEvent): boolean {
   return event.metaKey;
 }
-
-const LIFECYCLE_ICON: Record<PullRequest["badge"], typeof GitPullRequestIcon> = {
-  open: GitPullRequestIcon,
-  review: GitPullRequestIcon,
-  merged: GitMergeIcon,
-  closed: GitPullRequestClosedIcon,
-};
 
 /**
  * The card a checkout row opens on hover and keyboard focus (PRD
@@ -27,7 +19,10 @@ const LIFECYCLE_ICON: Record<PullRequest["badge"], typeof GitPullRequestIcon> = 
  * Open PR link over its title, then the rows `checkoutCard` gave it. It is
  * the shell's tooltip with hoverable content, so it opens after the same
  * delay, stays while the pointer crosses onto it, and closes when the pointer
- * leaves the row and the card, on Escape, and on a press on the row. The
+ * leaves the row and the card, on Escape, and on a press on the row. Escape
+ * closes it through the tooltip's own dismiss, not the shell's Escape owner:
+ * a card that a resting pointer opened must not take the Escape a focused
+ * terminal is about to receive, which the shell's owner would consume. The
  * hidden tooltip text a screen reader gets is `description`, the detail
  * sentence the row's tooltip carried before. A card with one value and no
  * header is the plain `Hint` with that value instead (D-09).
@@ -45,29 +40,13 @@ export function CheckoutCardHint({
   onOpenPullRequest: (url: string, external: boolean) => void;
   children: ReactNode;
 }) {
-  const [open, setOpen] = useState(false);
-  const pressed = useRef(false);
-  useEscapeLayer(open, () => setOpen(false));
+  const { open, onOpenChange, triggerProps } = useHintOpen();
   const single = cardSingleValue(card);
   if (single !== null) return <Hint label={single}>{children}</Hint>;
-  const press = () => {
-    pressed.current = true;
-    setOpen(false);
-  };
   const header = card.header;
   return (
-    <Tooltip open={open} onOpenChange={(next) => setOpen(next && !pressed.current)} disableHoverableContent={false}>
-      <TooltipTrigger
-        asChild
-        onPointerDown={press}
-        onContextMenu={press}
-        onPointerEnter={() => {
-          pressed.current = false;
-        }}
-        onBlur={() => {
-          pressed.current = false;
-        }}
-      >
+    <Tooltip open={open} onOpenChange={onOpenChange} disableHoverableContent={false}>
+      <TooltipTrigger asChild {...triggerProps}>
         {children}
       </TooltipTrigger>
       <TooltipContent
@@ -103,8 +82,8 @@ function PullRequestHeader({
   header: Extract<NonNullable<CheckoutCard["header"]>, { kind: "pull_request" }>;
   onOpen: (url: string, external: boolean) => void;
 }) {
-  // The lifecycle shape the sidebar glyph draws (docs/UI_BEHAVIOR.md, PR chrome); a draft keeps its own.
-  const Icon = header.isDraft && header.lifecycle === "open" ? GitPullRequestDraftIcon : LIFECYCLE_ICON[header.lifecycle];
+  // The same shape the sidebar row's glyph draws for this pull request.
+  const Icon = CHECKOUT_KIND_ICON[header.glyph];
   return (
     <>
       <div className="flex items-center gap-sm">

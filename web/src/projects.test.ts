@@ -109,6 +109,15 @@ describe("checkoutPresentation", () => {
     expect(checkoutPresentation(project, checkout({ pull_request: pr({ badge: "review" }) }), now).kind).toBe("pr_open");
   });
 
+  it("draws one shape for a pull request on the row and in its card, a draft under review included", () => {
+    for (const request of [pr(), pr({ is_draft: true }), pr({ badge: "review", is_draft: true }), pr({ badge: "merged" }), pr({ badge: "closed", is_draft: true })]) {
+      const row = checkout({ pull_request: request });
+      const header = checkoutCard(project, row, now).header;
+      expect(header?.kind === "pull_request" ? header.glyph : null).toBe(checkoutPresentation(project, row, now).kind);
+    }
+    expect(checkoutCard(project, checkout({ pull_request: pr({ badge: "review", is_draft: true }) }), now).header).toMatchObject({ glyph: "pr_draft" });
+  });
+
   it("mutes a stale pull request and falls back to the branch when GitHub could not answer", () => {
     expect(checkoutPresentation(project, checkout({ pull_request: pr(), github: github({ stale: true }) }), now)).toMatchObject({ kind: "pr_open", kindTone: "text-muted-foreground" });
     expect(checkoutPresentation(project, checkout({ pull_request: pr(), github: github({ available: false, unavailable_reason: "gh is not signed in" }) }), now).kind).toBe("branch");
@@ -181,8 +190,7 @@ describe("checkoutCard", () => {
     expect(card.header).toEqual({
       kind: "pull_request",
       badge: { label: "Approved", color: "text-success", draft: false },
-      lifecycle: "review",
-      isDraft: false,
+      glyph: "pr_open",
       number: 180,
       url: "https://example.invalid/pull/180",
       title: "Sidebar readability",

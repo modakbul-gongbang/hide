@@ -86,6 +86,22 @@ export function projectMarks(workspace: Workspace): MarkCounts {
   return total;
 }
 
+/** The glyph a pull request draws: its lifecycle, with a draft keeping its own shape while it is open or under review. */
+export type PullRequestKind = Extract<CheckoutKind, `pr_${string}`>;
+
+export function pullRequestKind(pr: PullRequest): PullRequestKind {
+  if (pr.badge === "merged") return "pr_merged";
+  if (pr.badge === "closed") return "pr_closed";
+  return pr.is_draft ? "pr_draft" : "pr_open";
+}
+
+/** The word and tone of a review decision, on the badge of a pull request under review and on the card's Review row. */
+const REVIEW_WORD: Record<NonNullable<PullRequest["review"]>, { value: string; tone: string }> = {
+  approved: { value: "Approved", tone: "text-success" },
+  changes_requested: { value: "Changes requested", tone: "text-destructive" },
+  review_required: { value: "Review required", tone: "text-muted-foreground" },
+};
+
 /**
  * The pull request's badge (PRD checkout-pr-glyph-card D-08): the lifecycle
  * word for a merged, closed, open or draft pull request, and the review
@@ -100,15 +116,10 @@ export function pullRequestBadge(pr: PullRequest): { label: string; color: strin
       return { label: "Closed", color: "text-pr-closed", draft: false };
     case "open":
       return pr.is_draft ? { label: "Draft", color: "text-pr-draft", draft: false } : { label: "Open", color: "text-pr-open", draft: false };
-    case "review":
-      switch (pr.review) {
-        case "approved":
-          return { label: "Approved", color: "text-success", draft: pr.is_draft };
-        case "changes_requested":
-          return { label: "Changes requested", color: "text-destructive", draft: pr.is_draft };
-        default:
-          return { label: "Review required", color: "text-muted-foreground", draft: pr.is_draft };
-      }
+    case "review": {
+      const word = REVIEW_WORD[pr.review ?? "review_required"];
+      return { label: word.value, color: word.tone, draft: pr.is_draft };
+    }
   }
 }
 
@@ -156,21 +167,7 @@ export function checkoutPresentation(workspace: Workspace, checkout: Checkout, n
   const pr = shownPullRequest(checkout);
   const primary = checkout.is_primary === true;
   const detached = checkout.worktree ? checkout.worktree.branch === null : false;
-  const kind: CheckoutKind = primary
-    ? "primary"
-    : pr
-      ? pr.badge === "merged"
-        ? "pr_merged"
-        : pr.badge === "closed"
-          ? "pr_closed"
-          : pr.is_draft
-            ? "pr_draft"
-            : "pr_open"
-      : !workspace.is_git
-        ? "folder"
-        : detached
-          ? "detached"
-          : "branch";
+  const kind: CheckoutKind = primary ? "primary" : pr ? pullRequestKind(pr) : !workspace.is_git ? "folder" : detached ? "detached" : "branch";
   const kindTone = !checkout.exists
     ? "text-destructive"
     : kind.startsWith("pr_")
@@ -232,17 +229,11 @@ export type CheckoutCardRow =
 export type CheckoutCard = {
   /** A pull request's badge line, or the danger header of a folder that is gone; null on a plain checkout. */
   header:
-    | { kind: "pull_request"; badge: ReturnType<typeof pullRequestBadge>; lifecycle: PullRequest["badge"]; isDraft: boolean; number: number; url: string; title: string }
+    | { kind: "pull_request"; badge: ReturnType<typeof pullRequestBadge>; glyph: PullRequestKind; number: number; url: string; title: string }
     | { kind: "missing"; label: string }
     | null;
   /** Each row only where its source has a value; a row with nothing to say takes no place. */
   rows: CheckoutCardRow[];
-};
-
-const REVIEW_WORD: Record<NonNullable<PullRequest["review"]>, { value: string; tone: string }> = {
-  approved: { value: "Approved", tone: "text-success" },
-  changes_requested: { value: "Changes requested", tone: "text-destructive" },
-  review_required: { value: "Review required", tone: "text-muted-foreground" },
 };
 
 const CHECKS_WORD: Partial<Record<NonNullable<PullRequest["checks"]>, { value: string; tone: string }>> = {
@@ -282,7 +273,7 @@ export function checkoutCard(workspace: Workspace, checkout: Checkout, nowMs: nu
   if (age) rows.push({ key: "commit", label: "Commit", value: age === "now" ? "now" : `${age} ago` });
   rows.push({ key: "path", label: "Path", value: checkout.path });
   return {
-    header: pr ? { kind: "pull_request", badge: pullRequestBadge(pr), lifecycle: pr.badge, isDraft: pr.is_draft, number: pr.number, url: pr.url, title: pr.title } : null,
+    header: pr ? { kind: "pull_request", badge: pullRequestBadge(pr), glyph: pullRequestKind(pr), number: pr.number, url: pr.url, title: pr.title } : null,
     rows,
   };
 }

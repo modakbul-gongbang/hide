@@ -1,5 +1,5 @@
 import { Tooltip as TooltipPrimitive } from "radix-ui";
-import { useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { useRef, useState, type ComponentProps, type FocusEvent, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
 
 // A hint for a control whose meaning is its icon or its shortcut. The label a
@@ -39,6 +39,39 @@ function TooltipContent({ className, sideOffset = 4, children, ...props }: Compo
 const LAYER = '[data-radix-popper-content-wrapper], [role="dialog"], [role="alertdialog"]';
 
 /**
+ * The open state of a hint or a card that a trigger shows on hover and focus.
+ * A press on the trigger (a click that opens a menu or a dialog, or a
+ * right-click that opens a context menu) ends it until the pointer comes back
+ * to the trigger or the keyboard leaves it for somewhere outside the layer the
+ * press opened. The hover delay that started before the press, and the focus
+ * a closing menu hands back to its trigger, would otherwise open it over or
+ * after whatever the press opened; Tab to the trigger later still shows it.
+ */
+function useHintOpen() {
+  const [open, setOpen] = useState(false);
+  const pressed = useRef(false);
+  const press = () => {
+    pressed.current = true;
+    setOpen(false);
+  };
+  return {
+    open,
+    onOpenChange: (next: boolean) => setOpen(next && !pressed.current),
+    triggerProps: {
+      onPointerDown: press,
+      onContextMenu: press,
+      onPointerEnter: () => {
+        pressed.current = false;
+      },
+      onBlur: (event: FocusEvent<HTMLElement>) => {
+        const next = event.relatedTarget;
+        if (!(next instanceof Element && next.closest(LAYER))) pressed.current = false;
+      },
+    },
+  };
+}
+
+/**
  * The shell's one way to give a control a hint: the trigger keeps its own
  * element (asChild) and gets `label` as its accessible name unless it already
  * has one, and the hint shows `label` and an optional shortcut. `reveals`
@@ -58,33 +91,10 @@ function Hint({
   reveals?: boolean;
   children: ReactNode;
 }) {
-  // A press on the trigger (a click that opens a menu or a dialog, or a
-  // right-click that opens a context menu) ends the hint until the pointer
-  // comes back to the trigger or the keyboard leaves it for somewhere else. The
-  // hover delay that started before the press, and the focus a closing menu
-  // hands back to its trigger, would otherwise open it over or after whatever
-  // the press opened; Tab to the trigger later still shows it.
-  const [open, setOpen] = useState(false);
-  const pressed = useRef(false);
-  const press = () => {
-    pressed.current = true;
-    setOpen(false);
-  };
+  const { open, onOpenChange, triggerProps } = useHintOpen();
   return (
-    <Tooltip open={open} onOpenChange={(next) => setOpen(next && !pressed.current)}>
-      <TooltipTrigger
-        asChild
-        aria-label={reveals ? undefined : label}
-        onPointerDown={press}
-        onContextMenu={press}
-        onPointerEnter={() => {
-          pressed.current = false;
-        }}
-        onBlur={(event) => {
-          const next = event.relatedTarget;
-          if (!(next instanceof Element && next.closest(LAYER))) pressed.current = false;
-        }}
-      >
+    <Tooltip open={open} onOpenChange={onOpenChange}>
+      <TooltipTrigger asChild aria-label={reveals ? undefined : label} {...triggerProps}>
         {children}
       </TooltipTrigger>
       <TooltipContent side={side}>
@@ -97,4 +107,4 @@ function Hint({
   );
 }
 
-export { Hint, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger };
+export { Hint, Tooltip, TooltipContent, TooltipProvider, TooltipTrigger, useHintOpen };

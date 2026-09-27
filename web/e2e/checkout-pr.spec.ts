@@ -209,14 +209,29 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
 
     // B10: the row's menu names the pull request; choosing it opens the same
     // address, which the Workspace already shows, so no second display appears.
-    await feature.locator("[data-checkout]").click({ button: "right" });
+    // The menu is opened on the focused row with the pointer away from the
+    // sidebar and the item chosen by keyboard, so the card that shows on
+    // focus, closed by the press, has only the menu's returned focus to
+    // reopen it, and must not.
+    await rest(page);
+    await feature.locator("[data-checkout]").focus();
+    await expect(card).toBeVisible();
+    const rowBox = await feature.locator("[data-checkout]").boundingBox();
+    if (!rowBox) throw new Error("the checkout row has no box");
+    await feature.locator("[data-checkout]").dispatchEvent("contextmenu", { clientX: rowBox.x + rowBox.width / 2, clientY: rowBox.y + rowBox.height / 2 });
     const menu = page.getByRole("menu", { name: `${BRANCH} actions` });
     await expect(menu).toBeVisible();
+    await expect(card).toHaveCount(0);
     await expect(menu.getByRole("menuitem")).toHaveText(["Open pull request #180", "Set purpose…", "Delete worktree…"]);
-    await menu.getByRole("menuitem", { name: "Open pull request #180" }).click();
+    await page.keyboard.press("ArrowDown");
+    await expect(menu.getByRole("menuitem", { name: "Open pull request #180" })).toBeFocused();
+    await page.keyboard.press("Enter");
     await expect(menu).toHaveCount(0);
     await expect(page.locator('[data-view-tab-bar] [role="tab"]')).toHaveCount(1);
     await expect(address).toHaveText(url.replace(/^https?:\/\//, ""));
+    await expect(feature.locator("[data-checkout]")).toBeFocused();
+    await page.waitForTimeout(300);
+    await expect(page.locator("[data-checkout-card]")).toHaveCount(0);
     await primary.locator("[data-checkout]").click({ button: "right" });
     const primaryMenu = page.getByRole("menu", { name: "main actions" });
     await expect(primaryMenu).toBeVisible();

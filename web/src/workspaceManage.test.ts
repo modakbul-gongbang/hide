@@ -122,6 +122,14 @@ describe("row menus", () => {
       ["remove_project", false],
       ["set_purpose", true],
     ]);
+    const pr = { number: 7, title: "", url: "https://example.invalid/pull/7", badge: "open" as const, review: null, is_draft: false };
+    expect(folderMenu(workspace(), checkout({ is_worktree: false, pull_request: pr })).map((item) => [item.id, item.separated ?? false])).toEqual([
+      ["pin", false],
+      ["new_worktree", false],
+      ["remove_project", false],
+      ["open_pull_request", true],
+      ["set_purpose", false],
+    ]);
   });
 });
 
