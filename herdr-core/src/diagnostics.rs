@@ -91,7 +91,9 @@ pub(crate) fn install(state_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-pub(crate) fn emit(record: serde_json::Value) {
+/// Public so the daemon that owns this core can record its own events in the
+/// same Logs file; a detached daemon's stderr goes nowhere.
+pub fn emit(record: serde_json::Value) {
     let message = record.to_string();
     let sink = sink_slot()
         .lock()

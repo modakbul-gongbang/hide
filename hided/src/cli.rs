@@ -233,7 +233,7 @@ fn parse_browser<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Comma
 pub fn run(kind: CommandKind) -> Result<(), String> {
     if kind == CommandKind::Help {
         println!(
-            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nEach Workspace command requires a live Hide renderer and an attested Herdr pane; it never starts Hide."
+            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide."
         );
         return Ok(());
     }
@@ -368,6 +368,18 @@ fn workspace_action_value(
     }
 }
 
+/// What the caller can do about a refused credential bootstrap. The daemon
+/// answers the bootstrap with a reason only, so the CLI names the next step.
+fn bootstrap_next_action(reason: &str) -> &'static str {
+    match reason {
+        "checkout_not_registered" => {
+            "Run the command from a shell inside a registered project checkout, or reconnect Hide, and retry"
+        }
+        "caller_unavailable" => "Retry from a live shell inside a registered project checkout",
+        _ => "Open Hide, reconnect this pane, and retry the same command",
+    }
+}
+
 fn workspace_action_before_send_refusal<T>(request_id: &str, reason: &str) -> Result<T, String> {
     println!(
         "{}",
@@ -376,7 +388,7 @@ fn workspace_action_before_send_refusal<T>(request_id: &str, reason: &str) -> Re
             "request_id": request_id,
             "reason": reason,
             "applied": "not_applied",
-            "next_action": "Open Hide, reconnect this pane, and retry the same command",
+            "next_action": bootstrap_next_action(reason),
         })
     );
     Err(reason.to_owned())
@@ -464,7 +476,7 @@ fn workspace_query_value(
     let (reference, ephemeral) = match workspace_reference(env) {
         Ok(reference) => reference,
         Err(reason) => {
-            return query_refusal(&reason, "Run Hide, reconnect this pane, and retry", report);
+            return query_refusal(&reason, bootstrap_next_action(&reason), report);
         }
     };
     let _reference_owner =

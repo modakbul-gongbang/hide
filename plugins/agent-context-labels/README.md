@@ -137,7 +137,8 @@ codex login
 
 The watcher finds `codex` on the usual install paths (`~/.local/bin`, `/opt/homebrew/bin`, `/usr/local/bin`) even when the Herdr server was started outside a login shell.
 
-The plugin startup hook runs when a Herdr server starts after restoring its session.
+The plugin startup hook runs when a Herdr server starts after restoring its session, and again when a new server takes over during a live handoff.
+In a handoff the new watcher starts while the old server's watcher still holds the lock, so it waits up to 15 seconds for that watcher to exit and logs `watcher_lock_taken_over` with the wait.
 If the plugin was installed or linked while a server was already running, the watcher starts on the next Herdr server start because linking and enabling a plugin do not rerun startup hooks.
 
 Confirm the registration:
@@ -431,7 +432,7 @@ Common event codes include `ai_provider_availability`, `raw_session_unavailable`
 | `analysis_provider_unavailable` with `usage_limited` | The Codex account is over its usage window. Every pane waits for the reset the provider reported, or ten minutes. |
 | `analysis_abandoned` | The provider layer exhausted its retries for that turn; the detail carries the failure class. The next turn starts fresh, and the refresh action re-asks now. |
 | A task label looks stale | Task labels refresh once per turn, so a pane mid-turn keeps the label it was given at the start. Use the refresh action to re-ask from the initial session view immediately. |
-| Two watchers seem to run | They cannot; a file lock guarantees one. A `watcher_already_running` log line is normal. |
+| Two watchers seem to run | They cannot; a file lock guarantees one. A starting watcher waits up to 15 seconds for the previous one to exit, then exits with `watcher_already_running` if a live watcher still holds the lock. |
 
 ## Development
 

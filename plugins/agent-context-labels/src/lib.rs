@@ -2955,10 +2955,10 @@ impl<T: HerdrEventTransport, R: SessionReader> Watcher<T, R> {
                 }
             }
 
-            // The idle cap is five seconds so the host-gone check above runs
-            // at least that often (D-08); elapsed-display and reconnect waits
-            // still shorten it.
-            let mut wait = Duration::from_secs(5);
+            // The idle cap is the host check interval so the host-gone check
+            // above runs at least that often (D-08); elapsed-display and
+            // reconnect waits still shorten it.
+            let mut wait = HOST_CHECK_INTERVAL;
             if subscription.is_none() {
                 wait = reconnect_at
                     .saturating_duration_since(std::time::Instant::now())
@@ -3193,7 +3193,20 @@ fn wake_watcher(paths: &StatePaths) {
     }
 }
 
-pub fn exclusive_watcher_lock(paths: &StatePaths) -> Result<File> {
+/// The longest the watcher loop waits before checking that the Herdr that
+/// started it is still its parent; also the loop's idle cap (D-08).
+const HOST_CHECK_INTERVAL: Duration = Duration::from_secs(5);
+
+/// How long a starting watcher waits for the previous one to release the lock.
+/// A live handoff runs the new server's startup hook while the old server's
+/// watcher still holds it; that watcher exits within one host check of losing
+/// its parent, plus its provider shutdown. A lock still held after this is a
+/// watcher of a live host, and the new one exits.
+pub const WATCHER_LOCK_TAKEOVER: Duration = HOST_CHECK_INTERVAL.saturating_mul(3);
+
+const WATCHER_LOCK_RETRY: Duration = Duration::from_millis(100);
+
+pub fn exclusive_watcher_lock(paths: &StatePaths, takeover: Duration) -> Result<File> {
     fs::create_dir_all(&paths.root)?;
     let lock = OpenOptions::new()
         .create(true)
@@ -3201,8 +3214,27 @@ pub fn exclusive_watcher_lock(paths: &StatePaths) -> Result<File> {
         .write(true)
         .truncate(false)
         .open(paths.lock())?;
-    lock.try_lock_exclusive()
-        .map_err(|_| anyhow!("watcher_already_running"))?;
+    let started = std::time::Instant::now();
+    let mut contended = false;
+    loop {
+        match lock.try_lock_exclusive() {
+            Ok(()) => break,
+            Err(error) if error.kind() != fs2::lock_contended_error().kind() => {
+                return Err(error).context("watcher lock failed");
+            }
+            Err(_) if started.elapsed() >= takeover => {
+                return Err(anyhow!("watcher_already_running"));
+            }
+            Err(_) => {
+                contended = true;
+                thread::sleep(WATCHER_LOCK_RETRY);
+            }
+        }
+    }
+    if contended {
+        let detail = format!("waited_ms={}", started.elapsed().as_millis());
+        append_log(paths, "watcher_lock_taken_over", None, Some(&detail))?;
+    }
     Ok(lock)
 }
 
