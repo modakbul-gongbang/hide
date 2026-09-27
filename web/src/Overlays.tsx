@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronUpIcon, FolderIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon, FolderIcon, LayoutDashboardIcon, LayoutGridIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Actions } from "./actions";
@@ -46,7 +46,7 @@ export function CycleOverlay() {
             <div
               key={item.key}
               role="option"
-              data-cycle-row={item.surface?.id ?? item.key}
+              data-cycle-row={item.target.kind === "surface" ? item.target.surface.id : item.key}
               data-cycle-kind={item.kind}
               aria-selected={selected}
               aria-label={[item.title, item.agent && `${item.agent.agent_kind} agent`, item.agent?.status_label, item.detail].filter(Boolean).join(", ")}
@@ -85,9 +85,12 @@ function CycleMarks({ item }: { item: CycleItem }) {
   );
 }
 
+/** All projects and an Overview wear the marks their sidebar rows wear. */
 function KindMark({ item }: { item: CycleItem }) {
   if (item.kind === "herdr") return <AgentMark kind={item.agent?.agent_kind} />;
   if (item.kind === "project") return <FolderIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />;
+  if (item.kind === "main") return <LayoutGridIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />;
+  if (item.kind === "overview") return <LayoutDashboardIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />;
   return displayMark({ kind: item.kind, label: item.title });
 }
 

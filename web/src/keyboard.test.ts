@@ -34,7 +34,7 @@ describe("Recent Panels with a device in front", () => {
       },
     } as unknown as SnapshotRest;
     const cycle = panelCycle(rest)!;
-    expect(cycle.items.map((item) => item.deviceTabId)).toEqual(["remote:mini:tab:t2", "remote:mini:tab:t1", "remote:mini:tab:t3"]);
-    expect(cycle.items[0]).toMatchObject({ title: "t2", detail: "api · Terminal", surface: null });
+    expect(cycle.items.map((item) => item.target)).toEqual(["t2", "t1", "t3"].map((id) => ({ kind: "device_tab", tabId: `remote:mini:tab:${id}` })));
+    expect(cycle.items[0]).toMatchObject({ title: "t2", detail: "api · Terminal" });
   });
 });

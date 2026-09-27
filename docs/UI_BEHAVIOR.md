@@ -543,6 +543,8 @@ An add that lands mid-removal cancels the removal and says so, rather than losin
 Web owner: `web/src/recent.ts`, `web/src/keyboard.ts`, and `CycleOverlay` in `web/src/Overlays.tsx`.
 
 Cycling recent surfaces walks every unified surface in recent-use order, across every project, checkout, and device the session holds: terminal, file/editor, and diff tabs, and on the web every View-area display (file, diff, and browser).
+On the web, All projects and each Project's Overview are rows of the same order once the page has shown them, titled `All projects` or by the Project, with `Overview` beneath and their sidebar row's mark; a revisit moves the one row to the front, and an Overview leaves with its Project.
+Committing one of them shows that screen at once, committing a Workspace surface from one shows the Workspace once its checkout is in front, and Recent Projects still restores a Project's last Workspace surface, never its Overview.
 The overlay ("Recent Panels", ⌃Tab / ⌃⇧Tab in the desktop app, ⌥` / ⌥⇧` in a browser, where Chrome keeps ⌃Tab) returns to the actually previous surface on a single chord, and repeated chords toggle between the last two surfaces; holding the modifier while repeating the chord walks older visits rather than tab-strip or agent-list order.
 A second cycle ("Recent Projects", ⌥Tab / ⌥⇧Tab) scopes to projects globally and restores each project's last used surface.
 Committing a row brings its surface forward in its own project and checkout, switching the Workspace when needed, as one event; a display's View area shows if only Agents showed, and the keyboard lands in it.

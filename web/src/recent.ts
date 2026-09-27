@@ -3,14 +3,17 @@
 //
 // One recent-use order over every surface this machine holds, across every
 // project and checkout: its Herdr tabs and the View-area displays (file, diff
-// and browser) of each checkout's Workspace. Recent Panels walks it; Recent
-// Projects walks the projects in the order they were used and restores each
-// one's last surface, which is this same order narrowed to the project. The
-// core reports what is in front, not what was before, so the order is the
-// shell's convenience: nothing here is authority, and a reload rebuilds it
-// from use.
+// and browser) of each checkout's Workspace, and the page's own screens, All
+// projects and each Project's Overview, once the operator has been on them.
+// Recent Panels walks it; Recent Projects walks the projects in the order
+// they were used and restores each one's last Workspace surface, which is
+// this same order narrowed to the project. The core reports what is in
+// front, not what was before, and the screens are the page's own navigation,
+// so the order is the shell's convenience: nothing here is authority, and a
+// reload rebuilds it from use.
 
-import type { AgentRow, Checkout, SnapshotRest, ViewDisplaySnapshot, Workspace } from "./snapshot";
+import { catalogWorkspaces, type AgentRow, type Checkout, type SnapshotRest, type ViewDisplaySnapshot, type Workspace } from "./snapshot";
+import type { Screen } from "./ui";
 import { activeDisplay, areasOf } from "./viewLayout";
 import { workspaceViewOf } from "./workspace";
 
@@ -37,6 +40,32 @@ export function tabSurface(checkout: Checkout, tabId: string): Surface {
 
 export function displaySurface(checkout: Checkout, display: ViewDisplaySnapshot): Surface {
   return { key: `display\u0000${checkout.id}\u0000${display.id}`, kind: display.kind, workspaceId: checkout.workspace_id, checkoutId: checkout.id, id: display.id, label: display.label };
+}
+
+/** A screen of the page's own: All projects, or one Project's Overview. */
+export type PageScreen = Exclude<Screen, { kind: "workspace" }>;
+
+/**
+ * A page screen in the recent order. It joins the order when the page shows
+ * it, since it is somewhere the operator goes rather than something the
+ * session holds open, and an Overview leaves with its Project.
+ */
+export type ScreenVisit = { key: string; screen: PageScreen };
+
+/** One entry of the recent order: a Workspace surface, or a screen of the page's own. */
+export type RecentEntry = Surface | ScreenVisit;
+
+function screenVisit(screen: PageScreen): ScreenVisit {
+  return { key: screen.kind === "main" ? "main" : `overview:${screen.projectId}`, screen };
+}
+
+export function isScreenVisit(entry: RecentEntry): entry is ScreenVisit {
+  return "screen" in entry;
+}
+
+/** All projects is always there; an Overview while its Project is in the catalog, on any device. */
+function screenExists(rest: SnapshotRest | null, screen: PageScreen): boolean {
+  return screen.kind === "main" || catalogWorkspaces(rest).some((workspace) => workspace.id === screen.projectId);
 }
 
 /** This machine's checkouts, in the navigator's order. */
@@ -67,6 +96,16 @@ export function currentSurface(rest: SnapshotRest | null, viewInUse: boolean): S
 }
 
 /**
+ * What the operator is on now: All projects or an Overview while the page
+ * shows one, whichever device is in front, else the Workspace surface in use
+ * (`currentSurface`) while this machine is in front.
+ */
+export function currentEntry(screen: Screen | null, rest: SnapshotRest | null, local: boolean, viewInUse: boolean): RecentEntry | null {
+  if (screen && screen.kind !== "workspace") return screenVisit(screen);
+  return local ? currentSurface(rest, viewInUse) : null;
+}
+
+/**
  * What the core has in front: the device, checkout, visible tab, and the
  * front Workspace's panel state and active display. Only a change here, or the
  * keyboard moving between a checkout's areas, is a visit; an agent's status
@@ -81,60 +120,66 @@ export function focusSignature(rest: SnapshotRest | null): string {
 }
 
 /**
- * Every surface the session still holds, in the navigator's order: each
+ * Every entry the session still holds, in the navigator's order: each
  * checkout's Herdr tabs, the front Workspace's displays as the snapshot
  * carries them, and the displays remembered for a checkout not in front,
- * which the snapshot does not carry and which the core checks on commit.
+ * which the snapshot does not carry and which the core checks on commit;
+ * then the remembered screens that still exist.
  */
-export function availableSurfaces(rest: SnapshotRest | null, remembered: readonly Surface[]): Surface[] {
-  const surfaces: Surface[] = [];
+export function availableEntries(rest: SnapshotRest | null, remembered: readonly RecentEntry[]): RecentEntry[] {
+  const entries: RecentEntry[] = [];
   for (const checkout of localCheckouts(rest)) {
-    for (const tab of checkout.tabs) if (tab.id) surfaces.push(tabSurface(checkout, tab.id));
+    for (const tab of checkout.tabs) if (tab.id) entries.push(tabSurface(checkout, tab.id));
     const layout = frontLayoutOf(rest, checkout);
     if (layout) {
-      for (const area of areasOf(layout.root)) for (const display of area.displays) surfaces.push(displaySurface(checkout, display));
+      for (const area of areasOf(layout.root)) for (const display of area.displays) entries.push(displaySurface(checkout, display));
     } else {
-      surfaces.push(...remembered.filter((surface) => surface.kind !== AGENT_SURFACE && surface.checkoutId === checkout.id));
+      entries.push(...remembered.filter((entry) => !isScreenVisit(entry) && entry.kind !== AGENT_SURFACE && entry.checkoutId === checkout.id));
     }
   }
-  return surfaces;
+  entries.push(...remembered.filter((entry) => isScreenVisit(entry) && screenExists(rest, entry.screen)));
+  return entries;
 }
 
-let surfaces: Surface[] = [];
+let entries: RecentEntry[] = [];
 let projects: string[] = [];
-/** The surface a Recent Panels or Recent Projects commit asked for, until the page shows it (see `expectSurface`). */
+/** The entry a Recent Panels or Recent Projects commit asked for, until the page shows it (see `expectSurface`). */
 let expected: string | null = null;
 
 /**
  * Brings the order up to date with what the session holds and moves the
- * surface in use to its front. Surfaces that are gone leave, and ones never
- * used join at the end in the navigator's order, so the order is bounded by
- * what exists.
+ * entry in use to its front. Entries that are gone leave, surfaces never
+ * used join at the end in the navigator's order, and a screen joins when it
+ * is first shown, so the order is bounded by what exists: every surface, one
+ * Overview per Project in the catalog, and All projects.
  */
-export function observeSurfaces(rest: SnapshotRest | null, current: Surface | null) {
-  const available = availableSurfaces(rest, surfaces);
-  const byKey = new Map(available.map((surface) => [surface.key, surface]));
+export function observeEntries(rest: SnapshotRest | null, current: RecentEntry | null) {
+  const available = availableEntries(rest, entries);
+  const byKey = new Map(available.map((entry) => [entry.key, entry]));
   const known = new Set<string>();
-  const next: Surface[] = [];
-  for (const surface of surfaces) {
-    const fresh = byKey.get(surface.key);
-    if (fresh && !known.has(surface.key)) {
-      known.add(surface.key);
+  const next: RecentEntry[] = [];
+  for (const entry of entries) {
+    const fresh = byKey.get(entry.key);
+    if (fresh && !known.has(entry.key)) {
+      known.add(entry.key);
       next.push(fresh);
     }
   }
-  for (const surface of available) {
-    if (known.has(surface.key)) continue;
-    known.add(surface.key);
-    next.push(surface);
+  for (const entry of available) {
+    if (known.has(entry.key)) continue;
+    known.add(entry.key);
+    next.push(entry);
   }
-  surfaces = next;
+  entries = next;
   // A commit's own frames pass through the target's other surface (the
-  // checkout arrives before the keyboard does); none of them is a visit.
+  // checkout arrives before the keyboard does, an Overview stays on screen
+  // until the Workspace is in front); none of them is a visit.
   if (expected && current?.key !== expected) return;
   expected = null;
-  if (!current || !byKey.has(current.key)) return;
-  surfaces = [byKey.get(current.key)!, ...surfaces.filter((surface) => surface.key !== current.key)];
+  if (!current) return;
+  const visited = isScreenVisit(current) ? (screenExists(rest, current.screen) ? current : null) : byKey.get(current.key);
+  if (!visited) return;
+  entries = [visited, ...entries.filter((entry) => entry.key !== visited.key)];
 }
 
 /** The project in front, first in the Recent Projects order. */
@@ -143,18 +188,19 @@ export function observeProject(workspaceId: string | null | undefined) {
   projects = [workspaceId, ...projects.filter((id) => id !== workspaceId)];
 }
 
-/** Marks the surface a commit is bringing forward: visits are not recorded until the page shows it or the operator acts. */
+/** Marks the entry a commit is bringing forward: visits are not recorded until the page shows it or the operator acts. */
 export function expectSurface(key: string | null) {
   expected = key;
 }
 
-export function recentSurfaces(): readonly Surface[] {
-  return surfaces;
+export function recentEntries(): readonly RecentEntry[] {
+  return entries;
 }
 
-/** The project's surface used last, which Recent Projects restores. */
+/** The project's Workspace surface used last, which Recent Projects restores. */
 export function lastSurfaceOf(workspaceId: string): Surface | null {
-  return surfaces.find((surface) => surface.workspaceId === workspaceId) ?? null;
+  for (const entry of entries) if (!isScreenVisit(entry) && entry.workspaceId === workspaceId) return entry;
+  return null;
 }
 
 /** `existing` projects in recent order, unused ones after in their own order. */
@@ -165,27 +211,33 @@ export function recentProjectOrder(existing: readonly string[]): string[] {
 
 /** Test seam. */
 export function resetRecent() {
-  surfaces = [];
+  entries = [];
   projects = [];
   expected = null;
 }
 
 // --- rows -----------------------------------------------------------------
 
+/** What committing a switcher row brings forward. */
+export type CycleTarget =
+  /** A Workspace surface, in its own checkout. */
+  | { kind: "surface"; surface: Surface }
+  /** All projects or a Project's Overview, which the page shows itself. */
+  | { kind: "screen"; screen: PageScreen }
+  /** A tab of the device in front, which that device's Herdr focuses. */
+  | { kind: "device_tab"; tabId: string }
+  /** A project with no surface to restore, on its checkout. */
+  | { kind: "checkout"; workspaceId: string; checkoutId: string };
+
 /** What a switcher row draws and what committing it names. */
 export type CycleItem = {
   key: string;
   title: string;
   detail: string;
-  kind: SurfaceKind | "project";
+  kind: SurfaceKind | "project" | PageScreen["kind"];
   /** The one agent a tab holds, drawn with its status mark and its own mark. */
   agent: Pick<AgentRow, "agent_kind" | "symbol" | "status_label" | "demand" | "activity" | "emphasized" | "waiting_on_descendants"> | null;
-  /** The surface a commit brings forward, or null for a project with none to restore and for a device's tab. */
-  surface: Surface | null;
-  /** A tab of the device in front, which that device's Herdr focuses. */
-  deviceTabId?: string;
-  workspaceId: string;
-  checkoutId: string;
+  target: CycleTarget;
 };
 
 const KIND_LABEL: Record<SurfaceKind, string> = { herdr: "Terminal", file: "File", diff: "Diff", browser: "Browser" };
@@ -206,13 +258,16 @@ function findCheckout(rest: SnapshotRest | null, checkoutId: string) {
 /**
  * A Recent Panels row: a tab holding exactly one agent pane is called by
  * that agent and carries its status mark; any other tab keeps its Herdr
- * label, and a display its own name.
+ * label, and a display its own name. A screen is called by its Project, or
+ * All projects, and is gone with its Project.
  */
-export function panelItem(rest: SnapshotRest | null, surface: Surface): CycleItem | null {
+export function panelItem(rest: SnapshotRest | null, entry: RecentEntry): CycleItem | null {
+  if (isScreenVisit(entry)) return screenItem(rest, entry);
+  const surface = entry;
   const place = findCheckout(rest, surface.checkoutId);
   if (!place) return null;
   const detail = `${placeLabel(place.workspace, place.checkout)} · ${KIND_LABEL[surface.kind]}`;
-  const base = { key: surface.key, kind: surface.kind, surface, workspaceId: surface.workspaceId, checkoutId: surface.checkoutId, detail };
+  const base = { key: surface.key, kind: surface.kind, target: { kind: "surface", surface } as const, detail };
   if (surface.kind !== AGENT_SURFACE) return { ...base, title: surface.label, agent: null };
   const tab = place.checkout.tabs.find((row) => row.id === surface.id);
   if (!tab) return null;
@@ -222,14 +277,23 @@ export function panelItem(rest: SnapshotRest | null, surface: Surface): CycleIte
   return { ...base, title: agent?.identity_label ?? tab.label ?? surface.id, agent };
 }
 
+function screenItem(rest: SnapshotRest | null, visit: ScreenVisit): CycleItem | null {
+  const { screen } = visit;
+  const title = screen.kind === "main" ? "All projects" : catalogWorkspaces(rest).find((workspace) => workspace.id === screen.projectId)?.label;
+  if (title === undefined) return null;
+  return { key: visit.key, title, detail: "Overview", kind: screen.kind, agent: null, target: { kind: "screen", screen } };
+}
+
 /** A Recent Projects row: the project, with the surface and checkout it would come back on. */
 export function projectItem(workspace: Workspace, rest: SnapshotRest | null, local: boolean): CycleItem | null {
   const last = local ? lastSurfaceOf(workspace.id) : null;
   const lastItem = last ? panelItem(rest, last) : null;
-  const checkout = (lastItem && workspace.checkouts.find((row) => row.id === lastItem.checkoutId)) ?? workspace.checkouts[0];
+  const restored = lastItem ? last : null;
+  const checkout = (restored && workspace.checkouts.find((row) => row.id === restored.checkoutId)) ?? workspace.checkouts[0];
   if (!checkout) return null;
   const detail = lastItem ? `${lastItem.title} · ${checkout.label}` : checkout.label;
-  return { key: workspace.id, title: workspace.label, detail, kind: "project", agent: null, surface: lastItem ? last : null, workspaceId: workspace.id, checkoutId: checkout.id };
+  const target: CycleTarget = restored ? { kind: "surface", surface: restored } : { kind: "checkout", workspaceId: workspace.id, checkoutId: checkout.id };
+  return { key: workspace.id, title: workspace.label, detail, kind: "project", agent: null, target };
 }
 
 // --- the held cycle ---------------------------------------------------------
