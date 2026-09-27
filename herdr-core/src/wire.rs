@@ -231,6 +231,7 @@ macro_rules! record_conversions {
                 Self {
                     tab_id: v.tab_id,
                     workspace_id: v.workspace_id,
+                    number: v.number,
                     label: v.label,
                 }
             }
@@ -239,6 +240,8 @@ macro_rules! record_conversions {
             fn from(v: $wire::PaneInfo) -> Self {
                 Self {
                     pane_id: v.pane_id,
+                    foreground_process: None,
+                    agent_status: v.agent_status.to_string(),
                     workspace_id: v.workspace_id,
                     tab_id: v.tab_id,
                     cwd: v.cwd,
@@ -1107,10 +1110,41 @@ pub(crate) struct PaneProcessGroup {
     pub(crate) foreground_process_group_id: Option<u32>,
 }
 
+pub(crate) fn tab_rename_params(tab_id: &str, label: &str) -> Result<Value, String> {
+    params(req::TabRenameParams {
+        tab_id: tab_id.into(),
+        label: label.into(),
+    })
+}
+
 pub(crate) fn pane_process_info_params(pane_id: &str) -> Result<Value, String> {
     params(req::PaneProcessInfoParams {
         pane_id: Some(pane_id.into()),
     })
+}
+
+pub(crate) fn foreground_process(value: Value, pane_id: &str) -> Result<Option<String>, String> {
+    match response(value, "pane.process_info response is missing process_info")? {
+        res::ResponseResult::PaneProcessInfo { process_info, .. }
+            if process_info.pane_id == pane_id =>
+        {
+            let process = process_info
+                .foreground_processes
+                .iter()
+                .find(|process| Some(process.pid) == process_info.foreground_process_group_id)
+                .or_else(|| process_info.foreground_processes.last());
+            Ok(process.and_then(|process| {
+                let argv0 = process.argv0.as_deref().unwrap_or_default().trim();
+                let name = if argv0.is_empty() {
+                    process.name.trim()
+                } else {
+                    argv0.rsplit('/').next().unwrap_or_default()
+                };
+                (!name.is_empty()).then(|| name.to_owned())
+            }))
+        }
+        _ => Err("pane.process_info response does not match requested pane".into()),
+    }
 }
 
 pub(crate) fn pane_process_group(value: Value) -> Result<PaneProcessGroup, String> {
@@ -1489,6 +1523,69 @@ pub(crate) fn checked_response_fixture(id: &Value, result: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn process_names_select_the_group_leader_then_last_and_prefer_argv0() {
+        let mut value = serde_json::json!({"type":"pane_process_info", "process_info": {
+            "pane_id":"w1:p1", "foreground_process_group_id":41085,
+            "foreground_processes":[
+                {"pid":10130,"name":"caffeinate","argv0":"/usr/bin/caffeinate"},
+                {"pid":41085,"name":"2.1.283","argv0":"/usr/local/bin/claude"}
+            ], "terminal_title":"never use this"
+        }});
+        assert_eq!(
+            super::foreground_process(value.clone(), "w1:p1")
+                .unwrap()
+                .as_deref(),
+            Some("claude")
+        );
+        value["process_info"]["foreground_processes"]
+            .as_array_mut()
+            .unwrap()
+            .reverse();
+        assert_eq!(
+            super::foreground_process(value.clone(), "w1:p1")
+                .unwrap()
+                .as_deref(),
+            Some("claude")
+        );
+        value["process_info"]["foreground_process_group_id"] = serde_json::json!(999);
+        assert_eq!(
+            super::foreground_process(value.clone(), "w1:p1")
+                .unwrap()
+                .as_deref(),
+            Some("caffeinate")
+        );
+        value["process_info"]["foreground_processes"][1]["argv0"] = serde_json::json!("");
+        assert_eq!(
+            super::foreground_process(value.clone(), "w1:p1")
+                .unwrap()
+                .as_deref(),
+            Some("caffeinate")
+        );
+        value["process_info"]["foreground_processes"][1]["name"] = serde_json::json!("");
+        assert_eq!(super::foreground_process(value, "w1:p1").unwrap(), None);
+    }
+
+    #[test]
+    fn process_names_use_the_contract_and_never_terminal_titles() {
+        let value = serde_json::json!({"type":"pane_process_info", "process_info": {
+            "pane_id":"w1:p1", "foreground_processes":[{"pid":12,"name":"cargo"}], "terminal_title":"guess"
+        }});
+        assert_eq!(
+            super::foreground_process(value.clone(), "w1:p1")
+                .unwrap()
+                .as_deref(),
+            Some("cargo")
+        );
+        assert!(super::foreground_process(value, "w2:p1").is_err());
+        let empty = serde_json::json!({"type":"pane_process_info", "process_info":{"pane_id":"w1:p1","foreground_processes":[]}});
+        assert_eq!(super::foreground_process(empty, "w1:p1").unwrap(), None);
+        assert_eq!(
+            super::tab_rename_params("w1:t1", "").unwrap(),
+            serde_json::json!({"tab_id":"w1:t1","label":""})
+        );
+    }
+
     use super::*;
     use crate::herdr_contract::HERDR_API_SCHEMA_JSON;
 

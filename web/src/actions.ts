@@ -1023,6 +1023,10 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "focus_checkout", payload: { ...ids, display_id: surface.id, ...focusDevice } });
     },
 
+    renameTab(tabId: string, label: string, requestId: string) {
+      dispatch({ schema_version: 2, kind: "rename_tab", payload: { tab_id: tabId, label, request_id: requestId } });
+    },
+
     reorderTab(stripId: string, toIndex: number) {
       // A device's strip is arranged by the core as this machine's is; a
       // Herdr tab moves on the device's own Herdr (`reorder_tab`).

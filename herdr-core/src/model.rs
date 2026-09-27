@@ -909,6 +909,8 @@ pub struct CheckoutSnapshot {
     /// description, representative agent title, pull-request title.
     pub purpose: Option<CheckoutPurposeSnapshot>,
     pub is_worktree: bool,
+    /// The core-owned home choice, independent of the Git main worktree.
+    pub is_primary: bool,
     pub exists: bool,
     pub temporary: bool,
     /// Whether Herdr has a pane here. A worktree earns a row from git rather
@@ -1082,21 +1084,65 @@ impl StripTabSnapshot {
     }
 }
 
-/// The label a tab is drawn by, derived from the tab's own identity.
-///
-/// Herdr numbers an unnamed tab, which reads as a bare "2" in a strip; that
-/// number becomes "Tab 2". A tab the operator named keeps its name. A tab
-/// Herdr reports without any label falls back to its id, never to its
-/// position in the strip: a position-derived label renames every tab when one
-/// of them moves.
-pub fn display_tab_label(raw_label: &str, tab_id: &str) -> String {
+/// Preserve the established numeric label when a projection has no newer number.
+pub fn tab_number(raw_label: &str, fallback: u32) -> u32 {
     let trimmed = raw_label.trim();
-    if trimmed.is_empty() {
-        return tab_id.to_owned();
+    trimmed
+        .strip_prefix("Tab ")
+        .unwrap_or(trimmed)
+        .trim()
+        .parse()
+        .unwrap_or(fallback)
+}
+
+/// A custom name wins; automatic names follow the focused pane's identity.
+pub fn display_tab_label(
+    raw_label: &str,
+    number: u32,
+    agent_title: Option<&str>,
+    process: Option<&str>,
+) -> String {
+    let trimmed = raw_label.trim();
+    let automatic_number = trimmed
+        .strip_prefix("Tab ")
+        .unwrap_or(trimmed)
+        .trim()
+        .parse::<u32>()
+        .ok();
+    if !trimmed.is_empty() && automatic_number.is_none() {
+        return trimmed.to_owned();
     }
-    match trimmed.parse::<u32>() {
-        Ok(number) => format!("Tab {number}"),
-        Err(_) => trimmed.to_owned(),
+    agent_title
+        .into_iter()
+        .chain(process)
+        .map(str::trim)
+        .find(|name| !name.is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("Tab {}", automatic_number.unwrap_or(number)))
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TabAgentSnapshot {
+    pub agent_kind: String,
+    pub symbol: String,
+    pub demand: String,
+    pub activity: String,
+    pub emphasized: bool,
+    pub waiting_on_descendants: bool,
+    pub status_label: String,
+}
+
+impl From<&SidebarAgentSnapshot> for TabAgentSnapshot {
+    fn from(agent: &SidebarAgentSnapshot) -> Self {
+        Self {
+            agent_kind: agent.agent_kind.clone(),
+            symbol: agent.symbol.clone(),
+            demand: agent.demand.clone(),
+            activity: agent.activity.clone(),
+            emphasized: agent.emphasized,
+            waiting_on_descendants: agent.waiting_on_descendants,
+            status_label: agent.status_label.clone(),
+        }
     }
 }
 
@@ -1145,8 +1191,28 @@ pub struct OverlayActionSnapshot {
     pub destructive: bool,
 }
 
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TabNaming {
+    pub focused_pane_id: String,
+    pub number: u32,
+    pub processes: BTreeMap<String, String>,
+    pub raw: String,
+    pub automatic: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct TabRenameSnapshot {
+    pub request_id: String,
+    pub tab_id: String,
+    pub label: String,
+    pub phase: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TabSnapshot {
+    #[serde(skip_serializing)]
+    pub naming: TabNaming,
+    pub agent: Option<TabAgentSnapshot>,
     pub id: Option<String>,
     pub workspace_id: Option<String>,
     pub checkout_id: Option<String>,
@@ -2090,6 +2156,9 @@ impl Default for UiStateSnapshot {
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WorkspaceRegistration {
+    /// None preserves the root default for registrations written before this choice existed.
+    #[serde(default)]
+    pub primary_checkout_id: Option<String>,
     pub id: String,
     pub label: String,
     pub path: String,
@@ -2681,6 +2750,7 @@ pub struct TextRangeSnapshot {
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct StatusSnapshot {
+    pub tab_rename: Option<TabRenameSnapshot>,
     pub herdr: ProviderStatusSnapshot,
     pub remote: Vec<RemoteStatusSnapshot>,
     pub environment: Vec<EnvironmentStatusSnapshot>,
@@ -3010,6 +3080,8 @@ impl Snapshot {
                 actions: Vec::new(),
             },
             tab: TabSnapshot {
+                agent: None,
+                naming: Default::default(),
                 id: None,
                 workspace_id: None,
                 checkout_id: None,
@@ -3065,6 +3137,7 @@ impl Snapshot {
             },
             input_generation: 0,
             status: StatusSnapshot {
+                tab_rename: None,
                 herdr: ProviderStatusSnapshot {
                     state: herdr_state.to_owned(),
                     socket_path: options.herdr_socket_path.clone(),

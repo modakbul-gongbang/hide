@@ -800,6 +800,12 @@ fn daemon_binary() -> Result<std::path::PathBuf, String> {
 }
 
 fn spawn_daemon(env: &Env, keep_alive: bool) -> Result<(), String> {
+    // The daemon would refuse the same value after it is spawned; checking
+    // here answers `start_failed` with the path instead of a ten-second
+    // `no_response` that names nothing.
+    if let Some(error) = env::herdr_bin_error(env) {
+        return Err(error);
+    }
     let mut command = Command::new(daemon_binary()?);
     command.env("HIDE_STATE_DIR", &env.state_dir);
     if keep_alive {

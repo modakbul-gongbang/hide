@@ -580,6 +580,7 @@ fn pane_focus_request_moves_to_the_checkout_that_owns_the_target() {
     let mut runtime = runtime();
     runtime.snapshot.ui_state.workspace_registrations = vec![
         WorkspaceRegistration {
+            primary_checkout_id: None,
             id: project_a.to_owned(),
             label: "Alpha".to_owned(),
             path: path_a.clone(),
@@ -587,6 +588,7 @@ fn pane_focus_request_moves_to_the_checkout_that_owns_the_target() {
             pinned: false,
         },
         WorkspaceRegistration {
+            primary_checkout_id: None,
             id: project_b.to_owned(),
             label: "Beta".to_owned(),
             path: path_b.clone(),
@@ -1996,13 +1998,21 @@ fn tab_strip_reorder_ignores_a_result_a_later_drag_has_replaced() {
 }
 
 #[test]
-fn tab_label_turns_a_herdr_number_into_a_name_and_keeps_a_named_tab() {
-    assert_eq!(crate::model::display_tab_label("2", "w1:t2"), "Tab 2");
-    assert_eq!(crate::model::display_tab_label(" 2 ", "w1:t2"), "Tab 2");
-    assert_eq!(crate::model::display_tab_label("notes", "w1:t2"), "notes");
-    // A tab Herdr reports with no label at all falls back to its own id,
-    // which is still its identity rather than its place in the strip.
-    assert_eq!(crate::model::display_tab_label("", "w1:t2"), "w1:t2");
+fn tab_label_follows_focused_pane_unless_custom_named() {
+    use crate::model::display_tab_label;
+    assert_eq!(
+        display_tab_label("notes", 2, Some("작업 제목"), Some("cargo")),
+        "notes"
+    );
+    for raw in ["2", " Tab 2 ", ""] {
+        assert_eq!(
+            display_tab_label(raw, 2, Some("작업 제목"), Some("cargo")),
+            "작업 제목"
+        );
+        assert_eq!(display_tab_label(raw, 2, None, Some("cargo")), "cargo");
+        assert_eq!(display_tab_label(raw, 2, None, None), "Tab 2");
+    }
+    assert_eq!(display_tab_label("", 7, Some("  "), Some("zsh")), "zsh");
 }
 
 /// The shell used to name an unlabelled tab after its position, which
@@ -2052,6 +2062,7 @@ fn a_plain_terminal_pane_cwd_is_reconciled_into_its_checkout() {
     let mut runtime = runtime();
     let checkout_path = "/private/tmp/hide-registered-checkout";
     runtime.snapshot.ui_state.workspace_registrations = vec![WorkspaceRegistration {
+        primary_checkout_id: None,
         id: "workspace:registered".to_owned(),
         label: "registered".to_owned(),
         path: checkout_path.to_owned(),
@@ -2174,6 +2185,7 @@ fn a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd() {
     let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
     let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
     let registration = WorkspaceRegistration {
+        primary_checkout_id: None,
         id: workspace_id.clone(),
         label: "Selected".to_owned(),
         path: checkout_path.to_owned(),
@@ -2324,6 +2336,7 @@ fn a_missing_selected_pane_reports_without_falling_back_to_a_same_cwd_pane() {
     let workspace_id = workspace::workspace_id_for_path(Path::new(checkout_path));
     let checkout_id = workspace::checkout_id_for_path(&workspace_id, Path::new(checkout_path));
     let registration = WorkspaceRegistration {
+        primary_checkout_id: None,
         id: workspace_id.clone(),
         label: "Missing pane".to_owned(),
         path: checkout_path.to_owned(),
@@ -2832,5 +2845,136 @@ fn a_checkout_chosen_with_its_device_moves_both_or_neither() {
     assert_eq!(
         runtime.snapshot.navigator.focused_device_id.as_deref(),
         Some(workspace::LOCAL_DEVICE_ID)
+    );
+}
+
+#[test]
+fn tab_rename_keeps_the_committed_name_on_failure_and_ignores_old_receipts() {
+    let mut runtime = runtime();
+    let mut checkout = checkout("w", "c", "/fixture", None);
+    let mut tab = tab("w", "c", None);
+    tab.naming = crate::model::TabNaming {
+        focused_pane_id: String::new(),
+        raw: "Saved".into(),
+        automatic: "작업 제목".into(),
+        ..Default::default()
+    };
+    tab.label = Some("Saved".into());
+    checkout.tabs.push(tab.clone());
+    checkout.strip = StripTabSnapshot::from_herdr_tabs(&checkout.tabs);
+    runtime.snapshot.navigator.workspaces =
+        vec![workspace("w", "Fixture", "/fixture", vec![checkout])];
+    runtime.snapshot.tab = tab;
+    let request = |id: &str, label: &str| RenameTabPayload {
+        request_id: id.into(),
+        tab_id: "c:tab".into(),
+        label: label.into(),
+    };
+    // No connector is installed. The real event failure leaves the committed
+    // name and records a correlated retry result without a global alert.
+    runtime.rename_tab(request("first", "변경할 이름"));
+    assert_eq!(
+        runtime.snapshot.status.tab_rename.as_ref().unwrap().phase,
+        "failed"
+    );
+    assert_eq!(
+        runtime.snapshot.status.tab_rename.as_ref().unwrap().label,
+        "변경할 이름"
+    );
+    assert_eq!(runtime.snapshot.tab.label.as_deref(), Some("Saved"));
+    assert!(runtime.snapshot.status.last_error.is_none());
+    runtime.rename_tab(request("retry", ""));
+    assert!(!runtime.ingest_tab_rename_result("first", Ok(())));
+    assert_eq!(runtime.snapshot.tab.label.as_deref(), Some("Saved"));
+    runtime.ingest_tab_rename_result("retry", Ok(()));
+    assert_eq!(runtime.snapshot.tab.label.as_deref(), Some("작업 제목"));
+    assert_eq!(
+        runtime.snapshot.navigator.workspaces[0].checkouts[0].strip[0].label,
+        "작업 제목"
+    );
+    // A stale projection cannot undo an acknowledged clear; once Herdr
+    // confirms it, a subsequent external rename becomes authoritative.
+    let mut incoming = runtime.snapshot.tab.clone();
+    incoming.naming.raw = "Saved".into();
+    incoming.label = Some("Saved".into());
+    runtime.apply_tab_rename(&mut incoming);
+    assert_eq!(incoming.label.as_deref(), Some("작업 제목"));
+    incoming.naming.raw.clear();
+    runtime.apply_tab_rename(&mut incoming);
+    incoming.naming.raw = "External".into();
+    incoming.label = Some("External".into());
+    runtime.apply_tab_rename(&mut incoming);
+    assert_eq!(incoming.label.as_deref(), Some("External"));
+
+    let herdr =
+        crate::fake_herdr::FakeHerdr::start("rename-busy", |_, _| serde_json::json!({"type":"ok"}));
+    runtime.live = Some(live::LiveContext {
+        socket_path: herdr.socket_path().to_owned(),
+        herdr_bin: None,
+        runtime: std::sync::Weak::new(),
+        notifier: crate::handle::ChangeNotifier::noop(),
+        api_connector: Arc::new(herdr.connector()),
+    });
+    runtime.rename_tab(request("slow", "First"));
+    runtime.rename_tab(request("newer", "Retry me"));
+    runtime.ingest_tab_rename_result("slow", Ok(()));
+    let receipt = runtime.snapshot.status.tab_rename.as_ref().unwrap();
+    assert_eq!(
+        (&*receipt.request_id, &*receipt.phase, &*receipt.label),
+        ("newer", "failed", "Retry me")
+    );
+    runtime.live = None;
+}
+
+#[test]
+fn tab_name_follows_core_focus_before_herdr_and_on_refusal() {
+    let path = "/private/tmp/hide-tab-focus-name";
+    let (mut runtime, _) = tab_order_runtime(path);
+    let mut payload = tab_order_payload(path, &["w-order:t1"], &["w-order:t1"], "w-order:t1");
+    let mut second = payload.panes[0].clone();
+    second.pane_id = "w-order:p2".into();
+    second.foreground_process = Some("cargo".into());
+    payload.panes[0].foreground_process = Some("zsh".into());
+    payload.panes.push(second);
+    let mut second_rect = payload.layouts[0].panes[0].clone();
+    second_rect.pane_id = "w-order:p2".into();
+    second_rect.rect.x = 40;
+    second_rect.rect.width = 40;
+    payload.layouts[0].panes[0].rect.width = 40;
+    payload.layouts[0].panes.push(second_rect);
+    payload.layouts[0].splits = serde_json::from_value(serde_json::json!([{
+        "direction":"right", "ratio":0.5,
+        "rect":{"x":0,"y":0,"width":80,"height":24}
+    }]))
+    .unwrap();
+    runtime.ingest_session(Ok(payload.clone()));
+    assert_eq!(runtime.snapshot.tab.label.as_deref(), Some("zsh"));
+    let mut external = payload.clone();
+    external.focused_pane_id = Some("w-order:p2".into());
+    external.layouts[0].focused_pane_id = "w-order:p2".into();
+    runtime.ingest_session(Ok(external));
+    assert_eq!(
+        runtime.snapshot.focused.pane_id.as_deref(),
+        Some("w-order:p2")
+    );
+    assert_eq!(runtime.snapshot.tab.label.as_deref(), Some("cargo"));
+    runtime.ingest_session(Ok(payload));
+    assert_eq!(runtime.snapshot.tab.label.as_deref(), Some("zsh"));
+    runtime.dispatch_json(&correlated_pane_focus_event("w-order:p2", "label-focus"));
+    assert_eq!(
+        runtime.snapshot.focused.pane_id.as_deref(),
+        Some("w-order:p2")
+    );
+    assert_eq!(runtime.snapshot.tab.label.as_deref(), Some("cargo"));
+    assert_eq!(runtime.snapshot.tab.naming.focused_pane_id, "w-order:p2");
+    assert_eq!(
+        runtime
+            .snapshot
+            .status
+            .pane_focus_request
+            .as_ref()
+            .unwrap()
+            .phase,
+        "failed"
     );
 }

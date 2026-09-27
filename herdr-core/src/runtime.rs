@@ -18,6 +18,7 @@ mod memory;
 mod operations;
 mod project_sessions;
 mod projects;
+mod rename;
 mod session;
 mod snapshot_delta;
 mod terminal;
@@ -401,7 +402,7 @@ const DIAGNOSTIC_RETENTION: usize = 256;
 /// was rejected because the core owns no timer and the behaviour could not be
 /// proved without one; a visit count is decided by the same events that draw
 /// the screen.
-const ATTACHED_TAB_LIMIT: usize = 5;
+pub(crate) const ATTACHED_TAB_LIMIT: usize = 5;
 
 /// How long a relocation waits before Hide asks again.
 ///
@@ -597,7 +598,11 @@ fn is_remote_scoped_pane_id(pane_id: &str) -> bool {
 /// Left alone it publishes `Done` and demands a close confirmation for every
 /// pane the operator has already read. One owner decides the answer; every
 /// tree copies it, local and remote alike, because a pane is a pane.
-fn sync_pane_status(workspaces: &mut [WorkspaceSnapshot], agents: &[SidebarAgentSnapshot]) -> bool {
+fn sync_pane_status(
+    workspaces: &mut [WorkspaceSnapshot],
+    agents: &[SidebarAgentSnapshot],
+    focused: Option<&str>,
+) -> bool {
     let by_pane = agents
         .iter()
         .map(|agent| {
@@ -635,6 +640,55 @@ fn sync_pane_status(workspaces: &mut [WorkspaceSnapshot], agents: &[SidebarAgent
             pane.requires_close_status_check = requires_close_status_check;
             changed = true;
         }
+    }
+    // The tab uses the very row whose read, lineage and sleep axes were just
+    // derived. A second status derivation here would diverge from the sidebar.
+    let agent_by_pane = agents
+        .iter()
+        .map(|agent| (agent.pane_id.as_str(), agent))
+        .collect::<BTreeMap<_, _>>();
+    for tab in workspaces
+        .iter_mut()
+        .flat_map(|workspace| &mut workspace.checkouts)
+        .flat_map(|checkout| &mut checkout.tabs)
+    {
+        if let Some(focused) = focused.filter(|id| tab.panes.iter().any(|pane| pane.id == *id)) {
+            changed |= tab.naming.focused_pane_id != focused;
+            tab.naming.focused_pane_id = focused.to_owned();
+        }
+        let agent = agent_by_pane
+            .get(tab.naming.focused_pane_id.as_str())
+            .copied();
+        if !tab.naming.focused_pane_id.is_empty() {
+            tab.naming.automatic = crate::model::display_tab_label(
+                "",
+                tab.naming.number,
+                agent.map(|agent| agent.identity_label.as_str()),
+                tab.naming
+                    .processes
+                    .get(&tab.naming.focused_pane_id)
+                    .map(String::as_str),
+            );
+            let label = crate::model::display_tab_label(
+                &tab.naming.raw,
+                tab.naming.number,
+                Some(&tab.naming.automatic),
+                None,
+            );
+            changed |= tab.label.as_deref() != Some(&label);
+            tab.label = Some(label);
+        }
+        let representative = agent.map(crate::model::TabAgentSnapshot::from);
+        if tab.agent != representative {
+            tab.agent = representative;
+            changed = true;
+        }
+    }
+    for checkout in workspaces
+        .iter_mut()
+        .flat_map(|workspace| &mut workspace.checkouts)
+    {
+        rename::refresh_strip_labels(checkout);
     }
     // What the pane body and its menu say about sleep follows the same row,
     // and a pane whose agent left takes neither with it.
@@ -992,6 +1046,7 @@ pub struct Runtime {
     usage_popover_open: bool,
     usage_popover_open_generation: u64,
     recent_visible_tabs: Vec<String>,
+    pending_tab_rename: Option<rename::PendingRename>,
     /// Panes Hide has asked Herdr to close. Herdr closes the PTY first, so the
     /// attach child ends before the `pane_closed` event arrives and the pane
     /// is still on screen when its transport reports the close. Projecting
@@ -1373,6 +1428,7 @@ impl Runtime {
             usage_popover_open: false,
             usage_popover_open_generation: 0,
             recent_visible_tabs: Vec::new(),
+            pending_tab_rename: None,
             panes_closing: HashSet::new(),
             recent_closed: VecDeque::new(),
             close_capture_order: VecDeque::new(),
