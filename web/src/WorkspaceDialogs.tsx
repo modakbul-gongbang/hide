@@ -485,6 +485,8 @@ export function WorkspaceNotices({ actions }: { actions: Actions }) {
   // core selects it when the creation lands, but only a focus request is
   // tracked until Herdr confirms it, so the move is made explicit once the
   // pane is listed: a late focus event for the pane left behind cannot undo it.
+  // It is opened as an agent row opens its pane, so a worktree started from
+  // an Overview (Start, New agent) brings its Workspace to the front.
   const focusWhenListed = useUiStore((s) => s.focusWhenListed);
   const listed = useShellStore((s) =>
     focusWhenListed !== null &&
@@ -495,7 +497,7 @@ export function WorkspaceNotices({ actions }: { actions: Actions }) {
   useEffect(() => {
     if (!focusWhenListed || !listed) return;
     useUiStore.getState().setFocusWhenListed(null);
-    actions.focusPane(focusWhenListed);
+    actions.openAgent(focusWhenListed);
   }, [focusWhenListed, listed, actions]);
 
   if (!task || !task.agent_phase || task.agent_phase === "started") return null;

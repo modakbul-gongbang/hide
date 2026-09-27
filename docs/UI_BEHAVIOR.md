@@ -301,7 +301,7 @@ The Start dialog turns an issue into work in one step: a worktree named for the 
 The name opens as the issue number and the title's English words (`192-hided-sigterm-handler`, `L-3-...`, or `issue-192` when the title has none), and when Settings › Issues allows it the background AI's name replaces it once it answers, unless the operator has typed; `↺ AI 이름으로` brings the AI's name back.
 A name that is already a branch says so, and when a worktree has it the primary button opens that worktree instead.
 The first prompt is filled from the issue's body, which the dialog reads when it opens, names the issue, and for a GitHub issue asks for a pull request that closes it when Settings › Issues says so; the operator edits it before starting.
-Starting creates the worktree, writes the link into it, starts the agent, and sends the prompt once the agent is ready; a folder project has no worktree, so its agent starts in the folder with the prompt.
+Starting creates the worktree, writes the link into it, starts the agent, and sends the prompt once the agent is ready, then brings the new pane's Workspace to the front; a folder project has no worktree, so its agent starts in the folder with the prompt.
 이슈 연결 is a search over the project's open issues, and a title no issue matches can be made into one in place and linked.
 
 `Board | List | Dependencies` on the right of the tab row is a mode of the Tasks view, not a tab; like the view it belongs to the page, so another scope keeps it.

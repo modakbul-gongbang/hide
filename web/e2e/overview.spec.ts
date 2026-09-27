@@ -475,9 +475,10 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await start.locator('[data-start-agent="terminal"]').click();
     await start.locator('[data-start-submit="start"]').click();
     await expect(start).toHaveCount(0, { timeout: 30_000 });
-    // The new worktree's Workspace comes to the front with its agent; ⌘⇧H
+    // The new worktree's Workspace comes to the front at its pane; ⌘⇧H
     // then opens its project's Overview.
-    await expect(page.locator(`[data-checkout][aria-label^="3-graph-view"]`)).toHaveAttribute("aria-current", "true", { timeout: 30_000 });
+    await expect(workspace).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(`[data-checkout][aria-label^="3-graph-view"]`)).toHaveAttribute("aria-current", "true");
     await page.keyboard.press("Meta+Shift+KeyH");
     await expect(overview).toBeVisible();
     await expect(column("backlog").locator("[data-overview-card]")).toHaveCount(0, { timeout: 30_000 });
