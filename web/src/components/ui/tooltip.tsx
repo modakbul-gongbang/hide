@@ -1,6 +1,7 @@
 import { Tooltip as TooltipPrimitive } from "radix-ui";
-import { useRef, useState, type ComponentProps, type FocusEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ComponentProps, type FocusEvent, type ReactNode } from "react";
 import { cn } from "../../lib/utils";
+import { useUiStore } from "../../ui";
 
 // A hint for a control whose meaning is its icon or its shortcut. The label a
 // tooltip shows is also the control's accessible name, so a screen reader and
@@ -46,10 +47,18 @@ const LAYER = '[data-radix-popper-content-wrapper], [role="dialog"], [role="aler
  * press opened. The hover delay that started before the press, and the focus
  * a closing menu hands back to its trigger, would otherwise open it over or
  * after whatever the press opened; Tab to the trigger later still shows it.
+ * While open it is registered with the shell as a hint, not an Escape layer:
+ * Escape closes it through the tooltip's own dismiss and still reaches the
+ * terminal or screen it was meant for, and an Escape the shell consumes
+ * closes it from `keyboard.ts` instead.
  */
 function useHintOpen() {
   const [open, setOpen] = useState(false);
   const pressed = useRef(false);
+  useEffect(() => {
+    if (!open) return;
+    return useUiStore.getState().pushHint(() => setOpen(false));
+  }, [open]);
   const press = () => {
     pressed.current = true;
     setOpen(false);

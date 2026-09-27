@@ -168,6 +168,13 @@ type UiStore = {
    * confirmation closes before the sheet behind it.
    */
   escapeLayers: (() => void)[];
+  /**
+   * The hints and cards open on hover or focus. Not Escape layers: a hint must
+   * not take the Escape a focused terminal is about to receive, so its own
+   * tooltip closes it. An Escape the shell consumes never reaches that
+   * tooltip, so the shell closes these itself as it consumes.
+   */
+  hints: (() => void)[];
   setScreen: (screen: Screen) => void;
   setProjectView: (view: ProjectView) => void;
   setTasksMode: (mode: TasksMode) => void;
@@ -201,6 +208,8 @@ type UiStore = {
   setRecordingShortcut: (recording: boolean) => void;
   /** Registers an Escape layer and returns its removal. */
   pushEscape: (handler: () => void) => () => void;
+  /** Registers an open hint's close and returns its removal. */
+  pushHint: (close: () => void) => () => void;
 };
 
 export const useUiStore = create<UiStore>((set, get) => ({
@@ -229,6 +238,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   watchedRemoval: null,
   recordingShortcut: false,
   escapeLayers: [],
+  hints: [],
   // Moving by hand drops an open still waiting for its Workspace, so a late
   // answer does not pull the screen away from where the operator went.
   setScreen: (screen) => set({ screen, opening: null }),
@@ -277,5 +287,9 @@ export const useUiStore = create<UiStore>((set, get) => ({
   pushEscape: (handler) => {
     set({ escapeLayers: [...get().escapeLayers, handler] });
     return () => set({ escapeLayers: get().escapeLayers.filter((layer) => layer !== handler) });
+  },
+  pushHint: (close) => {
+    set({ hints: [...get().hints, close] });
+    return () => set({ hints: get().hints.filter((hint) => hint !== close) });
   },
 }));

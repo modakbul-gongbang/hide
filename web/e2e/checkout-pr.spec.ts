@@ -253,6 +253,19 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await rest(page);
     await expect(plain).toHaveCount(0);
 
+    // An Escape the shell answers closes the card too: on a Project's Overview
+    // Escape leaves the Overview, and the card the hovered row showed goes
+    // with it, though the card is no layer of its own.
+    await project.locator("[data-project-overview]").click();
+    await expect(page.locator("[data-overview-screen]")).toBeVisible();
+    await feature.locator("[data-checkout]").hover();
+    await expect(card).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(card).toHaveCount(0);
+    await expect(page.locator("[data-overview-screen]")).toHaveCount(0);
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
+    await rest(page);
+
     await chooseTheme(page, "light");
     await feature.locator("[data-checkout]").hover();
     await expect(card).toBeVisible();

@@ -199,10 +199,13 @@ export function installKeyboard(actions: Actions): () => void {
     if (event.key === "Escape") {
       // An Escape the shell answers is consumed here: the pane's textarea is
       // still the focused element under the sheet or a cycle, and xterm
-      // would send the same press to the program as an ESC byte.
+      // would send the same press to the program as an ESC byte. A hint or
+      // card open on hover is not a layer and closes through its own tooltip,
+      // which never sees a consumed press, so consuming closes it here.
       const consume = () => {
         event.preventDefault();
         event.stopPropagation();
+        for (const close of ui().hints) close();
       };
       if (ui().cycle) {
         ui().setCycle(null);
@@ -228,8 +231,9 @@ export function installKeyboard(actions: Actions): () => void {
       // With no layer open, Escape leaves a Project's Overview for the
       // Workspace in front, or All projects when there is none
       // (web-project-overview B1). Every dialog, menu and popover is an escape
-      // layer, answered above; a text field holding text answers it itself, so
-      // the Sessions search clears before a second Escape leaves.
+      // layer, answered above, and a hint is closed by `consume`; a text field
+      // holding text answers it itself, so the Sessions search clears before a
+      // second Escape leaves.
       const field = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement ? event.target : null;
       if (ui().screen?.kind === "overview" && !field?.value) {
         actions.leaveProjectOverview();
