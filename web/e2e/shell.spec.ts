@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { startHerdr } from "./herdr-fixture";
+import { herdrBinary, startHerdr } from "./herdr-fixture";
 import { enterWorkspace } from "./wire";
 
 type Daemon = {
@@ -31,6 +31,9 @@ async function startHided(extra: Record<string, string> = {}): Promise<Daemon> {
       HIDE_KEEP_ALIVE: "1",
       HIDE_PORT: "0",
       HIDED_UI_DIR: uiDir,
+      // Resolve the fixture binary even when this test creates no server.
+      // An inherited app-bundle override may have moved since this shell began.
+      HERDR_BIN_PATH: herdrBinary(),
       ...extra,
     },
     stdio: ["ignore", "pipe", "pipe"],
