@@ -43,7 +43,9 @@ test("a root waiting on its child, the badge's child list, and the progress line
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
     await open(page, daemon);
-    await expect(page.locator('[data-sidebar="agents"]')).toBeVisible({ timeout: 20_000 });
+    // The sidebar opens on Projects; these rows are the Agents list's.
+    await page.locator('[data-sidebar-mode="agents"]').click({ timeout: 20_000 });
+    await expect(page.locator('[data-sidebar="agents"]')).toBeVisible();
 
     // B1: the parent finished its own turn and its child is working.
     report(herdr, parent, { status_done: "✓", progress: "하위 작업 위임 후 대기", elapsed: "12m" });

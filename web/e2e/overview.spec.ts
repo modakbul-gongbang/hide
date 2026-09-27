@@ -168,7 +168,7 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     const overviewRow = repoRow.locator("xpath=ancestor::li[@data-project]").locator("[data-project-overview]");
     await expect(overviewRow).toHaveAttribute("aria-current", "page");
     await expect(repoRow).not.toHaveAttribute("aria-current", "page");
-    await expect(page.locator("[data-all-projects]")).not.toHaveAttribute("aria-current", "page");
+    await expect(page.locator("[data-overview-destination]")).not.toHaveAttribute("aria-current", "page");
     await expect(page.locator('[data-project-list] [data-checkout][aria-current="true"]')).toHaveCount(0);
 
     // Header facts (B2): four worktrees; no open PR, as GitHub answered; the
@@ -299,7 +299,7 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
       await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
       await screenshot(page, `overview-sessions-${theme}`);
     }
-    const allProjects = page.locator("[data-all-projects]");
+    const allProjects = page.locator("[data-overview-destination]");
     await allProjects.click();
     await expect(page.locator("[data-main-screen]")).toBeVisible();
     await expect(allProjects).toHaveAttribute("aria-current", "page");

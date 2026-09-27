@@ -1533,7 +1533,7 @@
           "type": "text",
           "id": "screen-main-spec",
           "name": "web/src/App.tsx, sidebar.tsx",
-          "content": "web/src/App.tsx, sidebar.tsx, MainScreen.tsx, TaskBoards.tsx, WaitingBand.tsx: All projects, the scope the sidebar’s top row opens - its title with Add project, the facts line (the project count, and the open-PR and merged totals only when every project can give its part), the waiting band while an agent waits, the Tasks · Agents · Projects tabs, every project’s tasks on one board, and a project with agents and no task source gathered under it; its Dependencies mode names each card’s project above its title and draws a blocker in another project as an arrow. The Projects view is the project list grouped by device.",
+          "content": "web/src/App.tsx, sidebar.tsx, MainScreen.tsx, TaskBoards.tsx, WaitingBand.tsx: Overview, the scope the sidebar’s global Overview row opens and marks - its title with Add project, the facts line (the project count, and the open-PR and merged totals only when every project can give its part), the waiting band while an agent waits, the Tasks · Agents · Projects tabs, every project’s tasks on one board, and a project with agents and no task source gathered under it; its Dependencies mode names each card’s project above its title and draws a blocker in another project as an arrow. The Projects view is the project list grouped by device.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -1553,19 +1553,66 @@
               "children": [
                 {
                   "type": "frame",
+                  "id": "main-sidebar-overview-l",
+                  "name": "Overview",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "main-sidebar-overviewi-l",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "house",
+                      "library": "lucide",
+                      "fill": "$--subtle-foreground"
+                    },
+                    {
+                      "type": "text",
+                      "id": "main-sidebar-overviewt-l",
+                      "name": "Overview",
+                      "content": "Overview",
+                      "fill": "$--foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-subhead",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "main-sidebar-overviewgap-l",
+                      "name": "Spacer",
+                      "children": [],
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "main-sidebar-overviewn-l",
+                      "name": "12 projects",
+                      "content": "12 projects",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "400"
+                    }
+                  ],
+                  "width": "fill_container",
+                  "height": 36,
+                  "layout": "horizontal",
+                  "gap": "$--spacing-sm",
+                  "alignItems": "center",
+                  "padding": [
+                    0,
+                    "$--spacing-sm"
+                  ],
+                  "cornerRadius": "$--radius-sm",
+                  "fill": "$--secondary"
+                },
+                {
+                  "type": "frame",
                   "id": "main-sidebar-tabs-l",
                   "name": "Tabs",
                   "children": [
-                    {
-                      "type": "text",
-                      "id": "main-sidebar-agentstab-l",
-                      "name": "Agents",
-                      "content": "Agents",
-                      "fill": "$--foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-body",
-                      "fontWeight": "600"
-                    },
                     {
                       "type": "text",
                       "id": "main-sidebar-projectstab-l",
@@ -1573,12 +1620,44 @@
                       "content": "Projects",
                       "fill": "$--muted-foreground",
                       "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-body",
+                      "fontSize": "$--text-caption",
                       "fontWeight": "400"
+                    },
+                    {
+                      "type": "text",
+                      "id": "main-sidebar-agentstab-l",
+                      "name": "Agents",
+                      "content": "Agents",
+                      "fill": "$--foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "main-sidebar-tabsgap-l",
+                      "name": "Spacer",
+                      "children": [],
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "id": "main-sidebar-search-l",
+                      "type": "ref",
+                      "ref": "hideui:Nyvom",
+                      "name": "Icon",
+                      "descendants": {
+                        "hideui:ZIZFR": {
+                          "fill": "$--muted-foreground",
+                          "icon": "search"
+                        }
+                      }
                     }
                   ],
+                  "width": "fill_container",
                   "layout": "horizontal",
-                  "gap": "$--spacing-md"
+                  "gap": "$--spacing-sm",
+                  "alignItems": "center"
                 },
                 {
                   "type": "text",
@@ -1966,41 +2045,6 @@
                     "$--spacing-xs",
                     0,
                     40
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "main-sidebar-newws-l",
-                  "name": "New workspace",
-                  "children": [
-                    {
-                      "type": "icon",
-                      "id": "main-sidebar-newwsi-l",
-                      "name": "Glyph",
-                      "enabled": true,
-                      "width": 12,
-                      "height": 12,
-                      "icon": "plus",
-                      "library": "lucide",
-                      "fill": "$--muted-foreground"
-                    },
-                    {
-                      "type": "text",
-                      "id": "main-sidebar-newwst-l",
-                      "name": "새 워크스페이스 ⌥⇧N",
-                      "content": "새 워크스페이스 ⌥⇧N",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "400"
-                    }
-                  ],
-                  "layout": "horizontal",
-                  "gap": "$--spacing-xs",
-                  "alignItems": "center",
-                  "padding": [
-                    "$--spacing-sm",
-                    0
                   ]
                 },
                 {
@@ -2775,7 +2819,7 @@
                 {
                   "type": "frame",
                   "id": "main-list-l",
-                  "name": "All projects",
+                  "name": "Overview",
                   "children": [
                     {
                       "type": "frame",
@@ -2790,8 +2834,8 @@
                             {
                               "type": "text",
                               "id": "main-listtitle-l",
-                              "name": "All projects",
-                              "content": "All projects",
+                              "name": "Overview",
+                              "content": "Overview",
                               "fill": "$--foreground",
                               "fontFamily": "$--font-ui",
                               "fontSize": "$--text-headline",
@@ -4004,7 +4048,7 @@
                 {
                   "type": "frame",
                   "id": "main-deps-l",
-                  "name": "All projects · Dependencies",
+                  "name": "Overview · Dependencies",
                   "children": [
                     {
                       "type": "frame",
@@ -4014,8 +4058,8 @@
                         {
                           "type": "text",
                           "id": "main-dtitle-l",
-                          "name": "All projects",
-                          "content": "All projects",
+                          "name": "Overview",
+                          "content": "Overview",
                           "fill": "$--foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-headline",
@@ -4811,19 +4855,66 @@
               "children": [
                 {
                   "type": "frame",
+                  "id": "main-sidebar-overview-d",
+                  "name": "Overview",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "main-sidebar-overviewi-d",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "house",
+                      "library": "lucide",
+                      "fill": "$--subtle-foreground"
+                    },
+                    {
+                      "type": "text",
+                      "id": "main-sidebar-overviewt-d",
+                      "name": "Overview",
+                      "content": "Overview",
+                      "fill": "$--foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-subhead",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "main-sidebar-overviewgap-d",
+                      "name": "Spacer",
+                      "children": [],
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "type": "text",
+                      "id": "main-sidebar-overviewn-d",
+                      "name": "12 projects",
+                      "content": "12 projects",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "400"
+                    }
+                  ],
+                  "width": "fill_container",
+                  "height": 36,
+                  "layout": "horizontal",
+                  "gap": "$--spacing-sm",
+                  "alignItems": "center",
+                  "padding": [
+                    0,
+                    "$--spacing-sm"
+                  ],
+                  "cornerRadius": "$--radius-sm",
+                  "fill": "$--secondary"
+                },
+                {
+                  "type": "frame",
                   "id": "main-sidebar-tabs-d",
                   "name": "Tabs",
                   "children": [
-                    {
-                      "type": "text",
-                      "id": "main-sidebar-agentstab-d",
-                      "name": "Agents",
-                      "content": "Agents",
-                      "fill": "$--foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-body",
-                      "fontWeight": "600"
-                    },
                     {
                       "type": "text",
                       "id": "main-sidebar-projectstab-d",
@@ -4831,12 +4922,44 @@
                       "content": "Projects",
                       "fill": "$--muted-foreground",
                       "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-body",
+                      "fontSize": "$--text-caption",
                       "fontWeight": "400"
+                    },
+                    {
+                      "type": "text",
+                      "id": "main-sidebar-agentstab-d",
+                      "name": "Agents",
+                      "content": "Agents",
+                      "fill": "$--foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "main-sidebar-tabsgap-d",
+                      "name": "Spacer",
+                      "children": [],
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "id": "main-sidebar-search-d",
+                      "type": "ref",
+                      "ref": "hideui:Nyvom",
+                      "name": "Icon",
+                      "descendants": {
+                        "hideui:ZIZFR": {
+                          "fill": "$--muted-foreground",
+                          "icon": "search"
+                        }
+                      }
                     }
                   ],
+                  "width": "fill_container",
                   "layout": "horizontal",
-                  "gap": "$--spacing-md"
+                  "gap": "$--spacing-sm",
+                  "alignItems": "center"
                 },
                 {
                   "type": "text",
@@ -5224,41 +5347,6 @@
                     "$--spacing-xs",
                     0,
                     40
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "main-sidebar-newws-d",
-                  "name": "New workspace",
-                  "children": [
-                    {
-                      "type": "icon",
-                      "id": "main-sidebar-newwsi-d",
-                      "name": "Glyph",
-                      "enabled": true,
-                      "width": 12,
-                      "height": 12,
-                      "icon": "plus",
-                      "library": "lucide",
-                      "fill": "$--muted-foreground"
-                    },
-                    {
-                      "type": "text",
-                      "id": "main-sidebar-newwst-d",
-                      "name": "새 워크스페이스 ⌥⇧N",
-                      "content": "새 워크스페이스 ⌥⇧N",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "400"
-                    }
-                  ],
-                  "layout": "horizontal",
-                  "gap": "$--spacing-xs",
-                  "alignItems": "center",
-                  "padding": [
-                    "$--spacing-sm",
-                    0
                   ]
                 },
                 {
@@ -6033,7 +6121,7 @@
                 {
                   "type": "frame",
                   "id": "main-list-d",
-                  "name": "All projects",
+                  "name": "Overview",
                   "children": [
                     {
                       "type": "frame",
@@ -6048,8 +6136,8 @@
                             {
                               "type": "text",
                               "id": "main-listtitle-d",
-                              "name": "All projects",
-                              "content": "All projects",
+                              "name": "Overview",
+                              "content": "Overview",
                               "fill": "$--foreground",
                               "fontFamily": "$--font-ui",
                               "fontSize": "$--text-headline",
@@ -7262,7 +7350,7 @@
                 {
                   "type": "frame",
                   "id": "main-deps-d",
-                  "name": "All projects · Dependencies",
+                  "name": "Overview · Dependencies",
                   "children": [
                     {
                       "type": "frame",
@@ -7272,8 +7360,8 @@
                         {
                           "type": "text",
                           "id": "main-dtitle-d",
-                          "name": "All projects",
-                          "content": "All projects",
+                          "name": "Overview",
+                          "content": "Overview",
                           "fill": "$--foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-headline",
@@ -8126,8 +8214,8 @@
                                 {
                                   "type": "text",
                                   "id": "ov-head-crumb1-l",
-                                  "name": "All projects",
-                                  "content": "All projects",
+                                  "name": "Overview",
+                                  "content": "Overview",
                                   "fill": "$--subtle-foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-caption",
@@ -9653,8 +9741,8 @@
                                 {
                                   "type": "text",
                                   "id": "ov-dhead-crumb1-l",
-                                  "name": "All projects",
-                                  "content": "All projects",
+                                  "name": "Overview",
+                                  "content": "Overview",
                                   "fill": "$--subtle-foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-caption",
@@ -11032,8 +11120,8 @@
                                 {
                                   "type": "text",
                                   "id": "ov-ahead-crumb1-l",
-                                  "name": "All projects",
-                                  "content": "All projects",
+                                  "name": "Overview",
+                                  "content": "Overview",
                                   "fill": "$--subtle-foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-caption",
@@ -12298,8 +12386,8 @@
                                 {
                                   "type": "text",
                                   "id": "ov-head-crumb1-d",
-                                  "name": "All projects",
-                                  "content": "All projects",
+                                  "name": "Overview",
+                                  "content": "Overview",
                                   "fill": "$--subtle-foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-caption",
@@ -13825,8 +13913,8 @@
                                 {
                                   "type": "text",
                                   "id": "ov-dhead-crumb1-d",
-                                  "name": "All projects",
-                                  "content": "All projects",
+                                  "name": "Overview",
+                                  "content": "Overview",
                                   "fill": "$--subtle-foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-caption",
@@ -15204,8 +15292,8 @@
                                 {
                                   "type": "text",
                                   "id": "ov-ahead-crumb1-d",
-                                  "name": "All projects",
-                                  "content": "All projects",
+                                  "name": "Overview",
+                                  "content": "Overview",
                                   "fill": "$--subtle-foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-caption",
@@ -16490,19 +16578,65 @@
                   "children": [
                     {
                       "type": "frame",
+                      "id": "ws-sidebar-overview-lo",
+                      "name": "Overview",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ws-sidebar-overviewi-lo",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 14,
+                          "height": 14,
+                          "icon": "house",
+                          "library": "lucide",
+                          "fill": "$--subtle-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-sidebar-overviewt-lo",
+                          "name": "Overview",
+                          "content": "Overview",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ws-sidebar-overviewgap-lo",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-sidebar-overviewn-lo",
+                          "name": "12 projects",
+                          "content": "12 projects",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 36,
+                      "layout": "horizontal",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center",
+                      "padding": [
+                        0,
+                        "$--spacing-sm"
+                      ],
+                      "cornerRadius": "$--radius-sm"
+                    },
+                    {
+                      "type": "frame",
                       "id": "ws-sidebar-tabs-lo",
                       "name": "Tabs",
                       "children": [
-                        {
-                          "type": "text",
-                          "id": "ws-sidebar-agentstab-lo",
-                          "name": "Agents",
-                          "content": "Agents",
-                          "fill": "$--foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
-                          "fontWeight": "600"
-                        },
                         {
                           "type": "text",
                           "id": "ws-sidebar-projectstab-lo",
@@ -16510,12 +16644,44 @@
                           "content": "Projects",
                           "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
+                          "fontSize": "$--text-caption",
                           "fontWeight": "400"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-sidebar-agentstab-lo",
+                          "name": "Agents",
+                          "content": "Agents",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ws-sidebar-tabsgap-lo",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "id": "ws-sidebar-search-lo",
+                          "type": "ref",
+                          "ref": "hideui:Nyvom",
+                          "name": "Icon",
+                          "descendants": {
+                            "hideui:ZIZFR": {
+                              "fill": "$--muted-foreground",
+                              "icon": "search"
+                            }
+                          }
                         }
                       ],
+                      "width": "fill_container",
                       "layout": "horizontal",
-                      "gap": "$--spacing-md"
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center"
                     },
                     {
                       "type": "text",
@@ -16692,41 +16858,6 @@
                           "opacity": 0
                         }
                       }
-                    },
-                    {
-                      "type": "frame",
-                      "id": "ws-sidebar-newws-lo",
-                      "name": "New workspace",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "ws-sidebar-newwsi-lo",
-                          "name": "Glyph",
-                          "enabled": true,
-                          "width": 12,
-                          "height": 12,
-                          "icon": "plus",
-                          "library": "lucide",
-                          "fill": "$--muted-foreground"
-                        },
-                        {
-                          "type": "text",
-                          "id": "ws-sidebar-newwst-lo",
-                          "name": "새 워크스페이스 ⌥⇧N",
-                          "content": "새 워크스페이스 ⌥⇧N",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
-                        }
-                      ],
-                      "layout": "horizontal",
-                      "gap": "$--spacing-xs",
-                      "alignItems": "center",
-                      "padding": [
-                        "$--spacing-sm",
-                        0
-                      ]
                     },
                     {
                       "type": "frame",
@@ -17991,19 +18122,65 @@
                   "children": [
                     {
                       "type": "frame",
+                      "id": "ws-sidebar-overview-lc",
+                      "name": "Overview",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ws-sidebar-overviewi-lc",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 14,
+                          "height": 14,
+                          "icon": "house",
+                          "library": "lucide",
+                          "fill": "$--subtle-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-sidebar-overviewt-lc",
+                          "name": "Overview",
+                          "content": "Overview",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ws-sidebar-overviewgap-lc",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-sidebar-overviewn-lc",
+                          "name": "12 projects",
+                          "content": "12 projects",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 36,
+                      "layout": "horizontal",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center",
+                      "padding": [
+                        0,
+                        "$--spacing-sm"
+                      ],
+                      "cornerRadius": "$--radius-sm"
+                    },
+                    {
+                      "type": "frame",
                       "id": "ws-sidebar-tabs-lc",
                       "name": "Tabs",
                       "children": [
-                        {
-                          "type": "text",
-                          "id": "ws-sidebar-agentstab-lc",
-                          "name": "Agents",
-                          "content": "Agents",
-                          "fill": "$--foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
-                          "fontWeight": "600"
-                        },
                         {
                           "type": "text",
                           "id": "ws-sidebar-projectstab-lc",
@@ -18011,12 +18188,44 @@
                           "content": "Projects",
                           "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
+                          "fontSize": "$--text-caption",
                           "fontWeight": "400"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-sidebar-agentstab-lc",
+                          "name": "Agents",
+                          "content": "Agents",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ws-sidebar-tabsgap-lc",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "id": "ws-sidebar-search-lc",
+                          "type": "ref",
+                          "ref": "hideui:Nyvom",
+                          "name": "Icon",
+                          "descendants": {
+                            "hideui:ZIZFR": {
+                              "fill": "$--muted-foreground",
+                              "icon": "search"
+                            }
+                          }
                         }
                       ],
+                      "width": "fill_container",
                       "layout": "horizontal",
-                      "gap": "$--spacing-md"
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center"
                     },
                     {
                       "type": "text",
@@ -18193,41 +18402,6 @@
                           "opacity": 0
                         }
                       }
-                    },
-                    {
-                      "type": "frame",
-                      "id": "ws-sidebar-newws-lc",
-                      "name": "New workspace",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "ws-sidebar-newwsi-lc",
-                          "name": "Glyph",
-                          "enabled": true,
-                          "width": 12,
-                          "height": 12,
-                          "icon": "plus",
-                          "library": "lucide",
-                          "fill": "$--muted-foreground"
-                        },
-                        {
-                          "type": "text",
-                          "id": "ws-sidebar-newwst-lc",
-                          "name": "새 워크스페이스 ⌥⇧N",
-                          "content": "새 워크스페이스 ⌥⇧N",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
-                        }
-                      ],
-                      "layout": "horizontal",
-                      "gap": "$--spacing-xs",
-                      "alignItems": "center",
-                      "padding": [
-                        "$--spacing-sm",
-                        0
-                      ]
                     },
                     {
                       "type": "frame",
@@ -19255,19 +19429,65 @@
                   "children": [
                     {
                       "type": "frame",
+                      "id": "ws-sidebar-overview-do",
+                      "name": "Overview",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ws-sidebar-overviewi-do",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 14,
+                          "height": 14,
+                          "icon": "house",
+                          "library": "lucide",
+                          "fill": "$--subtle-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-sidebar-overviewt-do",
+                          "name": "Overview",
+                          "content": "Overview",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ws-sidebar-overviewgap-do",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-sidebar-overviewn-do",
+                          "name": "12 projects",
+                          "content": "12 projects",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 36,
+                      "layout": "horizontal",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center",
+                      "padding": [
+                        0,
+                        "$--spacing-sm"
+                      ],
+                      "cornerRadius": "$--radius-sm"
+                    },
+                    {
+                      "type": "frame",
                       "id": "ws-sidebar-tabs-do",
                       "name": "Tabs",
                       "children": [
-                        {
-                          "type": "text",
-                          "id": "ws-sidebar-agentstab-do",
-                          "name": "Agents",
-                          "content": "Agents",
-                          "fill": "$--foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
-                          "fontWeight": "600"
-                        },
                         {
                           "type": "text",
                           "id": "ws-sidebar-projectstab-do",
@@ -19275,12 +19495,44 @@
                           "content": "Projects",
                           "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
+                          "fontSize": "$--text-caption",
                           "fontWeight": "400"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-sidebar-agentstab-do",
+                          "name": "Agents",
+                          "content": "Agents",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ws-sidebar-tabsgap-do",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "id": "ws-sidebar-search-do",
+                          "type": "ref",
+                          "ref": "hideui:Nyvom",
+                          "name": "Icon",
+                          "descendants": {
+                            "hideui:ZIZFR": {
+                              "fill": "$--muted-foreground",
+                              "icon": "search"
+                            }
+                          }
                         }
                       ],
+                      "width": "fill_container",
                       "layout": "horizontal",
-                      "gap": "$--spacing-md"
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center"
                     },
                     {
                       "type": "text",
@@ -19457,41 +19709,6 @@
                           "opacity": 0
                         }
                       }
-                    },
-                    {
-                      "type": "frame",
-                      "id": "ws-sidebar-newws-do",
-                      "name": "New workspace",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "ws-sidebar-newwsi-do",
-                          "name": "Glyph",
-                          "enabled": true,
-                          "width": 12,
-                          "height": 12,
-                          "icon": "plus",
-                          "library": "lucide",
-                          "fill": "$--muted-foreground"
-                        },
-                        {
-                          "type": "text",
-                          "id": "ws-sidebar-newwst-do",
-                          "name": "새 워크스페이스 ⌥⇧N",
-                          "content": "새 워크스페이스 ⌥⇧N",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
-                        }
-                      ],
-                      "layout": "horizontal",
-                      "gap": "$--spacing-xs",
-                      "alignItems": "center",
-                      "padding": [
-                        "$--spacing-sm",
-                        0
-                      ]
                     },
                     {
                       "type": "frame",
@@ -20756,19 +20973,65 @@
                   "children": [
                     {
                       "type": "frame",
+                      "id": "ws-sidebar-overview-dc",
+                      "name": "Overview",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ws-sidebar-overviewi-dc",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 14,
+                          "height": 14,
+                          "icon": "house",
+                          "library": "lucide",
+                          "fill": "$--subtle-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-sidebar-overviewt-dc",
+                          "name": "Overview",
+                          "content": "Overview",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-subhead",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ws-sidebar-overviewgap-dc",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-sidebar-overviewn-dc",
+                          "name": "12 projects",
+                          "content": "12 projects",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 36,
+                      "layout": "horizontal",
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center",
+                      "padding": [
+                        0,
+                        "$--spacing-sm"
+                      ],
+                      "cornerRadius": "$--radius-sm"
+                    },
+                    {
+                      "type": "frame",
                       "id": "ws-sidebar-tabs-dc",
                       "name": "Tabs",
                       "children": [
-                        {
-                          "type": "text",
-                          "id": "ws-sidebar-agentstab-dc",
-                          "name": "Agents",
-                          "content": "Agents",
-                          "fill": "$--foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
-                          "fontWeight": "600"
-                        },
                         {
                           "type": "text",
                           "id": "ws-sidebar-projectstab-dc",
@@ -20776,12 +21039,44 @@
                           "content": "Projects",
                           "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-body",
+                          "fontSize": "$--text-caption",
                           "fontWeight": "400"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-sidebar-agentstab-dc",
+                          "name": "Agents",
+                          "content": "Agents",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ws-sidebar-tabsgap-dc",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "id": "ws-sidebar-search-dc",
+                          "type": "ref",
+                          "ref": "hideui:Nyvom",
+                          "name": "Icon",
+                          "descendants": {
+                            "hideui:ZIZFR": {
+                              "fill": "$--muted-foreground",
+                              "icon": "search"
+                            }
+                          }
                         }
                       ],
+                      "width": "fill_container",
                       "layout": "horizontal",
-                      "gap": "$--spacing-md"
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center"
                     },
                     {
                       "type": "text",
@@ -20958,41 +21253,6 @@
                           "opacity": 0
                         }
                       }
-                    },
-                    {
-                      "type": "frame",
-                      "id": "ws-sidebar-newws-dc",
-                      "name": "New workspace",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "ws-sidebar-newwsi-dc",
-                          "name": "Glyph",
-                          "enabled": true,
-                          "width": 12,
-                          "height": 12,
-                          "icon": "plus",
-                          "library": "lucide",
-                          "fill": "$--muted-foreground"
-                        },
-                        {
-                          "type": "text",
-                          "id": "ws-sidebar-newwst-dc",
-                          "name": "새 워크스페이스 ⌥⇧N",
-                          "content": "새 워크스페이스 ⌥⇧N",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
-                        }
-                      ],
-                      "layout": "horizontal",
-                      "gap": "$--spacing-xs",
-                      "alignItems": "center",
-                      "padding": [
-                        "$--spacing-sm",
-                        0
-                      ]
                     },
                     {
                       "type": "frame",
@@ -22067,8 +22327,8 @@
                             {
                               "type": "text",
                               "id": "ss-head-crumb1-l",
-                              "name": "All projects",
-                              "content": "All projects",
+                              "name": "Overview",
+                              "content": "Overview",
                               "fill": "$--subtle-foreground",
                               "fontFamily": "$--font-ui",
                               "fontSize": "$--text-caption",
@@ -22466,8 +22726,8 @@
                             {
                               "type": "text",
                               "id": "ss-head-crumb1-d",
-                              "name": "All projects",
-                              "content": "All projects",
+                              "name": "Overview",
+                              "content": "Overview",
                               "fill": "$--subtle-foreground",
                               "fontFamily": "$--font-ui",
                               "fontSize": "$--text-caption",
@@ -24013,7 +24273,7 @@
           "type": "text",
           "id": "screen-palette-spec",
           "name": "web/src/Palette.tsx over Com",
-          "content": "web/src/Palette.tsx over Command/CommandDialog (issue #154): the sidebar Search field (⌘K), the query row with its Esc keycap, results grouped under <project> > AGENTS, WORKSPACE > COMMANDS, WORKSPACES > PROJECTS and WORKSPACES > CHECKOUTS in the order of each group’s best match, two-line rows with the agent’s own mark and its state sentence, ↵ on the selected row, the no-match and nothing-to-search states, and ⌘P on the same shell.",
+          "content": "web/src/Palette.tsx over Command/CommandDialog (issue #154): the sidebar’s Search icon with its ⌘K hint, the query row with its Esc keycap, results grouped under <project> > AGENTS, WORKSPACE > COMMANDS, WORKSPACES > PROJECTS and WORKSPACES > CHECKOUTS in the order of each group’s best match, two-line rows with the agent’s own mark and its state sentence, ↵ on the selected row, the no-match and nothing-to-search states, and ⌘P on the same shell.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -24029,13 +24289,13 @@
             {
               "type": "frame",
               "id": "pal-side-cell-l",
-              "name": "Sidebar · the Search field opens ⌘K",
+              "name": "Sidebar · the Search icon opens ⌘K",
               "children": [
                 {
                   "type": "text",
                   "id": "pal-side-cell-l-cap",
-                  "name": "Sidebar · the Search field o",
-                  "content": "Sidebar · the Search field opens ⌘K",
+                  "name": "Sidebar · the Search icon op",
+                  "content": "Sidebar · the Search icon opens ⌘K",
                   "fill": "$--muted-foreground",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-micro",
@@ -24053,20 +24313,20 @@
                       "children": [
                         {
                           "type": "text",
-                          "id": "pal-side-agents-l",
-                          "name": "Agents",
-                          "content": "Agents",
-                          "fill": "$--foreground",
+                          "id": "pal-side-projects-l",
+                          "name": "Projects",
+                          "content": "Projects",
+                          "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-caption",
                           "fontWeight": "400"
                         },
                         {
                           "type": "text",
-                          "id": "pal-side-projects-l",
-                          "name": "Projects",
-                          "content": "Projects",
-                          "fill": "$--muted-foreground",
+                          "id": "pal-side-agents-l",
+                          "name": "Agents",
+                          "content": "Agents",
+                          "fill": "$--foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-caption",
                           "fontWeight": "400"
@@ -24080,14 +24340,16 @@
                           "height": 1
                         },
                         {
-                          "type": "text",
-                          "id": "pal-side-e-l",
-                          "name": "⌘E",
-                          "content": "⌘E",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
+                          "id": "pal-side-search-l",
+                          "type": "ref",
+                          "ref": "hideui:Nyvom",
+                          "name": "Icon",
+                          "descendants": {
+                            "hideui:ZIZFR": {
+                              "fill": "$--muted-foreground",
+                              "icon": "search"
+                            }
+                          }
                         }
                       ],
                       "layout": "horizontal",
@@ -24097,82 +24359,62 @@
                       "height": 32,
                       "padding": [
                         0,
+                        "$--spacing-xs",
+                        0,
                         "$--spacing-md"
                       ]
                     },
                     {
                       "type": "frame",
-                      "id": "pal-side-searchwrap-l",
-                      "name": "Search",
+                      "id": "pal-side-hintwrap-l",
+                      "name": "Search hint",
                       "children": [
                         {
                           "type": "frame",
-                          "id": "pal-side-search-l",
-                          "name": "Search field",
+                          "id": "pal-side-hint-l",
+                          "name": "Hint",
                           "children": [
                             {
-                              "type": "icon",
-                              "id": "pal-side-searchi-l",
-                              "name": "Glyph",
-                              "enabled": true,
-                              "width": 14,
-                              "height": 14,
-                              "icon": "search",
-                              "library": "lucide",
-                              "fill": "$--muted-foreground"
+                              "type": "text",
+                              "id": "pal-side-hintl-l",
+                              "name": "Search",
+                              "content": "Search",
+                              "fill": "$--popover-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
                             },
                             {
-                              "type": "frame",
-                              "id": "pal-side-searcht-l",
-                              "name": "Label",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "pal-side-searchl-l",
-                                  "name": "Search",
-                                  "content": "Search",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-body",
-                                  "fontWeight": "400"
-                                }
-                              ],
-                              "width": "fill_container"
-                            },
-                            {
-                              "id": "pal-side-searchk-l",
-                              "type": "ref",
-                              "ref": "hideui:kbd-m",
+                              "type": "text",
+                              "id": "pal-side-hintk-l",
                               "name": "⌘K",
-                              "fill": "$--secondary",
-                              "descendants": {
-                                "hideui:kbd-t": {
-                                  "fill": "$--subtle-foreground",
-                                  "content": "⌘K"
-                                }
-                              }
+                              "content": "⌘K",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
                             }
                           ],
-                          "width": "fill_container",
-                          "height": 28,
                           "layout": "horizontal",
                           "gap": "$--spacing-sm",
                           "alignItems": "center",
                           "padding": [
-                            0,
+                            "$--spacing-xs",
                             "$--spacing-sm"
                           ],
                           "cornerRadius": "$--radius-sm",
-                          "fill": "$--background",
-                          "stroke": "$--input",
+                          "fill": "$--popover",
+                          "stroke": "$--border",
                           "strokeWidth": "$--size-hairline",
                           "strokeAlignment": "inner"
                         }
                       ],
                       "width": 292,
+                      "layout": "horizontal",
+                      "justifyContent": "end",
                       "padding": [
                         0,
-                        "$--spacing-md"
+                        "$--spacing-xs"
                       ]
                     },
                     {
@@ -25713,13 +25955,13 @@
             {
               "type": "frame",
               "id": "pal-side-cell-d",
-              "name": "Sidebar · the Search field opens ⌘K",
+              "name": "Sidebar · the Search icon opens ⌘K",
               "children": [
                 {
                   "type": "text",
                   "id": "pal-side-cell-d-cap",
-                  "name": "Sidebar · the Search field o",
-                  "content": "Sidebar · the Search field opens ⌘K",
+                  "name": "Sidebar · the Search icon op",
+                  "content": "Sidebar · the Search icon opens ⌘K",
                   "fill": "$--muted-foreground",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-micro",
@@ -25737,20 +25979,20 @@
                       "children": [
                         {
                           "type": "text",
-                          "id": "pal-side-agents-d",
-                          "name": "Agents",
-                          "content": "Agents",
-                          "fill": "$--foreground",
+                          "id": "pal-side-projects-d",
+                          "name": "Projects",
+                          "content": "Projects",
+                          "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-caption",
                           "fontWeight": "400"
                         },
                         {
                           "type": "text",
-                          "id": "pal-side-projects-d",
-                          "name": "Projects",
-                          "content": "Projects",
-                          "fill": "$--muted-foreground",
+                          "id": "pal-side-agents-d",
+                          "name": "Agents",
+                          "content": "Agents",
+                          "fill": "$--foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-caption",
                           "fontWeight": "400"
@@ -25764,14 +26006,16 @@
                           "height": 1
                         },
                         {
-                          "type": "text",
-                          "id": "pal-side-e-d",
-                          "name": "⌘E",
-                          "content": "⌘E",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
+                          "id": "pal-side-search-d",
+                          "type": "ref",
+                          "ref": "hideui:Nyvom",
+                          "name": "Icon",
+                          "descendants": {
+                            "hideui:ZIZFR": {
+                              "fill": "$--muted-foreground",
+                              "icon": "search"
+                            }
+                          }
                         }
                       ],
                       "layout": "horizontal",
@@ -25781,82 +26025,62 @@
                       "height": 32,
                       "padding": [
                         0,
+                        "$--spacing-xs",
+                        0,
                         "$--spacing-md"
                       ]
                     },
                     {
                       "type": "frame",
-                      "id": "pal-side-searchwrap-d",
-                      "name": "Search",
+                      "id": "pal-side-hintwrap-d",
+                      "name": "Search hint",
                       "children": [
                         {
                           "type": "frame",
-                          "id": "pal-side-search-d",
-                          "name": "Search field",
+                          "id": "pal-side-hint-d",
+                          "name": "Hint",
                           "children": [
                             {
-                              "type": "icon",
-                              "id": "pal-side-searchi-d",
-                              "name": "Glyph",
-                              "enabled": true,
-                              "width": 14,
-                              "height": 14,
-                              "icon": "search",
-                              "library": "lucide",
-                              "fill": "$--muted-foreground"
+                              "type": "text",
+                              "id": "pal-side-hintl-d",
+                              "name": "Search",
+                              "content": "Search",
+                              "fill": "$--popover-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
                             },
                             {
-                              "type": "frame",
-                              "id": "pal-side-searcht-d",
-                              "name": "Label",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "pal-side-searchl-d",
-                                  "name": "Search",
-                                  "content": "Search",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-body",
-                                  "fontWeight": "400"
-                                }
-                              ],
-                              "width": "fill_container"
-                            },
-                            {
-                              "id": "pal-side-searchk-d",
-                              "type": "ref",
-                              "ref": "hideui:kbd-m",
+                              "type": "text",
+                              "id": "pal-side-hintk-d",
                               "name": "⌘K",
-                              "fill": "$--secondary",
-                              "descendants": {
-                                "hideui:kbd-t": {
-                                  "fill": "$--subtle-foreground",
-                                  "content": "⌘K"
-                                }
-                              }
+                              "content": "⌘K",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
                             }
                           ],
-                          "width": "fill_container",
-                          "height": 28,
                           "layout": "horizontal",
                           "gap": "$--spacing-sm",
                           "alignItems": "center",
                           "padding": [
-                            0,
+                            "$--spacing-xs",
                             "$--spacing-sm"
                           ],
                           "cornerRadius": "$--radius-sm",
-                          "fill": "$--background",
-                          "stroke": "$--input",
+                          "fill": "$--popover",
+                          "stroke": "$--border",
                           "strokeWidth": "$--size-hairline",
                           "strokeAlignment": "inner"
                         }
                       ],
                       "width": 292,
+                      "layout": "horizontal",
+                      "justifyContent": "end",
                       "padding": [
                         0,
-                        "$--spacing-md"
+                        "$--spacing-xs"
                       ]
                     },
                     {
@@ -30166,8 +30390,8 @@
         {
           "type": "text",
           "id": "screen-projects-sidebar-spec",
-          "name": "sidebar.tsx, projects.ts: th",
-          "content": "sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent; a checkout without either is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. A folded parent keeps its own-checkout descendants in the badge and draws one C-style line per other checkout, with the R1 server-glyph device chip. A checkout raised by an external root prefixes line two with the parent checkout. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.",
+          "name": "sidebar.tsx, sidebar-header.",
+          "content": "sidebar.tsx, sidebar-header.tsx, projects.ts: the Projects tab, the scope picker. Above it, fixed, the global destinations: one Overview row with the house glyph and the project count, which opens the every-project Overview and carries the selected fill only while that screen is in front; under it the Projects | Agents tab strip, Projects first, ending in New workspace (Projects only) and Search, the icon that opens ⌘K. The list starts at the first project; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent; a checkout without either is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. A folded parent keeps its own-checkout descendants in the badge and draws one C-style line per other checkout, with the R1 server-glyph device chip. A checkout raised by an external root prefixes line two with the parent checkout. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -30187,143 +30411,184 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "psb-hdr-l",
-                  "name": "Tabs",
+                  "id": "psb-top-l",
+                  "name": "Top",
                   "children": [
                     {
-                      "type": "text",
-                      "id": "psb-agents-l",
-                      "name": "Agents",
-                      "content": "Agents",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "400"
-                    },
-                    {
-                      "type": "text",
-                      "id": "psb-projects-l",
-                      "name": "Projects",
-                      "content": "Projects",
-                      "fill": "$--foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "400"
+                      "type": "frame",
+                      "id": "psb-dest-l",
+                      "name": "Destinations",
+                      "children": [
+                        {
+                          "id": "psb-all-l",
+                          "type": "ref",
+                          "ref": "hideui:qdhY0",
+                          "name": "Overview",
+                          "width": 284,
+                          "height": 36,
+                          "descendants": {
+                            "hideui:mIzlX": {
+                              "fill": "$--subtle-foreground",
+                              "icon": "house"
+                            },
+                            "hideui:JkPyX": {
+                              "fill": "$--foreground",
+                              "content": "Overview"
+                            },
+                            "hideui:project-status": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:project-error-glyph": {
+                              "fill": "$--destructive"
+                            },
+                            "hideui:project-error-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:project-approval-glyph": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:project-approval-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:project-question-glyph": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:project-question-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:project-working-dot": {
+                              "fill": "$--agent-working"
+                            },
+                            "hideui:project-working-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:project-done-glyph": {
+                              "fill": "$--success"
+                            },
+                            "hideui:project-done-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:project-idle-ring": {
+                              "stroke": "$--subtle-foreground"
+                            },
+                            "hideui:project-idle-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:nZkan": {
+                              "fill": "$--muted-foreground",
+                              "enabled": true,
+                              "content": "6 projects"
+                            },
+                            "hideui:iBYjj": {
+                              "fill": "$--muted-foreground"
+                            },
+                            "hideui:wgtfo": {
+                              "opacity": 0
+                            }
+                          }
+                        }
+                      ],
+                      "width": 292,
+                      "layout": "vertical",
+                      "padding": 4
                     },
                     {
                       "type": "frame",
-                      "id": "psb-hgap-l",
-                      "name": "Spacer",
+                      "id": "psb-rule0-l",
+                      "name": "Rule",
                       "children": [],
-                      "width": "fill_container",
-                      "height": 1
+                      "width": 292,
+                      "height": 1,
+                      "fill": "$--border"
                     },
                     {
-                      "type": "text",
-                      "id": "psb-kbd-l",
-                      "name": "⌘E",
-                      "content": "⌘E",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "400"
-                    },
-                    {
-                      "id": "psb-settings-l",
-                      "type": "ref",
-                      "ref": "hideui:Nyvom",
-                      "name": "Icon",
-                      "descendants": {
-                        "hideui:ZIZFR": {
+                      "type": "frame",
+                      "id": "psb-hdr-l",
+                      "name": "Tabs",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "psb-projects-l",
+                          "name": "Projects",
+                          "content": "Projects",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "text",
+                          "id": "psb-agents-l",
+                          "name": "Agents",
+                          "content": "Agents",
                           "fill": "$--muted-foreground",
-                          "icon": "settings"
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "psb-hgap-l",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "id": "psb-new-l",
+                          "type": "ref",
+                          "ref": "hideui:Nyvom",
+                          "name": "Icon",
+                          "descendants": {
+                            "hideui:ZIZFR": {
+                              "fill": "$--muted-foreground",
+                              "icon": "plus"
+                            }
+                          }
+                        },
+                        {
+                          "id": "psb-search-l",
+                          "type": "ref",
+                          "ref": "hideui:Nyvom",
+                          "name": "Icon",
+                          "descendants": {
+                            "hideui:ZIZFR": {
+                              "fill": "$--muted-foreground",
+                              "icon": "search"
+                            }
+                          }
                         }
-                      }
+                      ],
+                      "width": 292,
+                      "height": 32,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-rule1-l",
+                      "name": "Rule",
+                      "children": [],
+                      "width": 292,
+                      "height": 1,
+                      "fill": "$--border"
                     }
                   ],
                   "width": 292,
-                  "height": 32,
-                  "padding": [
-                    0,
-                    "$--spacing-md"
-                  ],
-                  "gap": "$--spacing-sm",
-                  "alignItems": "center"
+                  "layout": "vertical"
                 },
                 {
                   "type": "frame",
                   "id": "psb-list-l",
                   "name": "Projects list",
                   "children": [
-                    {
-                      "id": "psb-all-l",
-                      "type": "ref",
-                      "ref": "hideui:qdhY0",
-                      "name": "All projects",
-                      "width": 284,
-                      "height": 36,
-                      "descendants": {
-                        "hideui:mIzlX": {
-                          "fill": "$--subtle-foreground",
-                          "icon": "layout-grid"
-                        },
-                        "hideui:JkPyX": {
-                          "fill": "$--foreground",
-                          "content": "All projects"
-                        },
-                        "hideui:project-status": {
-                          "fill": "$--secondary",
-                          "enabled": false
-                        },
-                        "hideui:project-error-glyph": {
-                          "fill": "$--destructive"
-                        },
-                        "hideui:project-error-count": {
-                          "fill": "$--subtle-foreground"
-                        },
-                        "hideui:project-approval-glyph": {
-                          "fill": "$--warning"
-                        },
-                        "hideui:project-approval-count": {
-                          "fill": "$--subtle-foreground"
-                        },
-                        "hideui:project-question-glyph": {
-                          "fill": "$--warning"
-                        },
-                        "hideui:project-question-count": {
-                          "fill": "$--subtle-foreground"
-                        },
-                        "hideui:project-working-dot": {
-                          "fill": "$--agent-working"
-                        },
-                        "hideui:project-working-count": {
-                          "fill": "$--subtle-foreground"
-                        },
-                        "hideui:project-done-glyph": {
-                          "fill": "$--success"
-                        },
-                        "hideui:project-done-count": {
-                          "fill": "$--subtle-foreground"
-                        },
-                        "hideui:project-idle-ring": {
-                          "stroke": "$--subtle-foreground"
-                        },
-                        "hideui:project-idle-count": {
-                          "fill": "$--subtle-foreground"
-                        },
-                        "hideui:nZkan": {
-                          "fill": "$--muted-foreground",
-                          "enabled": true,
-                          "content": "6 projects"
-                        },
-                        "hideui:iBYjj": {
-                          "fill": "$--muted-foreground"
-                        },
-                        "hideui:wgtfo": {
-                          "opacity": 0
-                        }
-                      }
-                    },
                     {
                       "id": "psb-sec-pin-l",
                       "type": "ref",
@@ -32211,49 +32476,6 @@
                   "children": [
                     {
                       "type": "frame",
-                      "id": "psb-rule1-l",
-                      "name": "Rule",
-                      "children": [],
-                      "width": 292,
-                      "height": 1,
-                      "fill": "$--border"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "psb-new-l",
-                      "name": "New workspace",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "psb-newt-l",
-                          "name": "+ 새 워크스페이스",
-                          "content": "+ 새 워크스페이스",
-                          "fill": "$--subtle-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
-                        },
-                        {
-                          "type": "text",
-                          "id": "psb-newk-l",
-                          "name": "⇧⌘N",
-                          "content": "⇧⌘N",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
-                        }
-                      ],
-                      "width": 292,
-                      "padding": [
-                        "$--spacing-sm",
-                        "$--spacing-md"
-                      ],
-                      "gap": "$--spacing-xs",
-                      "alignItems": "center"
-                    },
-                    {
-                      "type": "frame",
                       "id": "psb-rule2-l",
                       "name": "Rule",
                       "children": [],
@@ -33142,143 +33364,184 @@
               "children": [
                 {
                   "type": "frame",
-                  "id": "psb-hdr-d",
-                  "name": "Tabs",
+                  "id": "psb-top-d",
+                  "name": "Top",
                   "children": [
                     {
-                      "type": "text",
-                      "id": "psb-agents-d",
-                      "name": "Agents",
-                      "content": "Agents",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "400"
-                    },
-                    {
-                      "type": "text",
-                      "id": "psb-projects-d",
-                      "name": "Projects",
-                      "content": "Projects",
-                      "fill": "$--foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "400"
+                      "type": "frame",
+                      "id": "psb-dest-d",
+                      "name": "Destinations",
+                      "children": [
+                        {
+                          "id": "psb-all-d",
+                          "type": "ref",
+                          "ref": "hideui:qdhY0",
+                          "name": "Overview",
+                          "width": 284,
+                          "height": 36,
+                          "descendants": {
+                            "hideui:mIzlX": {
+                              "fill": "$--subtle-foreground",
+                              "icon": "house"
+                            },
+                            "hideui:JkPyX": {
+                              "fill": "$--foreground",
+                              "content": "Overview"
+                            },
+                            "hideui:project-status": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:project-error-glyph": {
+                              "fill": "$--destructive"
+                            },
+                            "hideui:project-error-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:project-approval-glyph": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:project-approval-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:project-question-glyph": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:project-question-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:project-working-dot": {
+                              "fill": "$--agent-working"
+                            },
+                            "hideui:project-working-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:project-done-glyph": {
+                              "fill": "$--success"
+                            },
+                            "hideui:project-done-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:project-idle-ring": {
+                              "stroke": "$--subtle-foreground"
+                            },
+                            "hideui:project-idle-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:nZkan": {
+                              "fill": "$--muted-foreground",
+                              "enabled": true,
+                              "content": "6 projects"
+                            },
+                            "hideui:iBYjj": {
+                              "fill": "$--muted-foreground"
+                            },
+                            "hideui:wgtfo": {
+                              "opacity": 0
+                            }
+                          }
+                        }
+                      ],
+                      "width": 292,
+                      "layout": "vertical",
+                      "padding": 4
                     },
                     {
                       "type": "frame",
-                      "id": "psb-hgap-d",
-                      "name": "Spacer",
+                      "id": "psb-rule0-d",
+                      "name": "Rule",
                       "children": [],
-                      "width": "fill_container",
-                      "height": 1
+                      "width": 292,
+                      "height": 1,
+                      "fill": "$--border"
                     },
                     {
-                      "type": "text",
-                      "id": "psb-kbd-d",
-                      "name": "⌘E",
-                      "content": "⌘E",
-                      "fill": "$--muted-foreground",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "400"
-                    },
-                    {
-                      "id": "psb-settings-d",
-                      "type": "ref",
-                      "ref": "hideui:Nyvom",
-                      "name": "Icon",
-                      "descendants": {
-                        "hideui:ZIZFR": {
+                      "type": "frame",
+                      "id": "psb-hdr-d",
+                      "name": "Tabs",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "psb-projects-d",
+                          "name": "Projects",
+                          "content": "Projects",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "text",
+                          "id": "psb-agents-d",
+                          "name": "Agents",
+                          "content": "Agents",
                           "fill": "$--muted-foreground",
-                          "icon": "settings"
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "psb-hgap-d",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "id": "psb-new-d",
+                          "type": "ref",
+                          "ref": "hideui:Nyvom",
+                          "name": "Icon",
+                          "descendants": {
+                            "hideui:ZIZFR": {
+                              "fill": "$--muted-foreground",
+                              "icon": "plus"
+                            }
+                          }
+                        },
+                        {
+                          "id": "psb-search-d",
+                          "type": "ref",
+                          "ref": "hideui:Nyvom",
+                          "name": "Icon",
+                          "descendants": {
+                            "hideui:ZIZFR": {
+                              "fill": "$--muted-foreground",
+                              "icon": "search"
+                            }
+                          }
                         }
-                      }
+                      ],
+                      "width": 292,
+                      "height": 32,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        "$--spacing-md"
+                      ],
+                      "gap": "$--spacing-sm",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-rule1-d",
+                      "name": "Rule",
+                      "children": [],
+                      "width": 292,
+                      "height": 1,
+                      "fill": "$--border"
                     }
                   ],
                   "width": 292,
-                  "height": 32,
-                  "padding": [
-                    0,
-                    "$--spacing-md"
-                  ],
-                  "gap": "$--spacing-sm",
-                  "alignItems": "center"
+                  "layout": "vertical"
                 },
                 {
                   "type": "frame",
                   "id": "psb-list-d",
                   "name": "Projects list",
                   "children": [
-                    {
-                      "id": "psb-all-d",
-                      "type": "ref",
-                      "ref": "hideui:qdhY0",
-                      "name": "All projects",
-                      "width": 284,
-                      "height": 36,
-                      "descendants": {
-                        "hideui:mIzlX": {
-                          "fill": "$--subtle-foreground",
-                          "icon": "layout-grid"
-                        },
-                        "hideui:JkPyX": {
-                          "fill": "$--foreground",
-                          "content": "All projects"
-                        },
-                        "hideui:project-status": {
-                          "fill": "$--secondary",
-                          "enabled": false
-                        },
-                        "hideui:project-error-glyph": {
-                          "fill": "$--destructive"
-                        },
-                        "hideui:project-error-count": {
-                          "fill": "$--subtle-foreground"
-                        },
-                        "hideui:project-approval-glyph": {
-                          "fill": "$--warning"
-                        },
-                        "hideui:project-approval-count": {
-                          "fill": "$--subtle-foreground"
-                        },
-                        "hideui:project-question-glyph": {
-                          "fill": "$--warning"
-                        },
-                        "hideui:project-question-count": {
-                          "fill": "$--subtle-foreground"
-                        },
-                        "hideui:project-working-dot": {
-                          "fill": "$--agent-working"
-                        },
-                        "hideui:project-working-count": {
-                          "fill": "$--subtle-foreground"
-                        },
-                        "hideui:project-done-glyph": {
-                          "fill": "$--success"
-                        },
-                        "hideui:project-done-count": {
-                          "fill": "$--subtle-foreground"
-                        },
-                        "hideui:project-idle-ring": {
-                          "stroke": "$--subtle-foreground"
-                        },
-                        "hideui:project-idle-count": {
-                          "fill": "$--subtle-foreground"
-                        },
-                        "hideui:nZkan": {
-                          "fill": "$--muted-foreground",
-                          "enabled": true,
-                          "content": "6 projects"
-                        },
-                        "hideui:iBYjj": {
-                          "fill": "$--muted-foreground"
-                        },
-                        "hideui:wgtfo": {
-                          "opacity": 0
-                        }
-                      }
-                    },
                     {
                       "id": "psb-sec-pin-d",
                       "type": "ref",
@@ -35164,49 +35427,6 @@
                   "id": "psb-ftr-d",
                   "name": "Footer",
                   "children": [
-                    {
-                      "type": "frame",
-                      "id": "psb-rule1-d",
-                      "name": "Rule",
-                      "children": [],
-                      "width": 292,
-                      "height": 1,
-                      "fill": "$--border"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "psb-new-d",
-                      "name": "New workspace",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "psb-newt-d",
-                          "name": "+ 새 워크스페이스",
-                          "content": "+ 새 워크스페이스",
-                          "fill": "$--subtle-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
-                        },
-                        {
-                          "type": "text",
-                          "id": "psb-newk-d",
-                          "name": "⇧⌘N",
-                          "content": "⇧⌘N",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "400"
-                        }
-                      ],
-                      "width": 292,
-                      "padding": [
-                        "$--spacing-sm",
-                        "$--spacing-md"
-                      ],
-                      "gap": "$--spacing-xs",
-                      "alignItems": "center"
-                    },
                     {
                       "type": "frame",
                       "id": "psb-rule2-d",

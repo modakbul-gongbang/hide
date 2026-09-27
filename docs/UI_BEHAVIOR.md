@@ -10,7 +10,7 @@ Each rule below names the code that owns it: a web owner in `web/src/` and, wher
 The web shell's Workspace screen follows the approved S6 proposal, its View areas follow the approved boards of PRD S7 (`agents/prd/workspace-views-layout/prd.md`), and its side panel follows the operator's decisions on issue 170, the newest ("Side panel hierarchy, revised") first: every control sits once, on the container it changes.
 Web owner: `web/src/WorkspaceScreen.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, `web/src/viewLayout.ts`, `web/src/viewDrag.ts`, `web/src/viewFocus.ts`.
 
-The toolbar spans only the agent column and holds the path back (`All projects / Project / Workspace`, naming the device when it is not this Mac); it has no tool toggles.
+The toolbar spans only the agent column and holds the path back (`Overview / Project / Workspace`, naming the device when it is not this Mac); it has no tool toggles.
 The side panel toggle sits at the Workspace's top right in both states: at the toolbar's right end while the panel is closed, and at the right end of the panel's first row while it shows.
 It is drawn pressed while the panel shows, and ⌘⇧B toggles the panel too, restoring its views and the tool column as they were before hiding; while the panel is closed with views open, the toggle carries a badge with their count, also given as its accessible description.
 The toggle, the tool column's toggle, Pin, and Expand each keep one accessible name and say their state as pressed or not; their tooltips say what a press does.
@@ -39,7 +39,7 @@ The tool column holds one tool at a time, with no title row and no close: a tab 
 With stacked View areas each area keeps its own tab strip, and the first row holds the top area's tabs and the panel actions.
 With no view open and the tools shown, the panel is only the tool column, including after the last view closes, and its first row holds the tool tabs, Pin, and the panel toggle, so the tools alone can be pinned beside the agents.
 ⌘E opens a closed panel with tools shown, closes a tools-only panel, and toggles the tool column beside views, keeping the chosen tool.
-The sidebar's Agents/Projects switch has no default chord and can be bound in Settings, Shortcuts.
+The sidebar's Projects | Agents switch has no default chord and can be bound in Settings, Shortcuts; a bound chord shows in the tabs' hint.
 Panel content is views or tools only; closing the last view with tools hidden closes the panel in the core, and hiding the tools-only column does the same.
 There is no empty panel body or empty-panel New tab button.
 Only views expand: an expanded panel with no view open is drawn at its width, so the agents stay in reach.
@@ -139,8 +139,8 @@ A restored view whose device or root is not ready says what it waits for (such a
 A view whose file cannot be read shows why, with Close view and Retry, and its tab title reads as struck through; either action acts on that view alone and leaves the active area where it was.
 Each state belongs to its view alone, so one missing file never blanks another view or area.
 After a restart the app reopens the last Workspace as it was left: its areas and their sizes, each area's tabs in order with its preview, pinned views, and active view, the active area, the side panel's state, width and Pin, and the tools; unsaved text returns from the browser's drafts, and Herdr's current tabs and panes are used as they are.
-A first run, or a last Workspace that no longer exists, starts on All projects.
-A layout file that cannot be read is kept aside and the app starts on All projects, where the operator picks a Workspace and continues with a new layout.
+A first run, or a last Workspace that no longer exists, starts on the Overview.
+A layout file that cannot be read is kept aside and the app starts on the Overview, where the operator picks a Workspace and continues with a new layout.
 A Workspace stored before the side panel, with a layout instead of a panel state, restarts into the nearest panel state: Agents only as a closed panel (an open one when its View areas floated over the agents), Agents and Views as a pinned open panel as wide as its View region was, and Views only as an expanded panel.
 
 ### Browser displays
@@ -166,7 +166,7 @@ In a plain browser tab the view keeps its address on the toolbar row, level with
 
 When the body cannot give the agents their minimum beside the open panel, the panel takes the whole Workspace as if expanded, without Expand or Pin, and a pinned panel floats there instead of docking; it then covers the agents like an unpinned one, so an agent or a tab of that Workspace chosen from the sidebar, the palette, or a tab cycle closes it and uncovers the chosen agent, the Pin kept for when the panel opens again.
 Only the Workspace on screen is affected: another Workspace's panel stays as it was, so an agent chosen in another Workspace whose pinned panel is open lands under that panel in a narrow window until the toggle or ⌘⇧B closes it.
-From All projects or an Overview, an agent of the Workspace last on screen is treated as that Workspace last was: if the window was narrowed meanwhile, the agent lands under its pinned panel until the toggle closes it, and if it was widened, its pinned panel closes once, the Pin kept.
+From the Overview or a project's Overview, an agent of the Workspace last on screen is treated as that Workspace last was: if the window was narrowed meanwhile, the agent lands under its pinned panel until the toggle closes it, and if it was widened, its pinned panel closes once, the Pin kept.
 In a narrow window the tool opens as a temporary overlay over the View area's right side, below the first row, instead of a column, drawn with a border and no shadow and carrying the tool tabs; it is closed until the tool column's toggle, a tool command, or ⌘E asks for it, including the press that opened a closed panel, and the toggle reads pressed while it shows; Escape, the toggle again, or a click outside closes it and returns focus to what opened it.
 Hiding and restoring the whole panel keeps whether its temporary tool overlay was open.
 When the View areas cannot all have their minimum, only the active area shows, with an area switcher to the others.
@@ -268,7 +268,7 @@ Reintroducing a shared attachment shelf requires a supported provider contract f
 
 ## Project Home
 
-Web owner: `web/src/ProjectOverview.tsx` (the Project Overview screen), `web/src/MainScreen.tsx` (All projects), `web/src/TaskBoards.tsx` (the Tasks and Agents boards both scopes draw), `web/src/WaitingBand.tsx` (the waiting band), `web/src/projectBoard.ts` (the board rules); a card's agent row is the Agents list's `web/src/components/agent-row.tsx`.
+Web owner: `web/src/ProjectOverview.tsx` (the Project Overview screen), `web/src/MainScreen.tsx` (the Overview of every project), `web/src/TaskBoards.tsx` (the Tasks and Agents boards both scopes draw), `web/src/WaitingBand.tsx` (the waiting band), `web/src/projectBoard.ts` (the board rules); a card's agent row is the Agents list's `web/src/components/agent-row.tsx`.
 The web boards follow PRD task-agents-views (`agents/prd/task-agents-views/prd.md`).
 
 Project Home uses the shared tab choice, badges, agent identity marks, settings field, icon buttons, and command tooltip.
@@ -292,7 +292,7 @@ With no task source and no agent, Tasks is one sentence and `GitHub 이슈 연�
 
 While an agent of the scope waits on the operator, a band between the header's facts line and the tabs lists each one, and there is no band when none does.
 It lists the agents asking first (an error before a question or approval), then the finished ones not yet looked at, each in the core's order; a delegated agent is never one of them, since its parent is the one that waits.
-A row is the agent's mark, where it works in mono (`#id · branch`, with the project first on All projects), its request in one line, its age and `>`, and the whole row opens that agent's pane as one event; the answer is given in the pane, and the band has no label, hint or separate open button.
+A row is the agent's mark, where it works in mono (`#id · branch`, with the project first on the Overview), its request in one line, its age and `>`, and the whole row opens that agent's pane as one event; the answer is given in the pane, and the band has no label, hint or separate open button.
 
 `Board | Dependencies` on the right of the tab row is a mode of the Tasks view, not a tab; like the view it belongs to the page, so another scope keeps it.
 Dependencies draws the Board's task cards left to right with a quiet stage word at each card's top right: a task sits one column right of the longest chain of tasks it waits on, and an arrow runs from the blocker's right middle to the blocked card's left middle.
@@ -300,22 +300,22 @@ Arrows carry no label; one legend line above the graph says the left task has to
 A blocked card is dimmed with its lock line, a done card is dimmed, and Needs You and error keep the Board's warning and danger borders.
 Tasks with no relation in scope gather below the graph under `관계 없는 태스크`, and untracked checkouts and the ad hoc strip stay on the Board.
 A blocker outside the scope, or one the source says is closed, is no arrow; an open one outside the scope is still named on the lock line.
-On All projects each card carries its project above its title and an arrow crosses projects, and a project with no source keeps its cell under the graph, saying `의존 관계를 그릴 태스크가 없음`.
+On the Overview each card carries its project above its title and an arrow crosses projects, and a project with no source keeps its cell under the graph, saying `의존 관계를 그릴 태스크가 없음`.
 When the source answers the issues but not their dependencies, the last blockers read stay and the task cards carry the same warning mark as a failed read.
 
-The Agents view keeps its three columns, `진행 중 · 내 확인 대기 · 끝`, one card per agent: its status mark, provider, title and age; a request it is waiting on in the warning colour; the checkout it works in (on All projects, `project · branch`); its task chip (the issue's `#N`, a local task's title with a file glyph, or a quiet `태스크 없음`) and, for an agent on an SSH device, a device chip.
+The Agents view keeps its three columns, `진행 중 · 내 확인 대기 · 끝`, one card per agent: its status mark, provider, title and age; a request it is waiting on in the warning colour; the checkout it works in (on the Overview, `project · branch`); its task chip (the issue's `#N`, a local task's title with a file glyph, or a quiet `태스크 없음`) and, for an agent on an SSH device, a device chip.
 A delegated agent sits right under its parent, one step in, in its parent's column.
 A pull request shows here only in the task chip's tooltip (title, branch, pull request); the card opens the pane and the chip opens the task.
 
 On the web, the sidebar picks the scope and the tabs under the title pick the view.
-All projects is every project on every device, a project is its Overview, and a checkout is its Workspace, which has no views of its own.
-The board is the Project Overview: the sidebar's project name or its Overview child (a plain folder's one row opens its checkout instead), All projects' project row, the palette and the Workspace toolbar menu open it, and ⌘⇧H opens it for the checkout in front.
-Escape, once no dialog or menu is open and no text field holds text, returns to the Workspace in front, or to All projects when there is none.
-The title row carries the path back (`All projects / Project`) and New agent; directly under it is one line of facts, then the `Tasks · Agents · Sessions` tabs, which show even while the project has no agent.
+The Overview is every project on every device, a project is its Overview, and a checkout is its Workspace, which has no views of its own; the every-project Overview and a project's Overview share the name, the sidebar's global row opening the first and a project's Overview row the second.
+The board is the Project Overview: the sidebar's project name or its Overview child (a plain folder's one row opens its checkout instead), the Overview's project row, the palette and the Workspace toolbar menu open it, and ⌘⇧H opens it for the checkout in front.
+Escape, once no dialog or menu is open and no text field holds text, returns to the Workspace in front, or to the Overview when there is none.
+The title row carries the path back (`Overview / Project`) and New agent; directly under it is one line of facts, then the `Tasks · Agents · Sessions` tabs, which show even while the project has no agent.
 The facts line holds only numbers the system has: the worktree count, the open pull-request count once GitHub has answered, the disk every worktree and the shared Git directory occupy, main's distance behind origin only above zero, and the merged worktrees only above zero.
 Opening a local Git project's Overview asks the core to measure its disk and to read its tasks; the size reads `… GB` while that runs and is left out, with the reason only in the diagnostic log, when a part cannot be read, and there is no refresh control.
 The view is the page's, so choosing another scope keeps Tasks, Agents or Sessions, and a scope without that view shows its first one.
-All projects has `Tasks · Agents · Projects`: the Tasks board mixes every project's tasks, and a project with agents and no task source is gathered under the board in one cell (`<project> · 태스크 출처 연결 안 됨`, its agent count, `GitHub 이슈 연결`) instead of spreading through the columns; the Agents board holds every agent; Projects is the list of every registered project by device.
+The Overview has `Tasks · Agents · Projects`: the Tasks board mixes every project's tasks, and a project with agents and no task source is gathered under the board in one cell (`<project> · 태스크 출처 연결 안 됨`, its agent count, `GitHub 이슈 연결`) instead of spreading through the columns; the Agents board holds every agent; Projects is the list of every registered project by device.
 Its title row carries Add project, and its facts line the project count and, only when every project can give its part, the open pull-request and merged totals, which are plain facts there.
 New agent opens the New worktree dialog on a Git project and the folder's Workspace otherwise.
 Before the first snapshot the shell's own connecting state shows instead.
@@ -422,7 +422,7 @@ Core owner: `herdr-core/src/sidebar.rs`, `herdr-core/src/project_context.rs`, `h
 ### Sidebar type, rows and width
 
 The sidebar sets its words on three sizes: a project name 13/600, a checkout name, an agent title and a count 12/400, and a second line and a time 11; a section header is 10/500 in sentence case (`Projects · Recent activity · 5`).
-A project row, All projects and a one-line plain folder are 36 high, a checkout row 32 or 48 with its second line, an agent row 28 or 44.
+A project row, the Overview row and a one-line plain folder are 36 high, a checkout row 32 or 48 with its second line, an agent row 28 or 44.
 A checkout name mutes its prefix up to and including the first slash (`prd/`), so the part that tells checkouts apart reads first; a name with no slash, or one that starts or ends with it, has no prefix.
 The checkout whose Workspace is in front turns its name 500 and nothing else about the row.
 The sidebar keeps these sizes at every Appearance font size, because its rows are scanned, not read; the font size scales the rest of the interface.
@@ -458,13 +458,16 @@ An opened checkout's parent agent folds its children with the lineage chevron an
 A checkout whose root came from another checkout prefixes its purpose line with the Return glyph and the parent checkout's branch, adding `+N` when more than one external root raised it.
 Folding a project or parent, or using a checkout chevron, changes the list only: the center, the focused pane and tab, read state, groups and running processes stay as they were.
 Before the first snapshot arrives the Agents and Projects lists say they are connecting rather than drawing an empty list, and a local Projects list with no registered project offers Add project.
-The web Projects list is the scope picker: an All projects row heads it, with the layout-grid glyph and `N projects`, and opens All projects.
-One row carries the selected fill at a time, the row of the scope the center shows: All projects, a Git project’s Overview child on its Overview, or the focused checkout and its open agent row only while a Workspace is in front.
+The sidebar's top is fixed above both lists: the global destinations, today one Overview row with the house glyph and `N projects` (no count before the first snapshot), in the project row's height, font and focus ring, which opens the Overview by click, Enter or Space; then the `Projects | Agents` tab strip, Projects first and shown at launch, the choice kept for the session, ending in New workspace (on Projects only, where the Agents tab leaves its place empty) and Search, icons whose hints read `New workspace` and `Search` with their chords.
+Search opens the ⌘K palette and New workspace the new-workspace flow, on this machine or a selected SSH device alike; there is no Search field row and no bottom new-workspace button.
+The Herdr status line sits under the strip and above the list, and the footer is unchanged.
+The web Projects list is the scope picker, starting at its first project.
+One row carries the selected fill at a time, the row of the scope the center shows: the Overview row while the Overview is in front, a Git project’s Overview child on its Overview, or the focused checkout and its open agent row only while a Workspace is in front.
 An expanded Git project starts with an Overview row using the checkout row’s columns, single-line height, font and focus ring, with a layout-dashboard glyph and no badge, time or chevron.
 Click, Enter or Space opens the same Overview as the project name; only the Overview child carries its selection fill, and folding the project hides the child too.
 A plain folder, a project that is not a Git repository and holds one checkout, is one web row instead of a project row over an identical checkout row.
 Its first line is the project's folder glyph, name and status badge, set in the checkout row's columns, and the badge stays while its agent rows are open, as a project's does; its second line and trailing chevron are the checkout's, and a plain folder has no commit age.
-It has no project fold of its own and keeps the checkout row's right slots; the row opens the checkout and is marked while that checkout's Workspace or the project's Overview is in front, its menu lists the project's items and then the checkout's, and its Overview is reached from All projects, the palette or the Workspace toolbar.
+It has no project fold of its own and keeps the checkout row's right slots; the row opens the checkout and is marked while that checkout's Workspace or the project's Overview is in front, its menu lists the project's items and then the checkout's, and its Overview is reached from the Overview, the palette or the Workspace toolbar.
 While a checkout's agent rows are closed, its status badge ends line one; opening them takes the badge away, since their own marks now speak, and changes nothing else on the row.
 A checkout's second line is its purpose, after the parent checkout it was raised from when there is one, with the last-commit age ending it on the time column; it is drawn only while the checkout has a purpose or a raising parent, so a checkout with agents and neither is one line.
 A checkout with neither, or one whose Git facts have not been read yet, is one line, with its age on that line.
@@ -480,7 +483,7 @@ The pin lives on the project's registration and survives a relaunch; removing th
 A pinned project is exempt from its device's inactive fold whatever its activity; its own stale worktrees still fold behind their own `Inactive N` row.
 PR lifecycle color is a semantic-color exception to otherwise neutral chrome: Open, Merged, Closed, and Draft each keep a fixed color shared between the sidebar glyph, the Overview popover header, and the state badge, including during hover and selection; review decisions and CI keep their own separate status meanings.
 On the web a checkout row whose glyph is a pull request's lifecycle makes that glyph a button (PRD checkout-pr-glyph-card): a ring in the pull request's color under the pointer and the pointer cursor say so, a click opens the pull request as a browser display of the Workspace in front (an address the Workspace already shows is brought forward instead), and ⌘-click opens it in the default browser.
-While no Workspace is in front (All projects, an Overview) or the checkout is an SSH device's, the click opens the default browser too.
+While no Workspace is in front (the Overview, a project's Overview) or the checkout is an SSH device's, the click opens the default browser too.
 The press never reaches the row, so the checkout neither opens nor unfolds; every other kind glyph (home, branch, commit, folder) is inert and a click there is the row's.
 The row's menu offers `Open pull request #n` first while GitHub knows one, with the same open as a plain click.
 Hovering or keyboard-focusing a checkout row opens a card after the tooltip's delay, in place of the text tooltip (`Component / PR hover card`, `web/src/components/pr-card.tsx`): the pull request's badge, its number and `Open PR ↗` (the card's one control, opened as the glyph is), the title on up to two lines, a rule, then `Review`, `Checks`, `Branch`, `Agents`, `Commit` and `Path`, each row present only where the snapshot has the value.
@@ -602,11 +605,11 @@ The core keeps one value of each, so with several pages open the last page to re
 
 ## Search keyboard navigation
 
-Web owner: `web/src/search.ts`, `web/src/Palette.tsx`, `web/src/components/search-field.tsx`.
+Web owner: `web/src/search.ts`, `web/src/Palette.tsx`, `web/src/components/sidebar-header.tsx`.
 
 Agent/workspace search and file search share the same focused query field and first-result selection behavior.
 An agent result is titled by the identity every other surface uses and subtitled by the row's second line, falling back to the status word when the state chose no sentence; the pane id leaves the printed row but still matches the query and is read by accessibility, so a result can be found by title, sentence, or id.
-On the web, the sidebar's `Search` field with its `⌘K` keycap opens the same palette Command+K opens, and the query row carries an `Esc` keycap.
+On the web, the Search icon at the end of the sidebar's tab strip, hinted `Search ⌘K`, opens the same palette Command+K opens, and the query row carries an `Esc` keycap.
 Results sit under headers in the form `<project> > AGENTS` (an agent under the first project whose checkouts hold its pane, `AGENTS` when none does), `WORKSPACE > COMMANDS`, `WORKSPACES > PROJECTS`, and `WORKSPACES > CHECKOUTS`.
 A group stands where its best result ranked and keeps its results in rank order, so grouping never moves the best match off the first row.
 An agent row is the agent's own mark, its title, and the state line under it; a project or checkout row carries its path under the title; the selected row shows `↵`.
