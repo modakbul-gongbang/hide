@@ -19,7 +19,7 @@ args = parser.parse_args()
 bundle = Path(args.bundle).resolve()
 out = Path(args.output).resolve()
 out.mkdir(parents=True, exist_ok=True)
-pin = json.loads((ROOT / 'macos/Sources/HerdrMacOS/Resources/herdr-bundle.json').read_text())
+pin = json.loads((ROOT / 'contracts/herdr-bundle.json').read_text())
 binary = bundle / 'Contents/Resources/herdr-runtime/herdr'
 assert hashlib.sha256(binary.read_bytes()).hexdigest() == pin['sha256'], 'bundle digest differs'
 app = bundle / 'Contents/MacOS/HerdrMacOS'

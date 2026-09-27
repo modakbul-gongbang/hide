@@ -74,7 +74,7 @@ The CLI is a wrapper over the same local socket API: use CLI wrappers for shell 
 
 - Do not guess method names, parameters, response fields, or protocol compatibility from existing call sites.
   Check the target binary with `herdr --version` and `herdr api schema --json`, then compare with `contracts/herdr-api.schema.json` through `scripts/check-herdr-contract.sh`.
-- The pin lives only in `macos/Sources/HerdrMacOS/Resources/herdr-bundle.json`, and the contract is what that exact binary answers, never a copy from a Herdr checkout; `check-herdr-pin-single-source.sh` fails when anything restates it.
+- The pin lives only in `contracts/herdr-bundle.json`, and the contract is what that exact binary answers, never a copy from a Herdr checkout; `check-herdr-pin-single-source.sh` fails when anything restates it.
   Move it with `scripts/bump-herdr.sh <release-tag>`.
 - `herdr-core/src/wire.rs` is the only place generated wire types are converted into the core's inputs; do not write wire deserialization in `session_sync/{projection,replica}.rs` or import generated types into domain, runtime or sidebar code.
   `docs/ARCHITECTURE.md` lists the schema gaps the boundary still handwrites and the tests that demand migration when the schema closes them.

@@ -13,7 +13,7 @@ export LANG=en_US.UTF-8
 
 script_dir=${0:A:h}
 project_root=${script_dir:h}
-manifest=$project_root/macos/Sources/HerdrMacOS/Resources/herdr-bundle.json
+manifest=$project_root/contracts/herdr-bundle.json
 [[ -f "$manifest" ]] || {
   print -u2 -- "error: pinned Herdr runtime manifest is missing: $manifest"
   exit 1

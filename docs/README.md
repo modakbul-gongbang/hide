@@ -57,7 +57,7 @@ A document's location or an old PRD citation does not make it current authority.
 | Deterministic QA fixtures | [verification-fixtures.md](verification-fixtures.md) | Fixture/test code; performance guide governs native isolation |
 | App icon and bundled marks | [dev-runtime.md](dev-runtime.md#bundled-artwork-ownership) | Resource files, icon generation script, third-party notices |
 
-The Herdr pin lives in `macos/Sources/HerdrMacOS/Resources/herdr-bundle.json`; the matching schema lives in `contracts/herdr-api.schema.json`.
+The Herdr pin lives in `contracts/herdr-bundle.json`; the matching schema lives in `contracts/herdr-api.schema.json`.
 Documentation must point to those files rather than inventing another version or protocol authority.
 Approved PRDs are scoped change contracts, not an always-current description of the whole product.
 When code, tests, and a current contract disagree, investigate and update the responsible contract and implementation together; do not silently assume either is correct.

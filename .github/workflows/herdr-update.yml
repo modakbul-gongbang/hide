@@ -35,8 +35,8 @@ jobs:
           # keeps the preview-* tags out of this proposal.
           latest_tag=$(gh api repos/herdrdev/herdr/releases/latest --jq .tag_name)
           latest=${latest_tag#v}
-          pinned_tag=$(jq -er .tag macos/Sources/HerdrMacOS/Resources/herdr-bundle.json)
-          pinned=$(jq -er .version macos/Sources/HerdrMacOS/Resources/herdr-bundle.json)
+          pinned_tag=$(jq -er .tag contracts/herdr-bundle.json)
+          pinned=$(jq -er .version contracts/herdr-bundle.json)
           echo "latest=$latest" >> "$GITHUB_OUTPUT"
           echo "latest_tag=$latest_tag" >> "$GITHUB_OUTPUT"
           echo "pinned=$pinned" >> "$GITHUB_OUTPUT"
@@ -103,17 +103,7 @@ jobs:
 
       - name: Run the Rust suite against the candidate
         if: steps.existing.outputs.proceed == 'true'
-        run: cargo test --manifest-path herdr-core/Cargo.toml
-
-      - name: Build the core the Swift package links
-        if: steps.existing.outputs.proceed == 'true'
-        # The Swift package links target/release/libherdr_core.a as a system
-        # library, and cargo test leaves only a debug build behind.
-        run: cargo build --release --locked -p herdr-core
-
-      - name: Run the Swift suite against the candidate
-        if: steps.existing.outputs.proceed == 'true'
-        run: swift test --package-path macos
+        run: bash scripts/verify-cargo.sh test
 
       - name: Open the pull request
         if: steps.existing.outputs.proceed == 'true'
@@ -128,9 +118,9 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
           git add \
-            macos/Sources/HerdrMacOS/Resources/herdr-bundle.json \
+            contracts/herdr-bundle.json \
             contracts/herdr-api.schema.json \
-            macos/Resources/THIRD_PARTY_NOTICES/herdr-APACHE-2.0.txt \
+            desktop/resources/THIRD_PARTY_NOTICES/herdr-APACHE-2.0.txt \
             README.md \
             docs/INSTALL.md
           git commit -m "Move the bundled Herdr pin to v${latest}"
@@ -146,7 +136,7 @@ jobs:
 
           - \`check-herdr-contract.sh --schema-only\` against the v${latest} CLI
           - \`check-herdr-pin-single-source.sh\`
-          - \`cargo test\` and \`swift test\`
+          - \`cargo test\` over the workspace
 
           What this does not prove, and why this is not merged automatically:
 

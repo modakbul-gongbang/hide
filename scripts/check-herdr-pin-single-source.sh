@@ -1,6 +1,6 @@
 #!/bin/zsh
 # Fails when the pinned Herdr version or digest is restated anywhere outside
-# macos/Sources/HerdrMacOS/Resources/herdr-bundle.json. The drift this prevents already happened
+# contracts/herdr-bundle.json. The drift this prevents already happened
 # once: 002c2f4 changed one site and dcebff5 had to chase the other three.
 set -euo pipefail
 
@@ -9,7 +9,7 @@ export LANG=en_US.UTF-8
 
 script_dir=${0:A:h}
 project_root=${script_dir:h}
-manifest=$project_root/macos/Sources/HerdrMacOS/Resources/herdr-bundle.json
+manifest=$project_root/contracts/herdr-bundle.json
 
 [[ -f "$manifest" ]] || {
   print -u2 -- "error: pinned Herdr runtime manifest is missing: $manifest"
@@ -21,10 +21,12 @@ version=$(jq -er '.version' "$manifest")
 sha256=$(jq -er '.sha256' "$manifest")
 
 derived_sources=(
-  scripts/build-app.sh
   scripts/fetch-herdr-runtime.sh
-  macos/scripts/build_dev_app.sh
-  macos/Sources/HerdrMacOS/RuntimeEnvironment.swift
+  desktop/scripts/package.mjs
+  desktop/src/main/cli.ts
+  web/e2e/herdr-fixture.ts
+  desktop/e2e/fixture.ts
+  scripts/web-shell-measure/isolated-env.sh
 )
 
 failed=0

@@ -123,7 +123,7 @@ jobs:
         # The manifest is the pin; the download is verified against its digest
         # before the binary answers anything.
         run: |
-          manifest=macos/Sources/HerdrMacOS/Resources/herdr-bundle.json
+          manifest=contracts/herdr-bundle.json
           url="$(jq -er .source_url "$manifest")"
           expected="$(jq -er .sha256 "$manifest")"
           curl -sSfL "$url" -o "$RUNNER_TEMP/herdr"
@@ -168,7 +168,7 @@ jobs:
         # The click-flow e2e attaches hided to an isolated real Herdr; the
         # fixture refuses any binary whose version is not the pin.
         run: |
-          manifest=macos/Sources/HerdrMacOS/Resources/herdr-bundle.json
+          manifest=contracts/herdr-bundle.json
           url="$(jq -er .source_url "$manifest")"
           expected="$(jq -er .sha256 "$manifest")"
           curl -sSfL "$url" -o "$RUNNER_TEMP/herdr"
