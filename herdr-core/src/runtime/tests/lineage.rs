@@ -36,6 +36,122 @@ fn lineage_workspaces() -> Vec<WorkspaceSnapshot> {
     )]
 }
 
+fn remote_lineage_session(agents: Vec<SidebarAgentSnapshot>) -> RemoteSessionSnapshot {
+    RemoteSessionSnapshot {
+        workspaces: Vec::new(),
+        agents,
+        active_tab_ids: Default::default(),
+        focused_workspace_id: None,
+        focused_checkout_id: None,
+        focused_tab_id: None,
+        focused_pane_id: None,
+        pane_layouts: Vec::new(),
+    }
+}
+
+fn local_lineage_agent<'a>(runtime: &'a Runtime, pane: &str) -> &'a SidebarAgentSnapshot {
+    runtime
+        .snapshot
+        .navigator
+        .agents
+        .iter()
+        .find(|agent| agent.pane_id == pane)
+        .unwrap()
+}
+
+fn remote_lineage_agent<'a>(runtime: &'a Runtime, pane: &str) -> &'a SidebarAgentSnapshot {
+    runtime.snapshot.status.remote[0]
+        .session
+        .as_ref()
+        .unwrap()
+        .agents
+        .iter()
+        .find(|agent| agent.pane_id == pane)
+        .unwrap()
+}
+
+#[test]
+fn machine_identity_resolves_lineage_in_both_directions_and_restores_after_reconnect() {
+    let mut runtime = runtime();
+    runtime.local_machine_id = Some("machine-local".to_owned());
+    runtime
+        .device_machine_ids
+        .insert("mini".to_owned(), "machine-mini".to_owned());
+
+    let mut rows = lineage_rows();
+    let mut local_parent = rows.remove(0);
+    local_parent.pane_id = "local-parent".to_owned();
+    local_parent.id = "local-parent-agent".to_owned();
+    local_parent.declared_parent_pane_id = None;
+    local_parent.spawned_from_pane_id = None;
+
+    let mut local_child = rows.remove(0);
+    local_child.pane_id = "local-child".to_owned();
+    local_child.id = "local-child-agent".to_owned();
+    local_child.declared_parent_pane_id = Some("remote-parent".to_owned());
+    local_child.spawned_from_machine_id = Some("machine-mini".to_owned());
+
+    let mut remote_parent = rows.remove(0);
+    remote_parent.pane_id = "remote:mini:pane:remote-parent".to_owned();
+    remote_parent.id = "remote-parent-agent".to_owned();
+    remote_parent.declared_parent_pane_id = None;
+    remote_parent.spawned_from_pane_id = None;
+
+    let mut remote_child = rows.remove(0);
+    remote_child.pane_id = "remote:mini:pane:remote-child".to_owned();
+    remote_child.id = "remote-child-agent".to_owned();
+    remote_child.declared_parent_pane_id = Some("local-parent".to_owned());
+    remote_child.spawned_from_machine_id = Some("machine-local".to_owned());
+
+    runtime.snapshot.navigator.agents = vec![local_parent, local_child];
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: "mini".to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: Some("0.9.1".to_owned()),
+        session: Some(remote_lineage_session(vec![remote_parent, remote_child])),
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+
+    assert!(runtime.refresh_agent_lineage());
+    assert_eq!(
+        local_lineage_agent(&runtime, "local-child")
+            .lineage_parent_pane_id
+            .as_deref(),
+        Some("remote:mini:pane:remote-parent")
+    );
+    assert_eq!(
+        remote_lineage_agent(&runtime, "remote:mini:pane:remote-child")
+            .lineage_parent_pane_id
+            .as_deref(),
+        Some("local-parent")
+    );
+    assert!(local_lineage_agent(&runtime, "local-child").delegated);
+    assert!(remote_lineage_agent(&runtime, "remote:mini:pane:remote-child").delegated);
+
+    runtime.device_machine_ids.remove("mini");
+    assert!(runtime.refresh_agent_lineage());
+    assert_eq!(
+        local_lineage_agent(&runtime, "local-child").lineage_parent_pane_id,
+        None
+    );
+    assert!(!local_lineage_agent(&runtime, "local-child").delegated);
+    assert!(runtime.unresolved_machine_lineage.contains("local-child"));
+
+    runtime
+        .device_machine_ids
+        .insert("mini".to_owned(), "machine-mini".to_owned());
+    assert!(runtime.refresh_agent_lineage());
+    assert_eq!(
+        local_lineage_agent(&runtime, "local-child")
+            .lineage_parent_pane_id
+            .as_deref(),
+        Some("remote:mini:pane:remote-parent")
+    );
+    assert!(runtime.unresolved_machine_lineage.is_empty());
+}
+
 #[test]
 fn lineage_cross_checkout_tree_and_orphan_keep_the_canonical_rows_and_axes() {
     let mut rows = lineage_rows();
@@ -155,6 +271,7 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
     assert_eq!(restored.expanded_agent_pane_ids, ["parent"]);
     let options = CoreOptions {
         schema_version: SCHEMA_VERSION,
+        machine_id: None,
         herdr_socket_path: None,
         herdr_bin_path: None,
         app_state_path: runtime.state_path.to_string_lossy().into_owned(),

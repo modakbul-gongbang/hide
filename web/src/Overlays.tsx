@@ -1,5 +1,6 @@
 import { ChevronDownIcon, ChevronUpIcon, FolderIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { Actions } from "./actions";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./components/ui/alert-dialog";
 import { Button } from "./components/ui/button";
@@ -21,7 +22,9 @@ import { knownProvider } from "./workspace";
 /**
  * Recent Panels or Recent Projects while the chord's modifier is held: at
  * most nine rows around the highlight, which is what release commits
- * (docs/UI_BEHAVIOR.md, Recent navigation).
+ * (docs/UI_BEHAVIOR.md, Recent navigation). It is a layer of the body, like
+ * the palette and the menus, so a browser page it meets freezes under it
+ * (`web/src/browserViews.ts`).
  */
 export function CycleOverlay() {
   const cycle = useUiStore((s) => s.cycle);
@@ -30,9 +33,9 @@ export function CycleOverlay() {
   const { start, rows } = visibleWindow(cycle.items, cycle.index);
   const title = cycle.kind === "panels" ? "Recent Panels" : "Recent Projects";
   const chord = displayCommand(cycle.kind === "panels" ? "recent_panel" : "recent_project", hostKind(), registry);
-  return (
-    <div className="absolute inset-x-0 top-[var(--size-tab-strip)] z-30 flex justify-center" data-cycle={cycle.kind}>
-      <div role="listbox" aria-label={title} className="w-[var(--size-pr-popover)] rounded-md border border-border bg-popover py-xs shadow-lg">
+  return createPortal(
+    <div className="fixed inset-x-0 top-[var(--size-tab-strip)] z-30 flex justify-center" data-cycle={cycle.kind}>
+      <div role="listbox" aria-label={title} data-slot="cycle-overlay" className="w-[var(--size-pr-popover)] rounded-md border border-border bg-popover py-xs shadow-lg">
         <div className="flex items-center justify-between px-md pb-xxs">
           <span className="text-caption font-semibold uppercase text-muted-foreground">{title}</span>
           {chord ? <Kbd>{chord}</Kbd> : null}
@@ -58,7 +61,8 @@ export function CycleOverlay() {
           );
         })}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

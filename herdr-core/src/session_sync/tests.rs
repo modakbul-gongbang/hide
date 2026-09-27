@@ -175,6 +175,7 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
     Arc::new(Mutex::new(Runtime::new(
         CoreOptions {
             schema_version: SCHEMA_VERSION,
+            machine_id: None,
             herdr_socket_path: Some(socket_path.to_string_lossy().into_owned()),
             herdr_bin_path: None,
             app_state_path: state_path.to_string_lossy().into_owned(),
@@ -517,6 +518,7 @@ fn official_remote_session_coordinator_probe() {
     let runtime = Arc::new(Mutex::new(Runtime::new(
         CoreOptions {
             schema_version: SCHEMA_VERSION,
+            machine_id: None,
             herdr_socket_path: None,
             herdr_bin_path: None,
             app_state_path: state_path.to_string_lossy().into_owned(),
@@ -1419,4 +1421,21 @@ fn a_device_agents_declared_parent_is_scoped_to_the_device() {
         row.spawned_from_pane_id.as_deref(),
         Some("remote:mini:pane:w1:p0")
     );
+    assert_eq!(row.declared_parent_pane_id.as_deref(), Some("w1:p0"));
+
+    let mut cross_device = agent("w1:p1", "1m");
+    cross_device.spawned_from_pane_id = Some("w9:p3".to_owned());
+    cross_device.spawned_from_machine_id = Some("machine-parent".to_owned());
+    cross_device.tokens.remove("activity");
+    replica.replace_agents(vec![cross_device]);
+    replica.refresh_published_state().expect("published");
+    let (remote, excluded) = replica.project_remote("mini").expect("remote projection");
+    assert!(excluded.is_empty(), "{excluded:?}");
+    let row = &remote.agents[0];
+    assert_eq!(
+        row.spawned_from_pane_id.as_deref(),
+        Some("w9:p3"),
+        "a machine-qualified parent stays raw until the runtime matches that machine"
+    );
+    assert_eq!(row.declared_parent_pane_id.as_deref(), Some("w9:p3"));
 }

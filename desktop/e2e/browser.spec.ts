@@ -270,6 +270,20 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   await expect.poll(async () => (await views()).filter((view) => view.visible).length).toBe(2);
   await expect(page.locator("[data-browser-still]")).toHaveCount(0);
 
+  // So does Recent Panels while ⌃ is held; Escape keeps the current surface.
+  await page.keyboard.down("Control");
+  await page.keyboard.press("Tab");
+  const cycle = page.locator("[data-cycle=panels]");
+  await expect(cycle).toBeVisible();
+  await expect.poll(async () => (await views()).filter((view) => view.visible).length).toBeLessThan(2);
+  await expect(page.locator("[data-browser-still]").first()).toBeVisible();
+  await windowShot("browser-cycle-frozen");
+  await page.keyboard.press("Escape");
+  await page.keyboard.up("Control");
+  await expect(cycle).toHaveCount(0);
+  await expect.poll(async () => (await views()).filter((view) => view.visible).length).toBe(2);
+  await expect(page.locator("[data-browser-still]")).toHaveCount(0);
+
   // The toolbar: a typed address loads in that display; Back returns.
   const address = page.locator(`[data-browser-display="${a}"] [data-browser-address]`);
   await address.click();

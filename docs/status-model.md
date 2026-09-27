@@ -121,10 +121,11 @@ Done is therefore scoped to the lineage root: a delegated child that finishes le
 ## Where a parent comes from
 
 Ownership, the tree, the breadcrumb and the descendant badge all start from one fact per agent: the pane it was spawned from.
-Herdr records no lineage, so that fact has one source, read once in `wire.rs::lineage_parent` and nowhere else, so every row and every view sees the same parent: the pane token `parent_pane`, whose value is the parent's pane id, written by whoever created the pane through `pane.report_metadata`.
-
-Hide's own fork writes it under the source `hide` after `pane.split` and `agent.start`.
-sasu's dispatch writes it under its own source after `agent.start`, the only start that can carry its role marker; any orchestrator can write the same token by hand, and a child whose creator wrote nothing is a root.
+Herdr records no lineage, so hcoord is the sole writer of two pane tokens through `pane.report_metadata`: `parent_pane` names the parent's pane id, and `parent_machine` names the machine that owns that pane when the parent is on another device.
+The complete writer, value, lifetime, machine identity, and clone-limit contract lives in [plugins/hcoord/docs/pane-tokens.md](../plugins/hcoord/docs/pane-tokens.md).
+Hide's fork and an external coordinator both register a completed spawn through the fixed hcoord binary; neither Hide nor another integration writes the tokens directly.
+`wire.rs` is the only conversion point from those tokens into the projection, and the runtime resolves machine-qualified parents only after it has read each connected device's immutable hcoord machine identity outside the runtime mutex.
+A declaration whose machine cannot be matched stays a root and records one diagnostic for that pane instead of guessing.
 
 An empty token is a cleared declaration, not a parent named by an empty string.
 The token is display-only in Herdr's own terms and dies with the pane, so a closed child leaves no edge behind, and a parent that has gone makes the child an orphan root.
@@ -140,7 +141,8 @@ A closed pane leaves the list and therefore the badge on the next projection.
 
 The badge is drawn while the row's descendants are folded away and leaves when they are opened, since the opened rows carry their own marks; a raised row in Needs You or Done never unfolds and always wears it.
 Descendants are folded by default: `expanded_agent_pane_ids` in the persisted UI state names the panes the operator opened, it lives as long as the pane id does, and an older store's collapsed set is ignored rather than migrated, so the first launch after the change starts every parent folded.
-The web shell folds a parent by this one set wherever it draws the parent, in Agents and under its checkout in Projects, and counts the badge over every live descendant of the parent's device, so a descendant in another checkout is counted on the badge and still drawn as a root in its own checkout.
+The web shell folds a parent by this one set wherever it draws the parent, in Agents and under its checkout in Projects.
+The badge counts only live descendants in the parent's checkout, while one summary line per other checkout keeps that work visible under the folded root and the child is still drawn as a root in the checkout where it runs.
 
 Regression owners: `the_descendant_badge_sums_every_live_descendant_and_skips_ready_and_unknown_ones`, `lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappearance`, and `the_snapshot_carries_no_stall_notice_and_ownership_is_operator_or_delegated`.
 

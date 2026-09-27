@@ -217,6 +217,7 @@ impl SleepRecord {
                 value: self.session_id.clone(),
             }),
             spawned_from_pane_id: self.parent_pane_id.clone(),
+            spawned_from_machine_id: None,
             state_change_seq: self.state_change_seq,
             tokens,
         }
@@ -525,6 +526,8 @@ mod tests {
             state_change_seq: Some(4),
             session_id: Some("session-a".to_owned()),
             spawned_from_pane_id: None,
+            declared_parent_pane_id: None,
+            spawned_from_machine_id: None,
             delegated: false,
             descendant_counts: crate::model::DescendantCountsSnapshot::default(),
             waiting_on_descendants: false,

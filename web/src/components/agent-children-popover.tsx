@@ -5,6 +5,7 @@ import type { AgentRow } from "../snapshot";
 import { Command, CommandGroup, CommandItem, CommandList, CommandSeparator } from "./ui/command";
 import { Kbd } from "./ui/kbd";
 import { StatusMark } from "./status-mark";
+import { DeviceChip } from "./device-chip";
 import { Popover, PopoverContent, PopoverTrigger } from "./ui/popover";
 
 /**
@@ -72,7 +73,7 @@ export function AgentChildrenPopover({
           <CommandList>
             <CommandGroup>
               {childRows.map((child) => (
-                <ChildItem key={child.pane_id} child={child} onOpen={() => choose(() => onOpenChild(child.pane_id))} />
+                <ChildItem key={child.pane_id} parent={parent} child={child} onOpen={() => choose(() => onOpenChild(child.pane_id))} />
               ))}
             </CommandGroup>
             {onUnfold ? (
@@ -92,7 +93,7 @@ export function AgentChildrenPopover({
   );
 }
 
-function ChildItem({ child, onOpen }: { child: AgentRow; onOpen: () => void }) {
+function ChildItem({ parent, child, onOpen }: { parent: AgentRow; child: AgentRow; onOpen: () => void }) {
   const branch = branchChip(child);
   const tone = markTone(child);
   return (
@@ -110,6 +111,7 @@ function ChildItem({ child, onOpen }: { child: AgentRow; onOpen: () => void }) {
               {branch}
             </span>
           ) : null}
+          {child.device_id !== parent.device_id && child.device_label ? <DeviceChip label={child.device_label} className="max-w-2/5" /> : null}
         </span>
       </span>
       <button

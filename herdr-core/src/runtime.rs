@@ -54,7 +54,7 @@ use crate::model::{
     clamp_pane_text_scale,
 };
 use crate::recent_closed::{ClosedAgent, ClosedContext, ClosedItem, ClosedPane, push_bounded};
-use crate::remote::RusshSftpTransport;
+use crate::remote::{RemoteReadCommand, RusshSftpTransport, parse_machine_identity};
 use crate::sidebar::{ReadRecordScope, SessionSnapshotPayload, project_agents};
 use crate::{environment, files, live, persistence, pet, session_sync, workspace};
 
@@ -911,6 +911,11 @@ fn terminal_control_request_allowed(state: &str, has_active_session: bool) -> bo
 
 pub struct Runtime {
     snapshot: Snapshot,
+    /// Stable identities are separate from device labels: labels are mutable
+    /// presentation, while hcoord lineage is keyed by operating-system id.
+    local_machine_id: Option<String>,
+    device_machine_ids: HashMap<String, String>,
+    unresolved_machine_lineage: HashSet<String>,
     file_roots: Option<crate::files::FileRoots>,
     state_path: PathBuf,
     state_save_pending: bool,
@@ -1371,6 +1376,9 @@ impl Runtime {
         });
         let mut runtime = Self {
             snapshot,
+            local_machine_id: options.machine_id.clone(),
+            device_machine_ids: HashMap::new(),
+            unresolved_machine_lineage: HashSet::new(),
             file_roots: None,
             state_path,
             home_path: environment.home_path,
