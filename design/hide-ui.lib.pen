@@ -4339,9 +4339,9 @@
                     {
                       "type": "text",
                       "id": "fnd-size-set-size-checkout-row-value",
-                      "name": "36",
+                      "name": "32",
                       "fill": "$--muted-foreground",
-                      "content": "36",
+                      "content": "32",
                       "fontFamily": "$--font-mono",
                       "fontSize": "$--text-micro",
                       "fontWeight": "normal",
@@ -5591,7 +5591,7 @@
               "fill": "$--subtle-foreground",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "11/600 secondary label, count in micro mono muted, inset --spacing-md, pad-top --spacing-md, pad-bottom --spacing-sm. Title case; the chevron is drawn only where the section collapses.",
+              "content": "10/500 label in sentence case, count in micro mono muted, inset --spacing-md, pad-top --spacing-md, pad-bottom --spacing-sm. The chevron is drawn only where the section collapses.",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "normal"
@@ -5665,8 +5665,8 @@
                       "fill": "$--subtle-foreground",
                       "content": "Uncommitted",
                       "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-body",
-                      "fontWeight": "600"
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "500"
                     },
                     {
                       "type": "text",
@@ -12232,7 +12232,7 @@
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "sidebar.tsx WorkspaceRows: the project glyph and name read on the left; the status badge and the fold end the row, a step apart, so the badge ends on the column every row’s time ends on. The badge counts the agents of every checkout under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○), and stays while the checkouts are open because it is the project’s own summary; a project with no agent draws none. The row carries no time. A folded chevron is always shown; an unfolded one shows under the pointer, with keyboard focus in the row, while its menu is open, and always on an input with no hover. The name opens the Overview; a right-click, or the menu key or ⇧F10 on the focused row, opens the row’s menu, which nothing on the row stands for.",
+          "content": "sidebar.tsx WorkspaceRows: the project glyph and name read on the left, the name at 13/600, the sidebar’s one semibold, on a 36 row; the status badge and the fold end the row, a step apart, so the badge ends on the column every row’s time ends on. The badge counts the agents of every checkout under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○), and stays while the checkouts are open because it is the project’s own summary; a project with no agent draws none. The row carries no time. A folded chevron is always shown; an unfolded one shows under the pointer, with keyboard focus in the row, while its menu is open, and always on an input with no hover. The name opens the Overview; a right-click, or the menu key or ⇧F10 on the focused row, opens the row’s menu, which nothing on the row stands for. All projects is this row with its count at 12 where the badge stands.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -12281,7 +12281,7 @@
               "fill": "$--foreground",
               "content": "sasu",
               "fontFamily": "$--font-ui",
-              "fontSize": "$--text-title",
+              "fontSize": "$--text-subhead",
               "fontWeight": "600"
             },
             {
@@ -12577,7 +12577,7 @@
                   "fill": "$--muted-foreground",
                   "content": "12 projects",
                   "fontFamily": "$--font-ui",
-                  "fontSize": "$--text-caption",
+                  "fontSize": "$--text-body",
                   "fontWeight": "normal",
                   "enabled": false
                 },
@@ -14031,7 +14031,7 @@
               "fill": "$--subtle-foreground",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "sidebar.tsx CheckoutRowView: the kind glyph and the name read on the left. While its agent rows are folded, line one ends in the status badge, which counts them under the mark each row draws, then the fold slot, whose chevron is there only while agents run; opening them takes the badge away, since their own marks now speak, and changes nothing else on the row. Line two is the purpose, and the last-commit age ends it on the column every row’s time ends on; a row with agents keeps line two before a purpose is known, and a row with neither a purpose nor agents is one line with its age there. Nothing moves on hover or while the right-click menu is open. An opened checkout and its agent rows share one small group fill.",
+              "content": "sidebar.tsx CheckoutRowView: the kind glyph and the name read on the left, 12/400 (500 while its Workspace is in front) with the path prefix up to the first slash muted. While its agent rows are folded, line one ends in the status badge, which counts them under the mark each row draws, then the fold slot, whose chevron is there only while agents run; opening them takes the badge away, since their own marks now speak, and changes nothing else on the row. Line two is the purpose, 11 on a 16 line, and the last-commit age ends it on the column every row’s time ends on; a row without a purpose is one line, 32 high, with its age there, and a row with one is 48. Nothing moves on hover or while the right-click menu is open. An opened checkout and its agent rows share one small group fill with 4 inside above and below.",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "normal"
@@ -14059,7 +14059,7 @@
             {
               "type": "frame",
               "id": "DLP27",
-              "name": "Component / Checkout row (36 or 44)",
+              "name": "Component / Checkout row (32 or 48)",
               "reusable": true,
               "width": "fill_container",
               "layout": "vertical",
@@ -14098,14 +14098,32 @@
                       "fill": "$--pr-open"
                     },
                     {
-                      "type": "text",
-                      "id": "q91d7",
-                      "name": "Checkout name",
-                      "fill": "$--foreground",
-                      "content": "prd/browser-like-panes",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-subhead",
-                      "fontWeight": "500"
+                      "type": "frame",
+                      "id": "checkout-name",
+                      "name": "Name",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "checkout-name-prefix",
+                          "name": "Path prefix",
+                          "fill": "$--muted-foreground",
+                          "content": "prd/",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "text",
+                          "id": "q91d7",
+                          "name": "Checkout name",
+                          "fill": "$--foreground",
+                          "content": "browser-like-panes",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "normal"
+                        }
+                      ]
                     },
                     {
                       "id": "TS5x9",
@@ -14507,7 +14525,8 @@
                         }
                       ]
                     }
-                  ]
+                  ],
+                  "height": 16
                 }
               ],
               "cornerRadius": "$--radius-sm"
@@ -14537,7 +14556,15 @@
               "type": "ref",
               "ref": "DLP27",
               "name": "Row / Collapsed with purpose",
-              "width": "fill_container"
+              "width": "fill_container",
+              "descendants": {
+                "checkout-name-prefix": {
+                  "content": "prd/"
+                },
+                "q91d7": {
+                  "content": "browser-like-panes"
+                }
+              }
             }
           ]
         },
@@ -14571,6 +14598,12 @@
                 },
                 "checkout-status": {
                   "enabled": false
+                },
+                "checkout-name-prefix": {
+                  "content": "prd/"
+                },
+                "q91d7": {
+                  "content": "browser-like-panes"
                 }
               }
             }
@@ -14602,7 +14635,7 @@
               "width": "fill_container",
               "descendants": {
                 "q91d7": {
-                  "content": "chore/pr-template"
+                  "content": "pr-template"
                 },
                 "checkout-status": {
                   "enabled": false
@@ -14615,6 +14648,9 @@
                 },
                 "line2-age": {
                   "content": "2d"
+                },
+                "checkout-name-prefix": {
+                  "content": "chore/"
                 }
               }
             }
@@ -14644,10 +14680,10 @@
               "name": "Row / One line",
               "ref": "DLP27",
               "width": "fill_container",
-              "height": 36,
+              "height": 32,
               "descendants": {
                 "q91d7": {
-                  "content": "fix/registered-projects-only"
+                  "content": "registered-projects-only"
                 },
                 "checkout-status": {
                   "enabled": false
@@ -14661,6 +14697,9 @@
                 },
                 "o6XLUj": {
                   "enabled": false
+                },
+                "checkout-name-prefix": {
+                  "content": "fix/"
                 }
               }
             }
@@ -14709,6 +14748,9 @@
                 },
                 "o6XLUj": {
                   "enabled": false
+                },
+                "checkout-name-prefix": {
+                  "enabled": false
                 }
               }
             }
@@ -14739,8 +14781,15 @@
               "width": "fill_container",
               "name": "Row / Hover",
               "fill": "$--accent",
-              "height": 44,
-              "descendants": {}
+              "height": 48,
+              "descendants": {
+                "checkout-name-prefix": {
+                  "content": "prd/"
+                },
+                "q91d7": {
+                  "content": "browser-like-panes"
+                }
+              }
             }
           ]
         },
@@ -14771,8 +14820,15 @@
               "stroke": "$--ring",
               "strokeWidth": 1,
               "strokeAlignment": "inner",
-              "height": 44,
-              "descendants": {}
+              "height": 48,
+              "descendants": {
+                "checkout-name-prefix": {
+                  "content": "prd/"
+                },
+                "q91d7": {
+                  "content": "browser-like-panes"
+                }
+              }
             }
           ]
         },
@@ -14801,8 +14857,15 @@
               "width": "fill_container",
               "name": "Row / Menu open",
               "fill": "$--accent",
-              "height": 44,
-              "descendants": {}
+              "height": 48,
+              "descendants": {
+                "checkout-name-prefix": {
+                  "content": "prd/"
+                },
+                "q91d7": {
+                  "content": "browser-like-panes"
+                }
+              }
             }
           ]
         },
@@ -14831,14 +14894,14 @@
               "width": "fill_container",
               "name": "Row / Selected",
               "fill": "$--secondary",
-              "height": 36,
+              "height": 32,
               "descendants": {
                 "o6XLUj": {
                   "enabled": false
                 },
                 "q91d7": {
                   "content": "main",
-                  "fontWeight": "600"
+                  "fontWeight": "500"
                 },
                 "VtSRn": {
                   "icon": "house",
@@ -14853,6 +14916,9 @@
                 },
                 "IXwZI": {
                   "opacity": 0
+                },
+                "checkout-name-prefix": {
+                  "enabled": false
                 }
               }
             }
@@ -14891,7 +14957,7 @@
                   "ref": "DLP27",
                   "width": "fill_container",
                   "name": "Row / Opened",
-                  "height": 44,
+                  "height": 48,
                   "descendants": {
                     "q91d7": {
                       "content": "main"
@@ -14914,6 +14980,9 @@
                     },
                     "line2-age": {
                       "content": "12m"
+                    },
+                    "checkout-name-prefix": {
+                      "enabled": false
                     }
                   }
                 },
@@ -14965,7 +15034,7 @@
           "id": "sidebar-agent-row-spec",
           "name": "Spec",
           "fill": "$--subtle-foreground",
-          "content": "sidebar-agent-row.tsx SidebarAgentRow, in Agents and under a checkout in Projects: the status mark, the provider, the title, a branch chip only for a child whose checkout differs from its parent, the device chip, the descendant badge while folded, the elapsed time that is always shown, and the fold slot every row keeps, its chevron drawn only on a parent, so every row's time and chevron share one column each. A request or news has its own line from the start, a quiet sentence is only in the tooltip, and Agents adds a fixed context line. Hover, focus and selection change a fill and a ring, never a height.",
+          "content": "sidebar-agent-row.tsx SidebarAgentRow, in Agents and under a checkout in Projects: the status mark, the provider, the title at 12/400 in every state (attention and selection brighten it, never thicken it), a branch chip only for a child whose checkout differs from its parent, the device chip, the descendant badge while folded, the elapsed time at 11 that is always shown, and the fold slot every row keeps, its chevron drawn only on a parent, so every row's time and chevron share one column each. Line one is 20 high; a request or news has its own 16 line from the start, so a row is 28 or 44; a quiet sentence is only in the tooltip, and Agents adds a fixed context line. Hover, focus and selection change a fill and a ring, never a height.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal",
@@ -14990,7 +15059,7 @@
               "type": "frame",
               "id": "sar-marks",
               "name": "Marks",
-              "height": 24,
+              "height": 20,
               "gap": "$--spacing-xs",
               "alignItems": "center",
               "children": [
@@ -15066,7 +15135,7 @@
                   "id": "sar-line1",
                   "name": "Line 1",
                   "width": "fill_container",
-                  "height": 24,
+                  "height": 20,
                   "gap": "$--spacing-xs",
                   "alignItems": "center",
                   "children": [
@@ -15174,7 +15243,7 @@
                       "fill": "$--muted-foreground",
                       "content": "3m",
                       "fontFamily": "$--font-mono",
-                      "fontSize": "$--text-micro",
+                      "fontSize": "$--text-caption",
                       "fontWeight": "normal"
                     },
                     {
@@ -15182,7 +15251,7 @@
                       "id": "sar-fold",
                       "name": "Fold slot",
                       "width": 16,
-                      "height": 24,
+                      "height": 20,
                       "justifyContent": "center",
                       "alignItems": "center",
                       "children": [
@@ -15210,7 +15279,10 @@
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-caption",
                   "fontWeight": "normal",
-                  "enabled": false
+                  "enabled": false,
+                  "textGrowth": "fixed-width-height",
+                  "width": "fill_container",
+                  "height": 16
                 },
                 {
                   "type": "text",
@@ -15221,7 +15293,10 @@
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-caption",
                   "fontWeight": "normal",
-                  "enabled": false
+                  "enabled": false,
+                  "textGrowth": "fixed-width-height",
+                  "width": "fill_container",
+                  "height": 16
                 }
               ]
             }
@@ -15240,7 +15315,7 @@
               "id": "sidebar-agent-row-state-rest-label",
               "name": "State name",
               "fill": "$--subtle-foreground",
-              "content": "Seen at rest (32)",
+              "content": "Seen at rest (28)",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "normal"
@@ -15311,8 +15386,7 @@
               "fill": "$--secondary",
               "descendants": {
                 "sar-title": {
-                  "fill": "$--foreground",
-                  "fontWeight": "500"
+                  "fill": "$--foreground"
                 }
               }
             }
@@ -15433,8 +15507,7 @@
                 },
                 "sar-title": {
                   "content": "Electron포팅지침이행",
-                  "fill": "$--foreground",
-                  "fontWeight": "500"
+                  "fill": "$--foreground"
                 },
                 "sar-line": {
                   "enabled": true,
@@ -15486,8 +15559,7 @@
                 },
                 "sar-title": {
                   "content": "구현 범위 확인",
-                  "fill": "$--foreground",
-                  "fontWeight": "500"
+                  "fill": "$--foreground"
                 },
                 "sar-line": {
                   "enabled": true
@@ -15586,8 +15658,7 @@
                 },
                 "sar-title": {
                   "content": "테스트 실행 실패",
-                  "fill": "$--foreground",
-                  "fontWeight": "500"
+                  "fill": "$--foreground"
                 },
                 "sar-line": {
                   "enabled": true,
@@ -15892,8 +15963,7 @@
                 },
                 "sar-title": {
                   "content": "배포 승인 요청",
-                  "fill": "$--foreground",
-                  "fontWeight": "500"
+                  "fill": "$--foreground"
                 },
                 "sar-line": {
                   "enabled": true,
@@ -33683,10 +33753,6 @@
       "type": "number",
       "value": 18
     },
-    "--size-compact-agent-leading-inset": {
-      "type": "number",
-      "value": 13
-    },
     "--size-compact-agent-row-vpad": {
       "type": "number",
       "value": 5
@@ -33697,7 +33763,7 @@
     },
     "--size-checkout-row": {
       "type": "number",
-      "value": 36
+      "value": 32
     },
     "--size-checkout-icon": {
       "type": "number",
@@ -33989,7 +34055,7 @@
     },
     "--size-checkout-row-detailed": {
       "type": "number",
-      "value": 44
+      "value": 48
     },
     "--size-overview-group-header": {
       "type": "number",
@@ -34696,6 +34762,18 @@
     "--size-gallery-scene-h": {
       "type": "number",
       "value": 880
+    },
+    "--size-project-row": {
+      "type": "number",
+      "value": 36
+    },
+    "--size-sidebar-line": {
+      "type": "number",
+      "value": 20
+    },
+    "--size-sidebar-line-detail": {
+      "type": "number",
+      "value": 16
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4",

@@ -1242,11 +1242,23 @@
     },
     "--size-checkout-row": {
       "type": "number",
-      "value": 36
+      "value": 32
     },
     "--size-checkout-row-detailed": {
       "type": "number",
-      "value": 44
+      "value": 48
+    },
+    "--size-project-row": {
+      "type": "number",
+      "value": 36
+    },
+    "--size-sidebar-line": {
+      "type": "number",
+      "value": 20
+    },
+    "--size-sidebar-line-detail": {
+      "type": "number",
+      "value": 16
     },
     "--size-overview-group-header": {
       "type": "number",
@@ -1353,10 +1365,6 @@
       "value": 14
     },
     "--size-lineage-elbow-y": {
-      "type": "number",
-      "value": 13
-    },
-    "--size-compact-agent-leading-inset": {
       "type": "number",
       "value": 13
     },
@@ -1579,12 +1587,12 @@
                 {
                   "type": "text",
                   "id": "main-sidebar-seen-l",
-                  "name": "SEEN · 2",
-                  "content": "SEEN · 2",
+                  "name": "Seen · 2",
+                  "content": "Seen · 2",
                   "fill": "$--muted-foreground",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-micro",
-                  "fontWeight": "600"
+                  "fontWeight": "500"
                 },
                 {
                   "id": "main-sidebar-agent0-l",
@@ -3953,12 +3961,12 @@
                 {
                   "type": "text",
                   "id": "main-sidebar-seen-d",
-                  "name": "SEEN · 2",
-                  "content": "SEEN · 2",
+                  "name": "Seen · 2",
+                  "content": "Seen · 2",
                   "fill": "$--muted-foreground",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-micro",
-                  "fontWeight": "600"
+                  "fontWeight": "500"
                 },
                 {
                   "id": "main-sidebar-agent0-d",
@@ -14748,12 +14756,12 @@
                     {
                       "type": "text",
                       "id": "ws-sidebar-seen-lo",
-                      "name": "SEEN · 2",
-                      "content": "SEEN · 2",
+                      "name": "Seen · 2",
+                      "content": "Seen · 2",
                       "fill": "$--muted-foreground",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "600"
+                      "fontWeight": "500"
                     },
                     {
                       "id": "ws-sidebar-agent0-lo",
@@ -16249,12 +16257,12 @@
                     {
                       "type": "text",
                       "id": "ws-sidebar-seen-lc",
-                      "name": "SEEN · 2",
-                      "content": "SEEN · 2",
+                      "name": "Seen · 2",
+                      "content": "Seen · 2",
                       "fill": "$--muted-foreground",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "600"
+                      "fontWeight": "500"
                     },
                     {
                       "id": "ws-sidebar-agent0-lc",
@@ -17513,12 +17521,12 @@
                     {
                       "type": "text",
                       "id": "ws-sidebar-seen-do",
-                      "name": "SEEN · 2",
-                      "content": "SEEN · 2",
+                      "name": "Seen · 2",
+                      "content": "Seen · 2",
                       "fill": "$--muted-foreground",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "600"
+                      "fontWeight": "500"
                     },
                     {
                       "id": "ws-sidebar-agent0-do",
@@ -19014,12 +19022,12 @@
                     {
                       "type": "text",
                       "id": "ws-sidebar-seen-dc",
-                      "name": "SEEN · 2",
-                      "content": "SEEN · 2",
+                      "name": "Seen · 2",
+                      "content": "Seen · 2",
                       "fill": "$--muted-foreground",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-micro",
-                      "fontWeight": "600"
+                      "fontWeight": "500"
                     },
                     {
                       "id": "ws-sidebar-agent0-dc",
@@ -28395,7 +28403,7 @@
           "type": "text",
           "id": "screen-projects-sidebar-spec",
           "name": "sidebar.tsx, projects.ts: th",
-          "content": "sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. Line two is the purpose with the last-commit age on the time column, kept wherever agents run; a checkout with neither is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.",
+          "content": "sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose; a checkout without one is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -28553,28 +28561,37 @@
                       }
                     },
                     {
-                      "type": "frame",
                       "id": "psb-sec-pin-l",
-                      "name": "Section",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "psb-sec-pin-l-t",
-                          "name": "PINNED · 1",
-                          "content": "PINNED · 1",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-micro",
-                          "fontWeight": "600"
-                        }
-                      ],
+                      "type": "ref",
+                      "ref": "hideui:O79KF",
+                      "name": "Pinned · 1",
                       "width": 284,
                       "padding": [
                         "$--spacing-sm",
                         "$--spacing-sm",
                         "$--spacing-xxs",
                         "$--spacing-sm"
-                      ]
+                      ],
+                      "descendants": {
+                        "hideui:nOk00": {
+                          "fill": "$--muted-foreground"
+                        },
+                        "hideui:VOd6D": {
+                          "fill": "$--muted-foreground",
+                          "content": "Pinned · 1"
+                        },
+                        "hideui:rVsKB": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:g7fzt": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:eK6gz": {
+                          "enabled": false
+                        }
+                      }
                     },
                     {
                       "id": "psb-p-notes-l",
@@ -28582,7 +28599,7 @@
                       "ref": "hideui:DLP27",
                       "name": "team-notes",
                       "width": 284,
-                      "height": 44,
+                      "height": 48,
                       "padding": [
                         0,
                         4,
@@ -28594,10 +28611,14 @@
                           "fill": "$--subtle-foreground",
                           "icon": "folder"
                         },
+                        "hideui:checkout-name-prefix": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
                         "hideui:q91d7": {
                           "fill": "$--foreground",
                           "content": "team-notes",
-                          "fontSize": "$--text-title",
+                          "fontSize": "$--text-subhead",
                           "fontWeight": "600"
                         },
                         "hideui:checkout-status": {
@@ -28695,28 +28716,37 @@
                       }
                     },
                     {
-                      "type": "frame",
                       "id": "psb-sec-recent-l",
-                      "name": "Section",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "psb-sec-recent-l-t",
-                          "name": "PROJECTS · RECENT ACTIVITY ·",
-                          "content": "PROJECTS · RECENT ACTIVITY · 5",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-micro",
-                          "fontWeight": "600"
-                        }
-                      ],
+                      "type": "ref",
+                      "ref": "hideui:O79KF",
+                      "name": "Projects · Recent activity · 5",
                       "width": 284,
                       "padding": [
                         "$--spacing-sm",
                         "$--spacing-sm",
                         "$--spacing-xxs",
                         "$--spacing-sm"
-                      ]
+                      ],
+                      "descendants": {
+                        "hideui:nOk00": {
+                          "fill": "$--muted-foreground"
+                        },
+                        "hideui:VOd6D": {
+                          "fill": "$--muted-foreground",
+                          "content": "Projects · Recent activity · 5"
+                        },
+                        "hideui:rVsKB": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:g7fzt": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:eK6gz": {
+                          "enabled": false
+                        }
+                      }
                     },
                     {
                       "id": "psb-p-herdr-l",
@@ -28814,7 +28844,7 @@
                       "ref": "hideui:DLP27",
                       "name": "Overview",
                       "width": 284,
-                      "height": 36,
+                      "height": 32,
                       "padding": [
                         0,
                         4,
@@ -28827,10 +28857,14 @@
                           "fill": "$--subtle-foreground",
                           "icon": "layout-dashboard"
                         },
+                        "hideui:checkout-name-prefix": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
                         "hideui:q91d7": {
                           "fill": "$--foreground",
                           "content": "Overview",
-                          "fontWeight": "600"
+                          "fontWeight": "500"
                         },
                         "hideui:checkout-status": {
                           "fill": "$--secondary",
@@ -28917,7 +28951,7 @@
                           "ref": "hideui:DLP27",
                           "name": "main",
                           "width": 284,
-                          "height": 44,
+                          "height": 48,
                           "padding": [
                             0,
                             4,
@@ -28929,10 +28963,14 @@
                               "fill": "$--subtle-foreground",
                               "icon": "house"
                             },
+                            "hideui:checkout-name-prefix": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
                             "hideui:q91d7": {
                               "fill": "$--foreground",
                               "content": "main",
-                              "fontWeight": "500"
+                              "fontWeight": "normal"
                             },
                             "hideui:checkout-status": {
                               "fill": "$--secondary",
@@ -29366,8 +29404,7 @@
                             },
                             "hideui:sar-title": {
                               "fill": "$--foreground",
-                              "content": "배포 전 확인",
-                              "fontWeight": "500"
+                              "content": "배포 전 확인"
                             },
                             "hideui:sar-branch": {
                               "fill": "$--secondary",
@@ -29426,6 +29463,10 @@
                       ],
                       "width": 284,
                       "layout": "vertical",
+                      "padding": [
+                        "$--spacing-xs",
+                        0
+                      ],
                       "fill": "$--muted",
                       "cornerRadius": "$--radius-sm"
                     },
@@ -29435,7 +29476,7 @@
                       "ref": "hideui:DLP27",
                       "name": "quick/155-browser-display",
                       "width": 284,
-                      "height": 44,
+                      "height": 48,
                       "padding": [
                         0,
                         4,
@@ -29447,10 +29488,15 @@
                           "fill": "$--subtle-foreground",
                           "icon": "git-branch"
                         },
+                        "hideui:checkout-name-prefix": {
+                          "fill": "$--muted-foreground",
+                          "content": "quick/",
+                          "enabled": true
+                        },
                         "hideui:q91d7": {
                           "fill": "$--foreground",
-                          "content": "quick/155-browser-display",
-                          "fontWeight": "500"
+                          "content": "155-browser-display",
+                          "fontWeight": "normal"
                         },
                         "hideui:checkout-status": {
                           "fill": "$--secondary",
@@ -29553,7 +29599,7 @@
                       "ref": "hideui:DLP27",
                       "name": "quick/154-search-palette",
                       "width": 284,
-                      "height": 44,
+                      "height": 48,
                       "padding": [
                         0,
                         4,
@@ -29565,10 +29611,15 @@
                           "fill": "$--pr-draft",
                           "icon": "git-pull-request-draft"
                         },
+                        "hideui:checkout-name-prefix": {
+                          "fill": "$--muted-foreground",
+                          "content": "quick/",
+                          "enabled": true
+                        },
                         "hideui:q91d7": {
                           "fill": "$--foreground",
-                          "content": "quick/154-search-palette",
-                          "fontWeight": "500"
+                          "content": "154-search-palette",
+                          "fontWeight": "normal"
                         },
                         "hideui:checkout-status": {
                           "fill": "$--secondary",
@@ -29671,7 +29722,7 @@
                       "ref": "hideui:DLP27",
                       "name": "electron-shortcut-bindings",
                       "width": 284,
-                      "height": 44,
+                      "height": 48,
                       "padding": [
                         0,
                         4,
@@ -29683,10 +29734,14 @@
                           "fill": "$--pr-open",
                           "icon": "git-pull-request"
                         },
+                        "hideui:checkout-name-prefix": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
                         "hideui:q91d7": {
                           "fill": "$--foreground",
                           "content": "electron-shortcut-bindings",
-                          "fontWeight": "500"
+                          "fontWeight": "normal"
                         },
                         "hideui:checkout-status": {
                           "fill": "$--secondary",
@@ -29789,7 +29844,7 @@
                       "ref": "hideui:DLP27",
                       "name": "design/workspace-ux-prop…",
                       "width": 284,
-                      "height": 44,
+                      "height": 48,
                       "padding": [
                         0,
                         4,
@@ -29801,10 +29856,15 @@
                           "fill": "$--subtle-foreground",
                           "icon": "git-branch"
                         },
+                        "hideui:checkout-name-prefix": {
+                          "fill": "$--muted-foreground",
+                          "content": "design/",
+                          "enabled": true
+                        },
                         "hideui:q91d7": {
                           "fill": "$--foreground",
-                          "content": "design/workspace-ux-prop…",
-                          "fontWeight": "500"
+                          "content": "workspace-ux-prop…",
+                          "fontWeight": "normal"
                         },
                         "hideui:checkout-status": {
                           "fill": "$--secondary",
@@ -29888,7 +29948,7 @@
                       "ref": "hideui:DLP27",
                       "name": "fix/registered-projects-only",
                       "width": 284,
-                      "height": 36,
+                      "height": 32,
                       "padding": [
                         0,
                         4,
@@ -29900,10 +29960,15 @@
                           "fill": "$--subtle-foreground",
                           "icon": "git-branch"
                         },
+                        "hideui:checkout-name-prefix": {
+                          "fill": "$--muted-foreground",
+                          "content": "fix/",
+                          "enabled": true
+                        },
                         "hideui:q91d7": {
                           "fill": "$--foreground",
-                          "content": "fix/registered-projects-only",
-                          "fontWeight": "500"
+                          "content": "registered-projects-only",
+                          "fontWeight": "normal"
                         },
                         "hideui:checkout-status": {
                           "fill": "$--secondary",
@@ -29986,7 +30051,7 @@
                       "ref": "hideui:DLP27",
                       "name": "legacy-shell",
                       "width": 284,
-                      "height": 36,
+                      "height": 32,
                       "padding": [
                         0,
                         4,
@@ -29998,10 +30063,14 @@
                           "fill": "$--destructive",
                           "icon": "git-branch"
                         },
+                        "hideui:checkout-name-prefix": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
                         "hideui:q91d7": {
                           "fill": "$--foreground",
                           "content": "legacy-shell",
-                          "fontWeight": "500"
+                          "fontWeight": "normal"
                         },
                         "hideui:checkout-status": {
                           "fill": "$--secondary",
@@ -30493,28 +30562,37 @@
                       }
                     },
                     {
-                      "type": "frame",
                       "id": "psb-sec-pin-d",
-                      "name": "Section",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "psb-sec-pin-d-t",
-                          "name": "PINNED · 1",
-                          "content": "PINNED · 1",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-micro",
-                          "fontWeight": "600"
-                        }
-                      ],
+                      "type": "ref",
+                      "ref": "hideui:O79KF",
+                      "name": "Pinned · 1",
                       "width": 284,
                       "padding": [
                         "$--spacing-sm",
                         "$--spacing-sm",
                         "$--spacing-xxs",
                         "$--spacing-sm"
-                      ]
+                      ],
+                      "descendants": {
+                        "hideui:nOk00": {
+                          "fill": "$--muted-foreground"
+                        },
+                        "hideui:VOd6D": {
+                          "fill": "$--muted-foreground",
+                          "content": "Pinned · 1"
+                        },
+                        "hideui:rVsKB": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:g7fzt": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:eK6gz": {
+                          "enabled": false
+                        }
+                      }
                     },
                     {
                       "id": "psb-p-notes-d",
@@ -30522,7 +30600,7 @@
                       "ref": "hideui:DLP27",
                       "name": "team-notes",
                       "width": 284,
-                      "height": 44,
+                      "height": 48,
                       "padding": [
                         0,
                         4,
@@ -30534,10 +30612,14 @@
                           "fill": "$--subtle-foreground",
                           "icon": "folder"
                         },
+                        "hideui:checkout-name-prefix": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
                         "hideui:q91d7": {
                           "fill": "$--foreground",
                           "content": "team-notes",
-                          "fontSize": "$--text-title",
+                          "fontSize": "$--text-subhead",
                           "fontWeight": "600"
                         },
                         "hideui:checkout-status": {
@@ -30635,28 +30717,37 @@
                       }
                     },
                     {
-                      "type": "frame",
                       "id": "psb-sec-recent-d",
-                      "name": "Section",
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "psb-sec-recent-d-t",
-                          "name": "PROJECTS · RECENT ACTIVITY ·",
-                          "content": "PROJECTS · RECENT ACTIVITY · 5",
-                          "fill": "$--muted-foreground",
-                          "fontFamily": "$--font-ui",
-                          "fontSize": "$--text-micro",
-                          "fontWeight": "600"
-                        }
-                      ],
+                      "type": "ref",
+                      "ref": "hideui:O79KF",
+                      "name": "Projects · Recent activity · 5",
                       "width": 284,
                       "padding": [
                         "$--spacing-sm",
                         "$--spacing-sm",
                         "$--spacing-xxs",
                         "$--spacing-sm"
-                      ]
+                      ],
+                      "descendants": {
+                        "hideui:nOk00": {
+                          "fill": "$--muted-foreground"
+                        },
+                        "hideui:VOd6D": {
+                          "fill": "$--muted-foreground",
+                          "content": "Projects · Recent activity · 5"
+                        },
+                        "hideui:rVsKB": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:g7fzt": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:eK6gz": {
+                          "enabled": false
+                        }
+                      }
                     },
                     {
                       "id": "psb-p-herdr-d",
@@ -30754,7 +30845,7 @@
                       "ref": "hideui:DLP27",
                       "name": "Overview",
                       "width": 284,
-                      "height": 36,
+                      "height": 32,
                       "padding": [
                         0,
                         4,
@@ -30767,10 +30858,14 @@
                           "fill": "$--subtle-foreground",
                           "icon": "layout-dashboard"
                         },
+                        "hideui:checkout-name-prefix": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
                         "hideui:q91d7": {
                           "fill": "$--foreground",
                           "content": "Overview",
-                          "fontWeight": "600"
+                          "fontWeight": "500"
                         },
                         "hideui:checkout-status": {
                           "fill": "$--secondary",
@@ -30857,7 +30952,7 @@
                           "ref": "hideui:DLP27",
                           "name": "main",
                           "width": 284,
-                          "height": 44,
+                          "height": 48,
                           "padding": [
                             0,
                             4,
@@ -30869,10 +30964,14 @@
                               "fill": "$--subtle-foreground",
                               "icon": "house"
                             },
+                            "hideui:checkout-name-prefix": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
                             "hideui:q91d7": {
                               "fill": "$--foreground",
                               "content": "main",
-                              "fontWeight": "500"
+                              "fontWeight": "normal"
                             },
                             "hideui:checkout-status": {
                               "fill": "$--secondary",
@@ -31306,8 +31405,7 @@
                             },
                             "hideui:sar-title": {
                               "fill": "$--foreground",
-                              "content": "배포 전 확인",
-                              "fontWeight": "500"
+                              "content": "배포 전 확인"
                             },
                             "hideui:sar-branch": {
                               "fill": "$--secondary",
@@ -31366,6 +31464,10 @@
                       ],
                       "width": 284,
                       "layout": "vertical",
+                      "padding": [
+                        "$--spacing-xs",
+                        0
+                      ],
                       "fill": "$--muted",
                       "cornerRadius": "$--radius-sm"
                     },
@@ -31375,7 +31477,7 @@
                       "ref": "hideui:DLP27",
                       "name": "quick/155-browser-display",
                       "width": 284,
-                      "height": 44,
+                      "height": 48,
                       "padding": [
                         0,
                         4,
@@ -31387,10 +31489,15 @@
                           "fill": "$--subtle-foreground",
                           "icon": "git-branch"
                         },
+                        "hideui:checkout-name-prefix": {
+                          "fill": "$--muted-foreground",
+                          "content": "quick/",
+                          "enabled": true
+                        },
                         "hideui:q91d7": {
                           "fill": "$--foreground",
-                          "content": "quick/155-browser-display",
-                          "fontWeight": "500"
+                          "content": "155-browser-display",
+                          "fontWeight": "normal"
                         },
                         "hideui:checkout-status": {
                           "fill": "$--secondary",
@@ -31493,7 +31600,7 @@
                       "ref": "hideui:DLP27",
                       "name": "quick/154-search-palette",
                       "width": 284,
-                      "height": 44,
+                      "height": 48,
                       "padding": [
                         0,
                         4,
@@ -31505,10 +31612,15 @@
                           "fill": "$--pr-draft",
                           "icon": "git-pull-request-draft"
                         },
+                        "hideui:checkout-name-prefix": {
+                          "fill": "$--muted-foreground",
+                          "content": "quick/",
+                          "enabled": true
+                        },
                         "hideui:q91d7": {
                           "fill": "$--foreground",
-                          "content": "quick/154-search-palette",
-                          "fontWeight": "500"
+                          "content": "154-search-palette",
+                          "fontWeight": "normal"
                         },
                         "hideui:checkout-status": {
                           "fill": "$--secondary",
@@ -31611,7 +31723,7 @@
                       "ref": "hideui:DLP27",
                       "name": "electron-shortcut-bindings",
                       "width": 284,
-                      "height": 44,
+                      "height": 48,
                       "padding": [
                         0,
                         4,
@@ -31623,10 +31735,14 @@
                           "fill": "$--pr-open",
                           "icon": "git-pull-request"
                         },
+                        "hideui:checkout-name-prefix": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
                         "hideui:q91d7": {
                           "fill": "$--foreground",
                           "content": "electron-shortcut-bindings",
-                          "fontWeight": "500"
+                          "fontWeight": "normal"
                         },
                         "hideui:checkout-status": {
                           "fill": "$--secondary",
@@ -31729,7 +31845,7 @@
                       "ref": "hideui:DLP27",
                       "name": "design/workspace-ux-prop…",
                       "width": 284,
-                      "height": 44,
+                      "height": 48,
                       "padding": [
                         0,
                         4,
@@ -31741,10 +31857,15 @@
                           "fill": "$--subtle-foreground",
                           "icon": "git-branch"
                         },
+                        "hideui:checkout-name-prefix": {
+                          "fill": "$--muted-foreground",
+                          "content": "design/",
+                          "enabled": true
+                        },
                         "hideui:q91d7": {
                           "fill": "$--foreground",
-                          "content": "design/workspace-ux-prop…",
-                          "fontWeight": "500"
+                          "content": "workspace-ux-prop…",
+                          "fontWeight": "normal"
                         },
                         "hideui:checkout-status": {
                           "fill": "$--secondary",
@@ -31828,7 +31949,7 @@
                       "ref": "hideui:DLP27",
                       "name": "fix/registered-projects-only",
                       "width": 284,
-                      "height": 36,
+                      "height": 32,
                       "padding": [
                         0,
                         4,
@@ -31840,10 +31961,15 @@
                           "fill": "$--subtle-foreground",
                           "icon": "git-branch"
                         },
+                        "hideui:checkout-name-prefix": {
+                          "fill": "$--muted-foreground",
+                          "content": "fix/",
+                          "enabled": true
+                        },
                         "hideui:q91d7": {
                           "fill": "$--foreground",
-                          "content": "fix/registered-projects-only",
-                          "fontWeight": "500"
+                          "content": "registered-projects-only",
+                          "fontWeight": "normal"
                         },
                         "hideui:checkout-status": {
                           "fill": "$--secondary",
@@ -31926,7 +32052,7 @@
                       "ref": "hideui:DLP27",
                       "name": "legacy-shell",
                       "width": 284,
-                      "height": 36,
+                      "height": 32,
                       "padding": [
                         0,
                         4,
@@ -31938,10 +32064,14 @@
                           "fill": "$--destructive",
                           "icon": "git-branch"
                         },
+                        "hideui:checkout-name-prefix": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
                         "hideui:q91d7": {
                           "fill": "$--foreground",
                           "content": "legacy-shell",
-                          "fontWeight": "500"
+                          "fontWeight": "normal"
                         },
                         "hideui:checkout-status": {
                           "fill": "$--secondary",
