@@ -359,7 +359,7 @@ function screenDevicePickerRow(id, {name, detail, selected}) {
 // The weekly usage chip at the sidebar's foot (web/src/components/weekly-usage.tsx):
 // the master draws Claude Code's mark, so only another provider's mark is named.
 function screenUsageChip(id, {provider, value}) {
-  const mark = provider === 'claude' ? {} : {'usage-chip-mark': {fill: {type: 'image', enabled: true, url: `../macos/Sources/HerdrMacOS/Resources/agent-${provider}.png`, mode: 'fit'}}};
+  const mark = provider === 'claude' ? {} : {'usage-chip-mark': {fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${provider}.png`, mode: 'fit'}}};
   return themedXref(id, 'usage-chip', `Usage ${provider}`, {}, {...mark, 'usage-chip-percent': {content: value}});
 }
 
