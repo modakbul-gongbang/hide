@@ -24929,7 +24929,7 @@
           "type": "text",
           "id": "screen-projects-sidebar-spec",
           "name": "sidebar.tsx, projects.ts: th",
-          "content": "sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here herdr-ide on its Overview, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every row, agent rows included, ends in its time and then a fold slot, so names, ages and activity never move and the times and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A project row opens the Overview; a checkout row opens the checkout and keeps its last-commit age, and its chevron, there only while agents run, opens their rows in place of line two, on one group fill. A parent agent folds its children with the same chevron and speaks for them with its badge. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.",
+          "content": "sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here herdr-ide on its Overview, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. A checkout row opens the checkout; while its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. Line two is the purpose with the last-commit age on the time column, kept wherever agents run; a checkout with neither is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -25033,8 +25033,49 @@
                           "fill": "$--foreground",
                           "content": "All projects"
                         },
+                        "hideui:project-status": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:project-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:project-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:project-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:project-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:project-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:project-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:project-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
                         "hideui:nZkan": {
                           "fill": "$--muted-foreground",
+                          "enabled": true,
                           "content": "12 projects"
                         },
                         "hideui:iBYjj": {
@@ -25093,54 +25134,87 @@
                           "fontSize": "$--text-title",
                           "fontWeight": "600"
                         },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
-                          "content": "1 agent · 2h",
-                          "enabled": true,
-                          "fontFamily": "$--font-ui"
+                          "enabled": false
                         },
                         "hideui:CgZj3": {
                           "fill": "$--muted-foreground",
                           "icon": "chevron-right"
-                        },
-                        "hideui:J5xdha": {
-                          "fill": "$--agent-working",
-                          "enabled": false
-                        },
-                        "hideui:G3d9T": {
-                          "stroke": "$--muted-foreground",
-                          "enabled": true
-                        },
-                        "hideui:aFPLo": {
-                          "fill": "$--warning",
-                          "enabled": false
-                        },
-                        "hideui:N7YbJ": {
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-claude.png",
-                            "mode": "fit"
-                          }
-                        },
-                        "hideui:fklVZ": {
-                          "fill": "$--background",
-                          "enabled": false
-                        },
-                        "hideui:ExMsH": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": false
                         },
                         "hideui:D37Vr": {
                           "fill": "$--muted-foreground",
                           "content": "회의록 요약 정리",
                           "enabled": true
                         },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
                         "hideui:QetL0": {
                           "width": 292
                         },
                         "hideui:TS5x9": {
                           "enabled": false
+                        },
+                        "hideui:checkout-error": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-approval": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-question": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-working": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-done": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-idle": {
+                          "enabled": true
                         },
                         "hideui:IXwZI": {
                           "opacity": 1
@@ -25151,9 +25225,6 @@
                         },
                         "hideui:yfur4": {
                           "width": 20
-                        },
-                        "hideui:FtZyp": {
-                          "enabled": true
                         }
                       }
                     },
@@ -25198,9 +25269,52 @@
                           "fill": "$--foreground",
                           "content": "herdr-ide"
                         },
+                        "hideui:project-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:project-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:project-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:project-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:project-question-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "3"
+                        },
+                        "hideui:project-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:project-working-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "5"
+                        },
+                        "hideui:project-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:project-done-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:project-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:project-idle-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
                         "hideui:nZkan": {
-                          "fill": "$--muted-foreground",
-                          "content": "11 agents · now"
+                          "fill": "$--muted-foreground"
                         },
                         "hideui:iBYjj": {
                           "fill": "$--muted-foreground",
@@ -25208,6 +25322,24 @@
                         },
                         "hideui:wgtfo": {
                           "opacity": 0
+                        },
+                        "hideui:project-error": {
+                          "enabled": false
+                        },
+                        "hideui:project-approval": {
+                          "enabled": false
+                        },
+                        "hideui:project-question": {
+                          "enabled": true
+                        },
+                        "hideui:project-working": {
+                          "enabled": true
+                        },
+                        "hideui:project-done": {
+                          "enabled": true
+                        },
+                        "hideui:project-idle": {
+                          "enabled": true
                         }
                       }
                     },
@@ -25222,7 +25354,7 @@
                           "ref": "hideui:DLP27",
                           "name": "main",
                           "width": 284,
-                          "height": 36,
+                          "height": 44,
                           "padding": [
                             0,
                             4,
@@ -25239,47 +25371,63 @@
                               "content": "main",
                               "fontWeight": "500"
                             },
+                            "hideui:checkout-status": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:checkout-error-glyph": {
+                              "fill": "$--destructive"
+                            },
+                            "hideui:checkout-error-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-approval-glyph": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:checkout-approval-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-question-glyph": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:checkout-question-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-working-dot": {
+                              "fill": "$--agent-working"
+                            },
+                            "hideui:checkout-working-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-done-glyph": {
+                              "fill": "$--success"
+                            },
+                            "hideui:checkout-done-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-idle-ring": {
+                              "stroke": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-idle-count": {
+                              "fill": "$--subtle-foreground"
+                            },
                             "hideui:TuosT": {
                               "fill": "$--muted-foreground",
-                              "content": "now",
-                              "enabled": true
+                              "enabled": false
                             },
                             "hideui:CgZj3": {
                               "fill": "$--muted-foreground",
                               "icon": "chevron-down"
                             },
-                            "hideui:J5xdha": {
-                              "fill": "$--agent-working",
-                              "enabled": true
-                            },
-                            "hideui:G3d9T": {
-                              "stroke": "$--muted-foreground",
-                              "enabled": false
-                            },
-                            "hideui:aFPLo": {
-                              "fill": "$--warning",
-                              "enabled": false
-                            },
-                            "hideui:N7YbJ": {
-                              "fill": {
-                                "type": "image",
-                                "enabled": true,
-                                "url": "../web/src/assets/agent-codex.png",
-                                "mode": "fit"
-                              }
-                            },
-                            "hideui:fklVZ": {
-                              "fill": "$--background",
-                              "enabled": false
-                            },
-                            "hideui:ExMsH": {
-                              "fill": "$--subtle-foreground",
-                              "content": "+3",
-                              "enabled": true
-                            },
                             "hideui:D37Vr": {
                               "fill": "$--muted-foreground",
-                              "enabled": false
+                              "content": "사이드바 가독성 개선",
+                              "enabled": true
+                            },
+                            "hideui:line2-age": {
+                              "fill": "$--muted-foreground",
+                              "content": "now",
+                              "enabled": true
                             },
                             "hideui:QetL0": {
                               "width": 274
@@ -25291,14 +25439,11 @@
                               "opacity": 0
                             },
                             "hideui:o6XLUj": {
-                              "enabled": false,
+                              "enabled": true,
                               "width": 274
                             },
                             "hideui:yfur4": {
                               "width": 20
-                            },
-                            "hideui:FtZyp": {
-                              "enabled": true
                             }
                           }
                         },
@@ -25744,53 +25889,87 @@
                           "content": "quick/155-browser-display",
                           "fontWeight": "500"
                         },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
-                          "content": "40m",
-                          "enabled": true
+                          "enabled": false
                         },
                         "hideui:CgZj3": {
                           "fill": "$--muted-foreground",
                           "icon": "chevron-right"
-                        },
-                        "hideui:J5xdha": {
-                          "fill": "$--agent-working",
-                          "enabled": false
-                        },
-                        "hideui:G3d9T": {
-                          "stroke": "$--muted-foreground",
-                          "enabled": false
-                        },
-                        "hideui:aFPLo": {
-                          "fill": "$--warning",
-                          "enabled": true,
-                          "content": "?"
-                        },
-                        "hideui:N7YbJ": {
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-claude.png",
-                            "mode": "fit"
-                          }
-                        },
-                        "hideui:fklVZ": {
-                          "fill": "$--background",
-                          "enabled": false
-                        },
-                        "hideui:ExMsH": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": false
                         },
                         "hideui:D37Vr": {
                           "fill": "$--muted-foreground",
                           "content": "#155 browser display (WebCon…",
                           "enabled": true
                         },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "content": "40m",
+                          "enabled": true
+                        },
                         "hideui:QetL0": {
                           "width": 274
                         },
                         "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-error": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-approval": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-question": {
+                          "enabled": true
+                        },
+                        "hideui:checkout-working": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-done": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-idle": {
                           "enabled": false
                         },
                         "hideui:IXwZI": {
@@ -25802,9 +25981,6 @@
                         },
                         "hideui:yfur4": {
                           "width": 20
-                        },
-                        "hideui:FtZyp": {
-                          "enabled": true
                         }
                       }
                     },
@@ -25831,53 +26007,87 @@
                           "content": "quick/154-search-palette",
                           "fontWeight": "500"
                         },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
-                          "content": "1h",
-                          "enabled": true
+                          "enabled": false
                         },
                         "hideui:CgZj3": {
                           "fill": "$--muted-foreground",
                           "icon": "chevron-right"
-                        },
-                        "hideui:J5xdha": {
-                          "fill": "$--agent-working",
-                          "enabled": false
-                        },
-                        "hideui:G3d9T": {
-                          "stroke": "$--muted-foreground",
-                          "enabled": false
-                        },
-                        "hideui:aFPLo": {
-                          "fill": "$--success",
-                          "enabled": true,
-                          "content": "✓"
-                        },
-                        "hideui:N7YbJ": {
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-claude.png",
-                            "mode": "fit"
-                          }
-                        },
-                        "hideui:fklVZ": {
-                          "fill": "$--background",
-                          "enabled": false
-                        },
-                        "hideui:ExMsH": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": false
                         },
                         "hideui:D37Vr": {
                           "fill": "$--muted-foreground",
                           "content": "#154 ⌘K search palette UI",
                           "enabled": true
                         },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "content": "1h",
+                          "enabled": true
+                        },
                         "hideui:QetL0": {
                           "width": 274
                         },
                         "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-error": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-approval": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-question": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-working": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-done": {
+                          "enabled": true
+                        },
+                        "hideui:checkout-idle": {
                           "enabled": false
                         },
                         "hideui:IXwZI": {
@@ -25889,9 +26099,6 @@
                         },
                         "hideui:yfur4": {
                           "width": 20
-                        },
-                        "hideui:FtZyp": {
-                          "enabled": true
                         }
                       }
                     },
@@ -25918,52 +26125,87 @@
                           "content": "electron-shortcut-bindings",
                           "fontWeight": "500"
                         },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
-                          "content": "2h",
-                          "enabled": true
+                          "enabled": false
                         },
                         "hideui:CgZj3": {
                           "fill": "$--muted-foreground",
                           "icon": "chevron-right"
-                        },
-                        "hideui:J5xdha": {
-                          "fill": "$--agent-working",
-                          "enabled": true
-                        },
-                        "hideui:G3d9T": {
-                          "stroke": "$--muted-foreground",
-                          "enabled": false
-                        },
-                        "hideui:aFPLo": {
-                          "fill": "$--warning",
-                          "enabled": false
-                        },
-                        "hideui:N7YbJ": {
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-claude.png",
-                            "mode": "fit"
-                          }
-                        },
-                        "hideui:fklVZ": {
-                          "fill": "$--background",
-                          "enabled": false
-                        },
-                        "hideui:ExMsH": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": false
                         },
                         "hideui:D37Vr": {
                           "fill": "$--muted-foreground",
                           "content": "Electron desktop host for the we…",
                           "enabled": true
                         },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "content": "2h",
+                          "enabled": true
+                        },
                         "hideui:QetL0": {
                           "width": 274
                         },
                         "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-error": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-approval": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-question": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-working": {
+                          "enabled": true
+                        },
+                        "hideui:checkout-done": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-idle": {
                           "enabled": false
                         },
                         "hideui:IXwZI": {
@@ -25975,9 +26217,6 @@
                         },
                         "hideui:yfur4": {
                           "width": 20
-                        },
-                        "hideui:FtZyp": {
-                          "enabled": true
                         }
                       }
                     },
@@ -26004,36 +26243,62 @@
                           "content": "design/workspace-ux-prop…",
                           "fontWeight": "500"
                         },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
-                          "content": "5h",
-                          "enabled": true
+                          "enabled": false
                         },
                         "hideui:CgZj3": {
                           "fill": "$--muted-foreground",
                           "icon": "chevron-right"
                         },
-                        "hideui:J5xdha": {
-                          "fill": "$--agent-working"
-                        },
-                        "hideui:G3d9T": {
-                          "stroke": "$--muted-foreground"
-                        },
-                        "hideui:aFPLo": {
-                          "fill": "$--warning"
-                        },
-                        "hideui:N7YbJ": {
-                          "fill": "$--primary"
-                        },
-                        "hideui:fklVZ": {
-                          "fill": "$--background"
-                        },
-                        "hideui:ExMsH": {
-                          "fill": "$--subtle-foreground"
-                        },
                         "hideui:D37Vr": {
                           "fill": "$--muted-foreground",
                           "content": "Workspace UX 제안과 상태 소유…",
+                          "enabled": true
+                        },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "content": "5h",
                           "enabled": true
                         },
                         "hideui:QetL0": {
@@ -26051,9 +26316,6 @@
                         },
                         "hideui:yfur4": {
                           "width": 20
-                        },
-                        "hideui:FtZyp": {
-                          "enabled": false
                         }
                       }
                     },
@@ -26080,6 +26342,46 @@
                           "content": "fix/registered-projects-only",
                           "fontWeight": "500"
                         },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
                           "content": "1d",
@@ -26089,25 +26391,11 @@
                           "fill": "$--muted-foreground",
                           "icon": "chevron-right"
                         },
-                        "hideui:J5xdha": {
-                          "fill": "$--agent-working"
-                        },
-                        "hideui:G3d9T": {
-                          "stroke": "$--muted-foreground"
-                        },
-                        "hideui:aFPLo": {
-                          "fill": "$--warning"
-                        },
-                        "hideui:N7YbJ": {
-                          "fill": "$--primary"
-                        },
-                        "hideui:fklVZ": {
-                          "fill": "$--background"
-                        },
-                        "hideui:ExMsH": {
-                          "fill": "$--subtle-foreground"
-                        },
                         "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:line2-age": {
                           "fill": "$--muted-foreground",
                           "enabled": false
                         },
@@ -26126,9 +26414,6 @@
                         },
                         "hideui:yfur4": {
                           "width": 20
-                        },
-                        "hideui:FtZyp": {
-                          "enabled": false
                         }
                       }
                     },
@@ -26155,34 +26440,59 @@
                           "content": "legacy-shell",
                           "fontWeight": "500"
                         },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
-                          "content": "",
                           "enabled": false
                         },
                         "hideui:CgZj3": {
                           "fill": "$--muted-foreground",
                           "icon": "chevron-right"
                         },
-                        "hideui:J5xdha": {
-                          "fill": "$--agent-working"
-                        },
-                        "hideui:G3d9T": {
-                          "stroke": "$--muted-foreground"
-                        },
-                        "hideui:aFPLo": {
-                          "fill": "$--warning"
-                        },
-                        "hideui:N7YbJ": {
-                          "fill": "$--primary"
-                        },
-                        "hideui:fklVZ": {
-                          "fill": "$--background"
-                        },
-                        "hideui:ExMsH": {
-                          "fill": "$--subtle-foreground"
-                        },
                         "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:line2-age": {
                           "fill": "$--muted-foreground",
                           "enabled": false
                         },
@@ -26201,9 +26511,6 @@
                         },
                         "hideui:yfur4": {
                           "width": 20
-                        },
-                        "hideui:FtZyp": {
-                          "enabled": false
                         }
                       }
                     },
@@ -26245,9 +26552,51 @@
                           "fill": "$--foreground",
                           "content": "sasu"
                         },
+                        "hideui:project-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:project-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:project-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:project-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:project-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:project-working-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:project-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:project-done-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:project-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:project-idle-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
                         "hideui:nZkan": {
-                          "fill": "$--muted-foreground",
-                          "content": "3 agents · 50m"
+                          "fill": "$--muted-foreground"
                         },
                         "hideui:iBYjj": {
                           "fill": "$--muted-foreground",
@@ -26255,6 +26604,24 @@
                         },
                         "hideui:wgtfo": {
                           "opacity": 1
+                        },
+                        "hideui:project-error": {
+                          "enabled": false
+                        },
+                        "hideui:project-approval": {
+                          "enabled": false
+                        },
+                        "hideui:project-question": {
+                          "enabled": false
+                        },
+                        "hideui:project-working": {
+                          "enabled": true
+                        },
+                        "hideui:project-done": {
+                          "enabled": true
+                        },
+                        "hideui:project-idle": {
+                          "enabled": true
                         }
                       }
                     },
@@ -26509,8 +26876,49 @@
                           "fill": "$--foreground",
                           "content": "All projects"
                         },
+                        "hideui:project-status": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:project-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:project-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:project-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:project-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:project-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:project-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:project-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
                         "hideui:nZkan": {
                           "fill": "$--muted-foreground",
+                          "enabled": true,
                           "content": "12 projects"
                         },
                         "hideui:iBYjj": {
@@ -26569,54 +26977,87 @@
                           "fontSize": "$--text-title",
                           "fontWeight": "600"
                         },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
-                          "content": "1 agent · 2h",
-                          "enabled": true,
-                          "fontFamily": "$--font-ui"
+                          "enabled": false
                         },
                         "hideui:CgZj3": {
                           "fill": "$--muted-foreground",
                           "icon": "chevron-right"
-                        },
-                        "hideui:J5xdha": {
-                          "fill": "$--agent-working",
-                          "enabled": false
-                        },
-                        "hideui:G3d9T": {
-                          "stroke": "$--muted-foreground",
-                          "enabled": true
-                        },
-                        "hideui:aFPLo": {
-                          "fill": "$--warning",
-                          "enabled": false
-                        },
-                        "hideui:N7YbJ": {
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-claude.png",
-                            "mode": "fit"
-                          }
-                        },
-                        "hideui:fklVZ": {
-                          "fill": "$--background",
-                          "enabled": false
-                        },
-                        "hideui:ExMsH": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": false
                         },
                         "hideui:D37Vr": {
                           "fill": "$--muted-foreground",
                           "content": "회의록 요약 정리",
                           "enabled": true
                         },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
                         "hideui:QetL0": {
                           "width": 292
                         },
                         "hideui:TS5x9": {
                           "enabled": false
+                        },
+                        "hideui:checkout-error": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-approval": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-question": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-working": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-done": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-idle": {
+                          "enabled": true
                         },
                         "hideui:IXwZI": {
                           "opacity": 1
@@ -26627,9 +27068,6 @@
                         },
                         "hideui:yfur4": {
                           "width": 20
-                        },
-                        "hideui:FtZyp": {
-                          "enabled": true
                         }
                       }
                     },
@@ -26674,9 +27112,52 @@
                           "fill": "$--foreground",
                           "content": "herdr-ide"
                         },
+                        "hideui:project-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:project-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:project-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:project-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:project-question-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "3"
+                        },
+                        "hideui:project-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:project-working-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "5"
+                        },
+                        "hideui:project-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:project-done-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:project-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:project-idle-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
                         "hideui:nZkan": {
-                          "fill": "$--muted-foreground",
-                          "content": "11 agents · now"
+                          "fill": "$--muted-foreground"
                         },
                         "hideui:iBYjj": {
                           "fill": "$--muted-foreground",
@@ -26684,6 +27165,24 @@
                         },
                         "hideui:wgtfo": {
                           "opacity": 0
+                        },
+                        "hideui:project-error": {
+                          "enabled": false
+                        },
+                        "hideui:project-approval": {
+                          "enabled": false
+                        },
+                        "hideui:project-question": {
+                          "enabled": true
+                        },
+                        "hideui:project-working": {
+                          "enabled": true
+                        },
+                        "hideui:project-done": {
+                          "enabled": true
+                        },
+                        "hideui:project-idle": {
+                          "enabled": true
                         }
                       }
                     },
@@ -26698,7 +27197,7 @@
                           "ref": "hideui:DLP27",
                           "name": "main",
                           "width": 284,
-                          "height": 36,
+                          "height": 44,
                           "padding": [
                             0,
                             4,
@@ -26715,47 +27214,63 @@
                               "content": "main",
                               "fontWeight": "500"
                             },
+                            "hideui:checkout-status": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:checkout-error-glyph": {
+                              "fill": "$--destructive"
+                            },
+                            "hideui:checkout-error-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-approval-glyph": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:checkout-approval-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-question-glyph": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:checkout-question-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-working-dot": {
+                              "fill": "$--agent-working"
+                            },
+                            "hideui:checkout-working-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-done-glyph": {
+                              "fill": "$--success"
+                            },
+                            "hideui:checkout-done-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-idle-ring": {
+                              "stroke": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-idle-count": {
+                              "fill": "$--subtle-foreground"
+                            },
                             "hideui:TuosT": {
                               "fill": "$--muted-foreground",
-                              "content": "now",
-                              "enabled": true
+                              "enabled": false
                             },
                             "hideui:CgZj3": {
                               "fill": "$--muted-foreground",
                               "icon": "chevron-down"
                             },
-                            "hideui:J5xdha": {
-                              "fill": "$--agent-working",
-                              "enabled": true
-                            },
-                            "hideui:G3d9T": {
-                              "stroke": "$--muted-foreground",
-                              "enabled": false
-                            },
-                            "hideui:aFPLo": {
-                              "fill": "$--warning",
-                              "enabled": false
-                            },
-                            "hideui:N7YbJ": {
-                              "fill": {
-                                "type": "image",
-                                "enabled": true,
-                                "url": "../web/src/assets/agent-codex.png",
-                                "mode": "fit"
-                              }
-                            },
-                            "hideui:fklVZ": {
-                              "fill": "$--background",
-                              "enabled": false
-                            },
-                            "hideui:ExMsH": {
-                              "fill": "$--subtle-foreground",
-                              "content": "+3",
-                              "enabled": true
-                            },
                             "hideui:D37Vr": {
                               "fill": "$--muted-foreground",
-                              "enabled": false
+                              "content": "사이드바 가독성 개선",
+                              "enabled": true
+                            },
+                            "hideui:line2-age": {
+                              "fill": "$--muted-foreground",
+                              "content": "now",
+                              "enabled": true
                             },
                             "hideui:QetL0": {
                               "width": 274
@@ -26767,14 +27282,11 @@
                               "opacity": 0
                             },
                             "hideui:o6XLUj": {
-                              "enabled": false,
+                              "enabled": true,
                               "width": 274
                             },
                             "hideui:yfur4": {
                               "width": 20
-                            },
-                            "hideui:FtZyp": {
-                              "enabled": true
                             }
                           }
                         },
@@ -27220,53 +27732,87 @@
                           "content": "quick/155-browser-display",
                           "fontWeight": "500"
                         },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
-                          "content": "40m",
-                          "enabled": true
+                          "enabled": false
                         },
                         "hideui:CgZj3": {
                           "fill": "$--muted-foreground",
                           "icon": "chevron-right"
-                        },
-                        "hideui:J5xdha": {
-                          "fill": "$--agent-working",
-                          "enabled": false
-                        },
-                        "hideui:G3d9T": {
-                          "stroke": "$--muted-foreground",
-                          "enabled": false
-                        },
-                        "hideui:aFPLo": {
-                          "fill": "$--warning",
-                          "enabled": true,
-                          "content": "?"
-                        },
-                        "hideui:N7YbJ": {
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-claude.png",
-                            "mode": "fit"
-                          }
-                        },
-                        "hideui:fklVZ": {
-                          "fill": "$--background",
-                          "enabled": false
-                        },
-                        "hideui:ExMsH": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": false
                         },
                         "hideui:D37Vr": {
                           "fill": "$--muted-foreground",
                           "content": "#155 browser display (WebCon…",
                           "enabled": true
                         },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "content": "40m",
+                          "enabled": true
+                        },
                         "hideui:QetL0": {
                           "width": 274
                         },
                         "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-error": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-approval": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-question": {
+                          "enabled": true
+                        },
+                        "hideui:checkout-working": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-done": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-idle": {
                           "enabled": false
                         },
                         "hideui:IXwZI": {
@@ -27278,9 +27824,6 @@
                         },
                         "hideui:yfur4": {
                           "width": 20
-                        },
-                        "hideui:FtZyp": {
-                          "enabled": true
                         }
                       }
                     },
@@ -27307,53 +27850,87 @@
                           "content": "quick/154-search-palette",
                           "fontWeight": "500"
                         },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
-                          "content": "1h",
-                          "enabled": true
+                          "enabled": false
                         },
                         "hideui:CgZj3": {
                           "fill": "$--muted-foreground",
                           "icon": "chevron-right"
-                        },
-                        "hideui:J5xdha": {
-                          "fill": "$--agent-working",
-                          "enabled": false
-                        },
-                        "hideui:G3d9T": {
-                          "stroke": "$--muted-foreground",
-                          "enabled": false
-                        },
-                        "hideui:aFPLo": {
-                          "fill": "$--success",
-                          "enabled": true,
-                          "content": "✓"
-                        },
-                        "hideui:N7YbJ": {
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-claude.png",
-                            "mode": "fit"
-                          }
-                        },
-                        "hideui:fklVZ": {
-                          "fill": "$--background",
-                          "enabled": false
-                        },
-                        "hideui:ExMsH": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": false
                         },
                         "hideui:D37Vr": {
                           "fill": "$--muted-foreground",
                           "content": "#154 ⌘K search palette UI",
                           "enabled": true
                         },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "content": "1h",
+                          "enabled": true
+                        },
                         "hideui:QetL0": {
                           "width": 274
                         },
                         "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-error": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-approval": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-question": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-working": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-done": {
+                          "enabled": true
+                        },
+                        "hideui:checkout-idle": {
                           "enabled": false
                         },
                         "hideui:IXwZI": {
@@ -27365,9 +27942,6 @@
                         },
                         "hideui:yfur4": {
                           "width": 20
-                        },
-                        "hideui:FtZyp": {
-                          "enabled": true
                         }
                       }
                     },
@@ -27394,52 +27968,87 @@
                           "content": "electron-shortcut-bindings",
                           "fontWeight": "500"
                         },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
-                          "content": "2h",
-                          "enabled": true
+                          "enabled": false
                         },
                         "hideui:CgZj3": {
                           "fill": "$--muted-foreground",
                           "icon": "chevron-right"
-                        },
-                        "hideui:J5xdha": {
-                          "fill": "$--agent-working",
-                          "enabled": true
-                        },
-                        "hideui:G3d9T": {
-                          "stroke": "$--muted-foreground",
-                          "enabled": false
-                        },
-                        "hideui:aFPLo": {
-                          "fill": "$--warning",
-                          "enabled": false
-                        },
-                        "hideui:N7YbJ": {
-                          "fill": {
-                            "type": "image",
-                            "enabled": true,
-                            "url": "../web/src/assets/agent-claude.png",
-                            "mode": "fit"
-                          }
-                        },
-                        "hideui:fklVZ": {
-                          "fill": "$--background",
-                          "enabled": false
-                        },
-                        "hideui:ExMsH": {
-                          "fill": "$--subtle-foreground",
-                          "enabled": false
                         },
                         "hideui:D37Vr": {
                           "fill": "$--muted-foreground",
                           "content": "Electron desktop host for the we…",
                           "enabled": true
                         },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "content": "2h",
+                          "enabled": true
+                        },
                         "hideui:QetL0": {
                           "width": 274
                         },
                         "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-error": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-approval": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-question": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-working": {
+                          "enabled": true
+                        },
+                        "hideui:checkout-done": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-idle": {
                           "enabled": false
                         },
                         "hideui:IXwZI": {
@@ -27451,9 +28060,6 @@
                         },
                         "hideui:yfur4": {
                           "width": 20
-                        },
-                        "hideui:FtZyp": {
-                          "enabled": true
                         }
                       }
                     },
@@ -27480,36 +28086,62 @@
                           "content": "design/workspace-ux-prop…",
                           "fontWeight": "500"
                         },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
-                          "content": "5h",
-                          "enabled": true
+                          "enabled": false
                         },
                         "hideui:CgZj3": {
                           "fill": "$--muted-foreground",
                           "icon": "chevron-right"
                         },
-                        "hideui:J5xdha": {
-                          "fill": "$--agent-working"
-                        },
-                        "hideui:G3d9T": {
-                          "stroke": "$--muted-foreground"
-                        },
-                        "hideui:aFPLo": {
-                          "fill": "$--warning"
-                        },
-                        "hideui:N7YbJ": {
-                          "fill": "$--primary"
-                        },
-                        "hideui:fklVZ": {
-                          "fill": "$--background"
-                        },
-                        "hideui:ExMsH": {
-                          "fill": "$--subtle-foreground"
-                        },
                         "hideui:D37Vr": {
                           "fill": "$--muted-foreground",
                           "content": "Workspace UX 제안과 상태 소유…",
+                          "enabled": true
+                        },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "content": "5h",
                           "enabled": true
                         },
                         "hideui:QetL0": {
@@ -27527,9 +28159,6 @@
                         },
                         "hideui:yfur4": {
                           "width": 20
-                        },
-                        "hideui:FtZyp": {
-                          "enabled": false
                         }
                       }
                     },
@@ -27556,6 +28185,46 @@
                           "content": "fix/registered-projects-only",
                           "fontWeight": "500"
                         },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
                           "content": "1d",
@@ -27565,25 +28234,11 @@
                           "fill": "$--muted-foreground",
                           "icon": "chevron-right"
                         },
-                        "hideui:J5xdha": {
-                          "fill": "$--agent-working"
-                        },
-                        "hideui:G3d9T": {
-                          "stroke": "$--muted-foreground"
-                        },
-                        "hideui:aFPLo": {
-                          "fill": "$--warning"
-                        },
-                        "hideui:N7YbJ": {
-                          "fill": "$--primary"
-                        },
-                        "hideui:fklVZ": {
-                          "fill": "$--background"
-                        },
-                        "hideui:ExMsH": {
-                          "fill": "$--subtle-foreground"
-                        },
                         "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:line2-age": {
                           "fill": "$--muted-foreground",
                           "enabled": false
                         },
@@ -27602,9 +28257,6 @@
                         },
                         "hideui:yfur4": {
                           "width": 20
-                        },
-                        "hideui:FtZyp": {
-                          "enabled": false
                         }
                       }
                     },
@@ -27631,34 +28283,59 @@
                           "content": "legacy-shell",
                           "fontWeight": "500"
                         },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
                         "hideui:TuosT": {
                           "fill": "$--muted-foreground",
-                          "content": "",
                           "enabled": false
                         },
                         "hideui:CgZj3": {
                           "fill": "$--muted-foreground",
                           "icon": "chevron-right"
                         },
-                        "hideui:J5xdha": {
-                          "fill": "$--agent-working"
-                        },
-                        "hideui:G3d9T": {
-                          "stroke": "$--muted-foreground"
-                        },
-                        "hideui:aFPLo": {
-                          "fill": "$--warning"
-                        },
-                        "hideui:N7YbJ": {
-                          "fill": "$--primary"
-                        },
-                        "hideui:fklVZ": {
-                          "fill": "$--background"
-                        },
-                        "hideui:ExMsH": {
-                          "fill": "$--subtle-foreground"
-                        },
                         "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:line2-age": {
                           "fill": "$--muted-foreground",
                           "enabled": false
                         },
@@ -27677,9 +28354,6 @@
                         },
                         "hideui:yfur4": {
                           "width": 20
-                        },
-                        "hideui:FtZyp": {
-                          "enabled": false
                         }
                       }
                     },
@@ -27721,9 +28395,51 @@
                           "fill": "$--foreground",
                           "content": "sasu"
                         },
+                        "hideui:project-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:project-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:project-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:project-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:project-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:project-working-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:project-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:project-done-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:project-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:project-idle-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
                         "hideui:nZkan": {
-                          "fill": "$--muted-foreground",
-                          "content": "3 agents · 50m"
+                          "fill": "$--muted-foreground"
                         },
                         "hideui:iBYjj": {
                           "fill": "$--muted-foreground",
@@ -27731,6 +28447,24 @@
                         },
                         "hideui:wgtfo": {
                           "opacity": 1
+                        },
+                        "hideui:project-error": {
+                          "enabled": false
+                        },
+                        "hideui:project-approval": {
+                          "enabled": false
+                        },
+                        "hideui:project-question": {
+                          "enabled": false
+                        },
+                        "hideui:project-working": {
+                          "enabled": true
+                        },
+                        "hideui:project-done": {
+                          "enabled": true
+                        },
+                        "hideui:project-idle": {
+                          "enabled": true
                         }
                       }
                     },

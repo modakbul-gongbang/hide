@@ -12232,7 +12232,7 @@
           "fill": "$--subtle-foreground",
           "textGrowth": "fixed-width",
           "width": "fill_container",
-          "content": "sidebar.tsx WorkspaceRows: the project glyph, name and activity read on the left; the fold sits on the right in a slot kept at rest, a step after the activity, so the name and the activity never move and the activity ends on the column every row's time ends on. A folded chevron is always shown; an unfolded one shows under the pointer, with keyboard focus in the row, while its menu is open, and always on an input with no hover. The name opens the Overview; a right-click, or the menu key or ⇧F10 on the focused row, opens the row's menu, which nothing on the row stands for.",
+          "content": "sidebar.tsx WorkspaceRows: the project glyph and name read on the left; the status badge and the fold end the row, a step apart, so the badge ends on the column every row’s time ends on. The badge counts the agents of every checkout under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○), and stays while the checkouts are open because it is the project’s own summary; a project with no agent draws none. The row carries no time. A folded chevron is always shown; an unfolded one shows under the pointer, with keyboard focus in the row, while its menu is open, and always on an input with no hover. The name opens the Overview; a right-click, or the menu key or ⇧F10 on the focused row, opens the row’s menu, which nothing on the row stands for.",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-subhead",
           "fontWeight": "normal"
@@ -12299,14 +12299,287 @@
               "alignItems": "center",
               "children": [
                 {
+                  "type": "frame",
+                  "id": "project-status",
+                  "name": "Status badge",
+                  "height": 16,
+                  "cornerRadius": "$--radius-xs",
+                  "padding": [
+                    0,
+                    "$--spacing-xs"
+                  ],
+                  "gap": "$--spacing-xs",
+                  "alignItems": "center",
+                  "fill": "$--secondary",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "project-error",
+                      "name": "error",
+                      "enabled": false,
+                      "gap": "$--spacing-xxs",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "project-error-mark",
+                          "name": "Mark",
+                          "width": 12,
+                          "height": 12,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "project-error-glyph",
+                              "name": "Glyph",
+                              "fill": "$--destructive",
+                              "textGrowth": "fixed-width",
+                              "width": 12,
+                              "content": "×",
+                              "textAlign": "center",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "project-error-count",
+                          "name": "Count",
+                          "fill": "$--subtle-foreground",
+                          "content": "1",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "project-approval",
+                      "name": "approval",
+                      "enabled": false,
+                      "gap": "$--spacing-xxs",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "project-approval-mark",
+                          "name": "Mark",
+                          "width": 12,
+                          "height": 12,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "project-approval-glyph",
+                              "name": "Glyph",
+                              "fill": "$--warning",
+                              "textGrowth": "fixed-width",
+                              "width": 12,
+                              "content": "!",
+                              "textAlign": "center",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "project-approval-count",
+                          "name": "Count",
+                          "fill": "$--subtle-foreground",
+                          "content": "1",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "project-question",
+                      "name": "question",
+                      "enabled": true,
+                      "gap": "$--spacing-xxs",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "project-question-mark",
+                          "name": "Mark",
+                          "width": 12,
+                          "height": 12,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "project-question-glyph",
+                              "name": "Glyph",
+                              "fill": "$--warning",
+                              "textGrowth": "fixed-width",
+                              "width": 12,
+                              "content": "?",
+                              "textAlign": "center",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "project-question-count",
+                          "name": "Count",
+                          "fill": "$--subtle-foreground",
+                          "content": "1",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "project-working",
+                      "name": "working",
+                      "enabled": true,
+                      "gap": "$--spacing-xxs",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "project-working-mark",
+                          "name": "Mark",
+                          "width": 12,
+                          "height": 12,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "project-working-dot",
+                              "name": "Dot",
+                              "fill": "$--agent-working",
+                              "width": 7,
+                              "height": 7
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "project-working-count",
+                          "name": "Count",
+                          "fill": "$--subtle-foreground",
+                          "content": "2",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "project-done",
+                      "name": "done",
+                      "enabled": false,
+                      "gap": "$--spacing-xxs",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "project-done-mark",
+                          "name": "Mark",
+                          "width": 12,
+                          "height": 12,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "text",
+                              "id": "project-done-glyph",
+                              "name": "Glyph",
+                              "fill": "$--success",
+                              "textGrowth": "fixed-width",
+                              "width": 12,
+                              "content": "✓",
+                              "textAlign": "center",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "normal"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "project-done-count",
+                          "name": "Count",
+                          "fill": "$--subtle-foreground",
+                          "content": "1",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "500"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "project-idle",
+                      "name": "idle",
+                      "enabled": true,
+                      "gap": "$--spacing-xxs",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "project-idle-mark",
+                          "name": "Mark",
+                          "width": 12,
+                          "height": 12,
+                          "justifyContent": "center",
+                          "alignItems": "center",
+                          "children": [
+                            {
+                              "type": "ellipse",
+                              "id": "project-idle-ring",
+                              "name": "Ring",
+                              "width": 7,
+                              "height": 7,
+                              "stroke": "$--subtle-foreground",
+                              "strokeWidth": 1,
+                              "strokeAlignment": "inner"
+                            }
+                          ]
+                        },
+                        {
+                          "type": "text",
+                          "id": "project-idle-count",
+                          "name": "Count",
+                          "fill": "$--subtle-foreground",
+                          "content": "1",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "500"
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
                   "type": "text",
                   "id": "nZkan",
-                  "name": "Agent count and activity",
+                  "name": "Project count",
                   "fill": "$--muted-foreground",
-                  "content": "3 agents · 50m",
+                  "content": "12 projects",
                   "fontFamily": "$--font-ui",
                   "fontSize": "$--text-caption",
-                  "fontWeight": "normal"
+                  "fontWeight": "normal",
+                  "enabled": false
                 },
                 {
                   "type": "frame",
@@ -12374,7 +12647,7 @@
               "id": "project-row-state-expanded-label",
               "name": "State name",
               "fill": "$--subtle-foreground",
-              "content": "Expanded at rest",
+              "content": "Expanded at rest: the badge stays",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "normal"
@@ -12391,6 +12664,38 @@
                 },
                 "iBYjj": {
                   "icon": "chevron-down"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "project-row-state-quiet",
+          "name": "State / No agents: nothing before the fold",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "project-row-state-quiet-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "No agents: nothing before the fold",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "project-row-quiet",
+              "type": "ref",
+              "name": "Row / No agents",
+              "ref": "qdhY0",
+              "width": "fill_container",
+              "descendants": {
+                "project-status": {
+                  "enabled": false
                 }
               }
             }
@@ -12561,8 +12866,17 @@
                 "JkPyX": {
                   "content": "herdr-ide-sidebar-rea…"
                 },
-                "nZkan": {
-                  "content": "9 agents · 3h"
+                "project-question": {
+                  "enabled": true
+                },
+                "project-working": {
+                  "enabled": true
+                },
+                "project-working-count": {
+                  "content": "6"
+                },
+                "project-idle-count": {
+                  "content": "2"
                 }
               }
             }
@@ -13717,7 +14031,7 @@
               "fill": "$--subtle-foreground",
               "textGrowth": "fixed-width",
               "width": "fill_container",
-              "content": "sidebar.tsx CheckoutRowView: the kind glyph and the name read on the left; the last-commit age and the fold slot end the row, a step apart, so the age ends on the column every row's time ends on and nothing moves on hover or while the right-click menu is open. The fold is drawn only while agents run there, folded always shown and unfolded under the pointer; line two names the agents and the purpose while they are folded. An opened checkout and its agent rows share one small group fill.",
+              "content": "sidebar.tsx CheckoutRowView: the kind glyph and the name read on the left. While its agent rows are folded, line one ends in the status badge, which counts them under the mark each row draws, then the fold slot, whose chevron is there only while agents run; opening them takes the badge away, since their own marks now speak, and changes nothing else on the row. Line two is the purpose, and the last-commit age ends it on the column every row’s time ends on; a row with agents keeps line two before a purpose is known, and a row with neither a purpose nor agents is one line with its age there. Nothing moves on hover or while the right-click menu is open. An opened checkout and its agent rows share one small group fill.",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-caption",
               "fontWeight": "normal"
@@ -13821,14 +14135,287 @@
                       "alignItems": "center",
                       "children": [
                         {
+                          "type": "frame",
+                          "id": "checkout-status",
+                          "name": "Status badge",
+                          "height": 16,
+                          "cornerRadius": "$--radius-xs",
+                          "padding": [
+                            0,
+                            "$--spacing-xs"
+                          ],
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center",
+                          "fill": "$--secondary",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "checkout-error",
+                              "name": "error",
+                              "enabled": false,
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "checkout-error-mark",
+                                  "name": "Mark",
+                                  "width": 12,
+                                  "height": 12,
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "checkout-error-glyph",
+                                      "name": "Glyph",
+                                      "fill": "$--destructive",
+                                      "textGrowth": "fixed-width",
+                                      "width": 12,
+                                      "content": "×",
+                                      "textAlign": "center",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "checkout-error-count",
+                                  "name": "Count",
+                                  "fill": "$--subtle-foreground",
+                                  "content": "1",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "checkout-approval",
+                              "name": "approval",
+                              "enabled": false,
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "checkout-approval-mark",
+                                  "name": "Mark",
+                                  "width": 12,
+                                  "height": 12,
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "checkout-approval-glyph",
+                                      "name": "Glyph",
+                                      "fill": "$--warning",
+                                      "textGrowth": "fixed-width",
+                                      "width": 12,
+                                      "content": "!",
+                                      "textAlign": "center",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "checkout-approval-count",
+                                  "name": "Count",
+                                  "fill": "$--subtle-foreground",
+                                  "content": "1",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "checkout-question",
+                              "name": "question",
+                              "enabled": false,
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "checkout-question-mark",
+                                  "name": "Mark",
+                                  "width": 12,
+                                  "height": 12,
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "checkout-question-glyph",
+                                      "name": "Glyph",
+                                      "fill": "$--warning",
+                                      "textGrowth": "fixed-width",
+                                      "width": 12,
+                                      "content": "?",
+                                      "textAlign": "center",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "checkout-question-count",
+                                  "name": "Count",
+                                  "fill": "$--subtle-foreground",
+                                  "content": "1",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "checkout-working",
+                              "name": "working",
+                              "enabled": true,
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "checkout-working-mark",
+                                  "name": "Mark",
+                                  "width": 12,
+                                  "height": 12,
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "ellipse",
+                                      "id": "checkout-working-dot",
+                                      "name": "Dot",
+                                      "fill": "$--agent-working",
+                                      "width": 7,
+                                      "height": 7
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "checkout-working-count",
+                                  "name": "Count",
+                                  "fill": "$--subtle-foreground",
+                                  "content": "1",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "checkout-done",
+                              "name": "done",
+                              "enabled": false,
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "checkout-done-mark",
+                                  "name": "Mark",
+                                  "width": 12,
+                                  "height": 12,
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "checkout-done-glyph",
+                                      "name": "Glyph",
+                                      "fill": "$--success",
+                                      "textGrowth": "fixed-width",
+                                      "width": 12,
+                                      "content": "✓",
+                                      "textAlign": "center",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "normal"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "checkout-done-count",
+                                  "name": "Count",
+                                  "fill": "$--subtle-foreground",
+                                  "content": "1",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "checkout-idle",
+                              "name": "idle",
+                              "enabled": true,
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "checkout-idle-mark",
+                                  "name": "Mark",
+                                  "width": 12,
+                                  "height": 12,
+                                  "justifyContent": "center",
+                                  "alignItems": "center",
+                                  "children": [
+                                    {
+                                      "type": "ellipse",
+                                      "id": "checkout-idle-ring",
+                                      "name": "Ring",
+                                      "width": 7,
+                                      "height": 7,
+                                      "stroke": "$--subtle-foreground",
+                                      "strokeWidth": 1,
+                                      "strokeAlignment": "inner"
+                                    }
+                                  ]
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "checkout-idle-count",
+                                  "name": "Count",
+                                  "fill": "$--subtle-foreground",
+                                  "content": "1",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-micro",
+                                  "fontWeight": "500"
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
                           "type": "text",
                           "id": "TuosT",
-                          "name": "Last commit age",
+                          "name": "Last commit age, one-line row",
                           "fill": "$--muted-foreground",
                           "content": "4h",
                           "fontFamily": "$--font-mono",
                           "fontSize": "$--text-caption",
-                          "fontWeight": "normal"
+                          "fontWeight": "normal",
+                          "enabled": false
                         },
                         {
                           "type": "frame",
@@ -13878,92 +14465,6 @@
                       "height": 14
                     },
                     {
-                      "type": "frame",
-                      "id": "FtZyp",
-                      "name": "Agent summary",
-                      "gap": "$--spacing-xs",
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "frame",
-                          "id": "WVA8I",
-                          "name": "Status mark",
-                          "width": 12,
-                          "height": 12,
-                          "justifyContent": "center",
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "ellipse",
-                              "id": "J5xdha",
-                              "name": "Dot",
-                              "fill": "$--agent-working",
-                              "width": 7,
-                              "height": 7
-                            },
-                            {
-                              "type": "ellipse",
-                              "id": "G3d9T",
-                              "name": "Ring",
-                              "enabled": false,
-                              "width": 7,
-                              "height": 7,
-                              "stroke": "$--muted-foreground",
-                              "strokeWidth": 1,
-                              "strokeAlignment": "inner"
-                            },
-                            {
-                              "type": "text",
-                              "id": "aFPLo",
-                              "name": "Glyph",
-                              "enabled": false,
-                              "fill": "$--warning",
-                              "textGrowth": "fixed-width",
-                              "width": 12,
-                              "content": "?",
-                              "textAlign": "center",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "normal"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "frame",
-                          "id": "N7YbJ",
-                          "name": "Provider badge",
-                          "width": 16,
-                          "height": 16,
-                          "fill": "$--primary",
-                          "cornerRadius": "$--radius-xs",
-                          "justifyContent": "center",
-                          "alignItems": "center",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "fklVZ",
-                              "name": "Provider mark",
-                              "fill": "$--background",
-                              "content": "*",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "600"
-                            }
-                          ]
-                        },
-                        {
-                          "type": "text",
-                          "id": "ExMsH",
-                          "name": "Additional agent count",
-                          "fill": "$--subtle-foreground",
-                          "content": "+1",
-                          "fontFamily": "$--font-mono",
-                          "fontSize": "$--text-caption",
-                          "fontWeight": "normal"
-                        }
-                      ]
-                    },
-                    {
                       "type": "text",
                       "id": "D37Vr",
                       "name": "Purpose",
@@ -13972,6 +14473,39 @@
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-caption",
                       "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "line2-spacer",
+                      "name": "Flexible spacer",
+                      "width": "fill_container",
+                      "height": 1
+                    },
+                    {
+                      "type": "frame",
+                      "id": "line2-end",
+                      "name": "Row end",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "line2-age",
+                          "name": "Last commit age",
+                          "fill": "$--muted-foreground",
+                          "content": "4h",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "normal"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "line2-fold-lane",
+                          "name": "Fold slot",
+                          "width": 16,
+                          "height": 1
+                        }
+                      ]
                     }
                   ]
                 }
@@ -14020,7 +14554,7 @@
               "id": "rQTtq",
               "name": "State name",
               "fill": "$--muted-foreground",
-              "content": "Expanded or nothing for line 2",
+              "content": "Opened: the badge goes, line two stays",
               "fontFamily": "$--font-ui",
               "fontSize": "$--text-micro",
               "fontWeight": "600"
@@ -14029,13 +14563,13 @@
               "id": "B60vOy",
               "type": "ref",
               "ref": "DLP27",
-              "name": "Row / One line",
+              "name": "Row / Opened",
               "width": "fill_container",
               "descendants": {
                 "CgZj3": {
                   "icon": "chevron-down"
                 },
-                "o6XLUj": {
+                "checkout-status": {
                   "enabled": false
                 }
               }
@@ -14070,14 +14604,63 @@
                 "q91d7": {
                   "content": "chore/pr-template"
                 },
-                "TuosT": {
-                  "content": "2d"
-                },
-                "FtZyp": {
+                "checkout-status": {
                   "enabled": false
+                },
+                "IXwZI": {
+                  "opacity": 0
                 },
                 "D37Vr": {
                   "content": "Add the pull request template"
+                },
+                "line2-age": {
+                  "content": "2d"
+                }
+              }
+            }
+          ]
+        },
+        {
+          "type": "frame",
+          "id": "checkout-row-state-one-line",
+          "name": "State / One line: no purpose and no agents",
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs",
+          "children": [
+            {
+              "type": "text",
+              "id": "checkout-row-state-one-line-label",
+              "name": "State name",
+              "fill": "$--subtle-foreground",
+              "content": "One line: no purpose and no agents",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "normal"
+            },
+            {
+              "id": "checkout-row-one-line",
+              "type": "ref",
+              "name": "Row / One line",
+              "ref": "DLP27",
+              "width": "fill_container",
+              "height": 36,
+              "descendants": {
+                "q91d7": {
+                  "content": "fix/registered-projects-only"
+                },
+                "checkout-status": {
+                  "enabled": false
+                },
+                "TuosT": {
+                  "enabled": true,
+                  "content": "1d"
+                },
+                "IXwZI": {
+                  "opacity": 0
+                },
+                "o6XLUj": {
+                  "enabled": false
                 }
               }
             }
@@ -14118,7 +14701,7 @@
                 "TS5x9": {
                   "enabled": true
                 },
-                "TuosT": {
+                "checkout-status": {
                   "enabled": false
                 },
                 "CgZj3": {
@@ -14261,11 +14844,12 @@
                   "icon": "house",
                   "fill": "$--subtle-foreground"
                 },
-                "TuosT": {
-                  "content": "12m"
+                "checkout-status": {
+                  "enabled": false
                 },
-                "CgZj3": {
-                  "icon": "chevron-down"
+                "TuosT": {
+                  "enabled": true,
+                  "content": "12m"
                 },
                 "IXwZI": {
                   "opacity": 0
@@ -14307,11 +14891,8 @@
                   "ref": "DLP27",
                   "width": "fill_container",
                   "name": "Row / Opened",
-                  "height": 36,
+                  "height": 44,
                   "descendants": {
-                    "o6XLUj": {
-                      "enabled": false
-                    },
                     "q91d7": {
                       "content": "main"
                     },
@@ -14319,14 +14900,20 @@
                       "icon": "house",
                       "fill": "$--subtle-foreground"
                     },
-                    "TuosT": {
-                      "content": "12m"
+                    "checkout-status": {
+                      "enabled": false
                     },
                     "CgZj3": {
                       "icon": "chevron-down"
                     },
                     "IXwZI": {
                       "opacity": 0
+                    },
+                    "D37Vr": {
+                      "content": "workspace 조작 개선"
+                    },
+                    "line2-age": {
+                      "content": "12m"
                     }
                   }
                 },
