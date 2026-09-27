@@ -2,6 +2,7 @@
 //! lives in `session_sync` and uses the sequenced socket event stream.
 
 use std::io::{BufRead, BufReader, Read, Write};
+use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 #[cfg(test)]
@@ -2024,6 +2025,14 @@ pub fn spawn_agent_fork(context: LiveContext, request: ForkRequest) -> Result<()
 /// agent never started is closed again; hcoord registration happens only
 /// after start succeeded and never turns a working fork into a failure.
 fn run_agent_fork(connector: &dyn ApiConnector, request: &ForkRequest) -> Result<String, String> {
+    run_agent_fork_with_registration(connector, request, register_fork_lineage)
+}
+
+fn run_agent_fork_with_registration(
+    connector: &dyn ApiConnector,
+    request: &ForkRequest,
+    register: impl FnOnce(&str, &str) -> Result<(), String>,
+) -> Result<String, String> {
     let child_pane_id = control_request(
         connector,
         "pane.split",
@@ -2040,7 +2049,7 @@ fn run_agent_fork(connector: &dyn ApiConnector, request: &ForkRequest) -> Result
     );
     match started {
         Ok(pane_id) => {
-            if let Err(message) = register_fork_lineage(&request.parent_pane_id, &pane_id) {
+            if let Err(message) = register(&request.parent_pane_id, &pane_id) {
                 crate::diagnostic!(serde_json::json!({
                     "component": "fork",
                     "kind": "hcoord_registration_failed",
@@ -2072,7 +2081,24 @@ fn register_fork_lineage(parent_pane_id: &str, child_pane_id: &str) -> Result<()
         "HOME is unavailable, so ~/.hcoord/bin/hcoord cannot register the fork".to_owned()
     })?;
     let binary = PathBuf::from(home).join(".hcoord/bin/hcoord");
-    let output = Command::new(&binary)
+    register_fork_lineage_with_binary(
+        &binary,
+        parent_pane_id,
+        child_pane_id,
+        Duration::from_secs(25),
+    )
+}
+
+const HCOORD_LINK_OUTPUT_BYTES: usize = 64 * 1024;
+
+fn register_fork_lineage_with_binary(
+    binary: &Path,
+    parent_pane_id: &str,
+    child_pane_id: &str,
+    timeout: Duration,
+) -> Result<(), String> {
+    let mut command = Command::new(binary);
+    command
         .args([
             "agent",
             "link",
@@ -2083,21 +2109,73 @@ fn register_fork_lineage(parent_pane_id: &str, child_pane_id: &str) -> Result<()
             "--json",
         ])
         .stdin(Stdio::null())
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0);
+    let mut child = command
+        .spawn()
         .map_err(|error| format!("{} could not run: {error}", binary.display()))?;
-    if output.status.success() {
+    let stdout = child.stdout.take().expect("hcoord stdout is piped");
+    let stderr = child.stderr.take().expect("hcoord stderr is piped");
+    let stdout = thread::spawn(move || drain_capped(stdout, HCOORD_LINK_OUTPUT_BYTES));
+    let stderr = thread::spawn(move || drain_capped(stderr, HCOORD_LINK_OUTPUT_BYTES));
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Ok(None) if started.elapsed() < timeout => thread::sleep(Duration::from_millis(10)),
+            outcome => {
+                let reason = match outcome {
+                    Err(error) => format!("hcoord wait failed: {error}"),
+                    _ => format!("hcoord timed out after {} ms", timeout.as_millis()),
+                };
+                // The shim can exec a runtime that starts helpers. Kill the
+                // invocation's process group so no descendant can retain a
+                // pipe and keep this worker alive past its deadline.
+                unsafe {
+                    libc::kill(-(child.id() as i32), libc::SIGKILL);
+                }
+                let _ = child.kill();
+                let _ = child.wait();
+                break Err(reason);
+            }
+        }
+    };
+    let stdout = join_capped_output(stdout, "stdout")?;
+    let stderr = join_capped_output(stderr, "stderr")?;
+    let status = status?;
+    if status.success() {
         return Ok(());
     }
-    let detail = String::from_utf8_lossy(if output.stderr.is_empty() {
-        &output.stdout
-    } else {
-        &output.stderr
-    });
+    let detail = String::from_utf8_lossy(if stderr.is_empty() { &stdout } else { &stderr });
     Err(format!(
         "hcoord refused fork registration ({}): {}",
-        output.status,
+        status,
         detail.trim().chars().take(300).collect::<String>()
     ))
+}
+
+fn drain_capped(mut reader: impl Read, limit: usize) -> std::io::Result<Vec<u8>> {
+    let mut captured = Vec::with_capacity(limit.min(8 * 1024));
+    let mut buffer = [0_u8; 8 * 1024];
+    loop {
+        let read = reader.read(&mut buffer)?;
+        if read == 0 {
+            return Ok(captured);
+        }
+        let retained = (limit - captured.len()).min(read);
+        captured.extend_from_slice(&buffer[..retained]);
+    }
+}
+
+fn join_capped_output(
+    reader: thread::JoinHandle<std::io::Result<Vec<u8>>>,
+    stream: &str,
+) -> Result<Vec<u8>, String> {
+    reader
+        .join()
+        .map_err(|_| format!("hcoord {stream} reader failed"))?
+        .map_err(|error| format!("hcoord {stream}: {error}"))
 }
 
 pub fn spawn_remote_control(
@@ -3355,6 +3433,74 @@ mod tests {
 
     use super::*;
     use crate::fake_herdr::FakeHerdr;
+
+    #[test]
+    fn a_hung_hcoord_link_is_killed_without_closing_the_started_fork() {
+        let directory = tempfile::tempdir().expect("create hcoord fixture directory");
+        let binary = directory.path().join("hcoord");
+        let pid_path = directory.path().join("pid");
+        std::fs::write(
+            &binary,
+            format!(
+                "#!/bin/sh\nprintf '%s' \"$$\" > '{}'\nexec /bin/sleep 300\n",
+                pid_path.display()
+            ),
+        )
+        .expect("write hanging hcoord fixture");
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))
+            .expect("make hcoord fixture executable");
+        let herdr = FakeHerdr::start("fork-hcoord-timeout", |method, _| match method {
+            "pane.split" => json!({"type": "pane_info", "pane": {
+                "pane_id": "child-pane", "terminal_id": "child-terminal",
+                "workspace_id": "w1", "tab_id": "w1:t1", "focused": true,
+                "agent_status": "idle", "revision": 1
+            }}),
+            "agent.start" => json!({"type": "agent_started", "argv": [], "agent": {
+                "pane_id": "child-pane", "terminal_id": "child-terminal",
+                "workspace_id": "w1", "tab_id": "w1:t1", "focused": true,
+                "agent_status": "idle", "revision": 2
+            }}),
+            other => panic!("unexpected {other}"),
+        });
+        let request = ForkRequest {
+            parent_pane_id: "parent-pane".to_owned(),
+            agent: crate::fork::ForkableAgent::Codex,
+            session_id: "3f2b1c00-0000-4000-8000-000000000001".to_owned(),
+            cwd: Some("/checkout".to_owned()),
+            name: "fork-parent-pane-1".to_owned(),
+        };
+
+        let started = Instant::now();
+        let pane_id = run_agent_fork_with_registration(
+            &herdr.connector(),
+            &request,
+            |parent_pane_id, child_pane_id| {
+                register_fork_lineage_with_binary(
+                    &binary,
+                    parent_pane_id,
+                    child_pane_id,
+                    Duration::from_millis(250),
+                )
+            },
+        )
+        .expect("lineage failure does not turn a working fork into a failure");
+
+        assert_eq!(pane_id, "child-pane");
+        assert_eq!(herdr.methods(), ["pane.split", "agent.start"]);
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "the fork worker must settle promptly"
+        );
+        let pid: i32 = std::fs::read_to_string(pid_path)
+            .expect("fixture recorded its process id")
+            .parse()
+            .expect("fixture process id is numeric");
+        assert_eq!(
+            unsafe { libc::kill(pid, 0) },
+            -1,
+            "the timed-out hcoord process must not survive"
+        );
+    }
 
     #[test]
     fn tab_rename_uses_the_selected_host_and_reports_refusal() {
