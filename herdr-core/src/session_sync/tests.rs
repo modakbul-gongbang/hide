@@ -100,6 +100,76 @@ fn event(kind: &str, data: Value) -> ReplicaEvent {
 }
 
 #[test]
+fn creation_focus_is_published_with_membership_before_its_later_focus_event() {
+    for focused_at_creation in [false, true] {
+        let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+        let created = two_tab_snapshot();
+        let mut tab = created["tabs"][1].clone();
+        tab["focused"] = json!(focused_at_creation);
+        let change = replica
+            .apply(
+                event("tab_created", json!({"type":"tab_created", "tab":tab})),
+                ApplyMode::Strict,
+            )
+            .expect("created tab");
+        assert!(!change.publish);
+        replica
+            .apply(
+                event(
+                    "pane_created",
+                    json!({"type":"pane_created", "pane":created["panes"][1]}),
+                ),
+                ApplyMode::Strict,
+            )
+            .expect("created pane");
+        let change = replica
+            .apply(
+                event(
+                    "layout_updated",
+                    json!({"type":"layout_updated", "layout":created["layouts"][1]}),
+                ),
+                ApplyMode::Strict,
+            )
+            .expect("created layout");
+        assert!(change.publish);
+        let before = replica.project();
+        assert_eq!(
+            before.workspaces[0].active_tab_id.as_deref(),
+            Some(if focused_at_creation {
+                "w1:t2"
+            } else {
+                "w1:t1"
+            })
+        );
+        replica
+            .apply(
+                event(
+                    "tab_focused",
+                    json!({"type":"tab_focused", "workspace_id":"w1", "tab_id":"w1:t2"}),
+                ),
+                ApplyMode::Strict,
+            )
+            .expect("later focus");
+        replica
+            .apply(
+                event(
+                    "pane_focused",
+                    json!({"type":"pane_focused", "workspace_id":"w1", "pane_id":"w1:p2"}),
+                ),
+                ApplyMode::Strict,
+            )
+            .expect("later pane focus");
+        let after = replica.project();
+        assert_eq!(after.workspaces[0].active_tab_id.as_deref(), Some("w1:t2"));
+        assert_eq!(
+            before.workspaces[0].active_tab_id == after.workspaces[0].active_tab_id,
+            focused_at_creation,
+            "creation focus is one transition; a later explicit focus after --no-focus remains a new transition"
+        );
+    }
+}
+
+#[test]
 fn worktree_events_invalidate_the_change_driven_reader_once() {
     let value = snapshot();
     let workspace = value["workspaces"][0].clone();

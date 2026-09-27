@@ -809,7 +809,10 @@ impl SessionReplica {
                     upsert_workspace(&mut self.state.workspaces, workspace);
                 }
             }
-            ReplicaEvent::TabCreated { tab: input_tab } => {
+            ReplicaEvent::TabCreated {
+                tab: input_tab,
+                focused,
+            } => {
                 let event = "tab_created";
                 validate_tab_wire(event, &input_tab)?;
                 if !self
@@ -830,6 +833,21 @@ impl SessionReplica {
                     .any(|tab| tab.tab_id == input_tab.tab_id)
                 {
                     return Err(malformed_event(event, "created tab already exists"));
+                }
+                // Creation already reports its focus. Publish it with membership,
+                // so a later tab_focused event cannot look like a separate action
+                // after Hide has first admitted the new tab without stealing focus.
+                if focused {
+                    let workspace = self
+                        .state
+                        .workspaces
+                        .iter_mut()
+                        .find(|workspace| workspace.workspace_id == input_tab.workspace_id)
+                        .expect("created tab workspace was validated");
+                    workspace.active_tab_id = input_tab.tab_id.clone();
+                    self.state.focused_workspace_id = Some(input_tab.workspace_id.clone());
+                    self.pending_active_tab_focuses
+                        .remove(&input_tab.workspace_id);
                 }
                 self.pending_layouts.insert(input_tab.tab_id.clone());
                 self.state.tabs.push(input_tab);
@@ -1591,6 +1609,7 @@ pub(crate) enum ReplicaEvent {
     },
     TabCreated {
         tab: ProjectedTab,
+        focused: bool,
     },
     TabClosed {
         workspace_id: String,

@@ -456,9 +456,13 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
                 workspace_id,
             },
         ),
-        ev::EventData::TabCreated { tab, .. } => {
-            ("tab_created", ReplicaEvent::TabCreated { tab: tab.into() })
-        }
+        ev::EventData::TabCreated { tab, .. } => (
+            "tab_created",
+            ReplicaEvent::TabCreated {
+                focused: tab.focused,
+                tab: tab.into(),
+            },
+        ),
         ev::EventData::TabClosed {
             tab_id,
             workspace_id,
