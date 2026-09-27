@@ -5900,7 +5900,7 @@
                       "id": "hJDwP",
                       "name": "Label",
                       "fill": "$--foreground",
-                      "content": "GitWorktreesView.swift",
+                      "content": "GitWorktreesView.tsx",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-body",
                       "fontWeight": "normal"
@@ -6271,7 +6271,7 @@
                   "icon": "file-code"
                 },
                 "kj232": {
-                  "content": "new-example.swift",
+                  "content": "new-example.tsx",
                   "fill": "$--foreground"
                 },
                 "ZzvYJ": {
@@ -6740,7 +6740,7 @@
                           "icon": "file-code"
                         },
                         "kj232": {
-                          "content": "new-example.swift",
+                          "content": "new-example.tsx",
                           "fill": "$--foreground"
                         },
                         "ZzvYJ": {

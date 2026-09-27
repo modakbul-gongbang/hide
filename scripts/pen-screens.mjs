@@ -1001,7 +1001,7 @@ function buildSettings(tokens) {
 
 // -- Screen / Palette ------------------------------------------------------------
 
-// The ⌘K palette in the Swift search view's form (issue #154): the sidebar's
+// The ⌘K palette in the search view's form (issue #154): the sidebar's
 // Search field that opens it, the query row with its Esc keycap, results under
 // `<project> > AGENTS` / `WORKSPACE > COMMANDS` / `WORKSPACES > PROJECTS` /
 // `WORKSPACES > CHECKOUTS` headers, two-line rows with the agent's own mark,
@@ -1090,7 +1090,7 @@ function buildPalette(tokens) {
       heading('g-herdr', 'herdr-ide > AGENTS'),
       row('r0', {lead: mark('r0m', 'claude'), title: 'Electron포팅지침이행', detail: '웹 E2E 테스트 60개 통과, verify 진행 중', selected: true}),
       row('r1', {lead: mark('r1m', 'claude'), title: 'Electron 기본 포팅 구현', detail: 'PR #149 main 병합 진행: 단위테스트 통과, e2e 및 코드 리뷰 실행 중'}),
-      row('r2', {lead: mark('r2m', 'codex'), title: 'Swift 단축키 Electron 포팅', detail: 'Idle'}),
+      row('r2', {lead: mark('r2m', 'codex'), title: 'macOS 단축키 Electron 포팅', detail: 'Idle'}),
       heading('g-sasu', 'sasu > AGENTS'),
       row('r3', {lead: mark('r3m', 'claude'), title: 'hcoord 원격 에이전트 구현', detail: '방안 A와 데몬 재시작을 승인하세요'}),
       heading('g-projects', 'WORKSPACES > PROJECTS'),

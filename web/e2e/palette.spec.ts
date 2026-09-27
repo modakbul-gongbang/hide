@@ -1,4 +1,4 @@
-// The ⌘K palette in the Swift search view's form (GitHub issue 154) on an
+// The ⌘K palette in the search view's form (GitHub issue 154) on an
 // isolated pinned Herdr and hided: the sidebar Search field and ⌘K open the
 // same overlay; results sit under `<project> > AGENTS`, `WORKSPACES >
 // PROJECTS` and `WORKSPACES > CHECKOUTS`; an agent row is its mark, its title

@@ -221,8 +221,9 @@ fn snapshot_delivery_serializes_the_delta_outside_the_runtime_lock() {
     let bytes = serialize(&payload).expect("a payload serializes on its own");
     assert!(!bytes.is_empty(), "the wire is written from the payload");
 
-    let handle = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/handle.rs"))
-        .expect("the handle source");
+    let handle =
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("src/handle.rs"))
+            .expect("the handle source");
     let entry_point = handle
         .split_once("pub fn snapshot_delta(")
         .expect("the snapshot entry point")
@@ -509,4 +510,3 @@ fn diagnostics_keep_the_newest_entries_up_to_the_retention() {
         format!("entry {}", DIAGNOSTIC_RETENTION + 9)
     );
 }
-

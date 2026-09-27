@@ -15,7 +15,7 @@ use crate::model::EditorDocumentSnapshot;
 /// Opened checkout roots supplied by the daemon after its registration check.
 /// Each root's identity pins the folder every host request names; the opened
 /// handle is held so that identity cannot be reused by another folder while
-/// the daemon runs. The Swift shell supplies none, and its requests pin the
+/// the daemon runs. A client that supplies none has its requests pin the
 /// root when they first open it.
 type PinnedIdentity = (PathBuf, Option<(u64, u64)>);
 

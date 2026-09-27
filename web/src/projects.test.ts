@@ -46,7 +46,7 @@ describe("projectRows", () => {
 });
 
 describe("activity", () => {
-  it("rounds recency like the Swift row", () => {
+  it("rounds recency to the coarsest unit that fits", () => {
     const now = 1_000_000_000;
     expect(relativeActivity(null, now)).toBeNull();
     expect(relativeActivity(now + 5000, now)).toBe("now");

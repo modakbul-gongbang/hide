@@ -33,7 +33,7 @@ pub struct Listing {
 
 /// The children of `relative` under `dir`: files and directories, hidden
 /// names included, `.git` left out, directories first and then the natural
-/// order the Swift Explorer uses.
+/// order the Explorer uses.
 ///
 /// A child that is neither a file nor a directory, and a symlink whose target
 /// leaves `dir` or resolves to nothing, is not a row: the listing never
@@ -214,7 +214,7 @@ pub fn require_directory(dir: &Dir, relative: &Path) -> HostResult<()> {
     }
 }
 
-/// The order the Swift Explorer shows names in: case-insensitive, with a run
+/// The order the Explorer shows names in: case-insensitive, with a run
 /// of digits compared as a number, so `file2` sorts before `file10`.
 /// `localizedStandardCompare` is the rule the approved line names and this is
 /// that rule's comparable part; a tie keeps the order the folder was read in.

@@ -78,7 +78,7 @@ fn a_foreign_grid_is_held_until_a_matching_full_frame_arrives() {
 
 /// B2. Herdr draws an observer at the grid it attached with and an observer
 /// cannot resize, so a view that changed size after the attach (the web
-/// pane beside a Swift window that holds control) held every frame and the
+/// pane beside another client that holds control) held every frame and the
 /// pane froze. The observer attaches again at the view's grid instead.
 #[test]
 fn an_observed_frame_at_an_old_grid_reattaches_the_observer_at_the_views_grid() {
@@ -725,8 +725,8 @@ fn scroll_offsets(herdr: &FakeHerdr) -> Vec<u64> {
         .collect()
 }
 
-/// B1, B2. A pane another client controls (the Swift shell on the same
-/// server) is observed, and an observer has no terminal writer; its wheel
+/// B1, B2. A pane another client controls (another Herdr client on the
+/// same server) is observed, and an observer has no terminal writer; its wheel
 /// moves Herdr's viewport with `pane.scroll` instead of being dropped. One
 /// request is in flight per pane, and the wheels that arrive meanwhile go
 /// out as one summed request when it lands.

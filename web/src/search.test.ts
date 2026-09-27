@@ -45,7 +45,7 @@ describe("search entries", () => {
     expect(entries[3]).toMatchObject({ kind: "checkout", workspaceId: "w1", checkoutId: "c1" });
   });
 
-  it("heads each entry in the Swift search view's form, an agent under the project holding its pane (issue 154)", () => {
+  it("heads each entry in the search view's form, an agent under the project holding its pane (issue 154)", () => {
     const heads = Object.fromEntries(searchEntries(REST).map((entry) => [entry.id, entry.group.label]));
     expect(heads).toEqual({
       "agent:p1": "fixture > AGENTS",

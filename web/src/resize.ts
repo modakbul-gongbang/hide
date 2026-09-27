@@ -1,4 +1,4 @@
-// Divider drag math, mirrored from the Swift shell's `PaneResizeDragPolicy`.
+// Divider drag math.
 //
 // The web shell sends one `resize_pane` when the drag ends (PRD S2 D-03):
 // the guide line follows the pointer, the panes do not, and a release whose

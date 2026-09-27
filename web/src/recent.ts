@@ -8,7 +8,7 @@
 // one's last surface, which is this same order narrowed to the project. The
 // core reports what is in front, not what was before, so the order is the
 // shell's convenience: nothing here is authority, and a reload rebuilds it
-// from use. Swift owner: `AgentMRU.swift`.
+// from use.
 
 import type { AgentRow, Checkout, SnapshotRest, ViewDisplaySnapshot, Workspace } from "./snapshot";
 import { activeDisplay, areasOf } from "./viewLayout";

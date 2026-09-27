@@ -1,7 +1,7 @@
 // Packages the release hide.app: the Electron host with the release daemon,
 // the hide CLI, the hook and device helpers and the pinned Herdr binary in
 // its Contents/Resources, ad-hoc signed, zipped beside a SHA-256 checksum
-// (PRD electron-app-swift-removal D-03, D-08).
+// (the Electron release app PRD, D-03 and D-08).
 //
 // The CLI finds `hided` beside its own file and the daemon offers the device
 // helper from its own directory, so all of them ship flat in Resources. A

@@ -238,7 +238,7 @@ impl Runtime {
         }
     }
     /// Applies a background pane-control result to the owner-thread snapshot.
-    /// The child process is never waited on while the Swift caller holds the
+    /// The child process is never waited on while the caller holds the
     /// runtime lock; completion arrives through the normal change callback.
     /// Records the outcome of a fork worker.
     ///
@@ -320,8 +320,8 @@ impl Runtime {
     ///
     /// Herdr gives terminal control to one client per pane. The controlling
     /// session writes `terminal.scroll`, which Herdr routes to the program's
-    /// mouse handling or the history. A pane another client controls (the
-    /// Swift shell on the same server, say) is observed, and an observer has
+    /// mouse handling or the history. A pane another client controls (another
+    /// Herdr client on the same server, say) is observed, and an observer has
     /// no writer, so its wheel moves Herdr's viewport with `pane.scroll`
     /// instead; Herdr keeps one viewport per pane, so both clients see the
     /// move. A pane with no session yet keeps the lines for its first frame.

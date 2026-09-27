@@ -529,10 +529,10 @@ fn a_reopen_that_lands_after_the_views_filled_is_refused_and_stays_reopenable() 
     use crate::view_layout::{DisplayKind, MAX_VIEW_DISPLAYS};
     let (runtime, checkout_id, directory) = views_runtime("view-cap-landing");
     let shared = Arc::new(Mutex::new(runtime));
-    shared
-        .lock()
-        .unwrap()
-        .install_worker_context(Arc::downgrade(&shared), crate::handle::ChangeNotifier::noop());
+    shared.lock().unwrap().install_worker_context(
+        Arc::downgrade(&shared),
+        crate::handle::ChangeNotifier::noop(),
+    );
     let wait = |what: &str, ready: &dyn Fn(&Runtime) -> bool| {
         let deadline = Instant::now() + std::time::Duration::from_secs(5);
         while !ready(&shared.lock().unwrap()) {
@@ -1092,10 +1092,10 @@ fn closing_the_last_display_of_a_dirty_document_saves_it_first() {
     let (runtime, checkout_id, directory) = views_runtime("view-close-last");
     let path = directory.join("notes.md");
     let shared = Arc::new(Mutex::new(runtime));
-    shared
-        .lock()
-        .unwrap()
-        .install_worker_context(Arc::downgrade(&shared), crate::handle::ChangeNotifier::noop());
+    shared.lock().unwrap().install_worker_context(
+        Arc::downgrade(&shared),
+        crate::handle::ChangeNotifier::noop(),
+    );
     let wait = |what: &str, ready: &dyn Fn(&Runtime) -> bool| {
         let deadline = Instant::now() + std::time::Duration::from_secs(5);
         while !ready(&shared.lock().unwrap()) {
@@ -1203,10 +1203,10 @@ fn a_save_without_a_draft_keeps_every_display_of_its_document_open() {
     let (runtime, checkout_id, directory) = views_runtime("view-save-pins");
     let path = directory.join("notes.md");
     let shared = Arc::new(Mutex::new(runtime));
-    shared
-        .lock()
-        .unwrap()
-        .install_worker_context(Arc::downgrade(&shared), crate::handle::ChangeNotifier::noop());
+    shared.lock().unwrap().install_worker_context(
+        Arc::downgrade(&shared),
+        crate::handle::ChangeNotifier::noop(),
+    );
     let wait = |what: &str, ready: &dyn Fn(&Runtime) -> bool| {
         let deadline = Instant::now() + std::time::Duration::from_secs(5);
         while !ready(&shared.lock().unwrap()) {

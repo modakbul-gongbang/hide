@@ -1335,8 +1335,8 @@ fn handle_attachment_stage(state: &AppState, event: &Value, connection: u64) -> 
     }
 }
 
-/// Turns staged uploads into the one `terminal_attachment` event the Swift
-/// shell sends for a batch, and reports clipboard readiness, because hided
+/// Turns staged uploads into the one `terminal_attachment` event the core
+/// takes for a batch, and reports clipboard readiness, because hided
 /// staged the file the core is waiting for.
 fn handle_attachment_commit(state: &AppState, event: &Value) -> Vec<Message> {
     let request_id = payload_str(event, "request_id");

@@ -221,7 +221,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(context.exception.code, "frontmost.identity_field_invalid")
         self.assertEqual(context.exception.details["field"], "localized_name")
 
-    def test_frontmost_probe_has_no_per_query_swift_or_external_command_boundary(self) -> None:
+    def test_frontmost_probe_has_no_per_query_interpreter_or_external_command_boundary(self) -> None:
         source = (PACKAGE_ROOT / "t1_preflight" / "macos.py").read_text(encoding="utf-8")
         self.assertIn("objc_msgSend", source)
         self.assertNotIn("frontmost_application_command", source)

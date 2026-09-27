@@ -109,7 +109,7 @@ export function scaleTheme(scale: number) {
 /**
  * Markdown Live's drawn styles (PRD B6): the block and inline classes the plan
  * emits. Heading sizes are the editor heading tokens, so Live reads at the same
- * sizes as the Swift view; a hidden fence line collapses to no height.
+ * sizes as the preview; a hidden fence line collapses to no height.
  */
 export const liveTheme = EditorView.theme({
   ".cm-md-heading-1": { fontSize: "var(--text-editor-heading-1)", fontWeight: "600", lineHeight: "1.3" },

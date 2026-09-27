@@ -199,7 +199,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
                 .display()
                 .to_string(),
         ),
-        // The Swift app's state at its release path, read once for the pane
+        // The removed native app's state at its release path, read once for the pane
         // chords the operator set there (desktop PRD follow-up, user decision
         // 2026-09-26). It follows HOME, so an isolated run reads its own.
         shortcut_import_path: Some(

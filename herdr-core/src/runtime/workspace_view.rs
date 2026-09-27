@@ -5,7 +5,7 @@
 //! `view_areas.rs`.
 //!
 //! Everything here is inert unless the shell passed
-//! `CoreOptions::workspace_views_path`; the Swift shell keeps the rule that a
+//! `CoreOptions::workspace_views_path`; without it the rule is that a
 //! document takes the terminal canvas and a terminal takes it back.
 
 use std::collections::VecDeque;
@@ -259,8 +259,8 @@ impl Runtime {
         self.workspace_key(workspace_id, checkout_id)
     }
 
-    /// The terminal took the surface. The Swift shell's document gives it
-    /// back; with separate View areas the documents stay where they are.
+    /// The terminal took the surface. Without View areas the document gives
+    /// it back; with separate View areas the documents stay where they are.
     pub(super) fn yield_surface_to_terminal(&mut self) {
         if !self.separate_view_areas() {
             self.deactivate_editor_tab();

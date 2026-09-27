@@ -3,7 +3,7 @@
 //! The browser can read a dropped file's bytes but cannot name its path, so
 //! hided is the one that stages them: the client uploads one file per stage in
 //! binary frames, and a commit turns the staged files into the one
-//! `terminal_attachment` event the Swift shell sends for a batch of paths. The
+//! `terminal_attachment` event the core takes for a batch of paths. The
 //! staged file's path is what the core pastes, so it lands in the app state
 //! dir, where it outlives the paste; only the newest `STAGED_KEEP` files are
 //! kept, so the directory cannot grow with use (engineering 15). The caps are
@@ -183,7 +183,7 @@ impl Attachments {
         }
         // A previous run's staged files must not survive as garbage: the
         // attachments directory is hided's own, so it starts empty. The
-        // clipboard directory is shared with a possible Swift shell, so only
+        // clipboard directory may hold files another writer left, so only
         // its own retention window (24 h) is applied there.
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {

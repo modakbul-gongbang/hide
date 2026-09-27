@@ -21712,8 +21712,8 @@
                                 {
                                   "type": "text",
                                   "id": "pal-r2-l-title",
-                                  "name": "Swift 단축키 Electron 포팅",
-                                  "content": "Swift 단축키 Electron 포팅",
+                                  "name": "macOS 단축키 Electron 포팅",
+                                  "content": "macOS 단축키 Electron 포팅",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
@@ -23396,8 +23396,8 @@
                                 {
                                   "type": "text",
                                   "id": "pal-r2-d-title",
-                                  "name": "Swift 단축키 Electron 포팅",
-                                  "content": "Swift 단축키 Electron 포팅",
+                                  "name": "macOS 단축키 Electron 포팅",
+                                  "content": "macOS 단축키 Electron 포팅",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",

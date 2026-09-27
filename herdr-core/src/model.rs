@@ -14,7 +14,7 @@ pub struct CoreOptions {
     pub herdr_bin_path: Option<String>,
     pub app_state_path: String,
     /// The folder holding `hide-host-helper` builds for devices. Absent in a
-    /// shell that serves no device files (the Swift shell until S10), which
+    /// shell that serves no device files, which
     /// leaves every device's host `unsupported` with that reason.
     #[serde(default)]
     pub host_helper_dir: Option<String>,
@@ -24,15 +24,14 @@ pub struct CoreOptions {
     pub host_helper_root: Option<String>,
     /// Where a shell that draws separate Agent and View areas keeps each
     /// Workspace's presentation (PRD S6 D-10). Its presence is what turns
-    /// those semantics on: the web daemon passes it, the Swift shell passes
-    /// nothing and keeps a document in place of the terminal canvas.
+    /// those semantics on: the web daemon passes it; a client that passes
+    /// nothing keeps a document in place of the terminal canvas.
     #[serde(default)]
     pub workspace_views_path: Option<String>,
-    /// The Swift app's persisted state, whose `shortcut_bindings` the core
-    /// adopts once while its own set is empty, so the desktop app starts with
-    /// the pane chords the operator chose there. Only hided passes it: the
-    /// Swift shell owns that file until S10 deletes it, and the core is the
-    /// owner that outlives it.
+    /// The state file the removed native app wrote, whose `shortcut_bindings`
+    /// the core adopts once while its own set is empty, so the desktop app
+    /// starts with the pane chords the operator chose there. The file is
+    /// never written again; the core is the owner that outlived it.
     #[serde(default)]
     pub shortcut_import_path: Option<String>,
 }
@@ -74,7 +73,7 @@ pub struct Snapshot {
     pub recent_closed: RecentClosedSnapshot,
     /// The front Workspace's presentation, present only in a shell that draws
     /// separate Agent and View areas (`CoreOptions::workspace_views_path`).
-    /// Omitted rather than null otherwise, so the Swift shell's snapshot
+    /// Omitted rather than null otherwise, so an older client's snapshot
     /// keeps exactly its keys.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_view: Option<WorkspaceViewSnapshot>,
@@ -85,7 +84,7 @@ pub struct Snapshot {
     #[serde(skip)]
     pub browser_views_revision: Option<u64>,
     /// The Sessions of the Project a shell screen named, absent until one
-    /// does; the Swift shell never names one, so its snapshot keeps its keys.
+    /// does; a client that names none keeps exactly its snapshot keys.
     /// It rides its own revisioned section of the delta wire.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_sessions: Option<ProjectSessionsSnapshot>,
@@ -716,7 +715,7 @@ pub struct SidebarAgentSnapshot {
     /// Present while Hide has ended this agent's process and holds its
     /// conversation to resume (`agent_sleep.rs`). It rides beside `group`,
     /// never as a group or transport value, and is absent from the wire when
-    /// the agent is awake, so the Swift snapshot keeps its keys (PRD D-16).
+    /// the agent is awake, so an awake row keeps exactly its keys (PRD D-16).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sleep: Option<AgentSleepSnapshot>,
 }
@@ -746,7 +745,7 @@ pub struct AgentSleepActionSnapshot {
 pub struct WorkspaceSnapshot {
     pub home_issues: crate::issues::ProjectIssuesSnapshot,
     /// The project's tasks in the source-neutral shape the web reads
-    /// (`tasks.rs`); `home_issues` stays as the Swift shell reads it.
+    /// (`tasks.rs`); `home_issues` stays as older readers read it.
     pub tasks: crate::tasks::ProjectTasksSnapshot,
     pub id: String,
     pub label: String,
@@ -800,8 +799,8 @@ pub struct WorkspaceSnapshot {
     pub removal: WorkspaceRemovalGateSnapshot,
     /// A local Git project's allocated disk, for the web Overview's facts
     /// line. Absent from the wire until the project has a size, a reason it
-    /// has none, or a measurement in flight, so the Swift snapshot keeps its
-    /// keys.
+    /// has none, or a measurement in flight, so an unmeasured project keeps
+    /// exactly its keys.
     #[serde(default, skip_serializing_if = "ProjectDiskSnapshot::is_empty")]
     pub disk: ProjectDiskSnapshot,
 }
@@ -1525,7 +1524,7 @@ pub struct EditorSnapshot {
     /// With View areas, the document of the front Workspace's active area's
     /// active display, and null while that display cannot show it.
     pub active_tab_id: Option<String>,
-    /// The active tab's document for the Swift shell. Always null with View
+    /// The active tab's document for a client without View areas. Always null with View
     /// areas, whose documents ride the delta's `documents` section so a
     /// keystroke re-sends one document rather than the editor.
     pub document: Option<EditorDocumentSnapshot>,
@@ -1565,8 +1564,8 @@ pub struct EditorTabSnapshot {
     pub preview: bool,
     /// Why a View tab restored after a restart has no document: its file is
     /// gone or its device cannot read it. Such a tab only offers Close (B20).
-    /// Absent from the wire when there is none, so the Swift shell's tabs
-    /// keep exactly their keys.
+    /// Absent from the wire when there is none, so a restored tab keeps
+    /// exactly its keys.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unavailable_reason: Option<String>,
 }
@@ -1721,7 +1720,7 @@ pub struct SessionRowSnapshot {
 /// Project's session history and the one session read beside it.
 ///
 /// It is kept apart from [`SessionsSnapshot`], which follows the focused
-/// checkout for the Swift right panel and carries Project Memory, so neither
+/// checkout for the right panel and carries Project Memory, so neither
 /// the operator's focus nor Memory analysis ever moves it, and naming a
 /// Project here changes nothing Memory reads or schedules. A Project stays
 /// named until a shell names another.
@@ -1881,9 +1880,10 @@ pub struct UiStateSnapshot {
     pub device_expanded_paths: BTreeMap<String, Vec<String>>,
     #[serde(default)]
     pub collapsed_workspace_ids: Vec<String>,
-    /// Sidebar workspaces (checkout paths) whose agent rows the Swift shell
-    /// hides; absence is open. It stays the Swift shell's own preference
-    /// until S10 removes that shell; the web reads `expanded_checkout_ids`.
+    /// Sidebar workspaces (checkout paths) whose agent rows the removed
+    /// native shell hid; absence is open. It is kept as that shell's own
+    /// preference so an older store still loads; the web reads
+    /// `expanded_checkout_ids`.
     #[serde(default)]
     pub collapsed_checkout_ids: Vec<String>,
     /// Checkouts whose agent rows the web Projects list opened. Absence is
@@ -1912,8 +1912,8 @@ pub struct UiStateSnapshot {
     pub selected_path: Option<String>,
     pub selected_pane_id: Option<String>,
     pub shortcut_bindings: BTreeMap<String, String>,
-    /// Whether `shortcut_bindings` was already brought across from the Swift
-    /// app's state. Persisted, never on the wire: once the import ran, an
+    /// Whether `shortcut_bindings` was already brought across from the removed
+    /// native app's state. Persisted, never on the wire: once the import ran, an
     /// empty set is the operator's reset to defaults, not a set to import.
     #[serde(skip)]
     pub shortcut_bindings_imported: bool,
@@ -1935,7 +1935,7 @@ pub struct UiStateSnapshot {
     pub device_registrations: Vec<DeviceRegistration>,
     #[serde(default = "default_accent_hex")]
     pub accent_hex: String,
-    /// The web shell's color theme; the Swift shell does not read it.
+    /// The web shell's color theme.
     #[serde(default)]
     pub theme: ThemePreference,
     /// The interface font size, in points, that the Appearance slider sets.
@@ -3264,14 +3264,14 @@ pub struct SnapshotDeltaWire<'a> {
     pub editor: Option<&'a EditorSnapshot>,
     pub changes: Option<&'a ChangesSnapshot>,
     /// Absent unless a visible View document changed for this reader, and
-    /// always absent in a shell without View areas, so the Swift wire keeps
+    /// always absent in a shell without View areas, so such a wire keeps
     /// exactly its keys.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub documents: Option<DocumentsWire<'a>>,
     /// A named Project's session history and the transcript open beside it:
     /// hundreds of rows and megabytes of conversation, so off `rest` like the
     /// changes view. Omitted while no shell has named a Project, which keeps
-    /// the Swift shell's snapshot exactly its keys.
+    /// such a snapshot exactly its keys.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub project_sessions: Option<&'a ProjectSessionsSnapshot>,
     /// Find state rides top-level rather than in `rest`, because it changes on

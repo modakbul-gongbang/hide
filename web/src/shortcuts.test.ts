@@ -31,10 +31,10 @@ describe("shortcut registry", () => {
     );
   });
 
-  it("gives the desktop app the Swift chords", () => {
-    // ShellMenuCommand.swift and PaneShortcutSettings.swift, as the operator reads them;
-    // Keyboard shortcuts has no Swift chord and keeps the browser's.
-    const swift: Record<string, string> = {
+  it("gives the desktop app the macOS chords", () => {
+    // The macOS chord set as the operator reads it; Keyboard shortcuts has no
+    // macOS chord and keeps the browser's.
+    const macosSet: Record<string, string> = {
       new_tab: "⌘T",
       close_tab: "⌘W",
       reopen_closed_tab: "⇧⌘T",
@@ -47,8 +47,8 @@ describe("shortcut registry", () => {
       open_file: "⌘P",
       project_home: "⇧⌘H",
       toggle_left_sidebar: "⌘B",
-      // ⌘E shows the Explorer in both hosts (issue 170); the Swift app keeps
-      // it on its sidebar switch, which has no chord here until one is bound.
+      // ⌘E shows the Explorer in both hosts (issue 170); the macOS set keeps
+      // it on the sidebar switch, which has no chord here until one is bound.
       toggle_sidebar_view: "",
       toggle_explorer: "⌘E",
       toggle_right_panel: "⇧⌘B",
@@ -66,7 +66,7 @@ describe("shortcut registry", () => {
       settings: "⌘,",
       shortcuts: "⌘/",
     };
-    expect(Object.fromEntries(REGISTRY.map((command) => [command.id, displayCommand(command.id, "electron")]))).toEqual(swift);
+    expect(Object.fromEntries(REGISTRY.map((command) => [command.id, displayCommand(command.id, "electron")]))).toEqual(macosSet);
   });
 
   it("binds every electron chord once", () => {
@@ -195,7 +195,7 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
     const browser = effectiveRegistry({ toggle_sidebar_view: "meta+shift+KeyE" });
     expect(browser.diagnostic).toBeNull();
     expect(displayCommand("toggle_sidebar_view", "browser", browser.registry)).toBe("⇧⌘E");
-    // The desktop app keeps it in the macOS set the Swift app shares, under its own name.
+    // The desktop app keeps it in the macOS set, under its own name.
     const desktop = effectiveRegistry({ toggle_sidebar_view: "command+shift+e", split_right: "command+option+r" }, "electron");
     expect(desktop.diagnostic).toBeNull();
     expect(displayCommand("toggle_sidebar_view", "electron", desktop.registry)).toBe("⇧⌘E");
@@ -203,7 +203,7 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
 });
 
 describe("the desktop app's macOS pane chords (user decision 2026-09-26)", () => {
-  // The operator's Swift state.json on the day of the decision.
+  // The operator's native app state.json on the day of the decision.
   const operatorSet = {
     close_pane: "command+shift+w",
     split_down: "command+shift+d",
@@ -214,7 +214,7 @@ describe("the desktop app's macOS pane chords (user decision 2026-09-26)", () =>
     reset_text_size: "command+0",
   };
 
-  it("reads the Swift app's chord text the way the Swift app does", () => {
+  it("reads the macOS set's chord text leniently", () => {
     expect(parseMacosChord("command+shift+return")).toEqual({ code: "Enter", meta: true, shift: true });
     expect(parseMacosChord("Cmd + Opt + Enter")).toEqual({ code: "Enter", meta: true, alt: true });
     expect(parseMacosChord("command+=")).toEqual({ code: "Equal", meta: true });
@@ -238,7 +238,7 @@ describe("the desktop app's macOS pane chords (user decision 2026-09-26)", () =>
     expect(registry.find((command) => command.id === "toggle_zoom")?.browser).toEqual({ code: "Enter", meta: true, alt: true });
   });
 
-  it("keeps the Swift-only Toggle Conversation in the set without running it", () => {
+  it("keeps the surfaceless Toggle Conversation in the set without running it", () => {
     const { registry, diagnostic } = effectiveRegistry({ toggle_conversation: "command+option+c", split_right: "command+option+r" }, "electron");
     expect(diagnostic).toBeNull();
     expect(matchHost(press("KeyR", { meta: true, alt: true }), registry, "electron")?.id).toBe("split_right");
@@ -249,7 +249,7 @@ describe("the desktop app's macOS pane chords (user decision 2026-09-26)", () =>
     expect(diagnostic).toBeNull();
   });
 
-  it("refuses what the Swift app refuses, and falls back to the defaults as a whole", () => {
+  it("refuses a chord without ⌘ or a reserved one, and falls back to the defaults as a whole", () => {
     expect(bindingProblem("split_right", { code: "KeyR", alt: true }, REGISTRY, "electron")).toMatch(/Include ⌘/);
     expect(bindingProblem("split_right", { code: "KeyQ", meta: true }, REGISTRY, "electron")).toMatch(/kept by macOS/);
     expect(bindingProblem("split_right", { code: "ArrowUp", meta: true }, REGISTRY, "electron")).toMatch(/Use one letter/);

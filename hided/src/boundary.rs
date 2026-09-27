@@ -30,7 +30,7 @@
 //!
 //! The Explorer's listing (`file_list`) is that same line: the children of a
 //! folder under a root, files and hidden names included and `.git` dropped,
-//! ordered as the Swift Explorer orders them, with a symlink that leaves the
+//! ordered as the Explorer orders them, with a symlink that leaves the
 //! root left out rather than followed. The registration listing above keeps
 //! its own policy - directories only, hidden names dropped - because the
 //! directory autocomplete asks a different question of the same tree.
@@ -878,8 +878,8 @@ impl Boundary {
     /// The children of a folder inside a registered checkout: files and
     /// directories, hidden names included, `.git` left out.
     ///
-    /// This is the Explorer's line, so the policy is the Swift Explorer's
-    /// (`WorkspaceOutlineView`): `.git` is the name it hides that the approved
+    /// This is the Explorer's line, so the policy is the Explorer's
+    /// (`web/src/explorer.ts`): `.git` is the name it hides that the approved
     /// line hides too - the other names it skips are its own build directories,
     /// which the approved line does not name - and the order is its order,
     /// directories first and then the natural one `localizedStandardCompare`

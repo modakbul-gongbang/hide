@@ -19,7 +19,7 @@ function row(patch: Partial<ProviderUsage>): ProviderUsage {
   };
 }
 
-describe("a row's reading (#153: the Swift footer and popover rules)", () => {
+describe("a row's reading (#153: the footer and popover rules)", () => {
   it("shows a percent for a current, stale or fallback read and none while loading or unavailable", () => {
     expect(usagePercent(row({ state: "available", used_percent: 62 }))).toBe(62);
     expect(usagePercent(row({ state: "stale", used_percent: 40 }))).toBe(40);

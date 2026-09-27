@@ -3,11 +3,10 @@
 // The browser column is what Chrome lets a page claim. Six chords Chrome keeps
 // for itself (⌘T ⌘W ⌘⇧T ⌘⇧N ⌃Tab ⌃⇧Tab) moved to the ⌥ family, and ⌘⇧W
 // (Chrome's close-window) moved with them (D-06); `moved` marks each so the
-// sheet can say so. The Electron column is the Swift chord set
-// (`ShellMenuCommand.swift`, `PaneShortcutSettings.swift`): the desktop host
+// sheet can say so. The Electron column is the macOS chord set: the desktop host
 // has no browser keeping chords, so the moved ones return to their native
 // keys there. The one exception is ⌘E, which shows the Explorer in both
-// hosts (issue 170) while the Swift app keeps it on its sidebar switch; the
+// hosts (issue 170) while the macOS set keeps it on the sidebar switch; the
 // switch has no default chord here and can be bound in Settings. Its app
 // menu is built from this same column (`desktop/src/main/menu.ts`), so the
 // menu and the sheet cannot disagree.
@@ -61,11 +60,11 @@ export type Command = {
   title: string;
   group: "Tabs" | "Navigate" | "Panels" | "Panes" | "Help";
   browser: Chord | null;
-  /** The Electron host's chord: the Swift chord, or the browser one where Swift has none. */
+  /** The Electron host's chord: the macOS chord, or the browser one where the macOS set has none. */
   electron: Chord | null;
-  /** True when the browser chord differs from the Swift chord because Chrome reserves the original. */
+  /** True when the browser chord differs from the macOS chord because Chrome reserves the original. */
   moved: boolean;
-  /** The Swift chord the browser one replaced, for the sheet's note. */
+  /** The macOS chord the browser one replaced, for the sheet's note. */
   movedFrom?: string;
   /** Not intercepted at the window: the chord reaches the terminal (⌘⌫ is ^U there) and its shell owner is a later stage. */
   passthrough?: string;
@@ -154,14 +153,14 @@ export function matchHost(event: KeyEventLike, registry: readonly Command[], hos
   );
 }
 
-// The pane commands an operator may rebind (PRD S5 D-07): the eight Swift
+// The pane commands an operator may rebind (PRD S5 D-07): the eight macOS
 // pane commands less Toggle Conversation, which the web shell has no surface
 // for. Each host keeps its own set in the core, because the hosts reserve
 // different keys (Chrome keeps ⌘W): the browser's in
 // `ui_state.browser_shortcut_bindings`, and the desktop app's in
-// `ui_state.shortcut_bindings`, the macOS set it shares with the Swift app
-// in the Swift app's own format and command names (user decision 2026-09-26:
-// the desktop app honours the operator's Swift shortcut settings).
+// `ui_state.shortcut_bindings`, the macOS set in the removed native app's
+// format and command names (user decision 2026-09-26: the desktop app
+// honours the operator's existing shortcut settings).
 export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
   "toggle_sidebar_view",
   "split_right",
@@ -174,9 +173,9 @@ export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
 ];
 
 /**
- * The macOS set's name for each editable command (`PaneCommand` in the Swift
- * app). `toggle_sidebar_view` has no pane command there: the Swift app keeps
- * the key in the set and ignores it, the way this shell ignores
+ * The macOS set's name for each editable command. `toggle_sidebar_view`
+ * has no pane command there: the set keeps the key and the desktop host
+ * ignores it, the way this shell ignores
  * `toggle_conversation`.
  */
 const MACOS_KEYS: Readonly<Partial<Record<CommandId, string>>> = {
@@ -190,7 +189,7 @@ const MACOS_KEYS: Readonly<Partial<Record<CommandId, string>>> = {
   text_reset: "reset_text_size",
 };
 
-/** Swift pane commands the web shell has no surface for: kept in the set, never run here. */
+/** macOS pane commands the web shell has no surface for: kept in the set, never run here. */
 const MACOS_ONLY_KEYS: readonly string[] = ["toggle_conversation"];
 
 // A physical key a chord may use. Anything else (a dead key, an IME process
@@ -217,7 +216,7 @@ export function parseChord(text: string): Chord | null {
 }
 
 // The macOS set's keys: one printable ASCII key, named by the character it
-// types unshifted, or Return (`PaneShortcut.parse` in the Swift app).
+// types unshifted, or Return.
 const MACOS_KEY_CODES: Readonly<Record<string, string>> = {
   return: "Enter",
   "`": "Backquote",
@@ -245,7 +244,7 @@ function macosKeyName(code: string): string | null {
   return Object.entries(MACOS_KEY_CODES).find(([, known]) => known === code)?.[0] ?? null;
 }
 
-/** A macOS set chord ("command+shift+return"), read as leniently as the Swift app reads it. */
+/** A macOS set chord ("command+shift+return"), read leniently: case and order do not matter. */
 export function parseMacosChord(text: string): Chord | null {
   const parts = text.toLowerCase().replace(/ /g, "").split("+");
   const key = parts.pop() ?? "";
@@ -269,7 +268,7 @@ export function serializeMacosChord(chord: Chord): string | null {
   return [chord.meta && "command", chord.ctrl && "control", chord.alt && "option", chord.shift && "shift", key].filter(Boolean).join("+");
 }
 
-/** Chords macOS or the app keeps on the desktop host (`PaneShortcutPolicy.reserved` in the Swift app). */
+/** Chords macOS or the app keeps on the desktop host. */
 const MACOS_RESERVED: readonly Chord[] = [
   ...["KeyQ", "KeyH", "KeyM", "KeyS", "KeyW", "Comma"].map((code) => ({ code, meta: true })),
   ...Array.from({ length: 9 }, (_, index) => ({ code: `Digit${index + 1}`, meta: true })),
@@ -307,8 +306,7 @@ function withChord(command: Command, chord: Chord, host: HostKind): Command {
  * Why `chord` cannot become `id`'s binding on `host` in `registry`, or null
  * when it can. The same rules decide a stored set on load, so a chord the
  * editor refuses can never become effective by being written to the core
- * directly. The desktop host's rules are the Swift app's, because both run
- * the one macOS set.
+ * directly. The desktop host's rules are the macOS set's own.
  */
 export function bindingProblem(id: CommandId, chord: Chord, registry: readonly Command[], host: HostKind = "browser"): string | null {
   if (host === "electron") {
@@ -334,7 +332,7 @@ export type EffectiveRegistry = { registry: readonly Command[]; diagnostic: stri
  * The registry `host` runs, with the operator's stored pane chords applied.
  * A stored set that names an unknown command, holds a chord this host cannot
  * use, or collides with another command is dropped as a whole and the
- * defaults run, the way the Swift app resolves its own set; the diagnostic
+ * defaults run; the diagnostic
  * says why. Collisions are judged on the whole set, so two commands that
  * trade chords are one valid set.
  */

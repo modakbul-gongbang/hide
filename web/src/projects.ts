@@ -1,5 +1,4 @@
-// The Projects list as the sidebar draws it, mirrored from the Swift shell's
-// `SidebarProjectSections` and `SidebarInactiveProjection`: pinned rows
+// The Projects list as the sidebar draws it: pinned rows
 // under their own header, then the activity rows with a per-device fold of
 // inactive projects, and per project a fold of inactive checkouts. The
 // split only reads flags the core set; no age or merge rule is repeated.

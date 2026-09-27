@@ -2665,9 +2665,9 @@ fn tab_strip_reorder_a_drag_that_interleaves_two_workspaces_still_lands() {
     std::fs::remove_dir_all(&directory).ok();
 }
 
-/// The web Projects list's opened checkouts are its own: a save from the
-/// Swift shell, which carries only its own collapsed set, keeps them, and a
-/// web save changes them without touching the Swift shell's set.
+/// The web Projects list's opened checkouts are its own: a save from an
+/// older client, which carries only its own collapsed set, keeps them, and a
+/// web save changes them without touching that set.
 #[test]
 fn expanded_checkouts_survive_a_ui_state_update_that_omits_them() {
     let mut runtime = runtime();
@@ -2684,7 +2684,7 @@ fn expanded_checkouts_survive_a_ui_state_update_that_omits_them() {
         "expanded_paths": [],
         "selected_path": null,
         "selected_pane_id": null,
-        "collapsed_checkout_ids": ["checkout:swift"],
+        "collapsed_checkout_ids": ["checkout:older"],
         "expanded_checkout_ids": ["checkout:web"]
     }))));
     assert!(runtime.dispatch_json(&update(serde_json::json!({
@@ -2699,7 +2699,7 @@ fn expanded_checkouts_survive_a_ui_state_update_that_omits_them() {
 }
 
 /// The web shell's chords are its own: a save from a shell that does not
-/// know them (the Swift shell, or any older payload) keeps them.
+/// know them (any older payload) keeps them.
 #[test]
 fn browser_shortcut_bindings_survive_a_ui_state_update_that_omits_them() {
     let mut runtime = runtime();

@@ -1,13 +1,11 @@
-// The Seti mark a file row draws, resolved from the name alone, mirroring
-// macos/Sources/HerdrMacOS/SetiFileIcon.swift so the web outline shows the
-// same glyph as the Swift one. Colours are the tokens the design system owns,
+// The Seti mark a file row draws, resolved from the name alone, the catalog
+// the removed native outline used. Colours are the tokens the design system owns,
 // never literals: scripts/check-web-tokens.mjs refuses a hex colour in web/src.
 //
-// The font is the subset the app already ships (MIT, notice at
-// macos/Resources/THIRD_PARTY_NOTICES/seti-ui-MIT.txt), copied byte for byte
-// to web/src/assets/seti-subset.woff and loaded as "seti" by index.css. The
-// codepoints below are the private-use range that subset carries, and
-// SetiFileIconTests.swift is the Swift half of the same coverage check.
+// The font is the subset the app ships (MIT, notice at
+// desktop/resources/THIRD_PARTY_NOTICES/seti-ui-MIT.txt) at
+// web/src/assets/seti-subset.woff, loaded as "seti" by index.css. The
+// codepoints below are the private-use range that subset carries.
 
 type FileColor =
   | "text-file-neutral"
@@ -122,7 +120,7 @@ const EXTENSIONS: Record<string, FileIcon> = {
   log: { glyph: "\ue023", color: DOCUMENT },
 };
 
-/** The extension Foundation would report, which is what the Swift catalog
+/** The extension Foundation would report, which is what the original catalog
  * reads: a leading dot is not an extension, so .env resolves as a name. */
 function extensionOf(lowercased: string): string {
   const dot = lowercased.lastIndexOf(".");
