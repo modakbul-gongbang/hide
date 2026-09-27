@@ -1369,10 +1369,10 @@ export function createActions(dispatch: DispatchFn) {
      * or the one a page that asked for a new window belongs to. An address
      * the Workspace already shows is focused and loaded again.
      */
-    openBrowser(url: string, workspace?: ViewWorkspace) {
+    openBrowser(url: string, workspace?: ViewWorkspace, areaId?: string) {
       const target = workspace ?? frontViewWorkspace();
       if (!target) return diagnostic("browser_open: no Workspace in front");
-      dispatch({ schema_version: 2, kind: "browser_open", payload: { url, workspace: { device_id: target.device_id, path: target.path } } });
+      dispatch({ schema_version: 2, kind: "browser_open", payload: { url, workspace: { device_id: target.device_id, path: target.path }, ...(areaId ? { area_id: areaId } : {}) } });
     },
 
     /** Explorer "Open in Browser" on an HTML file of this machine's checkout. */
