@@ -222,9 +222,20 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     const menu = page.getByRole("menu", { name: `${BRANCH} actions` });
     await expect(menu).toBeVisible();
     await expect(card).toHaveCount(0);
-    await expect(menu.getByRole("menuitem")).toHaveText(["Open pull request #180", "Set purpose…", "Delete worktree…"]);
-    await page.keyboard.press("ArrowDown");
-    await expect(menu.getByRole("menuitem", { name: "Open pull request #180" })).toBeFocused();
+    await expect(menu.locator("[data-menu-label]")).toHaveText([
+      "Open",
+      "New tab here",
+      "Open pull request #180",
+      "Set purpose…",
+      "Set as default checkout",
+      "Copy branch name",
+      "Copy path",
+      "Delete worktree…",
+    ]);
+    // The pull request comes after Open and New tab here; arrow down to it.
+    const focusedItem = () => page.evaluate(() => document.activeElement?.getAttribute("data-menu-item") ?? null);
+    for (let press = 0; press < 8 && (await focusedItem()) !== "open_pull_request"; press += 1) await page.keyboard.press("ArrowDown");
+    await expect(menu.getByRole("menuitem", { name: /^Open pull request #180/ })).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(menu).toHaveCount(0);
     await expect(page.locator('[data-view-tab-bar] [role="tab"]')).toHaveCount(1);

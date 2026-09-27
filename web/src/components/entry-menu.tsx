@@ -37,10 +37,10 @@ function EntryItems<Id extends string>({ items, onSelect, parts }: { items: Menu
           {item.separated ? <Separator /> : null}
           <Item disabled={item.unavailable !== null} variant={item.destructive ? "destructive" : "default"} data-menu-item={item.id} className="flex-col items-stretch gap-none" onSelect={() => onSelect(item.id)}>
             <span className="flex items-center gap-sm">
-              <span>{item.label}</span>
+              <span data-menu-label="">{item.label}</span>
               {item.shortcut ? <ContextMenuShortcut data-menu-shortcut={item.shortcut}>{item.shortcut}</ContextMenuShortcut> : null}
             </span>
-            {item.unavailable ? <span className="text-caption text-muted-foreground">{item.unavailable}</span> : null}
+            {item.unavailable ? <span data-menu-reason="" className="text-caption text-muted-foreground">{item.unavailable}</span> : null}
           </Item>
         </Fragment>
       ))}

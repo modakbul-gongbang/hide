@@ -52,7 +52,7 @@ async function menuLines(menu: Locator): Promise<string[]> {
   return menu.evaluate((element) =>
     Array.from(element.children).map((child) => {
       if (child.getAttribute("role") === "separator") return "─";
-      const label = child.querySelector("span > span")?.textContent ?? "";
+      const label = child.querySelector("[data-menu-label]")?.textContent ?? "";
       const chord = child.querySelector("[data-menu-shortcut]")?.textContent;
       return [label, chord, child.hasAttribute("data-disabled") ? "(disabled)" : null].filter(Boolean).join(" ");
     }),
