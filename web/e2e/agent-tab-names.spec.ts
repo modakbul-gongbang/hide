@@ -30,7 +30,16 @@ test("focused agent titles, inline rename, clear and reconnect", async ({ page }
     const rename = async () => {
       await tab.click({ button: "right" });
       const menu = page.getByRole("menu");
-      await expect(menu.getByRole("menuitem")).toHaveText(["New tab", "Rename…", "Copy name", "Close tab…"]);
+      await expect(menu.getByRole("menuitem")).toHaveText([
+        "New tab",
+        /^Split right/,
+        /^Split left/,
+        /^Split up/,
+        /^Split down/,
+        "Rename…",
+        "Copy tab name",
+        "Close tab…",
+      ]);
       await menu.getByRole("menuitem", { name: "Rename…", exact: true }).click();
       const input = page.getByRole("textbox", { name: "Tab name", exact: true });
       await expect(input).toBeFocused();
