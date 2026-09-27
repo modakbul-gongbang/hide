@@ -1,8 +1,8 @@
 use agent_context_labels::{
-    EventKind, LocalSessionReader, PLUGIN_ID, SessionEvent, SocketHerdr, StatePaths, Watcher,
-    analysis_context, analysis_context_from_session, append_log, apply_hook_payload, context_label,
-    exclusive_watcher_lock, migrate_legacy_state, provider, request_refresh,
-    set_automatic_summaries,
+    EventKind, LocalSessionReader, PLUGIN_ID, SessionEvent, SocketHerdr, StatePaths,
+    WATCHER_LOCK_TAKEOVER, Watcher, analysis_context, analysis_context_from_session, append_log,
+    apply_hook_payload, context_label, exclusive_watcher_lock, migrate_legacy_state, provider,
+    request_refresh, set_automatic_summaries,
 };
 use anyhow::{Context, Result, anyhow};
 use clap::{ArgAction, Parser, Subcommand, ValueEnum};
@@ -92,7 +92,7 @@ fn watch(home: &Path) -> Result<()> {
     // kept-both.
     let migrated = migrate_legacy_state(home)?;
     let paths = &StatePaths::from_home(home);
-    let _lock = exclusive_watcher_lock(paths)?;
+    let _lock = exclusive_watcher_lock(paths, WATCHER_LOCK_TAKEOVER)?;
     if !migrated.is_empty() {
         append_log(paths, "state_migrated", None, Some(&migrated.join(";")))?;
     }

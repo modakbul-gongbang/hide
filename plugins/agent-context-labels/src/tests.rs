@@ -3093,3 +3093,48 @@ fn identity_params_clear_absent_tokens_explicitly() {
     assert_eq!(params["tokens"]["progress"], Value::Null);
     assert_eq!(params["tokens"]["expected_reply"], Value::Null);
 }
+
+fn hold_watcher_lock(paths: &StatePaths) -> File {
+    fs::create_dir_all(&paths.root).unwrap();
+    let held = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .write(true)
+        .truncate(false)
+        .open(paths.lock())
+        .unwrap();
+    held.try_lock_exclusive().unwrap();
+    held
+}
+
+#[test]
+fn starting_watcher_takes_the_lock_once_the_previous_watcher_exits() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let previous = hold_watcher_lock(&paths);
+    let exiting = thread::spawn(move || {
+        thread::sleep(Duration::from_millis(300));
+        drop(previous);
+    });
+
+    let taken = exclusive_watcher_lock(&paths, Duration::from_secs(5));
+    exiting.join().unwrap();
+
+    assert!(taken.is_ok(), "{taken:?}");
+    let log = fs::read_to_string(paths.log()).unwrap();
+    assert!(
+        log.contains("\"event\":\"watcher_lock_taken_over\""),
+        "{log}"
+    );
+}
+
+#[test]
+fn starting_watcher_leaves_a_live_watcher_running() {
+    let root = tempdir().unwrap();
+    let paths = StatePaths::for_tests(root.path());
+    let _live = hold_watcher_lock(&paths);
+
+    let refused = exclusive_watcher_lock(&paths, Duration::from_millis(300));
+
+    assert_eq!(refused.unwrap_err().to_string(), "watcher_already_running");
+}
