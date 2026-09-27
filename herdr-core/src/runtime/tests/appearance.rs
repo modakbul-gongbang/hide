@@ -156,6 +156,21 @@ fn a_dragged_sidebar_width_survives_a_restart() {
     let event = ui_state_update(&runtime, serde_json::json!({"sidebar_width": 360}));
     assert!(runtime.dispatch_json(&event));
     assert_eq!(runtime.snapshot().ui_state.sidebar_width, 360);
+    let mut unrelated: serde_json::Value = serde_json::from_slice(&ui_state_update(
+        &runtime,
+        serde_json::json!({"left_sidebar_visible": false}),
+    ))
+    .unwrap();
+    unrelated["payload"]
+        .as_object_mut()
+        .unwrap()
+        .remove("sidebar_width");
+    assert!(runtime.dispatch_json(&serde_json::to_vec(&unrelated).unwrap()));
+    assert_eq!(
+        runtime.snapshot().ui_state.sidebar_width,
+        360,
+        "an unrelated UI event without width preserves the completed drag"
+    );
     drop(runtime);
     assert_eq!(runtime_at(&path).snapshot().ui_state.sidebar_width, 360);
 }

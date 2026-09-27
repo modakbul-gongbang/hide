@@ -118,13 +118,16 @@ export function createActions(dispatch: DispatchFn) {
    * exception: their own events (`register_device`, `workspace_pin_set`, …)
    * own them and the core keeps them when they are absent, so an echo of an
    * older snapshot can never undo a registration that landed after it.
+   * Sidebar width is also patch-only: echoing it could undo a completed drag
+   * while its snapshot is still in flight.
    */
   const updateUiState = (patch: Record<string, unknown>) => {
     const state = rest()?.ui_state;
     if (!state) return;
-    const { workspace_registrations: _workspaces, device_registrations: _devices, ...owned } = state;
+    const { workspace_registrations: _workspaces, device_registrations: _devices, sidebar_width: _width, ...owned } = state;
     void _workspaces;
     void _devices;
+    void _width;
     dispatch({ schema_version: 2, kind: "ui_state_update", payload: { ...owned, ...patch } });
   };
 
