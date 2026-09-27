@@ -1590,7 +1590,7 @@
                   "id": "main-sidebar-agent0-l",
                   "type": "ref",
                   "ref": "hideui:sidebar-agent-row",
-                  "name": "두 번째 에이전트",
+                  "name": "카드 상태 시트 설계",
                   "width": 268,
                   "padding": [
                     "$--spacing-xs",
@@ -1601,11 +1601,11 @@
                   "descendants": {
                     "hideui:sar-dot": {
                       "fill": "$--agent-working",
-                      "enabled": true
+                      "enabled": false
                     },
                     "hideui:sar-ring": {
-                      "stroke": "$--muted-foreground",
-                      "enabled": false
+                      "stroke": "$--agent-working",
+                      "enabled": true
                     },
                     "hideui:sar-glyph": {
                       "fill": "$--warning",
@@ -1613,7 +1613,7 @@
                     },
                     "hideui:sar-title": {
                       "fill": "$--subtle-foreground",
-                      "content": "두 번째 에이전트"
+                      "content": "카드 상태 시트 설계"
                     },
                     "hideui:sar-branch": {
                       "fill": "$--secondary",
@@ -1633,11 +1633,11 @@
                     },
                     "hideui:sar-badge": {
                       "fill": "$--secondary",
-                      "enabled": false
+                      "enabled": true
                     },
                     "hideui:sar-badge-label": {
                       "fill": "$--subtle-foreground",
-                      "content": ""
+                      "content": "●1"
                     },
                     "hideui:sar-elapsed": {
                       "fill": "$--muted-foreground",
@@ -1665,15 +1665,139 @@
                       }
                     },
                     "hideui:sar-fold": {
-                      "opacity": 0
+                      "opacity": 1
                     }
                   }
+                },
+                {
+                  "type": "frame",
+                  "id": "main-sidebar-agent0-summary0-l",
+                  "name": "Other checkout lineage",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "main-sidebar-agent0-summary0-l-m",
+                      "name": "Status mark",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "main-sidebar-agent0-summary0-l-m-dot",
+                          "name": "Dot",
+                          "width": 7,
+                          "height": 7,
+                          "fill": "$--agent-working"
+                        }
+                      ],
+                      "width": 12,
+                      "height": 12,
+                      "layout": "horizontal",
+                      "justifyContent": "center",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "text",
+                      "id": "main-sidebar-agent0-summary0-l-b",
+                      "name": "web-view-overlay",
+                      "content": "web-view-overlay",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "text",
+                      "id": "main-sidebar-agent0-summary0-l-pr",
+                      "name": "#173",
+                      "content": "#173",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    }
+                  ],
+                  "layout": "horizontal",
+                  "gap": "$--spacing-xxs",
+                  "alignItems": "center",
+                  "padding": [
+                    0,
+                    "$--spacing-xs",
+                    0,
+                    40
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "main-sidebar-agent0-summary1-l",
+                  "name": "Other checkout lineage",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "main-sidebar-agent0-summary1-l-m",
+                      "name": "Status mark",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "main-sidebar-agent0-summary1-l-m-glyph",
+                          "name": "✓",
+                          "content": "✓",
+                          "fill": "$--success",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": 12,
+                      "height": 12,
+                      "layout": "horizontal",
+                      "justifyContent": "center",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "text",
+                      "id": "main-sidebar-agent0-summary1-l-b",
+                      "name": "web-side-panel",
+                      "content": "web-side-panel",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "text",
+                      "id": "main-sidebar-agent0-summary1-l-pr",
+                      "name": "#170",
+                      "content": "#170",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "text",
+                      "id": "main-sidebar-agent0-summary1-l-more",
+                      "name": "+1",
+                      "content": "+1",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    }
+                  ],
+                  "layout": "horizontal",
+                  "gap": "$--spacing-xxs",
+                  "alignItems": "center",
+                  "padding": [
+                    0,
+                    "$--spacing-xs",
+                    0,
+                    40
+                  ]
                 },
                 {
                   "id": "main-sidebar-agent1-l",
                   "type": "ref",
                   "ref": "hideui:sidebar-agent-row",
-                  "name": "Agent one",
+                  "name": "조용한 순찰 기능 개발",
                   "width": 268,
                   "padding": [
                     "$--spacing-xs",
@@ -1696,7 +1820,7 @@
                     },
                     "hideui:sar-title": {
                       "fill": "$--subtle-foreground",
-                      "content": "Agent one"
+                      "content": "조용한 순찰 기능 개발"
                     },
                     "hideui:sar-branch": {
                       "fill": "$--secondary",
@@ -1748,9 +1872,97 @@
                       }
                     },
                     "hideui:sar-fold": {
-                      "opacity": 0
+                      "opacity": 1
                     }
                   }
+                },
+                {
+                  "type": "frame",
+                  "id": "main-sidebar-agent1-summary0-l",
+                  "name": "Other checkout lineage",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "main-sidebar-agent1-summary0-l-m",
+                      "name": "Status mark",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "main-sidebar-agent1-summary0-l-m-glyph",
+                          "name": "✓",
+                          "content": "✓",
+                          "fill": "$--success",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": 12,
+                      "height": 12,
+                      "layout": "horizontal",
+                      "justifyContent": "center",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "text",
+                      "id": "main-sidebar-agent1-summary0-l-b",
+                      "name": "hcoord-decouple",
+                      "content": "hcoord-decouple",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "main-sidebar-agent1-summary0-l-d",
+                      "name": "Device chip",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "main-sidebar-agent1-summary0-l-d-g",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 10,
+                          "height": 10,
+                          "icon": "server",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "main-sidebar-agent1-summary0-l-d-t",
+                          "name": "mini",
+                          "content": "mini",
+                          "fill": "$--subtle-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "500"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xxs",
+                      "padding": [
+                        0,
+                        "$--spacing-xs"
+                      ],
+                      "height": 16,
+                      "alignItems": "center",
+                      "cornerRadius": "$--radius-xs",
+                      "stroke": "$--border",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner"
+                    }
+                  ],
+                  "layout": "horizontal",
+                  "gap": "$--spacing-xxs",
+                  "alignItems": "center",
+                  "padding": [
+                    0,
+                    "$--spacing-xs",
+                    0,
+                    40
+                  ]
                 },
                 {
                   "type": "frame",
@@ -1884,6 +2096,678 @@
               "id": "main-views-l",
               "name": "Views",
               "children": [
+                {
+                  "type": "frame",
+                  "id": "main-lineage-details-l",
+                  "name": "Lineage detail states",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "main-lineage-pop-l",
+                      "name": "Children list",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "main-lineage-pop0-l",
+                          "name": "Child",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pop0-m-l",
+                              "name": "Status mark",
+                              "children": [
+                                {
+                                  "type": "ellipse",
+                                  "id": "main-lineage-pop0-m-l-dot",
+                                  "name": "Dot",
+                                  "width": 7,
+                                  "height": 7,
+                                  "fill": "$--agent-working"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "horizontal",
+                              "justifyContent": "center",
+                              "alignItems": "center"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pop0-txt-l",
+                              "name": "Text",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "main-lineage-pop0-t-l",
+                                  "name": "레이아웃 재구조화",
+                                  "content": "레이아웃 재구조화",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "main-lineage-pop0-sub-l",
+                                  "name": "Sub",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "main-lineage-pop0-s-l",
+                                      "name": "Working",
+                                      "content": "Working",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "main-lineage-pop0-b-l",
+                                      "name": "web-view-overlay",
+                                      "content": "web-view-overlay",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xs",
+                                  "alignItems": "center"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0
+                            },
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pop0-gap-l",
+                              "name": "Spacer",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "text",
+                              "id": "main-lineage-pop0-a-l",
+                              "name": "4m",
+                              "content": "4m",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center",
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "fill": "$--accent"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "main-lineage-pop1-l",
+                          "name": "Child",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pop1-m-l",
+                              "name": "Status mark",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "main-lineage-pop1-m-l-glyph",
+                                  "name": "✓",
+                                  "content": "✓",
+                                  "fill": "$--success",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "horizontal",
+                              "justifyContent": "center",
+                              "alignItems": "center"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pop1-txt-l",
+                              "name": "Text",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "main-lineage-pop1-t-l",
+                                  "name": "패널 디자인 검토",
+                                  "content": "패널 디자인 검토",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "main-lineage-pop1-sub-l",
+                                  "name": "Sub",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "main-lineage-pop1-s-l",
+                                      "name": "Done",
+                                      "content": "Done",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "main-lineage-pop1-b-l",
+                                      "name": "web-side-panel",
+                                      "content": "web-side-panel",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xs",
+                                  "alignItems": "center"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0
+                            },
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pop1-gap-l",
+                              "name": "Spacer",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "text",
+                              "id": "main-lineage-pop1-a-l",
+                              "name": "13m",
+                              "content": "13m",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center",
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "main-lineage-pop2-l",
+                          "name": "Child",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pop2-m-l",
+                              "name": "Status mark",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "main-lineage-pop2-m-l-glyph",
+                                  "name": "✓",
+                                  "content": "✓",
+                                  "fill": "$--success",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "horizontal",
+                              "justifyContent": "center",
+                              "alignItems": "center"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pop2-txt-l",
+                              "name": "Text",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "main-lineage-pop2-t-l",
+                                  "name": "원격 분리",
+                                  "content": "원격 분리",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "main-lineage-pop2-sub-l",
+                                  "name": "Sub",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "main-lineage-pop2-s-l",
+                                      "name": "Done",
+                                      "content": "Done",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "main-lineage-pop2-b-l",
+                                      "name": "hcoord-decouple",
+                                      "content": "hcoord-decouple",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "main-lineage-pop2-d-l",
+                                      "name": "Device chip",
+                                      "children": [
+                                        {
+                                          "type": "icon",
+                                          "id": "main-lineage-pop2-d-l-g",
+                                          "name": "Glyph",
+                                          "enabled": true,
+                                          "width": 10,
+                                          "height": 10,
+                                          "icon": "server",
+                                          "library": "lucide",
+                                          "fill": "$--muted-foreground"
+                                        },
+                                        {
+                                          "type": "text",
+                                          "id": "main-lineage-pop2-d-l-t",
+                                          "name": "mini",
+                                          "content": "mini",
+                                          "fill": "$--subtle-foreground",
+                                          "fontFamily": "$--font-ui",
+                                          "fontSize": "$--text-micro",
+                                          "fontWeight": "500"
+                                        }
+                                      ],
+                                      "layout": "horizontal",
+                                      "gap": "$--spacing-xxs",
+                                      "padding": [
+                                        0,
+                                        "$--spacing-xs"
+                                      ],
+                                      "height": 16,
+                                      "alignItems": "center",
+                                      "cornerRadius": "$--radius-xs",
+                                      "stroke": "$--border",
+                                      "strokeWidth": "$--size-hairline",
+                                      "strokeAlignment": "inner"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xs",
+                                  "alignItems": "center"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0
+                            },
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pop2-gap-l",
+                              "name": "Spacer",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "text",
+                              "id": "main-lineage-pop2-a-l",
+                              "name": "1h",
+                              "content": "1h",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center",
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "main-lineage-pop-rule-l",
+                          "name": "Rule",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1,
+                          "fill": "$--border"
+                        },
+                        {
+                          "type": "text",
+                          "id": "main-lineage-pop-open-l",
+                          "name": "하위 에이전트 펼치기",
+                          "content": "하위 에이전트 펼치기",
+                          "fill": "$--subtle-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": 280,
+                      "layout": "vertical",
+                      "fill": "$--popover",
+                      "cornerRadius": "$--radius-md",
+                      "stroke": "$--border",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "padding": [
+                        "$--spacing-xxs",
+                        0
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "main-lineage-pane-l",
+                      "name": "Pane header lineage",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "main-lineage-pane-h-l",
+                          "name": "Pane header",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pane-m-l",
+                              "name": "Status mark",
+                              "children": [
+                                {
+                                  "type": "ellipse",
+                                  "id": "main-lineage-pane-m-l-ring",
+                                  "name": "Ring",
+                                  "width": 7,
+                                  "height": 7,
+                                  "stroke": "$--agent-working",
+                                  "strokeWidth": 1,
+                                  "strokeAlignment": "inner"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "horizontal",
+                              "justifyContent": "center",
+                              "alignItems": "center"
+                            },
+                            {
+                              "type": "text",
+                              "id": "main-lineage-pane-t-l",
+                              "name": "카드 상태 시트 설계",
+                              "content": "카드 상태 시트 설계",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "width": 640,
+                          "height": 28,
+                          "layout": "horizontal",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "padding": [
+                            0,
+                            "$--spacing-sm"
+                          ],
+                          "fill": "$--secondary"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "main-lineage-pane-c-l",
+                          "name": "Children",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-chip0-l",
+                              "name": "Child chip",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "main-lineage-chip0-m-l",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "ellipse",
+                                      "id": "main-lineage-chip0-m-l-dot",
+                                      "name": "Dot",
+                                      "width": 7,
+                                      "height": 7,
+                                      "fill": "$--agent-working"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "main-lineage-chip0-b-l",
+                                  "name": "web-view-overlay",
+                                  "content": "web-view-overlay",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center",
+                              "padding": [
+                                0,
+                                "$--spacing-xs"
+                              ],
+                              "height": 20,
+                              "cornerRadius": "$--radius-sm",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-chip1-l",
+                              "name": "Child chip",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "main-lineage-chip1-m-l",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "main-lineage-chip1-m-l-glyph",
+                                      "name": "✓",
+                                      "content": "✓",
+                                      "fill": "$--success",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "main-lineage-chip1-b-l",
+                                  "name": "web-side-panel",
+                                  "content": "web-side-panel",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center",
+                              "padding": [
+                                0,
+                                "$--spacing-xs"
+                              ],
+                              "height": 20,
+                              "cornerRadius": "$--radius-sm",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-chip2-l",
+                              "name": "Child chip",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "main-lineage-chip2-m-l",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "main-lineage-chip2-m-l-glyph",
+                                      "name": "✓",
+                                      "content": "✓",
+                                      "fill": "$--success",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "main-lineage-chip2-b-l",
+                                  "name": "hcoord-decouple",
+                                  "content": "hcoord-decouple",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "main-lineage-chip2-d-l",
+                                  "name": "Device chip",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "main-lineage-chip2-d-l-g",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 10,
+                                      "height": 10,
+                                      "icon": "server",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "main-lineage-chip2-d-l-t",
+                                      "name": "mini",
+                                      "content": "mini",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-micro",
+                                      "fontWeight": "500"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xxs",
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "height": 16,
+                                  "alignItems": "center",
+                                  "cornerRadius": "$--radius-xs",
+                                  "stroke": "$--border",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center",
+                              "padding": [
+                                0,
+                                "$--spacing-xs"
+                              ],
+                              "height": 20,
+                              "cornerRadius": "$--radius-sm",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center",
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "fill": "$--secondary"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "main-lineage-pane-b-l",
+                          "name": "Body",
+                          "children": [],
+                          "height": 64,
+                          "fill": "$--card"
+                        }
+                      ],
+                      "width": 640,
+                      "layout": "vertical",
+                      "cornerRadius": "$--radius-sm",
+                      "clip": true,
+                      "stroke": "$--border",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner"
+                    }
+                  ],
+                  "layout": "horizontal",
+                  "gap": "$--spacing-lg",
+                  "alignItems": "start"
+                },
                 {
                   "type": "frame",
                   "id": "main-list-l",
@@ -3964,7 +4848,7 @@
                   "id": "main-sidebar-agent0-d",
                   "type": "ref",
                   "ref": "hideui:sidebar-agent-row",
-                  "name": "두 번째 에이전트",
+                  "name": "카드 상태 시트 설계",
                   "width": 268,
                   "padding": [
                     "$--spacing-xs",
@@ -3975,11 +4859,11 @@
                   "descendants": {
                     "hideui:sar-dot": {
                       "fill": "$--agent-working",
-                      "enabled": true
+                      "enabled": false
                     },
                     "hideui:sar-ring": {
-                      "stroke": "$--muted-foreground",
-                      "enabled": false
+                      "stroke": "$--agent-working",
+                      "enabled": true
                     },
                     "hideui:sar-glyph": {
                       "fill": "$--warning",
@@ -3987,7 +4871,7 @@
                     },
                     "hideui:sar-title": {
                       "fill": "$--subtle-foreground",
-                      "content": "두 번째 에이전트"
+                      "content": "카드 상태 시트 설계"
                     },
                     "hideui:sar-branch": {
                       "fill": "$--secondary",
@@ -4007,11 +4891,11 @@
                     },
                     "hideui:sar-badge": {
                       "fill": "$--secondary",
-                      "enabled": false
+                      "enabled": true
                     },
                     "hideui:sar-badge-label": {
                       "fill": "$--subtle-foreground",
-                      "content": ""
+                      "content": "●1"
                     },
                     "hideui:sar-elapsed": {
                       "fill": "$--muted-foreground",
@@ -4039,15 +4923,139 @@
                       }
                     },
                     "hideui:sar-fold": {
-                      "opacity": 0
+                      "opacity": 1
                     }
                   }
+                },
+                {
+                  "type": "frame",
+                  "id": "main-sidebar-agent0-summary0-d",
+                  "name": "Other checkout lineage",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "main-sidebar-agent0-summary0-d-m",
+                      "name": "Status mark",
+                      "children": [
+                        {
+                          "type": "ellipse",
+                          "id": "main-sidebar-agent0-summary0-d-m-dot",
+                          "name": "Dot",
+                          "width": 7,
+                          "height": 7,
+                          "fill": "$--agent-working"
+                        }
+                      ],
+                      "width": 12,
+                      "height": 12,
+                      "layout": "horizontal",
+                      "justifyContent": "center",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "text",
+                      "id": "main-sidebar-agent0-summary0-d-b",
+                      "name": "web-view-overlay",
+                      "content": "web-view-overlay",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "text",
+                      "id": "main-sidebar-agent0-summary0-d-pr",
+                      "name": "#173",
+                      "content": "#173",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    }
+                  ],
+                  "layout": "horizontal",
+                  "gap": "$--spacing-xxs",
+                  "alignItems": "center",
+                  "padding": [
+                    0,
+                    "$--spacing-xs",
+                    0,
+                    40
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "main-sidebar-agent0-summary1-d",
+                  "name": "Other checkout lineage",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "main-sidebar-agent0-summary1-d-m",
+                      "name": "Status mark",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "main-sidebar-agent0-summary1-d-m-glyph",
+                          "name": "✓",
+                          "content": "✓",
+                          "fill": "$--success",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": 12,
+                      "height": 12,
+                      "layout": "horizontal",
+                      "justifyContent": "center",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "text",
+                      "id": "main-sidebar-agent0-summary1-d-b",
+                      "name": "web-side-panel",
+                      "content": "web-side-panel",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "text",
+                      "id": "main-sidebar-agent0-summary1-d-pr",
+                      "name": "#170",
+                      "content": "#170",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "text",
+                      "id": "main-sidebar-agent0-summary1-d-more",
+                      "name": "+1",
+                      "content": "+1",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-mono",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    }
+                  ],
+                  "layout": "horizontal",
+                  "gap": "$--spacing-xxs",
+                  "alignItems": "center",
+                  "padding": [
+                    0,
+                    "$--spacing-xs",
+                    0,
+                    40
+                  ]
                 },
                 {
                   "id": "main-sidebar-agent1-d",
                   "type": "ref",
                   "ref": "hideui:sidebar-agent-row",
-                  "name": "Agent one",
+                  "name": "조용한 순찰 기능 개발",
                   "width": 268,
                   "padding": [
                     "$--spacing-xs",
@@ -4070,7 +5078,7 @@
                     },
                     "hideui:sar-title": {
                       "fill": "$--subtle-foreground",
-                      "content": "Agent one"
+                      "content": "조용한 순찰 기능 개발"
                     },
                     "hideui:sar-branch": {
                       "fill": "$--secondary",
@@ -4122,9 +5130,97 @@
                       }
                     },
                     "hideui:sar-fold": {
-                      "opacity": 0
+                      "opacity": 1
                     }
                   }
+                },
+                {
+                  "type": "frame",
+                  "id": "main-sidebar-agent1-summary0-d",
+                  "name": "Other checkout lineage",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "main-sidebar-agent1-summary0-d-m",
+                      "name": "Status mark",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "main-sidebar-agent1-summary0-d-m-glyph",
+                          "name": "✓",
+                          "content": "✓",
+                          "fill": "$--success",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": 12,
+                      "height": 12,
+                      "layout": "horizontal",
+                      "justifyContent": "center",
+                      "alignItems": "center"
+                    },
+                    {
+                      "type": "text",
+                      "id": "main-sidebar-agent1-summary0-d-b",
+                      "name": "hcoord-decouple",
+                      "content": "hcoord-decouple",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "main-sidebar-agent1-summary0-d-d",
+                      "name": "Device chip",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "main-sidebar-agent1-summary0-d-d-g",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 10,
+                          "height": 10,
+                          "icon": "server",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "main-sidebar-agent1-summary0-d-d-t",
+                          "name": "mini",
+                          "content": "mini",
+                          "fill": "$--subtle-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-micro",
+                          "fontWeight": "500"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xxs",
+                      "padding": [
+                        0,
+                        "$--spacing-xs"
+                      ],
+                      "height": 16,
+                      "alignItems": "center",
+                      "cornerRadius": "$--radius-xs",
+                      "stroke": "$--border",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner"
+                    }
+                  ],
+                  "layout": "horizontal",
+                  "gap": "$--spacing-xxs",
+                  "alignItems": "center",
+                  "padding": [
+                    0,
+                    "$--spacing-xs",
+                    0,
+                    40
+                  ]
                 },
                 {
                   "type": "frame",
@@ -4258,6 +5354,678 @@
               "id": "main-views-d",
               "name": "Views",
               "children": [
+                {
+                  "type": "frame",
+                  "id": "main-lineage-details-d",
+                  "name": "Lineage detail states",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "main-lineage-pop-d",
+                      "name": "Children list",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "main-lineage-pop0-d",
+                          "name": "Child",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pop0-m-d",
+                              "name": "Status mark",
+                              "children": [
+                                {
+                                  "type": "ellipse",
+                                  "id": "main-lineage-pop0-m-d-dot",
+                                  "name": "Dot",
+                                  "width": 7,
+                                  "height": 7,
+                                  "fill": "$--agent-working"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "horizontal",
+                              "justifyContent": "center",
+                              "alignItems": "center"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pop0-txt-d",
+                              "name": "Text",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "main-lineage-pop0-t-d",
+                                  "name": "레이아웃 재구조화",
+                                  "content": "레이아웃 재구조화",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "main-lineage-pop0-sub-d",
+                                  "name": "Sub",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "main-lineage-pop0-s-d",
+                                      "name": "Working",
+                                      "content": "Working",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "main-lineage-pop0-b-d",
+                                      "name": "web-view-overlay",
+                                      "content": "web-view-overlay",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xs",
+                                  "alignItems": "center"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0
+                            },
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pop0-gap-d",
+                              "name": "Spacer",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "text",
+                              "id": "main-lineage-pop0-a-d",
+                              "name": "4m",
+                              "content": "4m",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center",
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "fill": "$--accent"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "main-lineage-pop1-d",
+                          "name": "Child",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pop1-m-d",
+                              "name": "Status mark",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "main-lineage-pop1-m-d-glyph",
+                                  "name": "✓",
+                                  "content": "✓",
+                                  "fill": "$--success",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "horizontal",
+                              "justifyContent": "center",
+                              "alignItems": "center"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pop1-txt-d",
+                              "name": "Text",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "main-lineage-pop1-t-d",
+                                  "name": "패널 디자인 검토",
+                                  "content": "패널 디자인 검토",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "main-lineage-pop1-sub-d",
+                                  "name": "Sub",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "main-lineage-pop1-s-d",
+                                      "name": "Done",
+                                      "content": "Done",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "main-lineage-pop1-b-d",
+                                      "name": "web-side-panel",
+                                      "content": "web-side-panel",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xs",
+                                  "alignItems": "center"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0
+                            },
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pop1-gap-d",
+                              "name": "Spacer",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "text",
+                              "id": "main-lineage-pop1-a-d",
+                              "name": "13m",
+                              "content": "13m",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center",
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "main-lineage-pop2-d",
+                          "name": "Child",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pop2-m-d",
+                              "name": "Status mark",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "main-lineage-pop2-m-d-glyph",
+                                  "name": "✓",
+                                  "content": "✓",
+                                  "fill": "$--success",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "horizontal",
+                              "justifyContent": "center",
+                              "alignItems": "center"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pop2-txt-d",
+                              "name": "Text",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "main-lineage-pop2-t-d",
+                                  "name": "원격 분리",
+                                  "content": "원격 분리",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "main-lineage-pop2-sub-d",
+                                  "name": "Sub",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "main-lineage-pop2-s-d",
+                                      "name": "Done",
+                                      "content": "Done",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "main-lineage-pop2-b-d",
+                                      "name": "hcoord-decouple",
+                                      "content": "hcoord-decouple",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "main-lineage-pop2-d-d",
+                                      "name": "Device chip",
+                                      "children": [
+                                        {
+                                          "type": "icon",
+                                          "id": "main-lineage-pop2-d-d-g",
+                                          "name": "Glyph",
+                                          "enabled": true,
+                                          "width": 10,
+                                          "height": 10,
+                                          "icon": "server",
+                                          "library": "lucide",
+                                          "fill": "$--muted-foreground"
+                                        },
+                                        {
+                                          "type": "text",
+                                          "id": "main-lineage-pop2-d-d-t",
+                                          "name": "mini",
+                                          "content": "mini",
+                                          "fill": "$--subtle-foreground",
+                                          "fontFamily": "$--font-ui",
+                                          "fontSize": "$--text-micro",
+                                          "fontWeight": "500"
+                                        }
+                                      ],
+                                      "layout": "horizontal",
+                                      "gap": "$--spacing-xxs",
+                                      "padding": [
+                                        0,
+                                        "$--spacing-xs"
+                                      ],
+                                      "height": 16,
+                                      "alignItems": "center",
+                                      "cornerRadius": "$--radius-xs",
+                                      "stroke": "$--border",
+                                      "strokeWidth": "$--size-hairline",
+                                      "strokeAlignment": "inner"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xs",
+                                  "alignItems": "center"
+                                }
+                              ],
+                              "layout": "vertical",
+                              "gap": 0
+                            },
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pop2-gap-d",
+                              "name": "Spacer",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "text",
+                              "id": "main-lineage-pop2-a-d",
+                              "name": "1h",
+                              "content": "1h",
+                              "fill": "$--muted-foreground",
+                              "fontFamily": "$--font-mono",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center",
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ]
+                        },
+                        {
+                          "type": "frame",
+                          "id": "main-lineage-pop-rule-d",
+                          "name": "Rule",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1,
+                          "fill": "$--border"
+                        },
+                        {
+                          "type": "text",
+                          "id": "main-lineage-pop-open-d",
+                          "name": "하위 에이전트 펼치기",
+                          "content": "하위 에이전트 펼치기",
+                          "fill": "$--subtle-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": 280,
+                      "layout": "vertical",
+                      "fill": "$--popover",
+                      "cornerRadius": "$--radius-md",
+                      "stroke": "$--border",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner",
+                      "padding": [
+                        "$--spacing-xxs",
+                        0
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "main-lineage-pane-d",
+                      "name": "Pane header lineage",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "main-lineage-pane-h-d",
+                          "name": "Pane header",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-pane-m-d",
+                              "name": "Status mark",
+                              "children": [
+                                {
+                                  "type": "ellipse",
+                                  "id": "main-lineage-pane-m-d-ring",
+                                  "name": "Ring",
+                                  "width": 7,
+                                  "height": 7,
+                                  "stroke": "$--agent-working",
+                                  "strokeWidth": 1,
+                                  "strokeAlignment": "inner"
+                                }
+                              ],
+                              "width": 12,
+                              "height": 12,
+                              "layout": "horizontal",
+                              "justifyContent": "center",
+                              "alignItems": "center"
+                            },
+                            {
+                              "type": "text",
+                              "id": "main-lineage-pane-t-d",
+                              "name": "카드 상태 시트 설계",
+                              "content": "카드 상태 시트 설계",
+                              "fill": "$--foreground",
+                              "fontFamily": "$--font-ui",
+                              "fontSize": "$--text-caption",
+                              "fontWeight": "400"
+                            }
+                          ],
+                          "width": 640,
+                          "height": 28,
+                          "layout": "horizontal",
+                          "gap": "$--spacing-sm",
+                          "alignItems": "center",
+                          "padding": [
+                            0,
+                            "$--spacing-sm"
+                          ],
+                          "fill": "$--secondary"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "main-lineage-pane-c-d",
+                          "name": "Children",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-chip0-d",
+                              "name": "Child chip",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "main-lineage-chip0-m-d",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "ellipse",
+                                      "id": "main-lineage-chip0-m-d-dot",
+                                      "name": "Dot",
+                                      "width": 7,
+                                      "height": 7,
+                                      "fill": "$--agent-working"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "main-lineage-chip0-b-d",
+                                  "name": "web-view-overlay",
+                                  "content": "web-view-overlay",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center",
+                              "padding": [
+                                0,
+                                "$--spacing-xs"
+                              ],
+                              "height": 20,
+                              "cornerRadius": "$--radius-sm",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-chip1-d",
+                              "name": "Child chip",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "main-lineage-chip1-m-d",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "main-lineage-chip1-m-d-glyph",
+                                      "name": "✓",
+                                      "content": "✓",
+                                      "fill": "$--success",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "main-lineage-chip1-b-d",
+                                  "name": "web-side-panel",
+                                  "content": "web-side-panel",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center",
+                              "padding": [
+                                0,
+                                "$--spacing-xs"
+                              ],
+                              "height": 20,
+                              "cornerRadius": "$--radius-sm",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "main-lineage-chip2-d",
+                              "name": "Child chip",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "main-lineage-chip2-m-d",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "main-lineage-chip2-m-d-glyph",
+                                      "name": "✓",
+                                      "content": "✓",
+                                      "fill": "$--success",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "main-lineage-chip2-b-d",
+                                  "name": "hcoord-decouple",
+                                  "content": "hcoord-decouple",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "main-lineage-chip2-d-d",
+                                  "name": "Device chip",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "main-lineage-chip2-d-d-g",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 10,
+                                      "height": 10,
+                                      "icon": "server",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "main-lineage-chip2-d-d-t",
+                                      "name": "mini",
+                                      "content": "mini",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-micro",
+                                      "fontWeight": "500"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xxs",
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "height": 16,
+                                  "alignItems": "center",
+                                  "cornerRadius": "$--radius-xs",
+                                  "stroke": "$--border",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center",
+                              "padding": [
+                                0,
+                                "$--spacing-xs"
+                              ],
+                              "height": 20,
+                              "cornerRadius": "$--radius-sm",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": "$--spacing-xs",
+                          "alignItems": "center",
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-sm"
+                          ],
+                          "fill": "$--secondary"
+                        },
+                        {
+                          "type": "frame",
+                          "id": "main-lineage-pane-b-d",
+                          "name": "Body",
+                          "children": [],
+                          "height": 64,
+                          "fill": "$--card"
+                        }
+                      ],
+                      "width": 640,
+                      "layout": "vertical",
+                      "cornerRadius": "$--radius-sm",
+                      "clip": true,
+                      "stroke": "$--border",
+                      "strokeWidth": "$--size-hairline",
+                      "strokeAlignment": "inner"
+                    }
+                  ],
+                  "layout": "horizontal",
+                  "gap": "$--spacing-lg",
+                  "alignItems": "start"
+                },
                 {
                   "type": "frame",
                   "id": "main-list-d",
@@ -28395,7 +30163,7 @@
           "type": "text",
           "id": "screen-projects-sidebar-spec",
           "name": "sidebar.tsx, projects.ts: th",
-          "content": "sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. Line two is the purpose with the last-commit age on the time column, kept wherever agents run; a checkout with neither is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.",
+          "content": "sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. Line two is the purpose with the last-commit age on the time column, kept wherever agents run; a checkout with neither is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. A folded parent keeps its own-checkout descendants in the badge and draws one C-style line per other checkout, with the R1 server-glyph device chip. A checkout raised by an external root prefixes line two with the parent checkout. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -29257,86 +31025,239 @@
                           }
                         },
                         {
+                          "type": "frame",
                           "id": "psb-a2-l",
-                          "type": "ref",
-                          "ref": "hideui:sidebar-agent-row",
-                          "name": "후속 UX 계획 인터뷰",
-                          "width": 284,
-                          "padding": [
-                            "$--spacing-xs",
-                            "$--spacing-xs",
-                            "$--spacing-xs",
-                            48
-                          ],
-                          "descendants": {
-                            "hideui:sar-dot": {
-                              "fill": "$--agent-working",
-                              "enabled": true
-                            },
-                            "hideui:sar-ring": {
-                              "stroke": "$--muted-foreground",
-                              "enabled": false
-                            },
-                            "hideui:sar-glyph": {
-                              "fill": "$--warning",
-                              "enabled": false
-                            },
-                            "hideui:sar-title": {
-                              "fill": "$--subtle-foreground",
-                              "content": "후속 UX 계획 인터뷰"
-                            },
-                            "hideui:sar-branch": {
-                              "fill": "$--secondary",
-                              "enabled": false
-                            },
-                            "hideui:sar-branch-label": {
-                              "fill": "$--subtle-foreground",
-                              "content": ""
-                            },
-                            "hideui:sar-device": {
-                              "stroke": "$--border",
-                              "enabled": false
-                            },
-                            "hideui:sar-device-label": {
-                              "fill": "$--subtle-foreground",
-                              "content": ""
-                            },
-                            "hideui:sar-badge": {
-                              "fill": "$--secondary",
-                              "enabled": true
-                            },
-                            "hideui:sar-badge-label": {
-                              "fill": "$--subtle-foreground",
-                              "content": "?1 ●1"
-                            },
-                            "hideui:sar-elapsed": {
-                              "fill": "$--muted-foreground",
-                              "content": "2m"
-                            },
-                            "hideui:sar-chevron": {
-                              "fill": "$--muted-foreground",
-                              "icon": "chevron-right"
-                            },
-                            "hideui:sar-line": {
-                              "fill": "$--warning",
-                              "enabled": false
-                            },
-                            "hideui:sar-place": {
-                              "fill": "$--muted-foreground",
-                              "enabled": false
-                            },
-                            "hideui:sar-provider": {
-                              "fill": {
-                                "type": "image",
-                                "enabled": true,
-                                "url": "../web/src/assets/agent-claude.png",
-                                "mode": "fit"
+                          "name": "Folded agent with other checkouts",
+                          "children": [
+                            {
+                              "id": "psb-a2-l-row",
+                              "type": "ref",
+                              "ref": "hideui:sidebar-agent-row",
+                              "name": "후속 UX 계획 인터뷰",
+                              "width": 284,
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-xs",
+                                "$--spacing-xs",
+                                48
+                              ],
+                              "descendants": {
+                                "hideui:sar-dot": {
+                                  "fill": "$--agent-working",
+                                  "enabled": true
+                                },
+                                "hideui:sar-ring": {
+                                  "stroke": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:sar-glyph": {
+                                  "fill": "$--warning",
+                                  "enabled": false
+                                },
+                                "hideui:sar-title": {
+                                  "fill": "$--subtle-foreground",
+                                  "content": "후속 UX 계획 인터뷰"
+                                },
+                                "hideui:sar-branch": {
+                                  "fill": "$--secondary",
+                                  "enabled": false
+                                },
+                                "hideui:sar-branch-label": {
+                                  "fill": "$--subtle-foreground",
+                                  "content": ""
+                                },
+                                "hideui:sar-device": {
+                                  "stroke": "$--border",
+                                  "enabled": false
+                                },
+                                "hideui:sar-device-label": {
+                                  "fill": "$--subtle-foreground",
+                                  "content": ""
+                                },
+                                "hideui:sar-badge": {
+                                  "fill": "$--secondary",
+                                  "enabled": true
+                                },
+                                "hideui:sar-badge-label": {
+                                  "fill": "$--subtle-foreground",
+                                  "content": "?1"
+                                },
+                                "hideui:sar-elapsed": {
+                                  "fill": "$--muted-foreground",
+                                  "content": "2m"
+                                },
+                                "hideui:sar-chevron": {
+                                  "fill": "$--muted-foreground",
+                                  "icon": "chevron-right"
+                                },
+                                "hideui:sar-line": {
+                                  "fill": "$--warning",
+                                  "enabled": false
+                                },
+                                "hideui:sar-place": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:sar-provider": {
+                                  "fill": {
+                                    "type": "image",
+                                    "enabled": true,
+                                    "url": "../web/src/assets/agent-claude.png",
+                                    "mode": "fit"
+                                  }
+                                },
+                                "hideui:sar-fold": {
+                                  "opacity": 1
+                                }
                               }
                             },
-                            "hideui:sar-fold": {
-                              "opacity": 1
+                            {
+                              "type": "frame",
+                              "id": "psb-a2-l-summary0",
+                              "name": "Other checkout lineage",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "psb-a2-l-summary0-m",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "ellipse",
+                                      "id": "psb-a2-l-summary0-m-dot",
+                                      "name": "Dot",
+                                      "width": 7,
+                                      "height": 7,
+                                      "fill": "$--agent-working"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "psb-a2-l-summary0-b",
+                                  "name": "agent-sleep",
+                                  "content": "agent-sleep",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "psb-a2-l-summary0-pr",
+                                  "name": "#183",
+                                  "content": "#183",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center",
+                              "padding": [
+                                0,
+                                "$--spacing-xs",
+                                0,
+                                40
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "psb-a2-l-summary1",
+                              "name": "Other checkout lineage",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "psb-a2-l-summary1-m",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "psb-a2-l-summary1-m-glyph",
+                                      "name": "✓",
+                                      "content": "✓",
+                                      "fill": "$--success",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "psb-a2-l-summary1-b",
+                                  "name": "hcoord-decouple",
+                                  "content": "hcoord-decouple",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "psb-a2-l-summary1-d",
+                                  "name": "Device chip",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "psb-a2-l-summary1-d-g",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 10,
+                                      "height": 10,
+                                      "icon": "server",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "psb-a2-l-summary1-d-t",
+                                      "name": "mini",
+                                      "content": "mini",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-micro",
+                                      "fontWeight": "500"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xxs",
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "height": 16,
+                                  "alignItems": "center",
+                                  "cornerRadius": "$--radius-xs",
+                                  "stroke": "$--border",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center",
+                              "padding": [
+                                0,
+                                "$--spacing-xs",
+                                0,
+                                40
+                              ]
                             }
-                          }
+                          ],
+                          "layout": "vertical",
+                          "width": 284
                         },
                         {
                           "id": "psb-a3-l",
@@ -29503,7 +31424,7 @@
                         },
                         "hideui:D37Vr": {
                           "fill": "$--muted-foreground",
-                          "content": "#155 browser display (WebCon…",
+                          "content": "↰ main에서 · #155 browser display (WebCon…",
                           "enabled": true
                         },
                         "hideui:line2-age": {
@@ -29621,7 +31542,7 @@
                         },
                         "hideui:D37Vr": {
                           "fill": "$--muted-foreground",
-                          "content": "#154 ⌘K search palette UI",
+                          "content": "↰ main에서 · #154 ⌘K search palette UI",
                           "enabled": true
                         },
                         "hideui:line2-age": {
@@ -31197,86 +33118,239 @@
                           }
                         },
                         {
+                          "type": "frame",
                           "id": "psb-a2-d",
-                          "type": "ref",
-                          "ref": "hideui:sidebar-agent-row",
-                          "name": "후속 UX 계획 인터뷰",
-                          "width": 284,
-                          "padding": [
-                            "$--spacing-xs",
-                            "$--spacing-xs",
-                            "$--spacing-xs",
-                            48
-                          ],
-                          "descendants": {
-                            "hideui:sar-dot": {
-                              "fill": "$--agent-working",
-                              "enabled": true
-                            },
-                            "hideui:sar-ring": {
-                              "stroke": "$--muted-foreground",
-                              "enabled": false
-                            },
-                            "hideui:sar-glyph": {
-                              "fill": "$--warning",
-                              "enabled": false
-                            },
-                            "hideui:sar-title": {
-                              "fill": "$--subtle-foreground",
-                              "content": "후속 UX 계획 인터뷰"
-                            },
-                            "hideui:sar-branch": {
-                              "fill": "$--secondary",
-                              "enabled": false
-                            },
-                            "hideui:sar-branch-label": {
-                              "fill": "$--subtle-foreground",
-                              "content": ""
-                            },
-                            "hideui:sar-device": {
-                              "stroke": "$--border",
-                              "enabled": false
-                            },
-                            "hideui:sar-device-label": {
-                              "fill": "$--subtle-foreground",
-                              "content": ""
-                            },
-                            "hideui:sar-badge": {
-                              "fill": "$--secondary",
-                              "enabled": true
-                            },
-                            "hideui:sar-badge-label": {
-                              "fill": "$--subtle-foreground",
-                              "content": "?1 ●1"
-                            },
-                            "hideui:sar-elapsed": {
-                              "fill": "$--muted-foreground",
-                              "content": "2m"
-                            },
-                            "hideui:sar-chevron": {
-                              "fill": "$--muted-foreground",
-                              "icon": "chevron-right"
-                            },
-                            "hideui:sar-line": {
-                              "fill": "$--warning",
-                              "enabled": false
-                            },
-                            "hideui:sar-place": {
-                              "fill": "$--muted-foreground",
-                              "enabled": false
-                            },
-                            "hideui:sar-provider": {
-                              "fill": {
-                                "type": "image",
-                                "enabled": true,
-                                "url": "../web/src/assets/agent-claude.png",
-                                "mode": "fit"
+                          "name": "Folded agent with other checkouts",
+                          "children": [
+                            {
+                              "id": "psb-a2-d-row",
+                              "type": "ref",
+                              "ref": "hideui:sidebar-agent-row",
+                              "name": "후속 UX 계획 인터뷰",
+                              "width": 284,
+                              "padding": [
+                                "$--spacing-xs",
+                                "$--spacing-xs",
+                                "$--spacing-xs",
+                                48
+                              ],
+                              "descendants": {
+                                "hideui:sar-dot": {
+                                  "fill": "$--agent-working",
+                                  "enabled": true
+                                },
+                                "hideui:sar-ring": {
+                                  "stroke": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:sar-glyph": {
+                                  "fill": "$--warning",
+                                  "enabled": false
+                                },
+                                "hideui:sar-title": {
+                                  "fill": "$--subtle-foreground",
+                                  "content": "후속 UX 계획 인터뷰"
+                                },
+                                "hideui:sar-branch": {
+                                  "fill": "$--secondary",
+                                  "enabled": false
+                                },
+                                "hideui:sar-branch-label": {
+                                  "fill": "$--subtle-foreground",
+                                  "content": ""
+                                },
+                                "hideui:sar-device": {
+                                  "stroke": "$--border",
+                                  "enabled": false
+                                },
+                                "hideui:sar-device-label": {
+                                  "fill": "$--subtle-foreground",
+                                  "content": ""
+                                },
+                                "hideui:sar-badge": {
+                                  "fill": "$--secondary",
+                                  "enabled": true
+                                },
+                                "hideui:sar-badge-label": {
+                                  "fill": "$--subtle-foreground",
+                                  "content": "?1"
+                                },
+                                "hideui:sar-elapsed": {
+                                  "fill": "$--muted-foreground",
+                                  "content": "2m"
+                                },
+                                "hideui:sar-chevron": {
+                                  "fill": "$--muted-foreground",
+                                  "icon": "chevron-right"
+                                },
+                                "hideui:sar-line": {
+                                  "fill": "$--warning",
+                                  "enabled": false
+                                },
+                                "hideui:sar-place": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:sar-provider": {
+                                  "fill": {
+                                    "type": "image",
+                                    "enabled": true,
+                                    "url": "../web/src/assets/agent-claude.png",
+                                    "mode": "fit"
+                                  }
+                                },
+                                "hideui:sar-fold": {
+                                  "opacity": 1
+                                }
                               }
                             },
-                            "hideui:sar-fold": {
-                              "opacity": 1
+                            {
+                              "type": "frame",
+                              "id": "psb-a2-d-summary0",
+                              "name": "Other checkout lineage",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "psb-a2-d-summary0-m",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "ellipse",
+                                      "id": "psb-a2-d-summary0-m-dot",
+                                      "name": "Dot",
+                                      "width": 7,
+                                      "height": 7,
+                                      "fill": "$--agent-working"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "psb-a2-d-summary0-b",
+                                  "name": "agent-sleep",
+                                  "content": "agent-sleep",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "psb-a2-d-summary0-pr",
+                                  "name": "#183",
+                                  "content": "#183",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center",
+                              "padding": [
+                                0,
+                                "$--spacing-xs",
+                                0,
+                                40
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "psb-a2-d-summary1",
+                              "name": "Other checkout lineage",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "psb-a2-d-summary1-m",
+                                  "name": "Status mark",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "psb-a2-d-summary1-m-glyph",
+                                      "name": "✓",
+                                      "content": "✓",
+                                      "fill": "$--success",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": 12,
+                                  "height": 12,
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "psb-a2-d-summary1-b",
+                                  "name": "hcoord-decouple",
+                                  "content": "hcoord-decouple",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "psb-a2-d-summary1-d",
+                                  "name": "Device chip",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "psb-a2-d-summary1-d-g",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 10,
+                                      "height": 10,
+                                      "icon": "server",
+                                      "library": "lucide",
+                                      "fill": "$--muted-foreground"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "psb-a2-d-summary1-d-t",
+                                      "name": "mini",
+                                      "content": "mini",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-micro",
+                                      "fontWeight": "500"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xxs",
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs"
+                                  ],
+                                  "height": 16,
+                                  "alignItems": "center",
+                                  "cornerRadius": "$--radius-xs",
+                                  "stroke": "$--border",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner"
+                                }
+                              ],
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center",
+                              "padding": [
+                                0,
+                                "$--spacing-xs",
+                                0,
+                                40
+                              ]
                             }
-                          }
+                          ],
+                          "layout": "vertical",
+                          "width": 284
                         },
                         {
                           "id": "psb-a3-d",
@@ -31443,7 +33517,7 @@
                         },
                         "hideui:D37Vr": {
                           "fill": "$--muted-foreground",
-                          "content": "#155 browser display (WebCon…",
+                          "content": "↰ main에서 · #155 browser display (WebCon…",
                           "enabled": true
                         },
                         "hideui:line2-age": {
@@ -31561,7 +33635,7 @@
                         },
                         "hideui:D37Vr": {
                           "fill": "$--muted-foreground",
-                          "content": "#154 ⌘K search palette UI",
+                          "content": "↰ main에서 · #154 ⌘K search palette UI",
                           "enabled": true
                         },
                         "hideui:line2-age": {

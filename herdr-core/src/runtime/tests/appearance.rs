@@ -6,6 +6,7 @@ fn runtime_at(path: &std::path::Path) -> Runtime {
     Runtime::new(
         CoreOptions {
             schema_version: SCHEMA_VERSION,
+            machine_id: None,
             herdr_socket_path: Some("/tmp/herdr-core-appearance.sock".to_owned()),
             herdr_bin_path: None,
             app_state_path: path.to_string_lossy().into_owned(),

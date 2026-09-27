@@ -9,6 +9,10 @@ pub const SCHEMA_VERSION: u32 = 2;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct CoreOptions {
     pub schema_version: u32,
+    /// The stable operating-system machine identity, read by the host before
+    /// the core is placed behind its runtime mutex.
+    #[serde(default)]
+    pub machine_id: Option<String>,
     pub herdr_socket_path: Option<String>,
     #[serde(default)]
     pub herdr_bin_path: Option<String>,
@@ -651,6 +655,13 @@ pub struct SidebarAgentSnapshot {
     /// `wire.rs::lineage_parent` is the one place that resolves the two.
     #[serde(skip_serializing)]
     pub spawned_from_pane_id: Option<String>,
+    /// The exact pane token before device scoping. It lets a disconnected
+    /// cross-device parent resolve again when its machine reconnects.
+    #[serde(skip_serializing)]
+    pub declared_parent_pane_id: Option<String>,
+    /// The stable machine identity hcoord recorded for a cross-device parent.
+    #[serde(skip_serializing)]
+    pub spawned_from_machine_id: Option<String>,
     /// Ownership, derived from the lineage alone: a root is the operator's own
     /// work, a descendant is work the root delegated. It is the fourth derived
     /// axis beside demand, activity and read, and it is advice rather than a
@@ -1323,6 +1334,10 @@ pub struct AgentChipSnapshot {
     pub pane_id: String,
     /// The short name the chip shows beside its mark.
     pub label: String,
+    /// The checkout the child physically runs in. A pane header compares it
+    /// with its own checkout and shows the branch instead of the task title
+    /// only when they differ.
+    pub checkout_label: Option<String>,
     /// The row's second line: the sentence the group chose, or nothing.
     pub detail: Option<String>,
     /// Whether the status word is drawn beside that sentence.

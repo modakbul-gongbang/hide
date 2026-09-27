@@ -11,6 +11,11 @@ export type AgentRow = {
   pane_id: string;
   identity_label: string;
   agent_kind: string;
+  /** The checkout that physically owns this pane. */
+  checkout_label?: string | null;
+  /** Presentation-only device facts attached by `allAgents`. */
+  device_id?: string;
+  device_label?: string;
   symbol: string;
   group: string;
   status_label: string;
@@ -61,6 +66,7 @@ export type DescendantCounts = { error: number; approval: number; question: numb
 export type AgentChip = {
   pane_id: string;
   label: string;
+  checkout_label?: string | null;
   detail: string | null;
   status_word_visible: boolean;
   agent_kind: string;

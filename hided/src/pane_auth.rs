@@ -1120,6 +1120,7 @@ mod tests {
     fn bare_core(directory: &Path) -> CoreHandle {
         CoreHandle::spawn(herdr_core::CoreOptions {
             schema_version: crate::state_file::SCHEMA_VERSION,
+            machine_id: None,
             herdr_socket_path: None,
             herdr_bin_path: None,
             app_state_path: directory.join("core-state.json").display().to_string(),

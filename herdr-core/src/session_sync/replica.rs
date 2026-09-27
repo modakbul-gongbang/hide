@@ -480,12 +480,15 @@ impl SessionReplica {
             let source_pane_id = agent.pane_id.clone();
             agent.id = format!("remote:{target_id}:agent:{source_pane_id}");
             agent.pane_id = remote_pane_id(target_id, &source_pane_id);
-            // The parent a device declared is one of its own panes, so the
-            // lineage joins it by the same scoped id.
-            agent.spawned_from_pane_id = agent
-                .spawned_from_pane_id
-                .as_deref()
-                .map(|parent| remote_pane_id(target_id, parent));
+            // A declaration without a machine stays within this device. A
+            // machine-qualified declaration is resolved after every device's
+            // stable identity is known, so keep its raw pane token here.
+            if agent.spawned_from_machine_id.is_none() {
+                agent.spawned_from_pane_id = agent
+                    .spawned_from_pane_id
+                    .as_deref()
+                    .map(|parent| remote_pane_id(target_id, parent));
+            }
         }
 
         // Remote rows use the same representative-agent and purpose fallback
@@ -1438,7 +1441,7 @@ pub(crate) fn remote_tab_id(target_id: &str, tab_id: &str) -> String {
     format!("remote:{target_id}:tab:{tab_id}")
 }
 
-fn remote_pane_id(target_id: &str, pane_id: &str) -> String {
+pub(crate) fn remote_pane_id(target_id: &str, pane_id: &str) -> String {
     format!("remote:{target_id}:pane:{pane_id}")
 }
 

@@ -122,6 +122,7 @@ fn runtime_with_home() -> Runtime {
     let state_id = NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed);
     let options = CoreOptions {
         schema_version: SCHEMA_VERSION,
+        machine_id: None,
         herdr_socket_path: None,
         herdr_bin_path: None,
         app_state_path: std::env::temp_dir()

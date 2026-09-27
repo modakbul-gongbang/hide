@@ -6,6 +6,7 @@ import type { AgentRow } from "../snapshot";
 import { AgentChildrenPopover } from "./agent-children-popover";
 import { BadgeMarks } from "./status-badge";
 import { StatusMark } from "./status-mark";
+import { DeviceChip } from "./device-chip";
 import { Badge } from "./ui/badge";
 import { Hint } from "./ui/tooltip";
 
@@ -112,9 +113,7 @@ export const AgentRowItem = memo(function AgentRowItem({
             </Badge>
           ) : null}
           {device ? (
-            <Badge variant="outline" className="min-w-0 shrink" data-device-chip={device}>
-              <span className="truncate">{device}</span>
-            </Badge>
+            <DeviceChip label={device} />
           ) : null}
         </span>
         {line ? (

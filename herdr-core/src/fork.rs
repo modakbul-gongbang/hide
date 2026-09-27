@@ -1,11 +1,9 @@
 //! Forking an agent pane into a sibling that carries the parent conversation.
 //!
-//! A fork is three Herdr calls: `pane.split` beside the parent, `agent.start`
-//! in the new pane with the agent's own resume arguments, and
-//! `pane.report_metadata` declaring the parent (`wire::PARENT_PANE_TOKEN`),
-//! which is the only lineage Herdr keeps. This module decides which panes can
-//! be forked and spells each agent's resume arguments; running the calls is
-//! [`crate::live`]'s job, and reading the lineage back is the session sync's.
+//! A fork asks Herdr to split beside the parent and start the new agent, then
+//! asks hcoord to register both exact executions and publish lineage. This
+//! module decides which panes can be forked and spells each agent's resume
+//! arguments; running the calls is [`crate::live`]'s job.
 
 /// The agents whose own fork command this shell knows how to spell.
 ///

@@ -192,13 +192,70 @@ impl Runtime {
         self.remote_connections.insert(
             device_id.clone(),
             RemoteDeviceConnection {
-                client,
+                client: Arc::clone(&client),
                 sync,
                 test_in_flight: false,
             },
         );
+        let identity_runtime = context.runtime.clone();
+        let identity_notifier = context.notifier.clone();
+        let identity_target = device_id.clone();
+        let identity_client = Arc::clone(&client);
+        if let Err(error) = thread::Builder::new()
+            .name(format!("herdr-core-machine-id-{device_id}"))
+            .spawn(move || {
+                let result = identity_client
+                    .exec_read_only(RemoteReadCommand::MachineIdentity)
+                    .and_then(|output| parse_machine_identity(&identity_target, &output))
+                    .map_err(|error| error.to_string());
+                let Some(runtime) = identity_runtime.upgrade() else {
+                    return;
+                };
+                let changed = match runtime.lock() {
+                    Ok(mut guard) => guard.ingest_device_machine_id(&identity_target, result),
+                    Err(_) => return,
+                };
+                drop(runtime);
+                if changed {
+                    identity_notifier.notify();
+                }
+            })
+        {
+            crate::diagnostic!(serde_json::json!({
+                "component": "lineage",
+                "kind": "machine_identity_worker_failed",
+                "target": device_id,
+                "message": error.to_string(),
+            }));
+        }
         let host_changed = self.start_device_host(&device_id);
         changed || host_changed || self.refresh_device_snapshots()
+    }
+
+    pub(super) fn ingest_device_machine_id(
+        &mut self,
+        target_id: &str,
+        result: Result<String, String>,
+    ) -> bool {
+        let identity_changed = match result {
+            Ok(machine_id) => {
+                let changed = self.device_machine_ids.get(target_id) != Some(&machine_id);
+                self.device_machine_ids
+                    .insert(target_id.to_owned(), machine_id);
+                changed
+            }
+            Err(message) => {
+                let removed = self.device_machine_ids.remove(target_id).is_some();
+                crate::diagnostic!(serde_json::json!({
+                    "component": "lineage",
+                    "kind": "machine_identity_unavailable",
+                    "target": target_id,
+                    "message": message,
+                }));
+                removed
+            }
+        };
+        identity_changed | self.refresh_agent_lineage()
     }
 
     /// Forgets everything the core holds for a device: its coordinator,
@@ -206,6 +263,7 @@ impl Runtime {
     /// coordinator is joined later, off the lock, by whoever drains
     /// `take_retired_remote_syncs`.
     pub(super) fn disconnect_remote_device(&mut self, device_id: &str) {
+        self.device_machine_ids.remove(device_id);
         self.forget_device_host(device_id);
         if let Some(connection) = self.remote_connections.remove(device_id)
             && let Some(sync) = connection.sync
@@ -232,6 +290,7 @@ impl Runtime {
             self.return_keyboard_to_local_pane();
             self.sync_recent_closed_snapshot();
         }
+        self.refresh_agent_lineage();
     }
 
     /// The device rows after a registration changed. The projects, their
