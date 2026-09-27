@@ -1,11 +1,10 @@
-use std::io::{self, IsTerminal, Write};
+use std::io;
 use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
 use herdr_core::workspace_control::{Action, Edge};
 
-use crate::coexist::{self, Decision};
 use crate::env::{self, Env};
 use crate::spawn::spawn_owned;
 use crate::state_file::{self, DaemonState};
@@ -629,7 +628,7 @@ fn browser_open(
 /// Why no daemon could be reached or started, in the categories a host shows.
 #[derive(Debug, Eq, PartialEq)]
 pub enum ConnectError {
-    /// The coexistence check refused, or the daemon process could not start.
+    /// The daemon process could not start.
     StartFailed(String),
     /// A daemon was started but never answered its health check.
     NoResponse(String),
@@ -657,7 +656,6 @@ fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
     if let Some(state) = healthy_state(env) {
         return Ok(state);
     }
-    confirm_coexist(env).map_err(ConnectError::StartFailed)?;
     spawn_daemon(env, false).map_err(ConnectError::StartFailed)?;
     wait_healthy(env).map_err(ConnectError::NoResponse)
 }
@@ -752,7 +750,6 @@ fn stop(env: &Env) -> Result<(), String> {
 
 fn serve(mut env: Env, keep_alive: bool) -> Result<(), String> {
     env.keep_alive = keep_alive || env.keep_alive;
-    confirm_coexist(&env)?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .thread_name("hide-serve")
@@ -769,7 +766,6 @@ fn dev(mut env: Env) -> Result<(), String> {
     if env.bind.port() == 0 {
         env.bind = "127.0.0.1:9876".parse().expect("loopback");
     }
-    confirm_coexist(&env)?;
     println!(
         "HIDED_ORIGIN=http://127.0.0.1:{}  Vite origin {}",
         env.bind.port(),
@@ -863,29 +859,6 @@ fn send_signal(pid: u32, signal: i32) -> io::Result<()> {
         Ok(())
     } else {
         Err(io::Error::last_os_error())
-    }
-}
-
-/// PRD B5: warn only when hided would attach to the socket the Swift shell
-/// already holds; an isolated socket never prompts. Without a TTY the shared
-/// case refuses instead of asking.
-fn confirm_coexist(env: &Env) -> Result<(), String> {
-    let target = env.herdr_socket_path.as_deref().map(Path::new);
-    let outcome = coexist::classify(target, coexist::find_swift_shell());
-    let prompt = match coexist::decide(outcome, io::stdin().is_terminal()) {
-        Decision::Proceed => return Ok(()),
-        Decision::Refuse(message) => return Err(message),
-        Decision::Ask(prompt) => prompt,
-    };
-    eprint!("{prompt}");
-    let _ = io::stderr().flush();
-    let mut line = String::new();
-    io::stdin()
-        .read_line(&mut line)
-        .map_err(|error| error.to_string())?;
-    match line.trim() {
-        "y" | "Y" | "yes" => Ok(()),
-        _ => Err("aborted".into()),
     }
 }
 

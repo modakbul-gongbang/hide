@@ -4,7 +4,6 @@ mod browser_assets;
 pub mod browser_cli;
 pub mod browser_routes;
 pub mod cli;
-pub mod coexist;
 pub mod core;
 pub mod demand;
 pub mod device_watch;
