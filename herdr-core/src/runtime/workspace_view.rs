@@ -454,9 +454,7 @@ impl Runtime {
         } else {
             tool
         };
-        let tools = payload
-            .tools
-            .or((tool.is_some() || payload.reveal.is_some()).then_some(true));
+        let tools = payload.tools.or(tool.is_some().then_some(true));
         match panel {
             Some(panel) => entry.panel = panel,
             None if tools == Some(true) && entry.panel == PanelState::Closed => {
