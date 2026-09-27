@@ -142,8 +142,8 @@ function deviceViews(panel: WorkspaceView["panel"]): WorkspaceView {
     panel,
     pinned: false,
     covered: false,
-    explorer: false,
-    changes: false,
+    tool: "explorer",
+    tools: false,
     views_over_share: 0.6,
     layout: { root: { area: { id: "a1", active: "d2", displays: [notes] } }, active_area: "a1", limits: { areas: 6, depth: 3, displays: 64 }, display_count: 1 },
   };

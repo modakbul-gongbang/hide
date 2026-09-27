@@ -9,6 +9,9 @@ import type { AgentRow, Checkout, SnapshotRest, StripTab, Tab, ViewLayoutSnapsho
 /** How the side panel shows (issue 170): closed, at its width, or over the whole body. */
 export type PanelState = "closed" | "open" | "expanded";
 
+/** The side panel's tools (issue 170): the Explorer, or History (`changes`). The column holds one at a time. */
+export type Tool = "explorer" | "changes";
+
 /** The front Workspace's presentation as the core published it. */
 export type WorkspaceView = {
   device_id: string;
@@ -16,8 +19,10 @@ export type WorkspaceView = {
   panel: PanelState;
   /** Docked: the agents end at the panel's left edge rather than running under it. */
   pinned: boolean;
-  explorer: boolean;
-  changes: boolean;
+  /** The one tool the tool column holds, kept while the column is hidden. */
+  tool: Tool;
+  /** Whether the tool column shows. */
+  tools: boolean;
   /** The open panel's width, as a share of the Workspace body's. */
   views_over_share: number;
   /** A page reported that this panel takes the whole body when it shows (a narrow window). */
@@ -76,14 +81,14 @@ export type PanelFrame = {
 };
 
 export function panelFrame(input: {
-  view: Pick<WorkspaceView, "panel" | "pinned" | "views_over_share" | "explorer" | "changes">;
+  view: Pick<WorkspaceView, "panel" | "pinned" | "views_over_share" | "tools">;
   /** A view is open, or a file of this checkout is opening into the View areas. */
   views: boolean;
   body: number;
   sizes: PanelSizes;
 }): PanelFrame {
   const { view, views, body, sizes } = input;
-  const tools = view.explorer || view.changes;
+  const tools = view.tools;
   const content = views ? "views" : tools ? "tools" : "empty";
   if (view.panel === "closed") return { shown: "closed", content, width: 0, agentsRight: 0, narrow: false, resizable: false, toolsOverlay: false };
   // Before the body is measured nothing is placed, so no terminal fits to a guess.

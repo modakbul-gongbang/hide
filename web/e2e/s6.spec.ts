@@ -64,10 +64,11 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect(workspace).toBeVisible();
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true");
     // A new Workspace starts with its agents alone: the side panel is
-    // closed, and the Explorer it will show is stored on (issue 170).
+    // closed, and its tool column is stored on the Explorer (issue 170). The
+    // toolbar holds only the path and the panel's toggle.
     await expect(workspace).toHaveAttribute("data-panel", "closed");
     await expect(page.locator("[data-side-panel]")).toHaveCount(0);
-    await expect(page.locator('[data-tool-toggle="explorer"]')).toHaveAttribute("aria-pressed", "false");
+    await expect(page.locator("[data-workspace-toolbar] :is([data-tool-toggle], [data-tools-toggle], [data-tool-tab])")).toHaveCount(0);
 
     // The toolbar toggle and the palette choose the panel's state; each is
     // one workspace_view. With no view open the panel is only as wide as the
@@ -88,24 +89,32 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     expect(sent.get("workspace_view")).toBe(before + 2);
     expect(last.get("workspace_view")).toEqual({ panel: "closed" });
 
-    // Explorer and History open and close on their own (B10), and one pressed
-    // while the panel is closed opens the panel with that tool alone, though
-    // the Workspace had the Explorer on (issue 170).
-    await page.locator('[data-tool-toggle="changes"]').click();
+    // ⌘⇧B opens the panel on its tool with the column shown, and the icon
+    // tabs swap the one tool it holds (issue 170, "Side panel hierarchy,
+    // revised").
+    await page.keyboard.press("Meta+Shift+KeyB");
     await expect(workspace).toHaveAttribute("data-panel", "open");
-    expect(last.get("workspace_view")).toEqual({ changes: true });
+    expect(last.get("workspace_view")).toEqual({ panel: "open", tools: true });
+    await panel.locator('[data-tool-tab="changes"]').click();
+    expect(last.get("workspace_view")).toEqual({ tool: "changes" });
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
-    await expect(page.locator('[data-tool-toggle="explorer"]')).toHaveAttribute("aria-pressed", "false");
-    // With no tool and no view the panel says nothing is open, and offers
-    // the Explorer back.
-    await page.locator('[data-tool-toggle="changes"]').click();
+    await expect(panel.locator('[data-tool-tab="changes"]')).toHaveAttribute("aria-selected", "true");
+    // With the tools hidden and no view the panel only says nothing is open
+    // and names ⌘P; the column's toggle brings back the tool it held.
+    await page.keyboard.press("Meta+KeyK");
+    await page.keyboard.type("Hide History");
+    await page.keyboard.press("Enter");
     await expect(page.locator('[data-tool="changes"]')).toHaveCount(0);
+    expect(last.get("workspace_view")).toEqual({ tools: false });
     await expect(panel).toHaveAttribute("data-panel-content", "empty");
     await expect(panel.getByText("No file or diff is open in this Workspace.")).toBeVisible();
-    await panel.locator("[data-empty-show-explorer]").click();
-    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
+    await expect(panel.locator("[data-empty-open-file]")).toHaveText(/⌘P opens a file/);
+    await panel.locator('[data-tools-toggle="off"]').click();
+    await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await expect(panel).toHaveAttribute("data-panel-content", "tools");
+    await panel.locator('[data-tool-tab="explorer"]').click();
+    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
 
     // A file opened from the Explorer widens the panel to its stored width,
     // over agents that keep the body's width underneath, so no terminal
@@ -136,9 +145,10 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     expect(panelBox.height).toBeCloseTo(bodyBox.height, 0);
     expect(panelBox.width).toBeGreaterThan(toolColumn);
     await expect(panel.locator('[data-tool="explorer"]')).toBeVisible();
-    // The panel's actions sit at the right end of its one strip, above the
-    // tool column.
+    // The panel's actions sit at the right end of its first row, above the
+    // tool column, with the column's toggle pressed.
     await expect(panel.locator('[data-workspace-tools] [data-panel-actions] [data-panel-pin="off"]')).toBeVisible();
+    await expect(panel.locator('[data-panel-actions] [data-tools-toggle="on"]')).toBeVisible();
     expect(await agentArea.boundingBox()).toEqual(agentBox);
 
     // Its left edge resizes it like any divider: one step per arrow key, a

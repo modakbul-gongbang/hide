@@ -709,14 +709,13 @@ export function placementForWidth(current: ToolsPlacement, narrow: boolean): Too
 }
 
 /**
- * The tools a Workspace shows now: the ones the core stores while its side
- * panel shows, except that a narrow panel's overlay shows them only while the
- * operator has it open. The stored tools never change for it, so widening
- * brings the column back.
+ * The tool a Workspace shows now: the one the core stores while its side
+ * panel shows the tool column, except that a narrow panel's overlay shows it
+ * only while the operator has it open. The stored tool never changes for it,
+ * so widening brings the column back.
  */
-export function shownTools(stored: { explorer: boolean; changes: boolean; panel: string }, placement: ToolsPlacement): { explorer: boolean; changes: boolean } {
-  const shown = stored.panel !== "closed" && placement !== "closed";
-  return { explorer: stored.explorer && shown, changes: stored.changes && shown };
+export function shownTool<T extends string>(stored: { tool: T; tools: boolean; panel: string }, placement: ToolsPlacement): T | null {
+  return stored.panel !== "closed" && stored.tools && placement !== "closed" ? stored.tool : null;
 }
 
 function count(n: number, noun: string): string {

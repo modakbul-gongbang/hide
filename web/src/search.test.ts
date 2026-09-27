@@ -73,7 +73,7 @@ describe("search entries", () => {
 });
 
 describe("workspace commands", () => {
-  const rest = { workspace_view: { device_id: "local", path: "/repo", panel: "open", pinned: false, explorer: true, changes: false, views_over_share: 0.6 } } as unknown as SnapshotRest;
+  const rest = { workspace_view: { device_id: "local", path: "/repo", panel: "open", pinned: false, tool: "explorer", tools: true, views_over_share: 0.6 } } as unknown as SnapshotRest;
   const wide = { drawn: null, placement: "column" } as const;
 
   it("offers the side panel's other states, its pin, and each tool by what it would do (issue 170)", () => {

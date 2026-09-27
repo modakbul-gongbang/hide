@@ -91,11 +91,23 @@ export async function screenshot(page: Page, name: string): Promise<unknown> {
 }
 
 /**
- * Shows the Explorer: a Workspace starts with its side panel closed, and the
- * Explorer's toggle opens the panel with it (issue 170).
+ * Shows one tool in the side panel's column: a Workspace starts with its
+ * panel closed, the panel toggle opens it, the column's toggle shows the
+ * column, and its icon tabs choose the tool (issue 170).
  */
+export async function showTool(page: Page, tool: "explorer" | "changes"): Promise<void> {
+  const shown = page.locator(`[data-tool="${tool}"]`);
+  if (await shown.isVisible()) return;
+  const panel = page.locator("[data-side-panel]");
+  if ((await panel.count()) === 0) await page.locator('[data-panel-toggle="off"]').click();
+  await expect(panel).toBeVisible();
+  const tab = page.locator(`[data-tool-tab="${tool}"]`);
+  await expect(tab.or(page.locator('[data-tools-toggle="off"]')).first()).toBeVisible();
+  if (!(await tab.isVisible())) await page.locator('[data-tools-toggle="off"]').click();
+  if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
+  await expect(shown).toBeVisible();
+}
+
 export async function showExplorer(page: Page): Promise<void> {
-  const toggle = page.locator('[data-tool-toggle="explorer"]');
-  if ((await toggle.getAttribute("aria-pressed")) !== "true") await toggle.click();
-  await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
+  await showTool(page, "explorer");
 }

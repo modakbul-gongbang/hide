@@ -8,36 +8,38 @@ Where a rule is currently native-only, its Swift owner is named below; a web own
 
 ## Web Workspace
 
-The web shell's Workspace screen follows the approved S6 proposal, its View areas follow the approved boards of PRD S7 (`agents/prd/workspace-views-layout/prd.md`), and its side panel follows the operator's decisions on issue 170.
+The web shell's Workspace screen follows the approved S6 proposal, its View areas follow the approved boards of PRD S7 (`agents/prd/workspace-views-layout/prd.md`), and its side panel follows the operator's decisions on issue 170, the newest ("Side panel hierarchy, revised") first: every control sits once, on the container it changes.
 Web owner: `web/src/WorkspaceScreen.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, `web/src/viewLayout.ts`, `web/src/viewDrag.ts`, `web/src/viewFocus.ts`.
 
-The toolbar reads left to right: the path back (`All projects / Project / Workspace`, naming the device when it is not this Mac), the side panel toggle, then the two tool toggles.
-The side panel toggle is drawn pressed while the panel shows, and ⌘⇧B does the same; while the panel is closed with views open, it carries a badge with their count, also given as its accessible description.
-The toggle, Pin, and Expand each keep one accessible name and say their state as pressed or not; their tooltips say what a press does.
-Explorer and History are independent toggles that open and close on their own, drawn pressed while shown; with both shown they share the tool column, Explorer above History, each with its own close.
-Showing a tool while the panel is closed, from its toggle, the toolbar menu, or the palette, opens the panel with that tool alone: History opens without the Explorer, and the Explorer without History.
-A right-click or the menu key on the toolbar offers the three panel states (Side panel closed, open, and expanded), Pin or Unpin side panel, each tool, Copy Workspace path, and Open Project Overview; the palette offers the other two states and Pin or Unpin as commands.
+The toolbar spans only the agent column and holds the path back (`All projects / Project / Workspace`, naming the device when it is not this Mac); it has no tool toggles.
+The side panel toggle sits at the Workspace's top right in both states: at the toolbar's right end while the panel is closed, and at the right end of the panel's first row while it shows.
+It is drawn pressed while the panel shows, and ⌘⇧B toggles the panel too, opening it on its tool with the tool column shown; while the panel is closed with views open, the toggle carries a badge with their count, also given as its accessible description.
+The toggle, the tool column's toggle, Pin, and Expand each keep one accessible name and say their state as pressed or not; their tooltips say what a press does.
+A right-click or the menu key on the toolbar offers the three panel states (Side panel closed, open, and expanded), Pin or Unpin side panel, Copy Workspace path, and Open Project Overview; the palette offers the other two states, Pin or Unpin, and Show or Hide Explorer and History as commands.
 An empty Agent area offers New tab.
 
 ### The side panel
 
-The Workspace body holds the Agent area, always the body's full width, and the side panel on its right edge, over the agents.
+The Workspace holds the agent column (the toolbar, then the Agent area), always the Workspace's full width, and the side panel on its right edge at the Workspace's full height, up to the toolbar's row, over the agents.
 The panel is closed, open at its width, or expanded over the whole body; the state is stored per Workspace and survives a restart, and a Workspace seen for the first time starts closed.
-Open, the panel floats over the right part of the Agent area, marked by its left border and resize edge rather than a shadow, and the Agent area keeps its full size underneath, so opening, closing, resizing and expanding the panel never resizes a terminal.
+Open, the panel floats over the right part of the agent column and the Agent area keeps its full size underneath, so opening, closing, resizing and expanding the panel never resizes a terminal.
+The panel is a `--card` surface with a `--border` hairline and a `--radius-lg` top-left corner, and no shadow; a `--spacing-sm` gap in `--background` on its left separates it from the agents.
 The pane header actions and the right part of an agent's lines under an open panel stay under it; Pin is the remedy.
 Pin docks the panel instead: the agents end at its left edge and their terminals resize once to fit, and Unpin gives them the body's width back.
 Pin is not a fourth state: it is stored per Workspace with the width, and a pinned panel still closes, opens, and expands, its agents keeping their docked width under an expanded panel so expanding and restoring resize nothing.
-The panel's left edge is a divider like the others: accent-colored on hover and keyboard focus, a guide line while dragging that lands once on release, one step per arrow key while focused, and neither the panel nor the agents to its left narrower than the area minimum; the width is the Workspace's share of the body and survives a restart.
+The gap on the panel's left is its resize grip, a divider like the others: an accent line in it on hover and keyboard focus, a guide line while dragging that lands once on release, one step per arrow key while focused, and neither the panel nor the agents to its left narrower than the area minimum; the width is the Workspace's share of the body and survives a restart.
 The agents left of the panel are live: clicking a pane or a tab there focuses it and typing goes to it while the panel stays up, and chords such as ⌘F and ⌥W act where the keyboard is, the panel's View area or the pane.
 While an expanded panel covers them, the agents take no pointer or keyboard, so Tab never walks into a terminal out of sight.
 
-The panel's top row holds the View tabs with their kind marks and, at its right end, the panel actions: New tab (the file palette), Pin, Expand (only while a view is open), and Hide.
-Below it the View areas sit on the left and the tool column (Explorer above History) on the right, the tool column's header sharing the tab strip's row.
-With stacked View areas each area keeps its own tab strip, and the top row holds the top area's tabs and the panel actions.
-With no view open and a tool shown, the panel is only as wide as the tool column, including after the last view closes; with no tool shown either, it says that no file or diff is open, with Show Explorer and Open file.
+The panel's first row sits at the toolbar row's height and holds each top area's View tabs with their kind marks, each area's tabs followed by its own New tab (the file palette, into that area), and, at its right end, the panel actions: the tool column's toggle (pressed while the tools show), Expand (only while a view is open), Pin, and the panel toggle.
+Its second row is level with the agents' tab strip: the active document's header over each View area, and over the tool column the Explorer and History icon tabs, the shown one marked, named Explorer and History in their tooltips and accessible names.
+The tool column holds one tool at a time, with no title row and no close: a tab swaps the tool, and the column's toggle hides and shows it, keeping the tool it held.
+With stacked View areas each area keeps its own tab strip, and the first row holds the top area's tabs and the panel actions.
+With no view open and the tools shown, the panel is only the tool column, including after the last view closes, and its first row holds the tool tabs, Pin, and the panel toggle, so the tools alone can be pinned beside the agents.
+With the tools hidden too, the panel keeps its width, its first row holds New tab, the tool column's toggle, Pin, and the panel toggle, and its body only says that no file or diff is open and that ⌘P opens a file.
 Only views expand: an expanded panel with no view open is drawn at its width, so the agents stay in reach.
 
-Opening a file, a diff, or a page while the panel is closed opens it, with the active View area focused; revealing a file shows the Explorer, and opens a closed panel with the Explorer alone.
+Opening a file, a diff, or a page while the panel is closed opens it, with the active View area focused; revealing a file shows the tool column on the Explorer, and opens a closed panel.
 Choosing an agent or a tab from the sidebar, the palette, or a tab cycle closes an unpinned panel and brings a pinned expanded panel back to its width, so the chosen agent is in sight; a pinned open panel stays beside the agents (in a window too narrow for both it closes too; see Narrow windows), and a choice made in the Agent area on screen beside the panel moves nothing.
 Closing the panel closes no view, document, or pane, and the keyboard goes back to the focused pane.
 Changing the panel's state only changes space, and expanding never makes a split; a split comes only from a split command or a drop on an edge.
@@ -136,22 +138,23 @@ In a plain browser tab the view reads `Pages open in the hide desktop app.` with
 
 ### Narrow windows
 
-When the body cannot give the agents their minimum beside the open panel, the panel takes the whole body as if expanded, and a pinned panel floats there instead of docking; it then covers the agents like an unpinned one, so an agent or a tab of that Workspace chosen from the sidebar, the palette, or a tab cycle closes it and uncovers the chosen agent, the Pin kept for when the panel opens again.
+When the body cannot give the agents their minimum beside the open panel, the panel takes the whole Workspace as if expanded, without Expand or Pin, and a pinned panel floats there instead of docking; it then covers the agents like an unpinned one, so an agent or a tab of that Workspace chosen from the sidebar, the palette, or a tab cycle closes it and uncovers the chosen agent, the Pin kept for when the panel opens again.
 Only the Workspace on screen is affected: another Workspace's panel stays as it was, so an agent chosen in another Workspace whose pinned panel is open lands under that panel in a narrow window until the toggle or ⌘⇧B closes it.
 From All projects or an Overview, an agent of the Workspace last on screen is treated as that Workspace last was: if the window was narrowed meanwhile, the agent lands under its pinned panel until the toggle closes it, and if it was widened, its pinned panel closes once, the Pin kept.
-When the panel cannot give a View area its minimum beside the tool column, Explorer and History open as a temporary overlay inside the panel instead of a column, drawn with a border and no shadow, closed until a toggle asks for one, including the press that opened a closed panel; Escape or a click outside closes it and returns focus to the toggle that opened it.
+When the panel cannot give a View area its minimum beside the tool column, the tool opens as a temporary overlay over the View area's right side, below the first row, instead of a column, drawn with a border and no shadow and carrying the tool tabs; it is closed until the tool column's toggle, a tool command, or ⌘⇧B asks for it, including the press that opened a closed panel, and the toggle reads pressed while it shows; Escape, the toggle again, or a click outside closes it and returns focus to what opened it.
 When the View areas cannot all have their minimum, only the active area shows, with an area switcher to the others.
 Widening the window brings back the panel's stored state, width and Pin, the area sizes, and the tool column, because none of these narrow arrangements is stored; the core is told only whether the panel covers the whole body, and only when that changes.
 
 ### Library masters
 
+The side panel's masters in `design/hide-ui.lib.pen` are on `Component / Side panel`: `Component / Side panel toggle` with its open-view count, `Component / Side panel tool tabs`, `Component / Side panel actions` in each of its states (tools hidden, pinned, expanded, no view open, narrow), and the panel itself over the agents, pinned with the grip hovered, with the tools hidden, as the tool column alone, and empty; `Screen / Workspace` in `design/hide-screens.pen` draws it open and closed in Dark and Light.
 The View area masters in `design/hide-ui.lib.pen` are `Component / View tab`, `Component / View insertion line`, `Component / View split overlay`, `Component / View tab menu`, and `Component / View area message`.
 Their sheets draw every state as refs: the View tab sheet draws preview, pinned, hover, active-in-the-active-area, active-in-another-area, dirty, unavailable, diff, a long title, and the floating drag copy; the placement sheet draws a reorder, a move into another area, a right and a down split, and an ineligible target; the tab menu sheet draws a preview's menu and a pinned view's menu with a disabled Split and its reason; the area states sheet draws the empty Views state and each view's opening, waiting, and unavailable states.
 The browser display's toolbar and its loading, load failed, and plain browser tab states are on `Component / Browser file diff toolbars`.
 
 ### Agent panes and the Agents explorer
 
-Several View areas leave the Agent side as it was already drawn: the side panel toggle, the independent tool toggles, and the child chips below behave the same with one area or six.
+Several View areas leave the Agent side as it was already drawn: the side panel toggle, the tool column, and the child chips below behave the same with one area or six.
 
 A pane whose agent delegated work shows every direct child on one row under its header, each chip a status mark, the provider mark, and a capped title; the row scrolls sideways instead of growing, and a pane with no children has no row.
 Its library masters are `Component / Pane child chip` and `Component / Pane child row`; the native pane header keeps its first child and `+N` until the native shell changes.

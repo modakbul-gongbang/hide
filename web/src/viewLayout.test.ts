@@ -13,7 +13,7 @@ import {
   ratioForFirst,
   resizeTarget,
   revealedScroll,
-  shownTools,
+  shownTool,
   splitEligibility,
   steppedRatio,
   viewCommands,
@@ -355,13 +355,13 @@ describe("narrow panels", () => {
     expect(placementForWidth("open", true)).toBe("open");
     expect(placementForWidth("closed", true)).toBe("closed");
     expect(placementForWidth("open", false)).toBe("column");
-    const stored = { explorer: true, changes: false, panel: "open" };
-    const tools = { explorer: true, changes: false };
-    expect(shownTools(stored, "column")).toEqual(tools);
-    expect(shownTools(stored, "open")).toEqual(tools);
-    expect(shownTools(stored, "closed")).toEqual({ explorer: false, changes: false });
-    // A closed side panel shows no tool, whatever the core stores.
-    expect(shownTools({ ...stored, panel: "closed" }, "column")).toEqual({ explorer: false, changes: false });
+    const stored = { tool: "changes", tools: true, panel: "open" };
+    expect(shownTool(stored, "column")).toBe("changes");
+    expect(shownTool(stored, "open")).toBe("changes");
+    expect(shownTool(stored, "closed")).toBeNull();
+    // A closed side panel or a hidden column shows no tool, whatever the core stores.
+    expect(shownTool({ ...stored, panel: "closed" }, "column")).toBeNull();
+    expect(shownTool({ ...stored, tools: false }, "column")).toBeNull();
   });
 });
 

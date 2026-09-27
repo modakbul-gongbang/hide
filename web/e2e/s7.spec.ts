@@ -15,7 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
+import { countSent, enterWorkspace, screenshot, showExplorer, showTool } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
 // A click or a key that cannot happen fails the flow in seconds, not at the test's end.
@@ -444,7 +444,7 @@ test("Open to the side from the only area is refused with its reason until that 
     // History's row menu opens at the pointer, whole, with the same item
     // disabled and its reason: a menu drawn inside the list's positioned
     // rows landed off the pointer and was clipped out of sight (B4, B9).
-    await page.locator('[data-tool-toggle="changes"]').click();
+    await showTool(page, "changes");
     const historyRow = page.locator('[data-history-group="working"][data-history-path="a.txt"]');
     const rowBox = await boxOf(historyRow);
     const pointer = { x: Math.round(rowBox.x + 16), y: Math.round(rowBox.y + rowBox.height / 2) };
@@ -471,6 +471,7 @@ test("Open to the side from the only area is refused with its reason until that 
     // With room (the panel expanded), the same item opens the second view to the right.
     await page.locator('[data-panel-expand="off"]').click();
     await expect.poll(async () => (await boxOf(area(page, 0))).width).toBeGreaterThan(450);
+    await showExplorer(page);
     await row.click({ button: "right" });
     await expect(item).toBeEnabled();
     await item.click();
@@ -997,8 +998,8 @@ test("the tab menu offers only what a view can do, and each cap refuses with its
           path: stack.root,
           panel: "expanded",
           pinned: false,
-          explorer: true,
-          changes: false,
+          tool: "explorer",
+          tools: true,
           views_over_share: 0.6,
           last_used_unix_ms: Date.now(),
           layout: {
@@ -1042,7 +1043,7 @@ test("the tab menu offers only what a view can do, and each cap refuses with its
   }
 });
 
-type StoredWorkspace = { device_id: string; path: string; panel: string; pinned: boolean; explorer: boolean; changes: boolean; views_over_share: number; layout: unknown };
+type StoredWorkspace = { device_id: string; path: string; panel: string; pinned: boolean; tool: string; tools: boolean; views_over_share: number; layout: unknown };
 
 /** This Workspace's entry in `workspace-views.json`, without the clock stamps a focus writes. */
 function storedWorkspace(daemon: Daemon, root: string): StoredWorkspace | null {
@@ -1081,7 +1082,7 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     const sentBefore = stack.events.filter((event) => event.kind === "workspace_view").length;
     const body = page.locator("[data-workspace-body]");
     const sidebar = (await boxOf(body)).x;
-    const toggle = page.locator('[data-tool-toggle="explorer"]');
+    const toggle = page.locator("[data-tools-toggle]");
 
     // Too narrow for the agents beside the panel: the panel takes the whole
     // body and the pinned one floats; the View areas that cannot all fit
@@ -1124,11 +1125,11 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     await page.keyboard.press("Escape");
     await expect(overlay).toHaveCount(0);
     await expect(toggle).toBeFocused();
-    // A click outside it (here the toolbar's own padding, which takes no
-    // focus) closes it too (B12).
+    // A click outside it (here the document header's own padding, which
+    // takes no focus) closes it too (B12).
     await toggle.click();
     await expect(overlay).toBeVisible();
-    await page.locator("[data-workspace-toolbar]").click({ position: { x: 3, y: 3 } });
+    await page.locator("[data-document-header]").click({ position: { x: 3, y: 3 } });
     await expect(overlay).toHaveCount(0);
 
     // Widening brings back what the core stores: the pinned panel beside the
@@ -1171,9 +1172,9 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     await expect(workspace).toHaveAttribute("data-panel", "closed");
     await expect(page.locator(`[data-pane-view="${pane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toMatchObject({ panel: "closed", pinned: true });
-    // One press of a tool toggle opens the panel with that tool, even where
-    // the tools fold into an overlay (B12).
-    await toggle.click();
+    // ⌘⇧B opens the panel on its tool with the tools shown, even where they
+    // fold into an overlay (B12, issue 170).
+    await page.keyboard.press("Meta+Shift+KeyB");
     await expect(workspace).toHaveAttribute("data-panel", "expanded");
     await expect(page.locator('[data-tools-overlay="true"] [data-tool="explorer"]')).toBeVisible();
     await expect(toggle).toHaveAttribute("aria-pressed", "true");
@@ -1291,11 +1292,11 @@ test("an outside click that closes the narrow tools overlay gives the keyboard b
     const sidebar = (await boxOf(page.locator("[data-workspace-body]"))).x;
     await page.setViewportSize({ width: Math.round(sidebar + 440), height: 1080 });
     await expect(page.locator("[data-workspace-body]")).toHaveAttribute("data-workspace-body", "narrow");
-    const toggle = page.locator('[data-tool-toggle="explorer"]');
+    const toggle = page.locator("[data-tools-toggle]");
     await toggle.click();
     const overlay = page.locator('[data-tools-overlay="true"]');
     await expect(overlay).toBeVisible();
-    await page.locator("[data-workspace-toolbar]").click({ position: { x: 3, y: 3 } });
+    await page.locator("[data-document-header]").click({ position: { x: 3, y: 3 } });
     await expect(overlay).toHaveCount(0);
     await expect(toggle).toBeFocused();
   } finally {
@@ -1340,13 +1341,12 @@ test("a restart brings the View areas back as they were, and a file gone meanwhi
     await expect(dividers.nth(1)).toHaveAttribute("aria-valuenow", "55");
     await tab(area(page, 2), "e.txt").click();
     await page.locator('[data-panel-expand="off"]').click();
-    await page.locator('[data-tool-toggle="changes"]').click();
-    await page.locator('[data-tool-close="explorer"]').click();
+    await showTool(page, "changes");
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     const before = await shape(page);
     expect(before).toBe("(a.txt >c.txt*) | (>b.txt) | @(d.txt >e.txt)");
-    await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toMatchObject({ panel: "expanded", pinned: false, explorer: false, changes: true });
+    await expect.poll(() => storedWorkspace(stack.daemon, stack.root)).toMatchObject({ panel: "expanded", pinned: false, tool: "changes", tools: true });
     await expect
       .poll(() => JSON.stringify(storedWorkspace(stack.daemon, stack.root)?.layout))
       .toMatch(/"ratio":0\.45.*"ratio":0\.55/);
@@ -1486,10 +1486,12 @@ test("the side panel's toggle, Expand, tools, kind marks and an open from a clos
   try {
     const workspace = page.locator("[data-workspace-screen]");
     const panels = () => stack.events.filter((event) => event.kind === "workspace_view" && "panel" in event.payload).length;
-    const tools = () => stack.events.filter((event) => event.kind === "workspace_view" && ("explorer" in event.payload || "changes" in event.payload)).length;
+    const tools = () => stack.events.filter((event) => event.kind === "workspace_view" && ("tool" in event.payload || "tools" in event.payload)).length;
 
-    // One panel toggle in the toolbar, and no layout switch (issue 170).
-    await expect(page.locator("[data-workspace-toolbar] [data-panel-toggle]")).toHaveCount(1);
+    // One panel toggle, on the open panel's first row, no tool toggle in the
+    // toolbar, and no layout switch (issue 170).
+    await expect(page.locator("[data-panel-actions] [data-panel-toggle]")).toHaveCount(1);
+    await expect(page.locator("[data-workspace-toolbar] :is([data-panel-toggle], [data-tools-toggle], [data-tool-tab])")).toHaveCount(0);
     await expect(page.locator("[data-layout-choice]")).toHaveCount(0);
 
     // Expanding never splits. With nothing open the panel stays the tool
@@ -1510,7 +1512,7 @@ test("the side panel's toggle, Expand, tools, kind marks and an open from a clos
 
     // Kind marks, never colour alone: a file's type mark, a diff's comparison
     // mark, and each agent tab's provider mark (B22, S6 D-15).
-    await page.locator('[data-tool-toggle="changes"]').click();
+    await showTool(page, "changes");
     await page.locator('[data-history-group="working"][data-history-path="a.txt"]').click();
     await expect.poll(() => shape(page)).toBe("@(a.txt >a.txt*)");
     await expect(page.locator('[data-view-area-id] [data-tab-kind="file"] [data-view-mark="file"]')).toHaveCount(1);
@@ -1523,23 +1525,27 @@ test("the side panel's toggle, Expand, tools, kind marks and an open from a clos
     // the next click would take its preview slot (B1).
     await page.locator('[data-tab-kind="diff"]').dblclick();
     await expect.poll(() => shape(page)).toBe("@(a.txt >a.txt)");
+    await showExplorer(page);
     await explorerRow(page, stack, "b.txt").dblclick();
     await tabMenu(page, page, "b.txt", "split_right");
     await expect.poll(() => shape(page)).toBe("(a.txt >a.txt) | @(>b.txt)");
 
-    // Explorer and History open and close on their own beside several areas,
-    // one event each, and the areas stay as they are (B22, S6 B10).
+    // The column's tabs swap its one tool and its toggle hides and shows it
+    // beside several areas, one event each, and the areas stay as they are
+    // (B22, S6 B10, issue 170).
     const toolsBefore = tools();
     const viewsBefore = viewEvents(stack).length;
-    await page.locator('[data-tool-close="explorer"]').click();
+    await page.locator('[data-tool-tab="changes"]').click();
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
-    await page.locator('[data-tool-toggle="explorer"]').click();
-    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
-    await page.locator('[data-tool-toggle="changes"]').click();
+    await page.locator('[data-tools-toggle="on"]').click();
+    await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
+    await page.locator('[data-tools-toggle="off"]').click();
+    await expect(page.locator('[data-tool="changes"]')).toBeVisible();
+    await page.locator('[data-tool-tab="explorer"]').click();
     await expect(page.locator('[data-tool="changes"]')).toHaveCount(0);
     await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
-    expect(tools()).toBe(toolsBefore + 3);
+    expect(tools()).toBe(toolsBefore + 4);
     expect(viewEvents(stack).length).toBe(viewsBefore);
     await expect.poll(() => shape(page)).toBe("(a.txt >a.txt) | @(>b.txt)");
 

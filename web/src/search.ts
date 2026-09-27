@@ -7,8 +7,8 @@
 import { projectPaneIds } from "./navigation";
 import { contextAgents, contextWorkspaces } from "./remote";
 import type { SnapshotRest } from "./snapshot";
-import { besideUnavailable, shownTools, viewCommands, type Geometry, type LayoutSizes, type ToolsPlacement, type ViewCommandId } from "./viewLayout";
-import { PANEL_STATES, workspaceViewOf, type PanelState } from "./workspace";
+import { besideUnavailable, shownTool, viewCommands, type Geometry, type LayoutSizes, type ToolsPlacement, type ViewCommandId } from "./viewLayout";
+import { PANEL_STATES, workspaceViewOf, type PanelState, type Tool } from "./workspace";
 
 /** The header an entry is drawn under, in the Swift search view's form (`herdr-ide > AGENTS`). */
 export type SearchGroup = { id: string; label: string };
@@ -32,7 +32,7 @@ export type SearchEntry = {
   workspaceId?: string;
   checkoutId?: string;
   /** What a command entry changes on the Workspace in front. */
-  command?: { panel: PanelState } | { pinned: boolean } | { tool: "explorer" | "changes"; visible: boolean } | { view: ViewCommandId } | { openBeside: true };
+  command?: { panel: PanelState } | { pinned: boolean } | { tool: Tool; visible: boolean } | { view: ViewCommandId } | { openBeside: true };
   /** Why a command cannot run now; the palette shows it and runs nothing. */
   unavailable?: string | null;
 };
@@ -75,7 +75,7 @@ export type WorkspaceOnScreen = { drawn: { geometry: Geometry; sizes: LayoutSize
 export function workspaceCommands(rest: SnapshotRest | null, screen: WorkspaceOnScreen): SearchEntry[] {
   const view = workspaceViewOf(rest);
   if (!view) return [];
-  const shown = shownTools(view, screen.placement);
+  const shown = shownTool(view, screen.placement);
   const entries: SearchEntry[] = PANEL_STATES.filter((state) => state.panel !== view.panel).map((state) => ({
     id: `command:panel:${state.panel}`,
     title: state.command,
@@ -94,19 +94,19 @@ export function workspaceCommands(rest: SnapshotRest | null, screen: WorkspaceOn
   });
   entries.push({
     id: "command:tool:explorer",
-    title: shown.explorer ? "Hide Explorer" : "Show Explorer",
+    title: shown === "explorer" ? "Hide Explorer" : "Show Explorer",
     subtitle: "Workspace tool",
     kind: "command",
     group: COMMANDS_GROUP,
-    command: { tool: "explorer", visible: !shown.explorer },
+    command: { tool: "explorer", visible: shown !== "explorer" },
   });
   entries.push({
     id: "command:tool:changes",
-    title: shown.changes ? "Hide History" : "Show History",
+    title: shown === "changes" ? "Hide History" : "Show History",
     subtitle: "Workspace tool",
     kind: "command",
     group: COMMANDS_GROUP,
-    command: { tool: "changes", visible: !shown.changes },
+    command: { tool: "changes", visible: shown !== "changes" },
   });
   if (!view.layout) return entries;
   for (const command of viewCommands(view.layout, screen.drawn)) {

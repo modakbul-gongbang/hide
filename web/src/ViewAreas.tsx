@@ -1,4 +1,4 @@
-import { ChevronDownIcon, EllipsisIcon, GlobeIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, EllipsisIcon, GlobeIcon, PlusIcon, XIcon } from "lucide-react";
 import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AreaEmpty } from "./AreaEmpty";
@@ -44,6 +44,8 @@ import {
   type ViewWorkspace,
 } from "./viewLayout";
 import { workspaceViewOf } from "./workspace";
+import { hostKind } from "./host";
+import { displayCommand } from "./shortcuts";
 
 // The View areas (PRD S7 B1-B13, B20; contract 3 and 6): the front
 // Workspace's tree of areas as the core published it, drawn as nested flex
@@ -117,7 +119,7 @@ export function ViewAreas({ actions, trailing = null }: { actions: Actions; trai
   if (layout.display_count === 0) {
     return (
       <>
-        {trailing ? <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center justify-end bg-card">{trailing}</div> : null}
+        {trailing ? <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center justify-end border-b border-border">{trailing}</div> : null}
         <AreaEmpty state="view-opening" text="Opening…" />
       </>
     );
@@ -531,7 +533,11 @@ function DisplayBody({ display }: { display: ViewDisplaySnapshot }) {
   );
 }
 
-/** An area's own tab bar; only the active area's shown tab carries the accent indicator (B1, B20). */
+/**
+ * An area's own tab bar; only the active area's shown tab carries the accent
+ * indicator (B1, B20). Its New tab follows the tabs and opens the file
+ * palette into this area (issue 170).
+ */
 function AreaTabBar({ area, active, index, count, switcher }: { area: ViewAreaSnapshot; active: boolean; index: number; count: number; switcher: boolean }) {
   const tree = useTree();
   const shown = area.displays.find((row) => row.id === area.active) ?? null;
@@ -554,8 +560,8 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: ViewAreaSn
     return () => observer.disconnect();
   }, [area.active, area.displays.length]);
   return (
-    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch bg-card" data-view-tab-bar={area.id}>
-      <div ref={strip} role="tablist" aria-label={`View tabs, area ${index + 1} of ${count}`} className="flex min-w-0 flex-1 items-stretch overflow-x-auto">
+    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-stretch border-b border-border" data-view-tab-bar={area.id}>
+      <div ref={strip} role="tablist" aria-label={`View tabs, area ${index + 1} of ${count}`} className="flex min-w-0 items-stretch overflow-x-auto">
         {area.displays.map((display) => (
           <EntryContextMenu
             key={display.id}
@@ -569,6 +575,22 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: ViewAreaSn
           </EntryContextMenu>
         ))}
       </div>
+      <Hint label="New tab: open a file" shortcut={displayCommand("open_file", hostKind())}>
+        <button
+          type="button"
+          aria-label="New tab: open a file"
+          data-view-new-tab={area.id}
+          className="flex min-w-[var(--size-tab-overflow-control)] shrink-0 items-center justify-center text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent"
+          onClick={() => {
+            // The palette opens into the active area, so this one becomes it first.
+            if (tree.layout.active_area !== area.id) tree.actions.focusViewArea(area.id);
+            tree.actions.openFilePalette();
+          }}
+        >
+          <PlusIcon className="size-(--size-icon)" />
+        </button>
+      </Hint>
+      <span className="min-w-0 flex-1" />
       {switcher ? <AreaSwitcher current={area.id} /> : null}
       {shown ? (
         <EntryDropdown

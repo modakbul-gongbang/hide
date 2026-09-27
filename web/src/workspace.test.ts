@@ -40,7 +40,7 @@ describe("tab identity", () => {
 
 describe("the side panel", () => {
   const sizes = { areaMin: 224, toolColumn: 260, toolMin: 200 };
-  const view = (panel: WorkspaceView["panel"], extra: Partial<WorkspaceView> = {}) => ({ panel, pinned: false, views_over_share: 0.6, explorer: true, changes: false, ...extra });
+  const view = (panel: WorkspaceView["panel"], extra: Partial<WorkspaceView> = {}) => ({ panel, pinned: false, views_over_share: 0.6, tools: true, ...extra });
   const frame = (panel: WorkspaceView["panel"], views: boolean, body: number, extra: Partial<WorkspaceView> = {}) => panelFrame({ view: view(panel, extra), views, body, sizes });
 
   it("floats at its share over agents that keep the body's width, and a pinned one narrows them to its edge", () => {
@@ -57,19 +57,19 @@ describe("the side panel", () => {
   it("is only as wide as the tool column while no view is open, and says nothing is open only without a tool", () => {
     expect(frame("open", false, 1400)).toMatchObject({ content: "tools", width: 260, resizable: false });
     expect(frame("expanded", false, 1400)).toMatchObject({ shown: "open", content: "tools", width: 260 });
-    expect(frame("open", false, 1400, { explorer: false })).toMatchObject({ content: "empty", width: 840, resizable: true });
+    expect(frame("open", false, 1400, { tools: false })).toMatchObject({ content: "empty", width: 840, resizable: true });
     // Only views expand, so the empty state never covers the agents.
-    expect(frame("expanded", false, 1400, { explorer: false })).toMatchObject({ shown: "open", content: "empty", width: 840 });
+    expect(frame("expanded", false, 1400, { tools: false })).toMatchObject({ shown: "open", content: "empty", width: 840 });
   });
 
   it("places nothing before the body is measured, so no terminal fits to a guess", () => {
     expect(frame("open", true, 0, { pinned: true })).toMatchObject({ width: 0, agentsRight: 0, toolsOverlay: false });
-    expect(frame("open", false, 0, { pinned: true, explorer: false })).toMatchObject({ width: 0, agentsRight: 0 });
+    expect(frame("open", false, 0, { pinned: true, tools: false })).toMatchObject({ width: 0, agentsRight: 0 });
   });
 
   it("keeps a View area and the tool column beside it, and the agents left of it, at their minimum", () => {
     expect(frame("open", true, 1400, { views_over_share: 0.2 }).width).toBe(484);
-    expect(frame("open", true, 1400, { views_over_share: 0.2, explorer: false }).width).toBe(280);
+    expect(frame("open", true, 1400, { views_over_share: 0.2, tools: false }).width).toBe(280);
     expect(frame("open", true, 1000, { views_over_share: 0.8 }).width).toBe(776);
   });
 
@@ -81,7 +81,7 @@ describe("the side panel", () => {
   it("folds the tools into an overlay when the panel cannot hold a View area beside them", () => {
     expect(frame("expanded", true, 423).toolsOverlay).toBe(true);
     expect(frame("expanded", true, 424).toolsOverlay).toBe(false);
-    expect(frame("expanded", true, 424, { explorer: false }).toolsOverlay).toBe(false);
+    expect(frame("expanded", true, 424, { tools: false }).toolsOverlay).toBe(false);
     expect(frame("open", true, 1400).toolsOverlay).toBe(false);
   });
 

@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
-import { countSent, screenshot, showExplorer } from "./wire";
+import { countSent, screenshot, showExplorer, showTool } from "./wire";
 
 test.describe.configure({ timeout: 90_000 });
 
@@ -41,12 +41,11 @@ test("History opens a scoped patch, then updates after editing the original file
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator('[data-sidebar-mode="projects"]').click();
     await page.locator("[data-project]", { hasText: "history-repo" }).locator("[data-checkout]").first().click();
-    // The Explorer's toggle opens the side panel with it; History is a second
-    // tool beside it (S6 B10, issue 170).
+    // The side panel's column holds one tool; History's tab swaps the
+    // Explorer out (S6 B10, issue 170).
     await showExplorer(page);
-    await page.locator('[data-tool-toggle="changes"]').click();
-    await expect(page.locator('[data-tool="changes"]')).toBeVisible();
-    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
+    await showTool(page, "changes");
+    await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     await expect(page.locator('[data-history-group-section="working"]')).toBeVisible();
     await expect(page.locator('[data-history-group-section="committed"]')).toBeVisible();
     const row = page.locator('[data-history-group="working"][data-history-path="한글 notes.txt"]');
@@ -137,7 +136,7 @@ test("registered subfolder History opens inside patches and hides sibling change
     const project = page.locator("[data-project]", { hasText: "registered" });
     await expect(project).toBeVisible({ timeout: 20_000 });
     await project.locator("[data-checkout]").first().click();
-    await page.locator('[data-tool-toggle="changes"]').click();
+    await showTool(page, "changes");
     const history = page.locator('[data-history-root]');
     await expect(history).toHaveAttribute("data-history-root", registered);
     await expect(page.locator('[data-history-path="inside.txt"]')).toBeVisible();

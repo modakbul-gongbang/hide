@@ -276,7 +276,7 @@ function EditorHeader({
   const editable = document?.document_kind === "text" || isMarkdown;
   const group = display.committed ? "Committed on branch" : "Uncommitted";
   return (
-    <div className="flex shrink-0 items-center gap-sm border-b border-border px-md py-xs text-caption text-subtle-foreground">
+    <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border px-md text-caption text-subtle-foreground" data-document-header="true">
       <Hint label={file ? display.path : `${group}: ${display.path}`} reveals>
       <span className="min-w-0 flex-1 truncate" data-editor-path="true">
         {file ? "" : `${display.committed ? "Branch diff" : "Working diff"} · `}{display.path}

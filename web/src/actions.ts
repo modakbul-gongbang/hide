@@ -65,7 +65,7 @@ import {
   type ViewMenuId,
   type ViewWorkspace,
 } from "./viewLayout";
-import { workspaceViewOf, type PanelState, type WorkspaceView } from "./workspace";
+import { workspaceViewOf, type PanelState, type Tool, type WorkspaceView } from "./workspace";
 
 /** The `device_id` an event carries: none for this machine, which the core takes as the default. */
 function deviceField(device: string): { device_id?: string } {
@@ -256,7 +256,7 @@ export function createActions(dispatch: DispatchFn) {
    * `workspace_view` event naming only what changes. The core keeps them per
    * Workspace, so another Workspace is never touched.
    */
-  const setWorkspaceView = (patch: { panel?: PanelState; pinned?: boolean; explorer?: boolean; changes?: boolean; views_over_share?: number; reveal?: string }) => {
+  const setWorkspaceView = (patch: { panel?: PanelState; pinned?: boolean; tool?: Tool; tools?: boolean; views_over_share?: number; reveal?: string }) => {
     if (!workspaceViewOf(rest())) return diagnostic("workspace_view: no Workspace in front");
     dispatch({ schema_version: 2, kind: "workspace_view", payload: patch });
   };
@@ -268,26 +268,46 @@ export function createActions(dispatch: DispatchFn) {
   };
 
   /**
-   * Shows one tool (B10). The operator asked for it, so a narrow panel's
-   * overlay opens (S7 B12), and a closed panel opens with that tool alone
-   * (issue 170, the core's rule); nothing is sent when the open panel already
-   * shows it, since the overlay closing never stored it hidden.
+   * Shows one tool in the column (B10; issue 170, one tool at a time). The
+   * operator asked for it, so a narrow panel's overlay opens (S7 B12), and a
+   * closed panel opens on it with the column shown (the core's rule); nothing
+   * is sent when the open panel already shows it, since the overlay closing
+   * never stored the column hidden.
    */
-  const showTool = (tool: "explorer" | "changes") => {
+  const showTool = (tool: Tool) => {
     const view = workspaceViewOf(rest());
     if (!view) return diagnostic("workspace_view: no Workspace in front");
     askForTools(view);
-    // The core opens a closed panel with the pressed tool alone.
-    if (view.panel === "closed" || !(tool === "explorer" ? view.explorer : view.changes)) setWorkspaceView(tool === "explorer" ? { explorer: true } : { changes: true });
+    if (view.panel === "closed" || !view.tools || view.tool !== tool) setWorkspaceView({ tool });
   };
 
-  const showExplorerPanel = () => showTool("explorer");
+  /**
+   * The tool column shown or hidden, on the tool it holds. A narrow panel's
+   * overlay is this page's alone: hiding it stores nothing, so a wider window
+   * brings the column back.
+   */
+  const setToolsShown = (visible: boolean) => {
+    const view = workspaceViewOf(rest());
+    if (!view) return diagnostic("workspace_view: no Workspace in front");
+    if (!visible) {
+      if (ui().toolsPlacement === "open") return ui().closeTools();
+      if (view.tools) setWorkspaceView({ tools: false });
+      return;
+    }
+    askForTools(view);
+    if (view.panel === "closed" || !view.tools) setWorkspaceView({ tools: true });
+  };
 
-  /** ⌘⇧B: closes the side panel when it shows, expanded or not, else opens it at its width (issue 170). */
+  /**
+   * ⌘⇧B: closes the side panel when it shows, expanded or not, else opens it
+   * at its width on its tool with the column shown (issue 170).
+   */
   const toggleRightPanel = () => {
     const view = workspaceViewOf(rest());
     if (!view) return diagnostic("toggle side panel: no Workspace in front");
-    setWorkspaceView({ panel: view.panel === "closed" ? "open" : "closed" });
+    if (view.panel !== "closed") return setWorkspaceView({ panel: "closed" });
+    askForTools(view);
+    setWorkspaceView({ panel: "open", tools: true });
   };
 
   /**
@@ -639,7 +659,7 @@ export function createActions(dispatch: DispatchFn) {
   const revealInExplorer = (path: string) => {
     const view = workspaceViewOf(rest());
     if (view) askForTools(view);
-    setWorkspaceView({ explorer: true, reveal: path });
+    setWorkspaceView({ reveal: path });
     ui().setExplorerSelection(path);
   };
 
@@ -1168,7 +1188,6 @@ export function createActions(dispatch: DispatchFn) {
 
     showSidebarMode,
 
-    showExplorerPanel,
     toggleRightPanel,
 
     setWorkspaceView,
@@ -1185,14 +1204,18 @@ export function createActions(dispatch: DispatchFn) {
 
     revealInExplorer,
 
+    showTool,
+    setToolsShown,
+
     /**
-     * Explorer and Changes open and close independently (B10). Showing a tool
-     * a narrow panel's overlay kept out of sight opens the overlay without an
-     * event when the open panel already stores it shown (S7 B12, B13).
+     * A palette command for one tool: showing it swaps the column onto it
+     * (B10), hiding it hides the column. Showing a tool a narrow panel's
+     * overlay kept out of sight opens the overlay without an event when the
+     * open panel already stores it shown (S7 B12, B13).
      */
-    setTool(tool: "explorer" | "changes", visible: boolean) {
+    setTool(tool: Tool, visible: boolean) {
       if (visible) return showTool(tool);
-      setWorkspaceView(tool === "explorer" ? { explorer: false } : { changes: false });
+      setToolsShown(false);
     },
 
     /** A History row's diff in the active View area's preview (a single click) or pinned (a double click). */
