@@ -1444,6 +1444,10 @@
       "type": "number",
       "value": 430
     },
+    "--size-gallery-scene-h": {
+      "type": "number",
+      "value": 880
+    },
     "--size-settings-sheet-w": {
       "type": "number",
       "value": 720
@@ -16922,6 +16926,507 @@
               "layout": "horizontal",
               "gap": "$--spacing-md",
               "alignItems": "start"
+            },
+            {
+              "type": "frame",
+              "id": "ws-newtab-ln",
+              "name": "New tab, checkout has changes",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "ws-newtab-tabs-ln",
+                  "name": "View tabs",
+                  "children": [
+                    {
+                      "id": "ws-newtab-tab-ln",
+                      "type": "ref",
+                      "ref": "hideui:view-tab",
+                      "name": "New tab",
+                      "fill": "$--card",
+                      "stroke": "$--primary",
+                      "strokeWidth": {
+                        "bottom": "$--size-tab-indicator"
+                      },
+                      "strokeAlignment": "inner",
+                      "descendants": {
+                        "hideui:view-tab-mark": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "globe"
+                        },
+                        "hideui:view-tab-title": {
+                          "fill": "$--foreground",
+                          "content": "New tab"
+                        },
+                        "hideui:view-tab-strike": {
+                          "fill": "$--muted-foreground"
+                        },
+                        "hideui:view-tab-dirty": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:view-tab-close": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "ws-newtab-plus-ln",
+                      "type": "ref",
+                      "ref": "hideui:Nyvom",
+                      "name": "plus",
+                      "descendants": {
+                        "hideui:ZIZFR": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "plus"
+                        }
+                      }
+                    }
+                  ],
+                  "width": "fill_container",
+                  "height": 32,
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "stroke": "$--border",
+                  "strokeWidth": {
+                    "bottom": "$--size-hairline"
+                  },
+                  "strokeAlignment": "inner"
+                },
+                {
+                  "type": "frame",
+                  "id": "ws-newtab-address-row-ln",
+                  "name": "Address row",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "ws-newtab-nav0-ln",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "arrow-left",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "ws-newtab-nav1-ln",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "arrow-right",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "ws-newtab-nav2-ln",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "rotate-cw",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ws-newtab-address-ln",
+                      "name": "Empty focused address",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ws-newtab-placeholder-ln",
+                          "name": "Enter a URL",
+                          "content": "Enter a URL",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 24,
+                      "layout": "horizontal",
+                      "alignItems": "center",
+                      "padding": [
+                        0,
+                        "$--spacing-sm"
+                      ],
+                      "fill": "$--background",
+                      "cornerRadius": "$--radius-sm",
+                      "stroke": "$--ring",
+                      "strokeWidth": 1
+                    }
+                  ],
+                  "width": "fill_container",
+                  "height": 32,
+                  "layout": "horizontal",
+                  "gap": "$--spacing-xs",
+                  "padding": [
+                    0,
+                    "$--spacing-sm"
+                  ],
+                  "alignItems": "center",
+                  "stroke": "$--border",
+                  "strokeWidth": {
+                    "bottom": "$--size-hairline"
+                  },
+                  "strokeAlignment": "inner"
+                },
+                {
+                  "type": "frame",
+                  "id": "ws-newtab-body-ln",
+                  "name": "Open",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ws-newtab-heading-ln",
+                      "name": "Open",
+                      "content": "Open",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ws-newtab-File-ln",
+                      "name": "File",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ws-newtab-File-i-ln",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 14,
+                          "height": 14,
+                          "icon": "file-search",
+                          "library": "lucide",
+                          "fill": "$--subtle-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-newtab-File-t-ln",
+                          "name": "File",
+                          "content": "File",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "500",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        },
+                        {
+                          "id": "ws-newtab-kbd-ln",
+                          "type": "ref",
+                          "ref": "hideui:kbd-m",
+                          "name": "⌘P",
+                          "fill": "$--secondary",
+                          "descendants": {
+                            "hideui:kbd-t": {
+                              "fill": "$--subtle-foreground",
+                              "content": "⌘P"
+                            }
+                          }
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 32,
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "padding": [
+                        0,
+                        "$--spacing-lg"
+                      ],
+                      "fill": "$--secondary",
+                      "cornerRadius": "$--radius-sm"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ws-newtab-Diff-ln",
+                      "name": "Diff",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ws-newtab-Diff-i-ln",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 14,
+                          "height": 14,
+                          "icon": "git-compare-arrows",
+                          "library": "lucide",
+                          "fill": "$--subtle-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-newtab-Diff-t-ln",
+                          "name": "Diff",
+                          "content": "Diff",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "500",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 32,
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "padding": [
+                        0,
+                        "$--spacing-lg"
+                      ],
+                      "fill": "$--secondary",
+                      "cornerRadius": "$--radius-sm"
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "padding": "$--spacing-xl"
+                }
+              ],
+              "width": 480,
+              "height": 360,
+              "layout": "vertical",
+              "gap": 0,
+              "fill": "$--card",
+              "clip": true
+            },
+            {
+              "type": "frame",
+              "id": "ws-newtab-le",
+              "name": "New tab, clean checkout",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "ws-newtab-tabs-le",
+                  "name": "View tabs",
+                  "children": [
+                    {
+                      "id": "ws-newtab-tab-le",
+                      "type": "ref",
+                      "ref": "hideui:view-tab",
+                      "name": "New tab",
+                      "fill": "$--card",
+                      "stroke": "$--primary",
+                      "strokeWidth": {
+                        "bottom": "$--size-tab-indicator"
+                      },
+                      "strokeAlignment": "inner",
+                      "descendants": {
+                        "hideui:view-tab-mark": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "globe"
+                        },
+                        "hideui:view-tab-title": {
+                          "fill": "$--foreground",
+                          "content": "New tab"
+                        },
+                        "hideui:view-tab-strike": {
+                          "fill": "$--muted-foreground"
+                        },
+                        "hideui:view-tab-dirty": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:view-tab-close": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "ws-newtab-plus-le",
+                      "type": "ref",
+                      "ref": "hideui:Nyvom",
+                      "name": "plus",
+                      "descendants": {
+                        "hideui:ZIZFR": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "plus"
+                        }
+                      }
+                    }
+                  ],
+                  "width": "fill_container",
+                  "height": 32,
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "stroke": "$--border",
+                  "strokeWidth": {
+                    "bottom": "$--size-hairline"
+                  },
+                  "strokeAlignment": "inner"
+                },
+                {
+                  "type": "frame",
+                  "id": "ws-newtab-address-row-le",
+                  "name": "Address row",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "ws-newtab-nav0-le",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "arrow-left",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "ws-newtab-nav1-le",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "arrow-right",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "ws-newtab-nav2-le",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "rotate-cw",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ws-newtab-address-le",
+                      "name": "Empty focused address",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ws-newtab-placeholder-le",
+                          "name": "Enter a URL",
+                          "content": "Enter a URL",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 24,
+                      "layout": "horizontal",
+                      "alignItems": "center",
+                      "padding": [
+                        0,
+                        "$--spacing-sm"
+                      ],
+                      "fill": "$--background",
+                      "cornerRadius": "$--radius-sm",
+                      "stroke": "$--ring",
+                      "strokeWidth": 1
+                    }
+                  ],
+                  "width": "fill_container",
+                  "height": 32,
+                  "layout": "horizontal",
+                  "gap": "$--spacing-xs",
+                  "padding": [
+                    0,
+                    "$--spacing-sm"
+                  ],
+                  "alignItems": "center",
+                  "stroke": "$--border",
+                  "strokeWidth": {
+                    "bottom": "$--size-hairline"
+                  },
+                  "strokeAlignment": "inner"
+                },
+                {
+                  "type": "frame",
+                  "id": "ws-newtab-body-le",
+                  "name": "Open",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ws-newtab-heading-le",
+                      "name": "Open",
+                      "content": "Open",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ws-newtab-File-le",
+                      "name": "File",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ws-newtab-File-i-le",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 14,
+                          "height": 14,
+                          "icon": "file-search",
+                          "library": "lucide",
+                          "fill": "$--subtle-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-newtab-File-t-le",
+                          "name": "File",
+                          "content": "File",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "500",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        },
+                        {
+                          "id": "ws-newtab-kbd-le",
+                          "type": "ref",
+                          "ref": "hideui:kbd-m",
+                          "name": "⌘P",
+                          "fill": "$--secondary",
+                          "descendants": {
+                            "hideui:kbd-t": {
+                              "fill": "$--subtle-foreground",
+                              "content": "⌘P"
+                            }
+                          }
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 32,
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "padding": [
+                        0,
+                        "$--spacing-lg"
+                      ],
+                      "fill": "$--secondary",
+                      "cornerRadius": "$--radius-sm"
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "padding": "$--spacing-xl"
+                }
+              ],
+              "width": 480,
+              "height": 360,
+              "layout": "vertical",
+              "gap": 0,
+              "fill": "$--card",
+              "clip": true
             }
           ],
           "theme": {
@@ -19160,6 +19665,507 @@
               "layout": "horizontal",
               "gap": "$--spacing-md",
               "alignItems": "start"
+            },
+            {
+              "type": "frame",
+              "id": "ws-newtab-dn",
+              "name": "New tab, checkout has changes",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "ws-newtab-tabs-dn",
+                  "name": "View tabs",
+                  "children": [
+                    {
+                      "id": "ws-newtab-tab-dn",
+                      "type": "ref",
+                      "ref": "hideui:view-tab",
+                      "name": "New tab",
+                      "fill": "$--card",
+                      "stroke": "$--primary",
+                      "strokeWidth": {
+                        "bottom": "$--size-tab-indicator"
+                      },
+                      "strokeAlignment": "inner",
+                      "descendants": {
+                        "hideui:view-tab-mark": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "globe"
+                        },
+                        "hideui:view-tab-title": {
+                          "fill": "$--foreground",
+                          "content": "New tab"
+                        },
+                        "hideui:view-tab-strike": {
+                          "fill": "$--muted-foreground"
+                        },
+                        "hideui:view-tab-dirty": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:view-tab-close": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "ws-newtab-plus-dn",
+                      "type": "ref",
+                      "ref": "hideui:Nyvom",
+                      "name": "plus",
+                      "descendants": {
+                        "hideui:ZIZFR": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "plus"
+                        }
+                      }
+                    }
+                  ],
+                  "width": "fill_container",
+                  "height": 32,
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "stroke": "$--border",
+                  "strokeWidth": {
+                    "bottom": "$--size-hairline"
+                  },
+                  "strokeAlignment": "inner"
+                },
+                {
+                  "type": "frame",
+                  "id": "ws-newtab-address-row-dn",
+                  "name": "Address row",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "ws-newtab-nav0-dn",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "arrow-left",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "ws-newtab-nav1-dn",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "arrow-right",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "ws-newtab-nav2-dn",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "rotate-cw",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ws-newtab-address-dn",
+                      "name": "Empty focused address",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ws-newtab-placeholder-dn",
+                          "name": "Enter a URL",
+                          "content": "Enter a URL",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 24,
+                      "layout": "horizontal",
+                      "alignItems": "center",
+                      "padding": [
+                        0,
+                        "$--spacing-sm"
+                      ],
+                      "fill": "$--background",
+                      "cornerRadius": "$--radius-sm",
+                      "stroke": "$--ring",
+                      "strokeWidth": 1
+                    }
+                  ],
+                  "width": "fill_container",
+                  "height": 32,
+                  "layout": "horizontal",
+                  "gap": "$--spacing-xs",
+                  "padding": [
+                    0,
+                    "$--spacing-sm"
+                  ],
+                  "alignItems": "center",
+                  "stroke": "$--border",
+                  "strokeWidth": {
+                    "bottom": "$--size-hairline"
+                  },
+                  "strokeAlignment": "inner"
+                },
+                {
+                  "type": "frame",
+                  "id": "ws-newtab-body-dn",
+                  "name": "Open",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ws-newtab-heading-dn",
+                      "name": "Open",
+                      "content": "Open",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ws-newtab-File-dn",
+                      "name": "File",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ws-newtab-File-i-dn",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 14,
+                          "height": 14,
+                          "icon": "file-search",
+                          "library": "lucide",
+                          "fill": "$--subtle-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-newtab-File-t-dn",
+                          "name": "File",
+                          "content": "File",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "500",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        },
+                        {
+                          "id": "ws-newtab-kbd-dn",
+                          "type": "ref",
+                          "ref": "hideui:kbd-m",
+                          "name": "⌘P",
+                          "fill": "$--secondary",
+                          "descendants": {
+                            "hideui:kbd-t": {
+                              "fill": "$--subtle-foreground",
+                              "content": "⌘P"
+                            }
+                          }
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 32,
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "padding": [
+                        0,
+                        "$--spacing-lg"
+                      ],
+                      "fill": "$--secondary",
+                      "cornerRadius": "$--radius-sm"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ws-newtab-Diff-dn",
+                      "name": "Diff",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ws-newtab-Diff-i-dn",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 14,
+                          "height": 14,
+                          "icon": "git-compare-arrows",
+                          "library": "lucide",
+                          "fill": "$--subtle-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-newtab-Diff-t-dn",
+                          "name": "Diff",
+                          "content": "Diff",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "500",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 32,
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "padding": [
+                        0,
+                        "$--spacing-lg"
+                      ],
+                      "fill": "$--secondary",
+                      "cornerRadius": "$--radius-sm"
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "padding": "$--spacing-xl"
+                }
+              ],
+              "width": 480,
+              "height": 360,
+              "layout": "vertical",
+              "gap": 0,
+              "fill": "$--card",
+              "clip": true
+            },
+            {
+              "type": "frame",
+              "id": "ws-newtab-de",
+              "name": "New tab, clean checkout",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "ws-newtab-tabs-de",
+                  "name": "View tabs",
+                  "children": [
+                    {
+                      "id": "ws-newtab-tab-de",
+                      "type": "ref",
+                      "ref": "hideui:view-tab",
+                      "name": "New tab",
+                      "fill": "$--card",
+                      "stroke": "$--primary",
+                      "strokeWidth": {
+                        "bottom": "$--size-tab-indicator"
+                      },
+                      "strokeAlignment": "inner",
+                      "descendants": {
+                        "hideui:view-tab-mark": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "globe"
+                        },
+                        "hideui:view-tab-title": {
+                          "fill": "$--foreground",
+                          "content": "New tab"
+                        },
+                        "hideui:view-tab-strike": {
+                          "fill": "$--muted-foreground"
+                        },
+                        "hideui:view-tab-dirty": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:view-tab-close": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "ws-newtab-plus-de",
+                      "type": "ref",
+                      "ref": "hideui:Nyvom",
+                      "name": "plus",
+                      "descendants": {
+                        "hideui:ZIZFR": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "plus"
+                        }
+                      }
+                    }
+                  ],
+                  "width": "fill_container",
+                  "height": 32,
+                  "layout": "horizontal",
+                  "alignItems": "center",
+                  "stroke": "$--border",
+                  "strokeWidth": {
+                    "bottom": "$--size-hairline"
+                  },
+                  "strokeAlignment": "inner"
+                },
+                {
+                  "type": "frame",
+                  "id": "ws-newtab-address-row-de",
+                  "name": "Address row",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "ws-newtab-nav0-de",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "arrow-left",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "ws-newtab-nav1-de",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "arrow-right",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    },
+                    {
+                      "type": "icon",
+                      "id": "ws-newtab-nav2-de",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "rotate-cw",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ws-newtab-address-de",
+                      "name": "Empty focused address",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ws-newtab-placeholder-de",
+                          "name": "Enter a URL",
+                          "content": "Enter a URL",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-mono",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 24,
+                      "layout": "horizontal",
+                      "alignItems": "center",
+                      "padding": [
+                        0,
+                        "$--spacing-sm"
+                      ],
+                      "fill": "$--background",
+                      "cornerRadius": "$--radius-sm",
+                      "stroke": "$--ring",
+                      "strokeWidth": 1
+                    }
+                  ],
+                  "width": "fill_container",
+                  "height": 32,
+                  "layout": "horizontal",
+                  "gap": "$--spacing-xs",
+                  "padding": [
+                    0,
+                    "$--spacing-sm"
+                  ],
+                  "alignItems": "center",
+                  "stroke": "$--border",
+                  "strokeWidth": {
+                    "bottom": "$--size-hairline"
+                  },
+                  "strokeAlignment": "inner"
+                },
+                {
+                  "type": "frame",
+                  "id": "ws-newtab-body-de",
+                  "name": "Open",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "ws-newtab-heading-de",
+                      "name": "Open",
+                      "content": "Open",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "500"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ws-newtab-File-de",
+                      "name": "File",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ws-newtab-File-i-de",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 14,
+                          "height": 14,
+                          "icon": "file-search",
+                          "library": "lucide",
+                          "fill": "$--subtle-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-newtab-File-t-de",
+                          "name": "File",
+                          "content": "File",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "500",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        },
+                        {
+                          "id": "ws-newtab-kbd-de",
+                          "type": "ref",
+                          "ref": "hideui:kbd-m",
+                          "name": "⌘P",
+                          "fill": "$--secondary",
+                          "descendants": {
+                            "hideui:kbd-t": {
+                              "fill": "$--subtle-foreground",
+                              "content": "⌘P"
+                            }
+                          }
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 32,
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "padding": [
+                        0,
+                        "$--spacing-lg"
+                      ],
+                      "fill": "$--secondary",
+                      "cornerRadius": "$--radius-sm"
+                    }
+                  ],
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": "$--spacing-sm",
+                  "padding": "$--spacing-xl"
+                }
+              ],
+              "width": 480,
+              "height": 360,
+              "layout": "vertical",
+              "gap": 0,
+              "fill": "$--card",
+              "clip": true
             }
           ],
           "theme": {
@@ -27484,7 +28490,7 @@
                         "hideui:nZkan": {
                           "fill": "$--muted-foreground",
                           "enabled": true,
-                          "content": "12 projects"
+                          "content": "6 projects"
                         },
                         "hideui:iBYjj": {
                           "fill": "$--muted-foreground"
@@ -27645,7 +28651,7 @@
                           "type": "text",
                           "id": "psb-sec-recent-l-t",
                           "name": "PROJECTS · RECENT ACTIVITY ·",
-                          "content": "PROJECTS · RECENT ACTIVITY · 12",
+                          "content": "PROJECTS · RECENT ACTIVITY · 5",
                           "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-micro",
@@ -29327,7 +30333,7 @@
                         "hideui:nZkan": {
                           "fill": "$--muted-foreground",
                           "enabled": true,
-                          "content": "12 projects"
+                          "content": "6 projects"
                         },
                         "hideui:iBYjj": {
                           "fill": "$--muted-foreground"
@@ -29488,7 +30494,7 @@
                           "type": "text",
                           "id": "psb-sec-recent-d-t",
                           "name": "PROJECTS · RECENT ACTIVITY ·",
-                          "content": "PROJECTS · RECENT ACTIVITY · 12",
+                          "content": "PROJECTS · RECENT ACTIVITY · 5",
                           "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-micro",

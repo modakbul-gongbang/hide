@@ -474,6 +474,7 @@ impl Runtime {
         if let Some(tools) = tools {
             entry.tools = tools;
         }
+        entry.close_empty_panel();
         if let Some(share) = payload.views_over_share {
             entry.views_over_share = workspace_views::clamp_views_over_share(share);
         }

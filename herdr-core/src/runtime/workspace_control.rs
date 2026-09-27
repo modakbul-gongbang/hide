@@ -421,7 +421,7 @@ impl Runtime {
                 }
                 tab_id
             };
-            self.place_document(key, &tab_id, false, *beside, None);
+            self.place_document(key, &tab_id, false, *beside, None, None);
             let view_id = self
                 .view_layout_of(key)
                 .and_then(|layout| layout.active_area().active.clone())

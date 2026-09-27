@@ -314,10 +314,10 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await expect.poll(() => sent.get("reorder_tab")).toBe(1);
     await expect.poll(() => page.locator("[role=tab]").first().getAttribute("data-tab"), { timeout: 10_000 }).toBe(tabs[1]);
 
-    // ⌥W closes the visible tab (its panes are idle, so no confirmation).
+    // The tab close control closes the visible tab (idle panes need no confirmation).
     await page.locator(`[data-tab="${tabs[2]}"]`).click();
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", tabs[2]);
-    await page.keyboard.press("Alt+KeyW");
+    await page.locator(`[data-tab="${tabs[2]}"] button`).click();
     await expect.poll(() => sent.get("close_tab")).toBe(1);
     await expect(page.locator("[role=tab]")).toHaveCount(3);
     await expect(page.locator(`[data-tab="${tabs[2]}"]`)).toHaveCount(0);

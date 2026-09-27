@@ -59,7 +59,7 @@ export function scopeView(view: ProjectView, views: readonly ProjectView[]): Pro
 }
 
 /** `file_palette_beside` is ⌘P's list for "Open file to the side" (S7 B4): its pick opens beside the active View area. */
-export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_palette" | "file_palette_beside" | "search" | "settings";
+export type Overlay = "none" | "shortcuts" | "find" | "new_workspace" | "file_palette" | "file_palette_beside" | "diff_palette" | "search" | "settings";
 
 /**
  * A notice the operator can act on: `refreshable` offers `refresh_status`

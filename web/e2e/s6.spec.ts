@@ -101,17 +101,13 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     await expect(panel.locator('[data-tool-tab="changes"]')).toHaveAttribute("aria-selected", "true");
-    // With the tools hidden and no view the panel only says nothing is open
-    // and names ⌘P; the column's toggle brings back the tool it held.
+    // Hiding the only content closes the panel. Reopening keeps History.
     await page.keyboard.press("Meta+KeyK");
     await page.keyboard.type("Hide History");
     await page.keyboard.press("Enter");
     await expect(page.locator('[data-tool="changes"]')).toHaveCount(0);
-    expect(last.get("workspace_view")).toEqual({ tools: false });
-    await expect(panel).toHaveAttribute("data-panel-content", "empty");
-    await expect(panel.getByText("No file or diff is open in this Workspace.")).toBeVisible();
-    await expect(panel.locator("[data-empty-open-file]")).toHaveText(/⌘P opens a file/);
-    await panel.locator('[data-tools-toggle="off"]').click();
+    await expect(panel).toHaveCount(0);
+    await page.keyboard.press("Meta+KeyE");
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await expect(panel).toHaveAttribute("data-panel-content", "tools");
     await panel.locator('[data-tool-tab="explorer"]').click();
@@ -137,26 +133,23 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect.poll(async () => (await panel.boundingBox())!.width).toBeCloseTo(500, -1);
     await page.mouse.move(bodyAtTools.x + 40, bodyAtTools.y + 40);
 
-    // ⌘E hides the column while the Explorer shows, shows it again on the
-    // Explorer at the tools-only width it keeps, swaps History for it, and
-    // opens a closed panel on it.
+    // ⌘E closes tools-only and restores the same tool at its stored width.
     await page.keyboard.press("Meta+KeyE");
-    expect(last.get("workspace_view")).toEqual({ tools: false });
-    await expect(panel).toHaveAttribute("data-panel-content", "empty");
+    await expect(panel).toHaveCount(0);
     await page.keyboard.press("Meta+KeyE");
-    expect(last.get("workspace_view")).toEqual({ tool: "explorer" });
     await expect(panel).toHaveAttribute("data-panel-content", "tools");
     await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
     await expect.poll(async () => (await panel.boundingBox())!.width).toBeCloseTo(500, -1);
     await panel.locator('[data-tool-tab="changes"]').click();
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await page.keyboard.press("Meta+KeyE");
-    expect(last.get("workspace_view")).toEqual({ tool: "explorer" });
-    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
+    await expect(panel).toHaveCount(0);
+    await page.keyboard.press("Meta+KeyE");
+    await expect(page.locator('[data-tool="changes"]')).toBeVisible();
+    await panel.locator('[data-tool-tab="explorer"]').click();
     await page.keyboard.press("Meta+Shift+KeyB");
     await expect(workspace).toHaveAttribute("data-panel", "closed");
     await page.keyboard.press("Meta+KeyE");
-    expect(last.get("workspace_view")).toEqual({ tool: "explorer" });
     await expect(workspace).toHaveAttribute("data-panel", "open");
     await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
     // The sidebar switch keeps no chord of its own.

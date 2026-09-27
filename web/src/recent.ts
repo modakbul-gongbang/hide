@@ -53,7 +53,7 @@ function frontLayoutOf(rest: SnapshotRest | null, checkout: Checkout) {
 /**
  * The surface the operator is using now: the focused checkout's active
  * display while the View area is the one in use, else its visible Herdr
- * tab. `viewInUse` is the page's answer (`viewAreaInUse`), since only the
+ * tab. `viewInUse` is the page's answer (`keyboardOwner`), since only the
  * page knows where the keyboard is.
  */
 export function currentSurface(rest: SnapshotRest | null, viewInUse: boolean): Surface | null {

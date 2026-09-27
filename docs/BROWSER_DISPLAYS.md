@@ -37,7 +37,12 @@ The stamp is not saved; a relaunched page loads its address once when it is firs
   A remote page's routed loopback address is translated back to its source device address before that request reaches the core.
 - The address field in the display's toolbar loads what was typed into that display.
 
-A display holds only an `http`, `https` or `file` address with something after the `//`, or `about:blank`, within 8 KiB; anything else is refused with its reason and nothing changes.
+An empty address is a new-tab page rendered by the shell, with a focused address field and Open choices for File (⌘P) and Diff when the checkout has changes.
+File and Diff use the existing palettes and replace the empty display, preserving its ID and position; a file read that fails leaves it intact, and one whose original tab was closed or navigated meanwhile cannot overwrite another tab.
+Each + or View tab menu New tab action creates its own empty display in that area, without creating a native page.
+Closing an untouched empty display adds nothing to Recent Closed or draft recovery.
+
+A nonempty display holds only an `http`, `https` or `file` address with something after the `//`, or `about:blank`, within 8 KiB; anything else is refused with its reason and nothing changes.
 A remote `file:` address is loaded through a checkout-scoped route, never as a file on this Mac.
 
 ## The file boundary

@@ -5,6 +5,7 @@ import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { Command, CommandDialog, CommandGroup, CommandInput, CommandItem, CommandList } from "./components/ui/command";
 import { Kbd } from "./components/ui/kbd";
+import { changedFiles } from "./newTab";
 import { fileIcon } from "./fileIcons";
 import { filterEntries, groupEntries, searchEntries, type SearchEntry } from "./search";
 import { explorerContext } from "./snapshot";
@@ -27,6 +28,7 @@ export function Palette({ actions }: { actions: Actions }) {
   if (overlay === "file_palette" || overlay === "file_palette_beside") {
     return <FilePalette key={overlay} beside={overlay === "file_palette_beside"} actions={actions} />;
   }
+  if (overlay === "diff_palette") return <DiffPalette actions={actions} />;
   if (overlay === "search") return <SearchPalette actions={actions} />;
   return null;
 }
@@ -167,6 +169,27 @@ function FilePalette({ beside, actions }: { beside: boolean; actions: Actions })
           </CommandItem>
         ))
       )}
+    </PaletteShell>
+  );
+}
+
+function DiffPalette({ actions }: { actions: Actions }) {
+  const root = useShellStore((s) => s.rest?.navigator?.changes_root_path ?? null);
+  const changes = useShellStore((s) => s.changes);
+  const [query, setQuery] = useState("");
+  const entries = changedFiles(changes, root, query);
+  return (
+    <PaletteShell label="Open diff" placeholder="Search changed files" query={query} onQuery={setQuery} footer="">
+      {entries.length ? entries.map((entry) => (
+        <CommandItem key={entry.path} asChild value={entry.path} onSelect={() => {
+          useUiStore.getState().closeOverlay();
+          actions.selectChange(entry.path, false, false);
+        }}>
+          <button type="button" data-palette-row={entry.path} className="group/palette-row w-full text-left">
+            <PaletteRow title={entry.relative_path} />
+          </button>
+        </CommandItem>
+      )) : <div className="px-md py-sm text-caption text-muted-foreground">No matching changed files</div>}
     </PaletteShell>
   );
 }
