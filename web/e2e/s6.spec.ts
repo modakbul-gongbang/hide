@@ -230,7 +230,7 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect(workspace).toHaveAttribute("data-panel", "open");
     // A tab of the Agent area's own strip is chosen in place too.
     await page.locator('[data-agent-tab-bar] [data-tab-kind="herdr"]').first().click();
-    await expect.poll(() => last.get("focus_tab")).toMatchObject({ in_place: true });
+    await expect.poll(() => last.get("agent_layout.focus")).toMatchObject({ action: "focus" });
     await expect(workspace).toHaveAttribute("data-panel", "open");
     await childHost.click({ position: { x: 40, y: 60 } });
     expect(resizes()).toBe(resizesBefore);
