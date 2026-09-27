@@ -878,6 +878,39 @@ fn checkout_caller_resolves_the_longest_registered_checkout_containing_its_cwd()
 }
 
 #[test]
+fn two_registrations_of_one_path_refuse_the_checkout_caller_instead_of_choosing() {
+    let (mut runtime, _dir) = caller_fixture();
+    runtime.snapshot.navigator.workspaces[0]
+        .checkouts
+        .push(checkout(
+            "workspace-a",
+            "checkout-b-again",
+            "/checkouts/b",
+            None,
+        ));
+    assert_eq!(
+        runtime
+            .workspace_control_query(
+                "local",
+                &crate::workspace_control::checkout_caller_id("k1", "/checkouts/b/src"),
+                Query::Info,
+            )
+            .unwrap_err()
+            .reason,
+        "ambiguous_checkout"
+    );
+    // The pane in that checkout is unaffected.
+    assert_eq!(
+        runtime
+            .workspace_control_query("local", "pane-b", Query::Info)
+            .unwrap()
+            .context
+            .checkout_id,
+        "checkout-b"
+    );
+}
+
+#[test]
 fn checkout_callers_in_one_checkout_keep_separate_retry_records() {
     let (mut runtime, _dir) = caller_fixture();
     let first = crate::workspace_control::checkout_caller_id("k1", "/checkouts/b/src");

@@ -24,7 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use herdr_core::remote::RusshRemoteClient;
-use herdr_core::workspace_control::{Context, Query, checkout_caller_id};
+use herdr_core::workspace_control::{Caller, Context, Query, checkout_caller_id};
 use hide_herdr_client::{UnixSocketConnector, request_with_connector};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -459,6 +459,47 @@ pub struct Attestation {
     binding: Binding,
 }
 
+/// The bootstrap's attestation. The pane path runs unchanged first; any
+/// pane failure, including a Herdr socket hided never had, hands the caller
+/// to the checkout fallback, whose reason is the bootstrap's answer when it
+/// fails too. Returns the pane reason alongside a checkout-bound attestation.
+fn attest_bootstrap(
+    peer: i32,
+    request: &BootstrapRequest,
+    herdr_socket: Option<&Path>,
+    core: &CoreHandle,
+) -> Result<(Attestation, Option<&'static str>), &'static str> {
+    // The encoded checkout caller is hided's own key for the core; a request
+    // never names one, whatever Herdr's pane namespace holds in the future.
+    if matches!(Caller::parse(&request.pane_id), Caller::Checkout { .. }) {
+        return Err("invalid_request");
+    }
+    let pane = if request.pane_id.is_empty() {
+        Err("pane_not_connected")
+    } else {
+        match herdr_socket {
+            Some(socket) => attest_local(peer, &request.pane_id, socket, core),
+            None => Err("pane_unavailable"),
+        }
+    };
+    match pane {
+        Ok(attestation) => Ok((attestation, None)),
+        Err(pane_reason) => attest_checkout(peer, &request.nonce, core)
+            .map(|attestation| (attestation, Some(pane_reason)))
+            .inspect_err(|reason| {
+                note_checkout_capability(
+                    "checkout_capability.refused",
+                    "bootstrap",
+                    Some(peer),
+                    Some(!request.one_shot),
+                    None,
+                    Some(reason),
+                    Some(pane_reason),
+                );
+            }),
+    }
+}
+
 /// Binds a local caller that is not a pane descendant to the registered,
 /// connected checkout holding its working directory. The directory comes
 /// from the kernel for the peer pid; the request supplies nothing but the
@@ -856,33 +897,8 @@ pub async fn serve(
                     serde_json::from_str::<BootstrapRequest>(&line).map_err(|_| "invalid_request")
                 })
                 .and_then(|request| {
-                    let pane = if request.pane_id.is_empty() {
-                        Err("pane_not_connected")
-                    } else {
-                        let socket = herdr_socket.as_deref().ok_or("pane_unavailable")?;
-                        attest_local(peer, &request.pane_id, socket, &core)
-                    };
-                    // The pane path is unchanged; a caller it cannot place is
-                    // bound to the checkout holding its cwd, or refused with
-                    // that lookup's reason.
-                    let (attestation, pane_reason) = match pane {
-                        Ok(attestation) => (attestation, None),
-                        Err(pane_reason) => {
-                            let attestation = attest_checkout(peer, &request.nonce, &core)
-                                .inspect_err(|reason| {
-                                    note_checkout_capability(
-                                        "checkout_capability.refused",
-                                        "bootstrap",
-                                        Some(peer),
-                                        Some(!request.one_shot),
-                                        None,
-                                        Some(reason),
-                                        Some(pane_reason),
-                                    );
-                                })?;
-                            (attestation, Some(pane_reason))
-                        }
-                    };
+                    let (attestation, pane_reason) =
+                        attest_bootstrap(peer, &request, herdr_socket.as_deref(), &core)?;
                     let holder = if request.one_shot {
                         Some((peer, process_start(peer).ok_or("caller_unavailable")?))
                     } else {
@@ -1097,6 +1113,60 @@ mod tests {
         assert!(created);
         assert_ne!(one_shot, path);
         assert_eq!(registry.entries.lock().unwrap().len(), 2);
+    }
+
+    /// A core with no Herdr and no registered checkout, so every bootstrap
+    /// answer below comes from the attestation path itself.
+    fn bare_core(directory: &Path) -> CoreHandle {
+        CoreHandle::spawn(herdr_core::CoreOptions {
+            schema_version: crate::state_file::SCHEMA_VERSION,
+            herdr_socket_path: None,
+            herdr_bin_path: None,
+            app_state_path: directory.join("core-state.json").display().to_string(),
+            host_helper_dir: None,
+            host_helper_root: None,
+            workspace_views_path: None,
+            shortcut_import_path: None,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn bootstrap_without_a_herdr_socket_still_reaches_the_checkout_fallback() {
+        let directory = tempfile::tempdir().unwrap();
+        let core = bare_core(directory.path());
+        let peer = std::process::id() as i32;
+        let request = |pane_id: &str| BootstrapRequest {
+            pane_id: pane_id.to_owned(),
+            nonce: format!("{:032x}", 7),
+            one_shot: true,
+        };
+        // A stale pane id with no Herdr socket used to answer pane_unavailable
+        // before the fallback ran; the fallback's own answer is the proof it ran
+        // (this test's cwd is inside no registered checkout).
+        assert_eq!(
+            attest_bootstrap(peer, &request("w9J:p17"), None, &core).unwrap_err(),
+            "checkout_not_registered"
+        );
+        assert_eq!(
+            attest_bootstrap(peer, &request(""), None, &core).unwrap_err(),
+            "checkout_not_registered"
+        );
+        // A request cannot name the core's encoded checkout caller itself.
+        assert_eq!(
+            attest_bootstrap(peer, &request("checkout:abcd:/tmp"), None, &core).unwrap_err(),
+            "invalid_request"
+        );
+        // An unreadable caller fails closed before any lookup.
+        assert_eq!(
+            attest_checkout(i32::MAX, &format!("{:032x}", 8), &core).unwrap_err(),
+            "caller_unavailable"
+        );
+        assert_eq!(
+            attest_checkout(peer, "not-a-nonce", &core).unwrap_err(),
+            "invalid_nonce"
+        );
+        core.shutdown();
     }
 
     #[test]
