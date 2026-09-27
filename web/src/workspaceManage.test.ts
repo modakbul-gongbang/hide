@@ -102,6 +102,11 @@ describe("row menus", () => {
 
   it("offers deletion for a linked worktree on any device whose gate allows it", () => {
     expect(checkoutMenu(checkout()).map((item) => item.id)).toEqual(["set_purpose", "delete_worktree"]);
+    // A checkout GitHub knows a pull request for opens it first (checkout-pr-glyph-card B10).
+    const pr = { number: 180, title: "Sidebar readability", url: "https://example.invalid/pull/180", badge: "open" as const, review: null, is_draft: false };
+    expect(checkoutMenu(checkout({ pull_request: pr })).map((item) => item.label)).toEqual(["Open pull request #180", "Set purpose…", "Delete worktree…"]);
+    const unavailable = { failure_category: "auth", available: false, loading: false, stale: false, last_success_at_unix_ms: null, unavailable_reason: "gh is not signed in" };
+    expect(checkoutMenu(checkout({ pull_request: pr, github: unavailable })).map((item) => item.id)).toEqual(["set_purpose", "delete_worktree"]);
     expect(checkoutMenu(checkout({ is_worktree: false })).map((item) => item.id)).toEqual(["set_purpose"]);
     const blocked = checkout();
     if (blocked.worktree) blocked.worktree.deletion_gate.blocked_reason = "The main worktree cannot be deleted";

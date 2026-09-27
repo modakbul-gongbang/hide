@@ -86,25 +86,42 @@ export function projectMarks(workspace: Workspace): MarkCounts {
   return total;
 }
 
-/** The PR badge's text and color token, mirrored from `CheckoutCardPresentation.badgeLabel/badgeColor`. */
-export function pullRequestBadge(pr: PullRequest): { label: string; color: string } {
+/**
+ * The pull request's badge (PRD checkout-pr-glyph-card D-08): the lifecycle
+ * word for a merged, closed, open or draft pull request, and the review
+ * decision for one under review. A draft that is under review keeps the
+ * decision as its badge and says `draft` beside it, in the draft color.
+ */
+export function pullRequestBadge(pr: PullRequest): { label: string; color: string; draft: boolean } {
   switch (pr.badge) {
     case "merged":
-      return { label: "merged", color: "text-pr-merged" };
+      return { label: "Merged", color: "text-pr-merged", draft: false };
     case "closed":
-      return { label: "closed", color: "text-pr-closed" };
+      return { label: "Closed", color: "text-pr-closed", draft: false };
     case "open":
-      return { label: pr.is_draft ? "draft" : "open", color: pr.is_draft ? "text-pr-draft" : "text-pr-open" };
+      return pr.is_draft ? { label: "Draft", color: "text-pr-draft", draft: false } : { label: "Open", color: "text-pr-open", draft: false };
     case "review":
       switch (pr.review) {
         case "approved":
-          return { label: "approved", color: "text-success" };
+          return { label: "Approved", color: "text-success", draft: pr.is_draft };
         case "changes_requested":
-          return { label: "changes", color: "text-destructive" };
+          return { label: "Changes requested", color: "text-destructive", draft: pr.is_draft };
         default:
-          return { label: "review", color: "text-warning" };
+          return { label: "Review required", color: "text-muted-foreground", draft: pr.is_draft };
       }
   }
+}
+
+/**
+ * The pull request a checkout's row speaks for: a stale refresh keeps the
+ * last known one (its glyph muted), an unavailable answer that is not stale
+ * shows none, so the row falls back to its branch.
+ */
+export function shownPullRequest(checkout: Checkout): PullRequest | null {
+  const pr = checkout.pull_request;
+  const github = checkout.github;
+  if (pr === null) return null;
+  return !github || github.available || github.stale || github.unavailable_reason === null ? pr : null;
 }
 
 /** The checkout row's leading glyph: a pull request's lifecycle, else what kind of checkout it is. */
@@ -121,8 +138,10 @@ export type CheckoutPresentation = {
   secondLineReady: boolean;
   /** A merged or closed pull request's row is drawn dimmed. */
   settled: boolean;
-  /** The tooltip: the pull request, the agents by state, and the branch and path. */
+  /** The row's screen-reader description: the pull request, the agents by state, and the branch and path. */
   detail: string;
+  /** The pull request the row shows, whose glyph is a button and whose card has a header. */
+  pullRequest: PullRequest | null;
 };
 
 const LIFECYCLE_TONE: Record<Extract<CheckoutKind, `pr_${string}`>, string> = {
@@ -133,16 +152,13 @@ const LIFECYCLE_TONE: Record<Extract<CheckoutKind, `pr_${string}`>, string> = {
 };
 
 export function checkoutPresentation(workspace: Workspace, checkout: Checkout, nowMs: number): CheckoutPresentation {
-  const pr = checkout.pull_request;
   const github = checkout.github;
-  // A stale refresh keeps the last known pull request and mutes its glyph; an
-  // unavailable answer that is not stale falls back to the branch glyph.
-  const showsPr = pr !== null && (!github || github.available || github.stale || github.unavailable_reason === null);
+  const pr = shownPullRequest(checkout);
   const primary = checkout.is_primary === true;
   const detached = checkout.worktree ? checkout.worktree.branch === null : false;
   const kind: CheckoutKind = primary
     ? "primary"
-    : pr && showsPr
+    : pr
       ? pr.badge === "merged"
         ? "pr_merged"
         : pr.badge === "closed"
@@ -169,7 +185,7 @@ export function checkoutPresentation(workspace: Workspace, checkout: Checkout, n
   const agentCount = summary ? summary.needs_you + summary.done + summary.working + summary.seen : 0;
 
   const lines: string[] = [];
-  if (pr && showsPr) {
+  if (pr) {
     let first = `#${pr.number} · ${pullRequestBadge(pr).label}`;
     if (pr.title) first += ` · ${pr.title}`;
     if (github?.stale && github.last_success_at_unix_ms != null) first += ` · Last known ${relativeActivity(github.last_success_at_unix_ms, nowMs)}`;
@@ -201,7 +217,78 @@ export function checkoutPresentation(workspace: Workspace, checkout: Checkout, n
     secondLineReady: !gitLoading,
     settled: pr?.badge === "merged" || pr?.badge === "closed",
     detail: lines.join("\n"),
+    pullRequest: pr,
   };
+}
+
+/** One line of the checkout card: a label and its value in a tone; the Agents row carries marks instead of a word. */
+export type CheckoutCardRow =
+  | { key: "review" | "checks"; label: string; value: string; tone: string }
+  | { key: "branch" | "commit"; label: string; value: string }
+  | { key: "path"; label: string; value: string }
+  | { key: "agents"; label: string; marks: MarkCounts };
+
+/** The card a checkout row opens on hover and focus (PRD checkout-pr-glyph-card D-03, D-08, D-09, D-12). */
+export type CheckoutCard = {
+  /** A pull request's badge line, or the danger header of a folder that is gone; null on a plain checkout. */
+  header: { kind: "pull_request"; badge: ReturnType<typeof pullRequestBadge>; number: number; url: string; title: string } | { kind: "missing"; label: string } | null;
+  /** Each row only where its source has a value; a row with nothing to say takes no place. */
+  rows: CheckoutCardRow[];
+};
+
+const REVIEW_WORD: Record<NonNullable<PullRequest["review"]>, { value: string; tone: string }> = {
+  approved: { value: "Approved", tone: "text-success" },
+  changes_requested: { value: "Changes requested", tone: "text-destructive" },
+  review_required: { value: "Review required", tone: "text-muted-foreground" },
+};
+
+const CHECKS_WORD: Partial<Record<NonNullable<PullRequest["checks"]>, { value: string; tone: string }>> = {
+  passing: { value: "Passing", tone: "text-success" },
+  failed: { value: "Failed", tone: "text-destructive" },
+  pending: { value: "Pending", tone: "text-muted-foreground" },
+};
+
+/**
+ * Every value the card draws comes from the snapshot (design principle 10):
+ * Review and Checks from the pull request, Branch from the worktree (a
+ * detached HEAD names its short sha), Agents from the summary while any agent
+ * runs, Commit from the last commit's age once Git has been read, Path always.
+ * A folder that is gone has only its Path under a danger header.
+ */
+export function checkoutCard(workspace: Workspace, checkout: Checkout, nowMs: number): CheckoutCard {
+  const rows: CheckoutCardRow[] = [];
+  if (!checkout.exists) {
+    rows.push({ key: "path", label: "Path", value: checkout.path });
+    return { header: { kind: "missing", label: "Folder missing" }, rows };
+  }
+  const pr = shownPullRequest(checkout);
+  if (pr) {
+    if (pr.review) rows.push({ key: "review", label: "Review", ...REVIEW_WORD[pr.review] });
+    const checks = pr.checks ? CHECKS_WORD[pr.checks] : undefined;
+    if (checks) rows.push({ key: "checks", label: "Checks", ...checks });
+  }
+  const worktree = checkout.worktree;
+  if (workspace.is_git && worktree) {
+    if (worktree.branch) rows.push({ key: "branch", label: "Branch", value: worktree.branch });
+    else rows.push({ key: "branch", label: "Branch", value: `Detached HEAD${worktree.head_sha ? ` at ${worktree.head_sha.slice(0, 7)}` : ""}` });
+  }
+  const summary = checkout.agent_summary;
+  if (summary && summary.needs_you + summary.done + summary.working + summary.seen > 0) rows.push({ key: "agents", label: "Agents", marks: summary.marks });
+  const commitSeconds = worktree?.last_commit_unix_seconds;
+  const age = commitSeconds != null ? relativeActivity(commitSeconds * 1000, nowMs) : null;
+  if (age) rows.push({ key: "commit", label: "Commit", value: age === "now" ? "now" : `${age} ago` });
+  rows.push({ key: "path", label: "Path", value: checkout.path });
+  return {
+    header: pr ? { kind: "pull_request", badge: pullRequestBadge(pr), number: pr.number, url: pr.url, title: pr.title } : null,
+    rows,
+  };
+}
+
+/** A card with one value and no header is the plain text tooltip instead (D-09): that one value, never an empty card. */
+export function cardSingleValue(card: CheckoutCard): string | null {
+  if (card.header !== null || card.rows.length !== 1) return null;
+  const row = card.rows[0]!;
+  return row.key === "agents" ? null : row.value;
 }
 
 /** A sidebar activation opens agents unless this Workspace is already open and unfolded. */
