@@ -116,7 +116,9 @@ test("Agent pointer drags split live canvases, reorder, move, cancel, resize, co
     await expect(divider).toHaveAttribute("aria-valuenow", ratio!);
     await screenshot(page, "agent-groups-restarted");
     const destination = await box(tab(page, second!));
-    await drag(page, tab(page, first!), { x: destination.x + 5, y: destination.y + destination.height / 2 });
+    await drag(page, tab(page, first!), { x: destination.x + destination.width / 4, y: destination.y + destination.height / 2 }, async () => {
+      await expect(page.locator('[data-agent-drop="bar"]')).toBeVisible();
+    });
     await expect(areas(page)).toHaveCount(1);
     expect((await shape(page))[0]?.tabs).toEqual([first, second, third]);
     expect(sent.get("reorder_tab") ?? 0).toBe(0);
@@ -132,7 +134,11 @@ test("Agent pointer drags split live canvases, reorder, move, cancel, resize, co
       });
       await expect(areas(page)).toHaveCount(2);
       const destination = await box(tab(page, first!));
-      await drag(page, tab(page, third!), { x: destination.x + 5, y: destination.y + destination.height / 2 });
+      // The sidebar's centered resize grab owns the column's first 10px.
+      // The first quarter of the tab is inside its bar, before its midpoint.
+      await drag(page, tab(page, third!), { x: destination.x + destination.width / 4, y: destination.y + destination.height / 2 }, async () => {
+        await expect(page.locator('[data-agent-drop="bar"]')).toBeVisible();
+      });
       await expect(areas(page)).toHaveCount(1);
     }
     await page.locator('[data-panel-toggle="off"]').click();

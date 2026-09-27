@@ -310,7 +310,9 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
     await page.mouse.down();
     await page.mouse.move(from.x + from.width / 2 - 30, from.y + from.height / 2, { steps: 4 });
-    await page.mouse.move(to.x + 3, to.y + to.height / 2, { steps: 8 });
+    // Stay inside the tab, clear of the sidebar's centered resize grab.
+    await page.mouse.move(to.x + to.width / 4, to.y + to.height / 2, { steps: 8 });
+    await expect(page.locator('[data-agent-drop="bar"]')).toBeVisible();
     await page.mouse.up();
     await expect.poll(() => sent.get("agent_layout.move")).toBe(1);
     expect(sent.get("reorder_tab") ?? 0).toBe(0);
