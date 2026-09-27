@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {spawnSync, execFileSync} from 'node:child_process';
+import {spawn, spawnSync, execFileSync} from 'node:child_process';
 import {fileURLToPath} from 'node:url';
 import {childIndent, evaluate, rootsAligned, sharedColumns, stable} from '../design-review-rules.mjs';
 
@@ -65,6 +65,7 @@ const args = process.argv.slice(2);
 const mode = process.env.FAKE_PEN_MODE ?? '';
 if (args[0] === 'version') { console.log('pen 0.3.8'); process.exit(); }
 if (mode === 'logged-out') { console.error('[ERROR] Authentication required. Run "pen login" or set PEN_CLI_KEY environment variable.'); process.exit(1); }
+if (mode === 'hang') { fs.appendFileSync(process.env.FAKE_PEN_LOG, JSON.stringify({hang: process.pid}) + '\\n'); setInterval(() => {}, 1000); }
 let input = '';
 process.stdin.on('data', chunk => { input += chunk; });
 process.stdin.on('end', () => {
@@ -95,7 +96,7 @@ function fixture(t) {
   for (const name of ['design-review.mjs', 'design-review-rules.mjs', 'pen-cli.mjs']) fs.copyFileSync(path.join(repository, 'scripts', name), path.join(root, 'scripts', name));
   fs.writeFileSync(path.join(root, '.gitignore'), '/agents/\n');
   fs.writeFileSync(path.join(root, 'design/review-targets.json'), JSON.stringify({
-    sample: {sheet: 's', scene: 'projects-sidebar', selector: 'nav', frames: [{node: 'f-l', theme: 'light', width: 292, scale: 1, content: 'reference', state: 'rest'}, {node: 'f-d', theme: 'dark', width: 292, scale: 1, content: 'reference', state: 'rest'}], conditions: {themes: ['light'], widths: [292], contents: ['reference'], scales: [1]}, states: {rest: 'at rest'}, rules: {childIndentPx: 12}, judgment: []},
+    sample: {file: 'design/screens.pen', sheet: 's', scene: 'projects-sidebar', selector: 'nav', frames: [{node: 'f-l', theme: 'light', width: 292, scale: 1, content: 'reference', state: 'rest'}, {node: 'f-d', theme: 'dark', width: 292, scale: 1, content: 'reference', state: 'rest'}], conditions: {themes: ['light'], widths: [292], contents: ['reference'], scales: [1]}, states: {rest: 'at rest'}, rules: {childIndentPx: 12}, judgment: []},
   }));
   fs.writeFileSync(path.join(root, 'design/lib.pen'), JSON.stringify({version: '2', children: [{id: 'm', url: '../web/src/assets/mark.png'}]}));
   fs.writeFileSync(path.join(root, 'design/screens.pen'), JSON.stringify({version: '2', imports: {ui: './lib.pen'}, children: [{id: 'f-l', children: [{id: 'img', fill: {type: 'image', url: '../web/src/assets/mark.png'}}]}]}));
@@ -114,7 +115,7 @@ function run(f, args, extraEnv = {}) {
   return spawnSync(process.execPath, [path.join(f.root, 'scripts/design-review.mjs'), ...args], {cwd: f.root, env: {...f.env, ...extraEnv}, encoding: 'utf8', timeout: 20_000});
 }
 
-const baselineArgs = (name = 'one') => ['baseline', 'task', '--target', 'sample', '--from', 'design/screens.pen', '--approval', 'delegated', '--reference', 'PRD D-08', '--name', name];
+const baselineArgs = (name = 'one') => ['baseline', 'task', '--target', 'sample', '--approval', 'delegated', '--reference', 'PRD D-08', '--name', name];
 const bundleOf = (f, name = 'one') => path.join(f.root, 'agents/runs/task/design/baseline', name);
 
 test('a baseline carries the Pen file, its library and images, exports from itself, and records what it is', t => {
@@ -202,4 +203,51 @@ test('an approval that is neither user nor delegated, or no decision reference, 
   assert.equal(run(f, noReference).status, 2);
   assert.equal(fs.readFileSync(f.log, 'utf8'), '');
   assert.equal(fs.existsSync(path.join(f.root, 'agents')), false);
+});
+
+test('two different libraries with one file name are refused rather than one overwriting the other', t => {
+  const f = fixture(t);
+  for (const dir of ['a', 'b']) {
+    fs.mkdirSync(path.join(f.root, 'design', dir));
+    fs.writeFileSync(path.join(f.root, 'design', dir, 'lib.pen'), JSON.stringify({version: '2', children: [{id: dir}]}));
+  }
+  fs.writeFileSync(path.join(f.root, 'design/screens.pen'), JSON.stringify({version: '2', imports: {a: './a/lib.pen', b: './b/lib.pen'}, children: [{id: 'f-l'}]}));
+  const result = run(f, baselineArgs());
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /Two Pen files would both be lib\.pen in the bundle/);
+  assert.deepEqual(fs.readdirSync(path.dirname(bundleOf(f))), []);
+});
+
+test('a library that imports the document back is copied once', t => {
+  const f = fixture(t);
+  fs.writeFileSync(path.join(f.root, 'design/lib.pen'), JSON.stringify({version: '2', imports: {screens: './screens.pen'}, children: []}));
+  const result = run(f, baselineArgs());
+  assert.equal(result.status, 0, result.stderr);
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(bundleOf(f), 'lib.pen'), 'utf8')).imports, {screens: './screens.pen'});
+});
+
+test('a cancel while the current Pen frames export ends the whole review, not just Pen', async t => {
+  const f = fixture(t);
+  assert.equal(run(f, baselineArgs()).status, 0);
+  fs.writeFileSync(f.log, '');
+  const child = spawn(process.execPath, [path.join(f.root, 'scripts/design-review.mjs'), 'review', 'task', '--baseline', bundleOf(f)], {cwd: f.root, env: {...f.env, FAKE_PEN_MODE: 'hang'}, stdio: ['ignore', 'pipe', 'pipe']});
+  let output = '';
+  child.stdout.on('data', chunk => { output += chunk; });
+  child.stderr.on('data', chunk => { output += chunk; });
+  const exited = new Promise(resolve => child.once('exit', (code, signal) => resolve({code, signal})));
+  let penPid;
+  for (let i = 0; i < 200 && !penPid; i += 1) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+    penPid = fs.readFileSync(f.log, 'utf8').split('\n').filter(Boolean).map(line => JSON.parse(line)).find(entry => entry.hang)?.hang;
+  }
+  assert.ok(penPid, `Pen export never started: ${output}`);
+  child.kill('SIGTERM');
+  const timeout = setTimeout(() => child.kill('SIGKILL'), 10_000);
+  const {code} = await exited;
+  clearTimeout(timeout);
+  assert.equal(code, 143);
+  assert.throws(() => process.kill(penPid, 0), {code: 'ESRCH'});
+  // It stopped instead of going on to the browser part and writing a report.
+  const runs = path.join(f.root, 'agents/runs/task/design/review');
+  for (const dir of fs.readdirSync(runs)) assert.equal(fs.existsSync(path.join(runs, dir, 'report.json')), false);
 });

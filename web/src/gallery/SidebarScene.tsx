@@ -5,7 +5,7 @@
 // the way the core does. One scene fills one document, because the stores it
 // seeds are the app's singletons.
 
-import { useEffect, useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useState } from "react";
 import { createActions } from "../actions";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { Sidebar } from "../sidebar";
@@ -47,15 +47,17 @@ export function SidebarScene({ theme, width, scale, content }: SceneParams) {
     [],
   );
 
-  // Seed the app's stores before the sidebar reads them, and again on every fold.
+  // Seed the app's stores before the first paint, and again on every fold.
   const scene = useMemo(() => sidebarScene(content, folds, Date.now()), [content, folds]);
-  useShellStore.setState({ rest: scene.rest, agents: scene.agents, connection: "live" });
+  useLayoutEffect(() => {
+    useShellStore.setState({ rest: scene.rest, agents: scene.agents, connection: "live" });
+  }, [scene]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     useUiStore.setState({ sidebarMode: "projects", screen: { kind: "overview", projectId: "herdr-ide" } });
   }, []);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = document.documentElement;
     root.classList.toggle("dark", theme === "dark");
     root.classList.toggle("light", theme === "light");

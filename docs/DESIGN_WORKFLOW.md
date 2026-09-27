@@ -74,7 +74,7 @@ Every name, path and count in a scene is invented example data, so a capture of 
 
 A design change is judged against the design that was chosen, not against whatever the Pen file says by the time the code lands: a later edit to Pen, or the same wrong change made to Pen and code together, would otherwise hide the drift.
 `scripts/design-review.mjs` keeps that choice and checks the production screen against it.
-A target in `design/review-targets.json` names what one run covers: the `Screen /` sheet, the Pen nodes it pairs with the screen and each node's width, theme, text scale, content and state, the gallery scene, the states the scene can be put in, the conditions to measure, the default layout rules, and the questions left to a person.
+A target in `design/review-targets.json` names what one run covers: the committed Pen file and its `Screen /` sheet, the Pen nodes it pairs with the screen and each node's width, theme, text scale, content and state, the gallery scene, the states the scene can be put in, the conditions to measure, the default layout rules, and the questions left to a person.
 A target exists for `projects-sidebar`; add one when a change touches another screen, not before.
 
 ### Keep the chosen design: `baseline`
@@ -83,7 +83,7 @@ A target exists for `projects-sidebar`; add one when a change touches another sc
 node scripts/design-review.mjs baseline <slug> --target projects-sidebar --approval user|delegated --reference "agents/prd/<slug>/prd.md D-08" [--name <name>] [--from <file.pen>] [--rules <rules.json>]
 ```
 
-- It copies the Pen file, every library it imports and every image it uses into `agents/runs/<slug>/design/baseline/<name>/`, rewriting the references so the bundle opens in Pen from any directory or machine, and exports the target's nodes from that copy, so the images prove the copy is whole.
+- It copies the target's Pen file (or `--from`, such as a scratch proposal), every library it imports and every image it uses into `agents/runs/<slug>/design/baseline/<name>/`, rewriting the references so the bundle opens in Pen from any directory or machine (two different files that would share one name in the bundle are refused), and exports the target's nodes from that copy, so the images prove the copy is whole.
 - `manifest.json` records when, from which file and commit, with which Pen version, each frame's conditions and image, the layout rules, and a hash of every file.
 - `--approval` separates the operator's choice from a delegated proposal, and `--reference` points at the decision in the PRD instead of restating it.
 - A bundle is never overwritten: a rerun with the same name is refused, and a failed export publishes nothing.
@@ -98,7 +98,7 @@ node scripts/design-review.mjs review <slug> --baseline <bundle> [--theme light,
 One run, in this order, with each step's real result in `agents/runs/<slug>/design/review/<run>/report.md` and `report.json`:
 
 1. The static contract: `node scripts/check-design-contract.mjs`, as CI runs it.
-2. The current Pen: the bundle's nodes exported from this checkout's Pen file.
+2. The current Pen: the bundle's nodes exported from the target's Pen file in this checkout, so a proposal bundle is set against what the checkout now carries.
 3. The production screen: the command starts its own Vite dev server and headless Chromium, opens the target's gallery scene under each selected condition, and measures the bundle's rules there through `web/e2e/sidebar-geometry.mjs`, the same geometry the e2e specs assert on.
    The rules are the bundle's, never values read back from the code under review: `childIndentPx` (a child's status mark and title start that many pixels per level right of its list's roots), `rootsAligned`, `stableUnderHover` and `stableUnderFocus` (no row moves or resizes while any one row is hovered or keyboard-focused), `noOverlap` (no part of a row overlaps another or runs past the row, no text spills), `sharedColumns` (one column for every time and badge end, one for every chevron) and `noSidewaysOverflow`.
 4. Comparisons: for each bundle frame, the reference, the current Pen and the actual screen side by side, captured under that frame's width, theme, text scale, content and state and labelled with them; an image whose width is not the frame's is reported as a different condition, never scaled to look alike.
@@ -107,7 +107,7 @@ One run, in this order, with each step's real result in `agents/runs/<slug>/desi
 The exit status is 0 for PASS, 1 for FAIL (the static contract or a rule failed) and 3 for INCOMPLETE: a missing Pen or Pen login, a node Pen did not export, a bundle file that no longer matches its hash, or a browser step that did not finish.
 An INCOMPLETE report names the cause and the command to rerun on a machine that can render; it is never read as a pass.
 A PASS covers only the rules; the comparisons and the report's judgment list are for a person.
-The run owns its dev server, browser and Pen session and closes them on every exit, including an interrupt, and it touches no other app, pane or server.
+The run owns its dev server, browser and Pen session and closes them on every exit, including an interrupt at any step, which ends the whole run; a process it cannot close is reported, and it touches no other app, pane or server.
 
 Only the selected conditions are measured, so a change names what it touched (`--theme dark --width 240 --content long`), and a bundle frame is always captured under its own conditions so its comparison exists.
 

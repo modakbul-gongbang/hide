@@ -1,6 +1,7 @@
 {
   "projects-sidebar": {
     "description": "The sidebar's Projects tab: project, checkout and agent rows.",
+    "file": "design/hide-screens.pen",
     "sheet": "screen-projects-sidebar",
     "scene": "projects-sidebar",
     "selector": "nav[data-sidebar]",

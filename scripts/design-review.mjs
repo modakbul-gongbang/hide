@@ -117,14 +117,21 @@ async function exportFrames(file, nodes, directory, cwd) {
  */
 function copyPortable(sourceFile, bundle) {
   const assets = new Map();
+  // Every document lands flat in the bundle under its own file name, so two
+  // different files with one name cannot both be kept; a file imported twice
+  // (or in a cycle) is copied once.
+  const documents = new Map();
   const copyDocument = (file, name) => {
+    const claimed = documents.get(name);
+    if (claimed === file) return;
+    if (claimed) throw new Error(`Two Pen files would both be ${name} in the bundle: ${claimed} and ${file}; rename one`);
+    documents.set(name, file);
     const document = JSON.parse(fs.readFileSync(file, 'utf8'));
     const from = path.dirname(file);
     for (const [alias, relative] of Object.entries(document.imports ?? {})) {
       const library = path.resolve(from, relative);
       if (!fs.existsSync(library)) throw new Error(`${path.basename(file)} imports ${relative} (${alias}), which does not exist`);
       const target = path.basename(library);
-      if (target === name) throw new Error(`Library ${relative} has the same name as the document`);
       copyDocument(library, target);
       document.imports[alias] = `./${target}`;
     }
@@ -142,7 +149,7 @@ function copyPortable(sourceFile, bundle) {
     })(document.children ?? []);
     fs.writeFileSync(path.join(bundle, name), `${JSON.stringify(document, null, 2)}\n`);
   };
-  copyDocument(sourceFile, path.basename(sourceFile));
+  copyDocument(path.resolve(sourceFile), path.basename(sourceFile));
   if (assets.size) fs.mkdirSync(path.join(bundle, 'assets'));
   for (const {source, name} of assets.values()) fs.copyFileSync(source, path.join(bundle, name));
 }
@@ -163,8 +170,8 @@ async function baseline(root, args) {
   if (!['user', 'delegated'].includes(options.approval)) throw new UsageError('--approval must be user (the operator chose this design) or delegated (a proposal made under delegated authority)');
   if (!options.reference?.trim()) throw new UsageError('--reference must say where the decision is recorded, e.g. "agents/prd/<slug>/prd.md D-08"');
   const name = options.name ?? new Date().toISOString().replace(/[-:]/g, '').replace(/\..+/, '').replace('T', '-');
-  checkSlug(name.toLowerCase() === name ? name : 'X');
-  const from = path.resolve(root, options.from ?? 'design/hide-screens.pen');
+  checkSlug(name);
+  const from = path.resolve(root, options.from ?? target.file);
   if (!fs.existsSync(from)) throw new UsageError(`No Pen file at ${from}`);
   const rules = options.rules ? JSON.parse(fs.readFileSync(path.resolve(options.rules), 'utf8')) : target.rules;
 
@@ -383,22 +390,62 @@ async function review(root, args) {
     judgment: target.judgment,
   };
   const incomplete = (reason, next) => report.incomplete.push({reason, next});
-  if (bundleProblems.length) incomplete(`The reference bundle does not match its manifest: ${bundleProblems.join('; ')}`, 'Restore the bundle from where it was copied, or make a new baseline with another --name.');
+  // The run owns its Pen session, dev server and browser. A cancel at any point
+  // closes what is open and ends the whole command; pen() kills its own group
+  // on the same signal.
+  const cleanup = [];
+  const stop = async () => {
+    for (const close of cleanup.splice(0).reverse()) {
+      try { await close(); }
+      catch (error) {
+        console.error(`Design review could not close a process it started: ${error.message}`);
+        incomplete(`A process this run started did not close: ${error.message.split('\n')[0]}`, 'Check for a leftover vite or Chromium process from this checkout and end it.');
+      }
+    }
+  };
+  const interrupt = signal => () => { void stop().finally(() => process.exit(128 + (signal === 'SIGINT' ? 2 : 15))); };
+  const onInt = interrupt('SIGINT'), onTerm = interrupt('SIGTERM');
+  process.once('SIGINT', onInt);
+  process.once('SIGTERM', onTerm);
+  try {
+    await reviewParts(root, {noPen: Boolean(options['no-pen']), slug, bundle, manifest, target, themes, widths, contents, scales, states, out, report, incomplete, cleanup});
+  } finally {
+    process.removeListener('SIGINT', onInt);
+    process.removeListener('SIGTERM', onTerm);
+    await stop();
+  }
+
+  const failedRules = report.rules.filter(rule => rule.pass === false);
+  if (report.static.exitCode !== 0 || failedRules.length) report.status = 'FAIL';
+  if (report.incomplete.length) report.status = report.status === 'FAIL' ? 'FAIL' : 'INCOMPLETE';
+  fs.writeFileSync(path.join(out, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
+  fs.writeFileSync(path.join(out, 'report.md'), markdown(report, root));
+  console.log(`${report.status}: ${path.join(out, 'report.md')}`);
+  for (const rule of failedRules.slice(0, 12)) console.log(`  FAIL ${rule.rule} [${rule.condition}]: ${rule.problems[0]}${rule.problems.length > 1 ? ` (+${rule.problems.length - 1} more)` : ''}`);
+  for (const item of report.incomplete) console.log(`  INCOMPLETE ${item.reason}\n    next: ${item.next}`);
+  process.exitCode = report.status === 'PASS' ? EXIT.pass : report.status === 'FAIL' ? EXIT.fail : EXIT.incomplete;
+}
+
+/** The static contract, the current Pen frames, and the measured and captured screen. */
+async function reviewParts(root, {noPen, slug, bundle, manifest, target, themes, widths, contents, scales, states, out, report, incomplete, cleanup}) {
+  if (report.baseline.integrity.length) incomplete(`The reference bundle does not match its manifest: ${report.baseline.integrity.join('; ')}`, 'Restore the bundle from where it was copied, or make a new baseline with another --name.');
 
   // 1. The static design contract, as CI runs it.
   const contract = spawnSync(process.execPath, [path.join(root, 'scripts/check-design-contract.mjs')], {cwd: root, encoding: 'utf8'});
   report.static = {command: 'node scripts/check-design-contract.mjs', exitCode: contract.status, output: `${contract.stdout}${contract.stderr}`.trim().split('\n').slice(-12)};
 
-  // 2. The same frames from the current Pen file, when Pen can render here.
-  const currentFile = path.join(root, manifest.source.file);
+  // 2. The same frames from the target's current Pen file, when Pen can render here.
+  const currentFile = path.join(root, target.file);
   let current = {};
-  if (options['no-pen']) {
+  if (noPen) {
     report.pen = {status: 'NOT RENDERED', reason: '--no-pen was given'};
   } else {
     try {
       await requirePen(root);
       current = await exportFrames(currentFile, manifest.frames.map(frame => frame.node), path.join(out, 'current-pen'), root);
-      report.pen = {status: 'RENDERED', file: manifest.source.file, sha256: sha256(currentFile), changedSinceBaseline: sha256(currentFile) !== manifest.source.sha256};
+      const hash = sha256(currentFile);
+      // Only the same file can be said to have changed; a proposal's bundle came from a scratch copy.
+      report.pen = {status: 'RENDERED', file: target.file, sha256: hash, changedSinceBaseline: target.file === manifest.source.file ? hash !== manifest.source.sha256 : null};
     } catch (error) {
       report.pen = {status: 'NOT RENDERED', reason: error instanceof PenError ? error.reason : error.message.split('\n')[0]};
     }
@@ -406,12 +453,6 @@ async function review(root, args) {
   if (report.pen.status !== 'RENDERED') incomplete(`The current Pen frames were not rendered: ${report.pen.reason}`, `Rerun on a machine with pen and a Pen login: node scripts/design-review.mjs review ${slug} --baseline ${path.relative(root, bundle)}`);
 
   // 3. The production screen in Chromium, measured and captured per condition.
-  const cleanup = [];
-  const stop = async () => { for (const close of cleanup.splice(0).reverse()) { try { await close(); } catch { /* already closed */ } } };
-  const interrupt = signal => () => { void stop().finally(() => process.exit(128 + (signal === 'SIGINT' ? 2 : 15))); };
-  const onInt = interrupt('SIGINT'), onTerm = interrupt('SIGTERM');
-  process.once('SIGINT', onInt);
-  process.once('SIGTERM', onTerm);
   try {
     const geometry = await import(pathToFileURL(path.join(root, 'web/e2e/sidebar-geometry.mjs')).href);
     const {origin, browser} = await openBrowser(root, cleanup);
@@ -467,7 +508,7 @@ async function review(root, args) {
         subtitle: `Same width, theme, content and state in all three. Reference: bundle ${manifest.name}, ${manifest.approval.kind === 'user' ? 'chosen by the operator' : 'delegated proposal, not user-approved'} (${manifest.approval.reference}).`,
         columns: [
           {label: 'Reference', detail: `baseline bundle, Pen node ${frame.node}`, image: reference},
-          {label: 'Current Pen', detail: `${manifest.source.file} in this checkout`, image: pair.current, missing: `NOT RENDERED: ${report.pen.reason ?? ''}`},
+          {label: 'Current Pen', detail: `${target.file} in this checkout`, image: pair.current, missing: `NOT RENDERED: ${report.pen.reason ?? ''}`},
           {label: 'Actual', detail: 'production Sidebar on the gallery scene, Chromium', image: actual, missing: 'NOT CAPTURED'},
         ],
       });
@@ -489,21 +530,7 @@ async function review(root, args) {
     }
   } catch (error) {
     incomplete(`The browser part did not finish: ${error.message.split('\n')[0]}`, 'Fix the cause above and rerun the same command.');
-  } finally {
-    process.removeListener('SIGINT', onInt);
-    process.removeListener('SIGTERM', onTerm);
-    await stop();
   }
-
-  const failedRules = report.rules.filter(rule => rule.pass === false);
-  if (report.static.exitCode !== 0 || failedRules.length) report.status = 'FAIL';
-  if (report.incomplete.length) report.status = report.status === 'FAIL' ? 'FAIL' : 'INCOMPLETE';
-  fs.writeFileSync(path.join(out, 'report.json'), `${JSON.stringify(report, null, 2)}\n`);
-  fs.writeFileSync(path.join(out, 'report.md'), markdown(report, root));
-  console.log(`${report.status}: ${path.join(out, 'report.md')}`);
-  for (const rule of failedRules.slice(0, 12)) console.log(`  FAIL ${rule.rule} [${rule.condition}]: ${rule.problems[0]}${rule.problems.length > 1 ? ` (+${rule.problems.length - 1} more)` : ''}`);
-  for (const item of report.incomplete) console.log(`  INCOMPLETE ${item.reason}\n    next: ${item.next}`);
-  process.exitCode = report.status === 'PASS' ? EXIT.pass : report.status === 'FAIL' ? EXIT.fail : EXIT.incomplete;
 }
 
 /** The report a reviewer reads: automated facts first, then what is left to a person. */
@@ -515,7 +542,7 @@ function markdown(report, root) {
   lines.push(`Baseline ${report.baseline.name}: ${report.baseline.approval.kind === 'user' ? 'chosen by the operator' : 'delegated proposal, not user-approved'} (${report.baseline.approval.reference}), from ${report.baseline.source.file} at ${report.baseline.source.gitHead.slice(0, 12)}.`, '');
   lines.push('## Automated facts', '');
   lines.push(`- Static design contract: \`${report.static.command}\` exit ${report.static.exitCode}.`);
-  lines.push(`- Current Pen: ${report.pen.status}${report.pen.reason ? ` (${report.pen.reason})` : ''}${report.pen.changedSinceBaseline === undefined ? '' : report.pen.changedSinceBaseline ? '; the Pen file changed since the baseline' : '; the Pen file is the baseline\'s'}.`);
+  lines.push(`- Current Pen: ${report.pen.status}${report.pen.reason ? ` (${report.pen.reason})` : ''}${report.pen.status !== 'RENDERED' ? '' : report.pen.changedSinceBaseline === null ? `; ${report.pen.file}, while the baseline was made from ${report.baseline.source.file}` : report.pen.changedSinceBaseline ? '; the Pen file changed since the baseline' : '; the Pen file is the baseline\'s'}.`);
   lines.push(`- Reference bundle integrity: ${report.baseline.integrity.length ? report.baseline.integrity.join('; ') : 'every file matches its hash'}.`);
   lines.push(`- Conditions measured: themes ${report.selection.themes.join('/')}, widths ${report.selection.widths.join('/')}px, content ${report.selection.contents.join('/')}, text scale ${report.selection.scales.join('/')}.`);
   lines.push('', '| Rule | Condition | Expected | Measured | Result |', '| --- | --- | --- | --- | --- |');
