@@ -50,10 +50,12 @@ export const PANEL_SHARE_MAX = 0.8;
 export type PanelSizes = {
   /** The narrowest the agents left of the panel, or one View area, may be. */
   areaMin: number;
-  /** The tool column's width. */
+  /** The tool column's width, counting its own left hairline and the card's right one, as the Pen part does. */
   toolColumn: number;
-  /** What the panel's frame takes from its width: the gap on its left and the card's two side hairlines. */
-  chrome: number;
+  /** The gap on the panel's left, outside the card. */
+  gap: number;
+  /** The card's side hairlines, each. */
+  hairline: number;
 };
 
 /**
@@ -124,8 +126,11 @@ export function panelFrame(input: {
 
 /** The narrowest an open panel may be for what it holds. */
 function panelMinimum(content: PanelFrame["content"], tools: boolean, sizes: PanelSizes): number {
-  if (content === "tools") return sizes.chrome + sizes.toolColumn;
-  return sizes.chrome + sizes.areaMin + (content === "views" && tools ? sizes.toolColumn : 0);
+  // The tool column holds the card's right hairline, and alone it holds the
+  // left one too, so it is the token wide wherever it shows.
+  if (content === "tools") return sizes.gap + sizes.toolColumn;
+  if (content === "views" && tools) return sizes.gap + sizes.hairline + sizes.areaMin + sizes.toolColumn;
+  return sizes.gap + 2 * sizes.hairline + sizes.areaMin;
 }
 
 /**

@@ -39,7 +39,7 @@ describe("tab identity", () => {
 });
 
 describe("the side panel", () => {
-  const sizes = { areaMin: 224, toolColumn: 260, chrome: 0 };
+  const sizes = { areaMin: 224, toolColumn: 260, gap: 0, hairline: 0 };
   const view = (panel: WorkspaceView["panel"], extra: Partial<WorkspaceView> = {}) => ({ panel, pinned: false, views_over_share: 0.6, tools_share: null, tools: true, ...extra });
   const frame = (panel: WorkspaceView["panel"], views: boolean, body: number, extra: Partial<WorkspaceView> = {}) => panelFrame({ view: view(panel, extra), views, body, sizes });
 
@@ -90,12 +90,16 @@ describe("the side panel", () => {
     expect(frame("open", true, 708, { pinned: true })).toMatchObject({ shown: "open", narrow: false, agentsRight: 484 });
   });
 
-  it("counts its gap and hairlines in every minimum, so a View area and the tool column keep theirs", () => {
-    const framed = { ...sizes, chrome: 10 };
+  it("counts its gap and hairlines in every minimum, with the tool column holding its hairlines inside its token", () => {
+    const framed = { ...sizes, gap: 8, hairline: 1 };
     const at = (views: boolean, body: number, extra: Partial<WorkspaceView> = {}) => panelFrame({ view: view("open", extra), views, body, sizes: framed });
-    expect(at(false, 1400)).toMatchObject({ content: "tools", width: 270 });
-    expect(at(true, 1400, { views_over_share: 0.2 }).width).toBe(494);
-    expect(at(true, 717)).toMatchObject({ narrow: true });
+    // Alone the column is the card, both hairlines inside it.
+    expect(at(false, 1400)).toMatchObject({ content: "tools", width: 268 });
+    // Beside a view it holds the card's right hairline; the left one is the View area's.
+    expect(at(true, 1400, { views_over_share: 0.2 }).width).toBe(493);
+    expect(at(true, 1400, { views_over_share: 0.2, tools: false }).width).toBe(280);
+    expect(at(true, 716)).toMatchObject({ narrow: true });
+    expect(at(true, 717)).toMatchObject({ narrow: false });
   });
 
   it("folds the tools into an overlay in a window too narrow for both, and only there", () => {

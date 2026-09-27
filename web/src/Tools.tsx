@@ -113,8 +113,8 @@ export function Tools({
       onKeyDown={overlay ? closeFromKeyboard : undefined}
       className={
         overlay
-          ? "absolute bottom-0 right-0 top-[var(--size-tab-strip)] z-20 flex w-[var(--size-panel-ideal)] max-w-full flex-col border-l border-border bg-card text-foreground outline-none"
-          : "flex h-full min-w-[var(--size-panel-min)] shrink-[1000] grow-0 basis-[var(--size-panel-ideal)] flex-col text-foreground"
+          ? "absolute bottom-0 right-0 top-[var(--size-tab-strip)] z-20 flex w-[calc(var(--size-panel-ideal)-var(--size-hairline))] max-w-full flex-col border-l border-border bg-card text-foreground outline-none"
+          : "flex h-full min-w-[calc(var(--size-panel-min)-var(--size-hairline))] shrink-[1000] grow-0 basis-[calc(var(--size-panel-ideal)-var(--size-hairline))] flex-col text-foreground"
       }
       aria-label="Workspace tools"
       data-workspace-tools={tool}

@@ -54,7 +54,7 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
   const [body, setBody] = useState<HTMLElement | null>(null);
   const width = useWidth(body);
   const sizes = useMemo<PanelSizes>(
-    () => ({ areaMin: tokenPx("--size-workspace-area-min"), toolColumn: tokenPx("--size-panel-ideal"), chrome: tokenPx("--spacing-sm") + 2 * tokenPx("--size-hairline") }),
+    () => ({ areaMin: tokenPx("--size-workspace-area-min"), toolColumn: tokenPx("--size-panel-ideal"), gap: tokenPx("--spacing-sm"), hairline: tokenPx("--size-hairline") }),
     [],
   );
   const opening = useShellStore((s) => (s.editor?.opening ?? []).some((row) => row.checkout_id === checkout?.id));

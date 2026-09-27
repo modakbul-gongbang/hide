@@ -81,7 +81,8 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect(panel).toHaveAttribute("data-panel-content", "tools");
     await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
     const toolColumn = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--size-panel-ideal")));
-    expect((await panel.locator("[data-workspace-tools]").boundingBox())!.width).toBeCloseTo(toolColumn, 0);
+    // The card is the column, its hairlines inside the token (issue 170).
+    expect((await panel.locator("[data-panel-card]").boundingBox())!.width).toBeCloseTo(toolColumn, 0);
     await page.keyboard.press("Meta+KeyK");
     await page.keyboard.type("Close side panel");
     await page.keyboard.press("Enter");
@@ -190,6 +191,9 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     expect(panelBox.height).toBeCloseTo(bodyBox.height, 0);
     expect(panelBox.width).toBeGreaterThan(toolColumn);
     await expect(panel.locator('[data-tool="explorer"]')).toBeVisible();
+    // Beside a view the column, with the card's right hairline, is the token wide.
+    const columnBox = (await panel.locator("[data-workspace-tools]").boundingBox())!;
+    expect(panelBox.x + panelBox.width - columnBox.x).toBeCloseTo(toolColumn, 0);
     // The panel's actions sit at the right end of its first row, above the
     // tool column, with the column's toggle pressed.
     await expect(panel.locator('[data-workspace-tools] [data-panel-actions] [data-panel-pin="off"]')).toBeVisible();
