@@ -35,7 +35,7 @@ pub(super) struct WorkspaceViewStore {
     /// the tree the file carried until it is shown.
     pub(super) live: HashSet<WorkspaceKey>,
     pub(super) agent_live: HashSet<WorkspaceKey>,
-    pub(super) agent_placements: BTreeMap<String, (WorkspaceKey, String, Instant)>,
+    pub(super) agent_placements: BTreeMap<String, (WorkspaceKey, String, Option<usize>, Instant)>,
     /// The Workspace the last sync saw in front.
     pub(super) front: Option<WorkspaceKey>,
     /// The front Workspace whose side panel the shell reports drawing over

@@ -141,6 +141,15 @@ impl ProjectionState {
             .iter()
             .map(|workspace| SessionWorkspacePayload {
                 workspace_id: workspace.workspace_id.clone(),
+                worktree: workspace.worktree.as_ref().map(|tree| {
+                    crate::domain::WorktreeProjection {
+                        repo_key: tree.repo_key.clone(),
+                        repo_name: tree.repo_name.clone(),
+                        repo_root: tree.repo_root.clone(),
+                        checkout_path: tree.checkout_path.clone(),
+                        is_linked_worktree: tree.is_linked_worktree,
+                    }
+                }),
                 label: workspace.label.clone(),
                 active_tab_id: non_blank(Some(workspace.active_tab_id.as_str())),
                 tokens: workspace.tokens.clone(),

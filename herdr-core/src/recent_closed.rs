@@ -26,6 +26,10 @@ pub struct ClosedContext {
     pub tab_id: String,
     pub tab_label: String,
     pub tab_index: usize,
+    /// Hide-owned area and insertion position, independent of Herdr order.
+    pub agent_area: Option<(String, usize)>,
+    /// The primary workspace needs a shell before its last tab can close.
+    pub replacement_shell: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

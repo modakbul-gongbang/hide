@@ -1179,6 +1179,12 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     /** A close whose outcome the core could not read; asks it to check (`check_close_status`). */
+    retryAgentClose(key: string) {
+      dispatch({ schema_version: 2, kind: "retry_agent_close", payload: { key } });
+    },
+    dismissAgentClose(key: string) {
+      dispatch({ schema_version: 2, kind: "dismiss_agent_close", payload: { key } });
+    },
     checkCloseStatus(key: string) {
       dispatch({ schema_version: 2, kind: "check_close_status", payload: { key } });
     },

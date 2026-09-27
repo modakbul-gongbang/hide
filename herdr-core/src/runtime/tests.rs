@@ -1174,6 +1174,8 @@ fn close_capture_request(key: &str) -> live::CloseCaptureRequest {
             tab_id: format!("tab:{key}"),
             tab_label: key.to_owned(),
             tab_index: 0,
+            agent_area: None,
+            replacement_shell: false,
         },
         panes: vec![],
         target: live::CloseCaptureTarget::Tab {

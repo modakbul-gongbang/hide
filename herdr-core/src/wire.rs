@@ -804,6 +804,19 @@ pub(crate) fn tab_create_params(workspace: &str, cwd: &str, label: &str) -> Resu
         env: Default::default(),
     })
 }
+pub(crate) fn replacement_tab_params(
+    workspace: &str,
+    cwd: &str,
+    env: std::collections::BTreeMap<String, String>,
+) -> Result<Value, String> {
+    params(req::TabCreateParams {
+        workspace_id: Some(workspace.into()),
+        cwd: Some(cwd.into()),
+        label: None,
+        focus: false,
+        env: env.into_iter().collect(),
+    })
+}
 pub(crate) fn worktree_create_params(
     cwd: &str,
     branch: &str,

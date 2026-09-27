@@ -27,6 +27,8 @@ pub struct SessionSnapshotPayload {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionWorkspacePayload {
+    #[serde(default)]
+    pub worktree: Option<crate::domain::WorktreeProjection>,
     pub workspace_id: String,
     #[serde(default)]
     pub label: String,

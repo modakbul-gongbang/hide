@@ -826,6 +826,17 @@ impl Runtime {
                         tab_id: tab_id.clone(),
                         tab_label: tab.label.clone().unwrap_or_else(|| "Tab".into()),
                         tab_index: tab_order.iter().position(|id| id == tab_id).unwrap_or(0),
+                        agent_area: self
+                            .agent_layout_of(&(workspace.device_id.clone(), checkout.path.clone()))
+                            .and_then(|layout| {
+                                layout.tree.areas().into_iter().find_map(|area| {
+                                    area.displays
+                                        .iter()
+                                        .position(|item| &item.id == tab_id)
+                                        .map(|index| (area.id.clone(), index))
+                                })
+                            }),
+                        replacement_shell: self.primary_needs_shell(session_workspace_id, tab_id),
                     })
             })
     }
@@ -1040,7 +1051,7 @@ impl Runtime {
                 live::CloseCaptureTarget::Pane { .. }
             )
             .then_some(operation.target_id.clone()),
-            message: operation.message.clone().unwrap_or(message),
+            message: operation.message.clone().unwrap_or_else(|| message.clone()),
         }]);
         self.push_diagnostic(
             "recent_closed.close_canceled",
@@ -1129,6 +1140,13 @@ impl Runtime {
         tab: TabSnapshot,
     ) -> bool {
         let target_id = close_target_id(&target).to_owned();
+        if self.close_operations.len() >= crate::recent_closed::RECENT_CLOSED_LIMIT {
+            self.set_reopen_notices(vec![live::ReopenNotice {
+                pane_id: None,
+                message: "Resolve or dismiss an earlier close before closing another item".into(),
+            }]);
+            return true;
+        }
         let Some(scope_id) = tab.id.clone() else {
             self.set_reopen_notices(vec![live::ReopenNotice {
                 pane_id: matches!(&target, live::CloseCaptureTarget::Pane { .. })
@@ -1155,7 +1173,7 @@ impl Runtime {
             self.sync_recent_closed_snapshot();
             return false;
         }
-        let Some(context) = self.close_context(&tab) else {
+        let Some(mut context) = self.close_context(&tab) else {
             self.set_reopen_notices(vec![live::ReopenNotice {
                 pane_id: matches!(&target, live::CloseCaptureTarget::Pane { .. })
                     .then_some(target_id.clone()),
@@ -1173,6 +1191,8 @@ impl Runtime {
             }]);
             return true;
         };
+        context.replacement_shell &=
+            matches!(target, live::CloseCaptureTarget::Tab { .. }) || tab.panes.len() == 1;
         let request = live::CloseCaptureRequest {
             key: self.next_recent_closed_key(),
             connection_generation: self.live_generation,
@@ -1356,9 +1376,11 @@ impl Runtime {
         };
         operation.phase = "failed".to_owned();
         operation.stage = "capture".to_owned();
-        operation.message = Some(format!(
-            "Restore information was not prepared; the item was not closed: {message}"
-        ));
+        operation.message = Some(if operation.request.context.replacement_shell {
+            "The close could not be prepared. Nothing was closed; retry when the connection is ready.".to_owned()
+        } else {
+            format!("Restore information was not prepared; the item was not closed: {message}")
+        });
         operation.retryable = true;
         operation.deadline_at_unix_ms = None;
         let operation = operation.clone();
@@ -1369,15 +1391,11 @@ impl Runtime {
                 live::CloseCaptureTarget::Pane { .. }
             )
             .then_some(operation.target_id.clone()),
-            message: operation.message.clone().unwrap_or(message),
+            message: operation.message.clone().unwrap_or_else(|| message.clone()),
         }]);
         self.push_diagnostic(
             "recent_closed.capture_failed",
-            format!(
-                "{}: {}",
-                operation.request.key,
-                operation.message.as_deref().unwrap_or("unknown failure")
-            ),
+            format!("{}: {}", operation.request.key, message),
         );
         self.promote_close_reservations();
         self.sync_recent_closed_snapshot();
@@ -1467,8 +1485,13 @@ impl Runtime {
                 operation.stage = "close_request".to_owned();
                 operation.message = None;
                 operation.retryable = false;
-                operation.deadline_at_unix_ms =
-                    Some(unix_milliseconds().saturating_add(CLOSE_STAGE_TIMEOUT_MS));
+                operation.deadline_at_unix_ms = Some(unix_milliseconds().saturating_add(
+                    if request.context.replacement_shell {
+                        3 * CLOSE_STAGE_TIMEOUT_MS
+                    } else {
+                        CLOSE_STAGE_TIMEOUT_MS
+                    },
+                ));
                 self.push_diagnostic(
                     "recent_closed.reserved",
                     format!(
@@ -1480,6 +1503,10 @@ impl Runtime {
                     key: request.key.clone(),
                     connection_generation: request.connection_generation,
                     target: request.target.clone(),
+                    replacement: (request.context.replacement_shell
+                        && (matches!(request.target, live::CloseCaptureTarget::Tab { .. })
+                            || request.panes.len() == 1))
+                        .then(|| request.context.clone()),
                 });
             }
             Err(message) => self.fail_close_operation(&request.key, message),
@@ -1516,6 +1543,8 @@ impl Runtime {
                     tab_id,
                     tab_label: request.key.clone(),
                     tab_index: 0,
+                    agent_area: None,
+                    replacement_shell: false,
                 },
                 panes: Vec::new(),
                 target: request.target.clone(),
@@ -1577,7 +1606,9 @@ impl Runtime {
                 if let Some(operation) = self.close_operations.get_mut(&request.key) {
                     operation.phase = "refused".to_owned();
                     operation.stage = "close_request".to_owned();
-                    operation.message = Some(format!("The close was refused: {code}: {message}"));
+                    operation.message = Some(if code == "replacement_failed" {
+                        "The replacement shell could not be prepared. Nothing was closed. Retry when the connection is ready."
+                    } else { "The item was not closed. The replacement shell remains available; retry the close." }.to_owned());
                     operation.retryable = true;
                     operation.deadline_at_unix_ms = None;
                 }
@@ -1639,6 +1670,11 @@ impl Runtime {
                 continue;
             };
             if !matches!(operation.phase.as_str(), "completed" | "failed" | "refused") {
+                break;
+            }
+            if operation.request.context.replacement_shell
+                && matches!(operation.phase.as_str(), "failed" | "refused")
+            {
                 break;
             }
             self.close_capture_order.pop_front();
@@ -2313,6 +2349,19 @@ impl Runtime {
                 }
             }
             Ok(live::FileReopenResultOrHerdr::Herdr(outcome)) => {
+                if let Some(tab_id) = outcome.tab_id.as_ref() {
+                    let context = match &request.item {
+                        ClosedItem::Pane { context, .. } | ClosedItem::Tab { context, .. } => {
+                            Some(context)
+                        }
+                        _ => None,
+                    };
+                    if let Some(context) = context
+                        && let Err(message) = self.queue_restored_agent_tab(context, tab_id)
+                    {
+                        self.push_diagnostic("agent_layout.reopen_placement_failed", message);
+                    }
+                }
                 if outcome.consumed {
                     self.consume_recent_closed(key);
                 }

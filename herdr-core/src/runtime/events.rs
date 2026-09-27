@@ -929,6 +929,8 @@ pub(super) enum Event {
     CloseTab(ConfirmedTabPayload),
     ClosePane(ConfirmedPanePayload),
     CheckCloseStatus(CheckCloseStatusPayload),
+    RetryAgentClose(CheckCloseStatusPayload),
+    DismissAgentClose(CheckCloseStatusPayload),
     ReopenClosed,
     ForkPane(PaneTargetPayload),
     AgentSleepSet(AgentSleepSetPayload),
@@ -1096,6 +1098,8 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "close_tab" => decode!(ConfirmedTabPayload, CloseTab),
         "close_pane" => decode!(ConfirmedPanePayload, ClosePane),
         "check_close_status" => decode!(CheckCloseStatusPayload, CheckCloseStatus),
+        "retry_agent_close" => decode!(CheckCloseStatusPayload, RetryAgentClose),
+        "dismiss_agent_close" => decode!(CheckCloseStatusPayload, DismissAgentClose),
         "reopen_closed" => Ok(Event::ReopenClosed),
         "fork_pane" => decode!(PaneTargetPayload, ForkPane),
         "agent_sleep_set" => decode!(AgentSleepSetPayload, AgentSleepSet),
@@ -2195,6 +2199,8 @@ impl Runtime {
                 self.start_close_capture(live::CloseCaptureTarget::Pane { pane_id }, tab)
             }
             Event::CheckCloseStatus(payload) => self.check_close_status(&payload.key),
+            Event::RetryAgentClose(payload) => self.retry_agent_close(&payload.key),
+            Event::DismissAgentClose(payload) => self.dismiss_agent_close(&payload.key),
             Event::ReopenClosed => self.reopen_closed(),
             Event::ForkPane(payload) => {
                 let pane_id = payload.pane_id;

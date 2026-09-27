@@ -5,6 +5,7 @@ use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 mod agent_areas;
+mod agent_close;
 mod agent_sleep;
 mod agents;
 mod attachments;
@@ -1196,6 +1197,7 @@ pub struct Runtime {
     /// the workspace's list, not in a checkout's part of it, so the index has
     /// to be read off this list or the tab lands somewhere else.
     herdr_workspace_tab_order: BTreeMap<String, Vec<String>>,
+    herdr_worktrees: BTreeMap<String, crate::domain::WorktreeProjection>,
     /// The arrangement a reorder asked for and Herdr has not reported yet,
     /// per checkout. Herdr owns where its own tabs sit, so a drag that moves
     /// one of them is held here rather than written into the strip: an
@@ -1519,6 +1521,7 @@ impl Runtime {
             catalog_roots: workspace::RootIndex::new(),
             checkout_tab_order: BTreeMap::new(),
             herdr_workspace_tab_order: BTreeMap::new(),
+            herdr_worktrees: BTreeMap::new(),
             pending_tab_move: BTreeMap::new(),
             next_tab_move_generation: 0,
             unresolved_active_tabs: BTreeSet::new(),

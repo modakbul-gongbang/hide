@@ -1,0 +1,110 @@
+use super::*;
+use crate::fake_herdr::FakeHerdr;
+
+fn context() -> ClosedContext {
+    ClosedContext {
+        workspace_id: "w1".into(),
+        workspace_label: "primary".into(),
+        workspace_ids_before_close: vec!["w1".into(), "w2".into()],
+        tab_ids_before_close: vec!["w1:t1".into()],
+        pane_ids_before_close: vec!["w1:p1".into()],
+        checkout_id: "checkout".into(),
+        checkout_path: "/tmp".into(),
+        tab_id: "w1:t1".into(),
+        tab_label: "old".into(),
+        tab_index: 0,
+        agent_area: Some(("a1".into(), 0)),
+        replacement_shell: true,
+    }
+}
+fn tab(id: &str) -> Value {
+    json!({"tab_id":id,"workspace_id":"w1","number":1,"label":"shell","focused":false,"pane_count":1,"agent_status":"idle"})
+}
+fn snapshot(created: bool) -> Value {
+    let mut tabs = vec![tab("w1:t1")];
+    if created {
+        tabs.push(tab("w1:t2"));
+    }
+    json!({"type":"session_snapshot","snapshot":{
+        "version":"fixture","protocol":HERDR_PROTOCOL_REVISION,
+        "workspaces":[{"workspace_id":"w1","number":1,"label":"primary","focused":false,"pane_count":tabs.len(),"tab_count":tabs.len(),"active_tab_id":"w1:t1","agent_status":"idle"}],
+        "tabs":tabs,"panes":[],"layouts":[],"agents":[]
+    }})
+}
+
+#[test]
+fn replacement_creation_failure_sends_no_close() {
+    let herdr = FakeHerdr::start_with_errors("replacement-failure", |method, _| match method {
+        "session.snapshot" => Ok(snapshot(false)),
+        "tab.create" => Err(("fixture_create_refused".into(), "private diagnostic".into())),
+        other => panic!("unexpected effect {other}"),
+    });
+    let error = prepare_close_replacement(&herdr.connector(), "intent", &context()).unwrap_err();
+    assert!(error.contains("fixture_create_refused"));
+    assert_eq!(herdr.methods(), ["session.snapshot", "tab.create"]);
+}
+
+#[test]
+fn replacement_retry_after_close_refusal_adopts_its_shell_without_another_create() {
+    let mut created = false;
+    let herdr = FakeHerdr::start_with_errors(
+        "replacement-retry",
+        move |method, params| match method {
+            "session.snapshot" => Ok(snapshot(created)),
+            "tab.create" => {
+                assert!(!created);
+                assert_eq!(params["cwd"], "/tmp");
+                assert_eq!(params["focus"], false);
+                assert_eq!(params["env"][REOPEN_INTENT_ENV], "intent:close-replacement");
+                created = true;
+                Ok(json!({"type":"tab_created","tab":tab("w1:t2"),"root_pane":{
+                    "pane_id":"w1:p2","terminal_id":"terminal","workspace_id":"w1","tab_id":"w1:t2","focused":false,"agent_status":"idle","revision":0
+                }}))
+            }
+            "layout.export" => Ok(json!({"type":"layout_export","layout":{
+                "workspace_id":"w1","tab_id":"w1:t2","zoomed":false,"focused_pane_id":"w1:p2",
+                "root":{"type":"pane","pane_id":"w1:p2","cwd":"/tmp","env":{(REOPEN_INTENT_ENV):"intent:close-replacement"}}
+            }})),
+            "tab.close" => Err(("fixture_close_refused".into(), "private diagnostic".into())),
+            other => panic!("unexpected effect {other}"),
+        },
+    );
+    let connector = herdr.connector();
+    assert_eq!(
+        prepare_close_replacement(&connector, "intent", &context())
+            .unwrap()
+            .0,
+        "w1:t2"
+    );
+    let close = CloseEffectRequest {
+        key: "intent".into(),
+        connection_generation: 0,
+        target: CloseCaptureTarget::Tab {
+            tab_id: "w1:t1".into(),
+        },
+        replacement: Some(context()),
+    };
+    assert!(run_close_effect(&connector, &close).is_err());
+    assert_eq!(
+        prepare_close_replacement(&connector, "intent", &context())
+            .unwrap()
+            .0,
+        "w1:t2"
+    );
+    assert_eq!(
+        herdr
+            .methods()
+            .iter()
+            .filter(|method| method.as_str() == "tab.create")
+            .count(),
+        1
+    );
+    assert_eq!(
+        herdr
+            .methods()
+            .iter()
+            .filter(|method| method.as_str() == "tab.close")
+            .count(),
+        1
+    );
+}

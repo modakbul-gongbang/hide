@@ -130,3 +130,33 @@ fn requested_new_tab_area_survives_a_focus_change_before_topology_arrives() {
             .is_empty()
     );
 }
+
+#[test]
+fn replacement_predicate_requires_primary_provenance_a_linked_sibling_and_its_last_tab() {
+    let (mut runtime, _) = setup();
+    let primary = crate::domain::WorktreeProjection {
+        repo_key: "repo".into(),
+        repo_name: "repo".into(),
+        repo_root: "/repo".into(),
+        checkout_path: "/repo".into(),
+        is_linked_worktree: false,
+    };
+    runtime
+        .herdr_worktrees
+        .insert("w-order".into(), primary.clone());
+    runtime.herdr_worktrees.insert(
+        "linked".into(),
+        crate::domain::WorktreeProjection {
+            is_linked_worktree: true,
+            ..primary
+        },
+    );
+    assert!(!runtime.primary_needs_shell("w-order", "w-order:t1"));
+    runtime
+        .herdr_workspace_tab_order
+        .insert("w-order".into(), vec!["w-order:t1".into()]);
+    assert!(runtime.primary_needs_shell("w-order", "w-order:t1"));
+    assert!(!runtime.primary_needs_shell("linked", "w-order:t1"));
+    runtime.herdr_worktrees.remove("linked");
+    assert!(!runtime.primary_needs_shell("w-order", "w-order:t1"));
+}

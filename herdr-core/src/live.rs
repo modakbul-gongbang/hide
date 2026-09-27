@@ -731,6 +731,7 @@ pub struct CloseCaptureOutcome {
 
 #[derive(Clone, Debug)]
 pub struct CloseEffectRequest {
+    pub replacement: Option<ClosedContext>,
     pub key: String,
     pub connection_generation: u64,
     pub target: CloseCaptureTarget,
@@ -756,7 +757,28 @@ pub fn spawn_close_capture(
                 context.notifier.notify();
             }
             for effect in effects {
-                let result = run_close_effect(context.api_connector.as_ref(), &effect);
+                let prepared = if let Some(replacement) = &effect.replacement {
+                    prepare_close_replacement(
+                        context.api_connector.as_ref(),
+                        &effect.key,
+                        replacement,
+                    )
+                    .and_then(|(tab_id, payload)| {
+                        let runtime = context.runtime.upgrade().ok_or("runtime stopped")?;
+                        let mut guard = runtime.lock().map_err(|_| "runtime unavailable")?;
+                        guard.ingest_close_replacement(&effect, &tab_id, payload)?;
+                        context.notifier.notify();
+                        Ok(())
+                    })
+                    .map_err(|message| ApiError::Remote {
+                        code: "replacement_failed".into(),
+                        message,
+                    })
+                } else {
+                    Ok(())
+                };
+                let result = prepared
+                    .and_then(|()| run_close_effect(context.api_connector.as_ref(), &effect));
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
@@ -815,6 +837,74 @@ fn capture_close_item(
         }),
     };
     Ok(CloseCaptureOutcome { item })
+}
+
+fn prepare_close_replacement(
+    connector: &dyn ApiConnector,
+    key: &str,
+    context: &ClosedContext,
+) -> Result<(String, SessionSnapshotPayload), String> {
+    let started = Instant::now();
+    let snapshot =
+        fetch_session_with_connector(connector).map_err(|error| error.message().to_owned())?;
+    if !snapshot
+        .workspaces
+        .iter()
+        .any(|workspace| workspace.workspace_id == context.workspace_id)
+    {
+        return Err("primary workspace disappeared before replacement".into());
+    }
+    let candidates = snapshot
+        .tabs
+        .iter()
+        .filter(|tab| {
+            tab.workspace_id == context.workspace_id
+                && !context.tab_ids_before_close.contains(&tab.tab_id)
+        })
+        .collect::<Vec<_>>();
+    if candidates.len() > 64 {
+        return Err("too many tabs to inspect for replacement intent".into());
+    }
+    let marker = reopen_intent_marker(key, ReopenIntentStage::CloseReplacement);
+    let mut owned = None;
+    for tab in candidates {
+        if started.elapsed() > Duration::from_secs(5) {
+            return Err("replacement inspection timed out".into());
+        }
+        let layout = export_reopen_layout(connector, key, &tab.tab_id)?;
+        if layout_has_reopen_marker(&layout, &marker) {
+            if owned.is_some() {
+                return Err("multiple shells carry the same close intent".into());
+            }
+            owned = Some(tab.tab_id.clone());
+        }
+    }
+    let tab_id = match owned {
+        Some(id) => id,
+        None => {
+            let value = reopen_request(
+                connector,
+                &format!("herdr-core:{key}:replacement"),
+                "tab.create",
+                wire::replacement_tab_params(
+                    &context.workspace_id,
+                    &context.checkout_path,
+                    reopen_intent_env(key, ReopenIntentStage::CloseReplacement),
+                )?,
+            )?;
+            wire::created_tab(value)?.0
+        }
+    };
+    let snapshot =
+        fetch_session_with_connector(connector).map_err(|error| error.message().to_owned())?;
+    if !snapshot
+        .tabs
+        .iter()
+        .any(|tab| tab.tab_id == tab_id && tab.workspace_id == context.workspace_id)
+    {
+        return Err("replacement shell is not confirmed in the primary workspace".into());
+    }
+    Ok((tab_id, snapshot))
 }
 
 fn run_close_effect(
@@ -909,6 +999,7 @@ enum ReopenIntentStage {
     Workspace,
     Layout,
     Pane,
+    CloseReplacement,
 }
 
 fn reopen_intent_marker(key: &str, stage: ReopenIntentStage) -> String {
@@ -916,6 +1007,7 @@ fn reopen_intent_marker(key: &str, stage: ReopenIntentStage) -> String {
         ReopenIntentStage::Workspace => "workspace",
         ReopenIntentStage::Layout => "layout",
         ReopenIntentStage::Pane => "pane",
+        ReopenIntentStage::CloseReplacement => "close-replacement",
     };
     format!("{key}:{stage}")
 }
@@ -1048,6 +1140,7 @@ pub struct ReopenNotice {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ReopenOutcome {
+    pub tab_id: Option<String>,
     pub consumed: bool,
     pub focused_pane_id: Option<String>,
     pub notices: Vec<ReopenNotice>,
@@ -1307,7 +1400,7 @@ fn reopen_pane(
 ) -> Result<ReopenOutcome, String> {
     let mut notices = Vec::new();
     let cwd = restored_cwd(&pane.cwd, &context.checkout_path, &mut notices);
-    let restored_pane_id = if request.tab_exists {
+    let (restored_pane_id, restored_tab_id) = if request.tab_exists {
         let current_layout = export_reopen_layout(connector, key, &context.tab_id)?;
         let marker = reopen_intent_marker(key, ReopenIntentStage::Pane);
         let mut recovered_panes = Vec::new();
@@ -1397,7 +1490,7 @@ fn reopen_pane(
                 "The pane reopened but its original side could not be restored: {message}"
             ));
         }
-        new_pane_id
+        (new_pane_id, context.tab_id.clone())
     } else {
         let root = ClosedLayoutNode::Pane {
             pane_id: None,
@@ -1407,12 +1500,13 @@ fn reopen_pane(
             env: Default::default(),
         };
         let layout = ensure_workspace_and_tab(connector, key, context, false, &root, &mut notices)?;
-        layout.focused_pane_id
+        (layout.focused_pane_id, layout.tab_id)
     };
     if let Some(agent) = &pane.agent {
         start_or_degrade_agent(connector, key, 0, &restored_pane_id, agent, &mut notices);
     }
     Ok(ReopenOutcome {
+        tab_id: Some(restored_tab_id),
         consumed: true,
         focused_pane_id: Some(restored_pane_id.clone()),
         notices: notices
@@ -1537,6 +1631,7 @@ fn reopen_tab(
         message,
     }));
     Ok(ReopenOutcome {
+        tab_id: Some(layout.tab_id),
         consumed: true,
         focused_pane_id: first,
         notices,
@@ -3591,6 +3686,8 @@ mod tests {
             tab_id: "w1:t1".into(),
             tab_label: "Tab".into(),
             tab_index: 0,
+            agent_area: None,
+            replacement_shell: false,
         };
         let pane = ClosedPane {
             pane_id: "closed".into(),
@@ -3663,6 +3760,8 @@ mod tests {
             tab_id: "w1:t1".into(),
             tab_label: "Tab".into(),
             tab_index: 0,
+            agent_area: None,
+            replacement_shell: false,
         };
         let error = repair_incomplete_tab_layout(
             &UnixSocketConnector::new("/tmp/hide-reopen-over-count-must-not-connect.sock"),
@@ -3765,6 +3864,8 @@ mod tests {
             tab_id: "w1:t1".into(),
             tab_label: "tab".into(),
             tab_index: 0,
+            agent_area: None,
+            replacement_shell: false,
         };
         let pane = ClosedPane {
             pane_id: "w1:p2".into(),
@@ -3888,6 +3989,8 @@ mod tests {
             tab_id: "w1:t1".into(),
             tab_label: "Tab".into(),
             tab_index: 0,
+            agent_area: None,
+            replacement_shell: false,
         };
         let layout_root = ClosedLayoutNode::Split {
             direction: crate::recent_closed::ClosedSplitDirection::Right,
@@ -3990,6 +4093,8 @@ mod tests {
             tab_id: "w1:t1".into(),
             tab_label: "Tab".into(),
             tab_index: 0,
+            agent_area: None,
+            replacement_shell: false,
         };
         let root = ClosedLayoutNode::Split {
             direction: crate::recent_closed::ClosedSplitDirection::Right,
@@ -4879,3 +4984,7 @@ mod tests {
         assert_eq!(error.state(), "socket_missing");
     }
 }
+
+#[cfg(test)]
+#[path = "live_agent_close_tests.rs"]
+mod agent_close_tests;

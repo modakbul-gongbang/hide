@@ -186,6 +186,13 @@ impl Runtime {
         // is split across checkouts. A tab whose layout has not arrived yet is
         // in it, because Herdr counts it when it indexes a move. Rebuilt whole
         // each reconcile so a closed workspace leaves no stale order behind.
+        self.herdr_worktrees = payload
+            .workspaces
+            .iter()
+            .filter_map(|workspace| {
+                Some((workspace.workspace_id.clone(), workspace.worktree.clone()?))
+            })
+            .collect();
         self.herdr_workspace_tab_order = payload.tabs.iter().fold(
             BTreeMap::<String, Vec<String>>::new(),
             |mut order, session_tab| {
@@ -1019,7 +1026,7 @@ impl Runtime {
                 })
                 .collect::<HashSet<_>>();
             store.agent_live.retain(|key| keys.contains(key));
-            store.agent_placements.retain(|id, (_, _, started)| {
+            store.agent_placements.retain(|id, (_, _, _, started)| {
                 let current = started.elapsed() < std::time::Duration::from_secs(30);
                 if !current {
                     agent_layout_errors.push(format!(
@@ -1052,18 +1059,18 @@ impl Runtime {
                     let placements = store
                         .agent_placements
                         .iter()
-                        .filter(|(id, (scope, _, _))| {
+                        .filter(|(id, (scope, _, _, _))| {
                             scope == &key && topology.iter().any(|(tab, _)| tab == *id)
                         })
-                        .map(|(id, (_, area, _))| (id.clone(), area.clone()))
+                        .map(|(id, (_, area, index, _))| (id.clone(), area.clone(), *index))
                         .collect::<Vec<_>>();
-                    for (id, area) in placements {
+                    for (id, area, index) in placements {
                         let target = layout
                             .tree
                             .area(&area)
                             .unwrap_or_else(|| layout.tree.active_area());
                         let area = target.id.clone();
-                        let index = target.displays.len();
+                        let index = index.unwrap_or(target.displays.len());
                         match layout.tree.move_display(
                             &id,
                             &area,
@@ -3545,6 +3552,7 @@ impl Runtime {
                                 (
                                     (workspace::LOCAL_DEVICE_ID.to_owned(), path),
                                     area,
+                                    None,
                                     Instant::now(),
                                 ),
                             );
