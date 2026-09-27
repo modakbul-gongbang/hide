@@ -2,12 +2,13 @@
 // project with an agent in its primary checkout and one in a worktree, and a
 // plain folder with one agent. The primary checkout leads its project, and
 // the rows name their kind and last-commit age;
-// a checkout's agent rows start closed, where its second line names them, and
-// open on its chevron; a plain folder is one row that opens its checkout; a
-// project folds its checkouts; both folds are the core's ui state, so they
-// survive a reload. Light and Dark captures land in HIDE_E2E_SCREENSHOT_DIR.
+// a checkout's agent rows start closed, where its status badge counts them, and
+// open on its chevron; a project's badge counts all of them and stays; a plain
+// folder is one row that opens its checkout; a project folds its checkouts;
+// both folds are the core's ui state, so they survive a reload. Light and Dark
+// captures land in HIDE_E2E_SCREENSHOT_DIR.
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -71,7 +72,7 @@ async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await page.waitForTimeout(400);
 }
 
-test("the Projects tab: kind, age, agent line, opened checkouts and folded projects", async ({ page }) => {
+test("the Projects tab: kind, age, status badges, opened checkouts and folded projects", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -111,13 +112,24 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     // The worktree's commit was just made: its age is the first minute.
     await expect(feature.locator("[data-checkout-age]")).toHaveText("now");
 
-    // A checkout's agent rows start closed: line two names the one agent,
-    // then the checkout's purpose.
+    // sidebar-readability D-14: a checkout's agent rows start closed, and its
+    // status badge counts its one agent under the mark that agent's row draws,
+    // idle here. Line two is the purpose with the age ending it. The project's
+    // badge counts both checkouts' agents.
     const featureToggle = feature.locator("[data-checkout-toggle]");
     await expect(featureToggle).toHaveAttribute("aria-expanded", "false");
     await expect(feature.locator("[data-checkout-agents-open]")).toHaveCount(0);
-    await expect(feature.locator('[data-checkout-agents="1"]')).toBeVisible();
+    await expect(feature.locator('[data-checkout-status] [data-badge-part="idle"]')).toHaveText("1");
     await expect(feature.locator("[data-purpose]")).toHaveText("Projects 탭 행 다시 그리기");
+    const lineOf = async (part: Locator) => Math.round((await part.boundingBox())!.y);
+    expect(await lineOf(feature.locator("[data-checkout-age]"))).toBeGreaterThan(await lineOf(feature.getByText("feature/sidebar-rows", { exact: true })));
+    expect(await lineOf(feature.locator("[data-checkout-age]"))).toBe(await lineOf(feature.locator("[data-purpose]")));
+    // A checkout where agents run keeps line two, with its age, before the
+    // core knows a purpose for it: its agent's title becomes one later (once
+    // the checkout is opened below), and the row must not grow when it does.
+    expect(await lineOf(primary.locator("[data-checkout-age]"))).toBeGreaterThan(await lineOf(primary.getByText("main", { exact: true })));
+    await expect(project.locator('[data-project-status] [data-badge-part="idle"]')).toHaveText("2");
+    await expect(project.locator("[data-project-row]")).toHaveAccessibleName("repo, 2 idle");
     await screenshot(page, "projects-sidebar-closed");
 
     // sidebar-readability B2, B4, B7: the fold sits on the right in a slot
@@ -137,8 +149,8 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     await expect(primaryToggle).toHaveCSS("opacity", "1");
     await expect(projectToggle).toHaveCSS("opacity", "0");
     await expect(page.locator("[data-project-list]").getByRole("button", { name: /actions$/ })).toHaveCount(0);
-    const activity = project.locator("[data-project-activity]");
-    expect((await projectToggle.boundingBox())!.x).toBeGreaterThan((await activity.boundingBox())!.x);
+    const status = project.locator("[data-project-status]");
+    expect((await projectToggle.boundingBox())!.x).toBeGreaterThan((await status.boundingBox())!.x);
     await project.locator("[data-project-row]").hover();
     await expect(projectToggle).toHaveCSS("opacity", "1");
     await primaryRow.hover();
@@ -172,14 +184,22 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     expect([...sent].filter(([kind, count]) => count !== (beforeLooking.get(kind) ?? 0)).map(([kind]) => kind)).toEqual([]);
     await primary.locator("[data-checkout]").click();
     await expect(primary.locator("[data-checkout]")).toHaveAttribute("aria-current", "true");
+    await expect(primary.locator("[data-purpose]")).toHaveText("메인 체크아웃 정리");
     await rest(page);
     expect(await rowGeometry(primaryRow, feature, primaryParts)).toEqual(atRest);
 
-    // The chevron opens the agent rows, which take line two's place.
+    // The chevron opens the agent rows below the row: their own marks stand
+    // for the checkout's badge, which goes, and the row keeps its purpose,
+    // its age and its height. The project's badge stays.
+    const featureButton = feature.locator("[data-checkout]");
+    const closedHeight = (await featureButton.boundingBox())!.height;
     await featureToggle.click();
     await expect(featureToggle).toHaveAttribute("aria-expanded", "true");
     await expect(feature.locator(`[data-checkout-agents-open] [data-pane="${rowsPane}"]`)).toBeVisible();
-    await expect(feature.locator("[data-checkout-agents]")).toHaveCount(0);
+    await expect(feature.locator("[data-checkout-status]")).toHaveCount(0);
+    await expect(feature.locator("[data-purpose]")).toBeVisible();
+    expect((await featureButton.boundingBox())!.height).toBe(closedHeight);
+    await expect(project.locator("[data-project-status]")).toBeVisible();
     await screenshot(page, "projects-sidebar-open");
 
     // The row itself still opens the checkout.
@@ -187,14 +207,15 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     await expect(feature.locator("[data-checkout]")).toHaveAttribute("aria-current", "true");
 
     // A plain folder is one row: no project row or fold of its own, a folder
-    // glyph, and its agent named on line two until its chevron opens the row.
+    // glyph, and its agent counted on its badge, which, being the project's,
+    // stays while its chevron has the agent rows open.
     const folder = page.locator("[data-project]", { hasText: /^notes/ });
     await expect(folder.locator("[data-project-row]")).toHaveCount(0);
     await expect(folder.locator("[data-project-toggle]")).toHaveCount(0);
     const folderRow = folder.locator("[data-checkout]");
     await expect(folderRow).toHaveCount(1);
     await expect(folderRow).toHaveAttribute("data-checkout-kind", "folder");
-    await expect(folder.locator('[data-checkout-agents="1"]')).toBeVisible();
+    await expect(folder.locator('[data-project-status] [data-badge-part="idle"]')).toHaveText("1");
     const folderToggle = folder.locator("[data-checkout-toggle]");
     await expect(folderToggle).toHaveAttribute("aria-expanded", "false");
     // The row opens the folder's checkout, not an Overview.
@@ -204,6 +225,7 @@ test("the Projects tab: kind, age, agent line, opened checkouts and folded proje
     await expect(feature.locator("[data-checkout]")).not.toHaveAttribute("aria-current", "true");
     await folderToggle.click();
     await expect(folder.locator(`[data-checkout-agents-open] [data-pane="${notesPane}"]`)).toBeVisible();
+    await expect(folder.locator("[data-project-status]")).toBeVisible();
     // B7: an agent that reported no elapsed time draws none rather than a made-up 0s.
     await expect(folder.locator(`[data-pane="${notesPane}"] [data-agent-elapsed]`)).toHaveCount(0);
     await expect(feature.locator(`[data-pane="${rowsPane}"] [data-agent-elapsed]`)).toHaveText("4m");

@@ -4,6 +4,7 @@ import { AgentMark } from "../AgentMark";
 import { badgeLabel, badgeParts, branchChip, lineShownAtRest, lineTone, markTone, rowAccessibleName, rowLine } from "../agentRow";
 import type { AgentRow } from "../snapshot";
 import { AgentChildrenPopover } from "./agent-children-popover";
+import { BadgeMarks } from "./status-badge";
 import { StatusMark } from "./status-mark";
 import { Badge } from "./ui/badge";
 import { Hint } from "./ui/tooltip";
@@ -180,14 +181,7 @@ export function DescendantBadge({
           className="relative shrink-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:ring-1 data-[state=open]:ring-ring"
         >
           <Badge variant="secondary" className="gap-xs font-mono">
-            {parts.length > 0
-              ? parts.map((part) => (
-                  <span key={part.state} className="inline-flex items-center gap-xxs" data-badge-part={part.state}>
-                    <StatusMark symbol={part.symbol} className={part.tone} />
-                    {part.count}
-                  </span>
-                ))
-              : `↳${descendants}`}
+            {parts.length > 0 ? <BadgeMarks parts={parts} /> : `↳${descendants}`}
           </Badge>
         </button>
       }

@@ -21,21 +21,20 @@ import { SearchField } from "./components/search-field";
 import { Hint } from "./components/ui/tooltip";
 import { DevicePicker } from "./DevicePicker";
 import { NewWorkspace } from "./NewWorkspace";
-import { directChildren, markTone, sectionCount, sectionTree, unfoldedRows } from "./agentRow";
-import { AgentMark } from "./AgentMark";
+import { badgeWords, directChildren, sectionCount, sectionTree, unfoldedRows } from "./agentRow";
 import { Badge } from "./components/ui/badge";
 import { cn } from "./lib/utils";
 import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow } from "./components/sidebar-agent-row";
-import { StatusMark } from "./components/status-mark";
+import { StatusBadge } from "./components/status-badge";
 import { WeeklyUsage } from "./components/weekly-usage";
 import { agentPlaces, agentSections, allAgents, allProjectsCount, liveDescendantCounts, type ListedAgent } from "./navigation";
 import {
   activeCheckouts,
-  activityLabel,
   checkoutPresentation,
   folderCheckout,
   inactiveCheckouts,
+  projectMarks,
   projectRows,
   type CheckoutKind,
   type CheckoutPresentation,
@@ -473,6 +472,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
   }
   const ProjectIcon = workspace.is_git ? FolderGit2Icon : FolderIcon;
   const selected = context.overviewProjectId === workspace.id;
+  const marks = projectMarks(workspace);
   const checkoutRow = (checkout: Checkout) => (
     <CheckoutRowView
       key={checkout.id}
@@ -500,14 +500,14 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
             type="button"
             data-project-row={workspace.id}
             aria-current={selected ? "page" : undefined}
+            aria-label={[workspace.label, badgeWords(marks)].filter(Boolean).join(", ")}
             className="flex min-w-0 flex-1 self-stretch items-center gap-sm rounded-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
             onClick={() => useUiStore.getState().setScreen({ kind: "overview", projectId: workspace.id })}
           >
             <ProjectIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
             <span className="min-w-0 flex-1 truncate text-title font-semibold text-foreground">{workspace.label}</span>
-            <span className="shrink-0 text-caption text-muted-foreground" data-project-activity="true">
-              {activityLabel(workspace, agents, Date.now())}
-            </span>
+            {/* The project's badge stays while its checkouts are open: it is the project's own summary. */}
+            <StatusBadge counts={marks} data-project-status={workspace.id} />
           </button>
           {disclosure ? (
             <FoldToggle
@@ -559,22 +559,28 @@ const KIND_ICON: Record<CheckoutKind, typeof GitBranchIcon> = {
 /**
  * What a checkout's row draws besides line one, shared by the checkout row and
  * a folder's one row: its agent rows open only where agents run and the
- * operator opened them, and line two stands in for them while they are closed.
+ * operator opened them. Line two is the purpose, and it is kept wherever
+ * agents run even before the core has a purpose to put there, because an
+ * agent's title becomes the purpose once it is known and the row must not
+ * grow when it arrives; opening the agents never grows or shrinks the row.
  */
 function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: CheckoutPresentation, context: ListContext) {
   const foldable = context.disclosure && agentRows.length > 0;
   const open = foldable && context.openCheckouts.includes(checkout.id);
   const purpose = checkout.purpose?.text ?? null;
-  const secondLine = !open && view.secondLineReady && (view.agentCount > 0 || purpose !== null);
+  const secondLine = view.secondLineReady && (purpose !== null || agentRows.length > 0);
   return { foldable, open, purpose, secondLine };
 }
 
 /**
- * A checkout: the row opens it, and a right-click opens its menu. On its
- * right are the last-commit age (always, where one is known) and the fold
- * slot, whose chevron opens its agent rows while agents run in it. Closed,
- * line two names its agents (the representative's mark and provider, +N for
- * the rest) and the purpose; opened, its rows and it share a small group fill.
+ * A checkout: the row opens it, and a right-click opens its menu. Line one
+ * ends in its agents' status badge while their rows are folded, then the fold
+ * slot, whose chevron opens those rows while agents run in it. Line two is
+ * the purpose, and the last-commit age ends the row's last line on the time
+ * column: line two's when the row has one, line one's on a row with neither a
+ * purpose nor agents, which is one line.
+ * Opened, its rows and it share a small group fill, and the rows' own marks
+ * stand for the badge.
  */
 const CheckoutRowView = memo(function CheckoutRowView({
   workspace,
@@ -594,6 +600,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
   const view = checkoutPresentation(workspace, checkout, Date.now());
   const name = checkout.branch ?? checkout.label;
   const { foldable, open, purpose, secondLine } = checkoutDisclosure(checkout, agentRows, view, context);
+  const marks = checkout.agent_summary?.marks;
   const KindIcon = KIND_ICON[view.kind];
   return (
     <li data-checkout-row={checkout.id} data-checkout-open={open ? "true" : undefined} className={cn(open && "rounded-sm bg-muted")}>
@@ -618,7 +625,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
             checkout={checkout}
             view={view}
             focused={focused}
-            label={[name, view.age, purpose].filter(Boolean).join(", ")}
+            label={[name, open ? null : badgeWords(marks), view.age, purpose].filter(Boolean).join(", ")}
             actions={actions}
           />
           {/* The row button covers the whole row; a control drawn over it is positioned, so it stacks above. */}
@@ -630,11 +637,8 @@ const CheckoutRowView = memo(function CheckoutRowView({
             <CheckoutBadge checkout={checkout} />
             <span className="flex-1" />
             <RowEnd>
-              {view.age ? (
-                <span aria-hidden="true" data-checkout-age={view.age} className="font-mono text-caption text-muted-foreground">
-                  {view.age}
-                </span>
-              ) : null}
+              {open ? null : <StatusBadge counts={marks} data-checkout-status={checkout.id} />}
+              {!secondLine && view.age ? <CheckoutAge age={view.age} /> : null}
               {foldable ? (
                 <FoldToggle
                   open={open}
@@ -647,7 +651,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
               )}
             </RowEnd>
           </span>
-          {secondLine ? <CheckoutSummaryLine checkout={checkout} agentCount={view.agentCount} agents={context.agents} /> : null}
+          {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={view.age} /> : null}
         </div>
       </EntryContextMenu>
       {open ? <OpenAgentRows checkoutId={checkout.id} agentRows={agentRows} inset={CHECKOUT_NAME_COLUMN} context={context} /> : null}
@@ -657,11 +661,12 @@ const CheckoutRowView = memo(function CheckoutRowView({
 
 /**
  * A plain folder (`folderCheckout`): the project and its only checkout are
- * one row. Line one is the project's name and activity, line two the
- * checkout's agents and purpose; the row opens the checkout and is marked
- * while that checkout is the Workspace in front or the project's Overview is,
- * and its menu is the project's followed by the checkout's. It ends as a
- * checkout row does, and its Overview is reached from All projects.
+ * one row. Line one is the project's name and its status badge, which stays
+ * while the agent rows are open because it is the project's own summary; line
+ * two is the purpose. The row opens the checkout and is marked while that
+ * checkout is the Workspace in front or the project's Overview is, and its
+ * menu is the project's followed by the checkout's. It ends as a checkout row
+ * does, and its Overview is reached from All projects.
  */
 const FolderRowView = memo(function FolderRowView({
   workspace,
@@ -681,7 +686,7 @@ const FolderRowView = memo(function FolderRowView({
   const { actions } = context;
   const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote));
   const view = checkoutPresentation(workspace, checkout, Date.now());
-  const activity = activityLabel(workspace, context.agents, Date.now());
+  const marks = checkout.agent_summary?.marks;
   const { foldable, open, purpose, secondLine } = checkoutDisclosure(checkout, agentRows, view, context);
   return (
     <li data-project={workspace.id} data-checkout-open={open ? "true" : undefined} className={cn(inset, open && "rounded-sm bg-muted")}>
@@ -705,7 +710,7 @@ const FolderRowView = memo(function FolderRowView({
             checkout={checkout}
             view={view}
             focused={focused}
-            label={[workspace.label, activity, purpose].filter(Boolean).join(", ")}
+            label={[workspace.label, badgeWords(marks), purpose].filter(Boolean).join(", ")}
             actions={actions}
           />
           <span className="pointer-events-none flex min-w-0 items-center gap-sm">
@@ -716,10 +721,7 @@ const FolderRowView = memo(function FolderRowView({
             <CheckoutBadge checkout={checkout} />
             <span className="flex-1" />
             <RowEnd>
-              {/* The activity stands where a checkout's age does. */}
-              <span aria-hidden="true" className="text-caption text-muted-foreground" data-project-activity="true">
-                {activity}
-              </span>
+              <StatusBadge counts={marks} data-project-status={workspace.id} />
               {foldable ? (
                 <FoldToggle
                   open={open}
@@ -732,7 +734,7 @@ const FolderRowView = memo(function FolderRowView({
               )}
             </RowEnd>
           </span>
-          {secondLine ? <CheckoutSummaryLine checkout={checkout} agentCount={view.agentCount} agents={context.agents} /> : null}
+          {secondLine ? <PurposeLine purpose={purpose} origin={checkout.purpose?.origin} age={null} /> : null}
         </div>
       </EntryContextMenu>
       {open ? <OpenAgentRows checkoutId={checkout.id} agentRows={agentRows} inset={PROJECT_NAME_COLUMN} context={context} /> : null}
@@ -789,24 +791,33 @@ function CheckoutBadge({ checkout }: { checkout: Checkout }) {
   return null;
 }
 
-/** A closed checkout's line two: the representative agent's mark and provider, +N for the rest, and the purpose. */
-function CheckoutSummaryLine({ checkout, agentCount, agents }: { checkout: Checkout; agentCount: number; agents: AgentRow[] }) {
-  const representative = agents.find((agent) => agent.pane_id === checkout.agent_summary?.representative_pane_id) ?? null;
-  const purpose = checkout.purpose?.text ?? null;
+/** A checkout's last-commit age, drawn on the time column of whichever line ends the row. */
+function CheckoutAge({ age }: { age: string }) {
+  return (
+    <span aria-hidden="true" data-checkout-age={age} className="font-mono text-caption text-muted-foreground">
+      {age}
+    </span>
+  );
+}
+
+/**
+ * A checkout's line two: its purpose, and the last-commit age ending on the
+ * time column over an empty fold slot, as line one ends. A folder's line two
+ * has no age: a plain folder has no commit. Until a purpose is known the line
+ * keeps its place empty.
+ */
+function PurposeLine({ purpose, origin, age }: { purpose: string | null; origin: string | undefined; age: string | null }) {
   return (
     // The row is already inset to its glyph, so line two starts one glyph and gap further, under the name.
-    <span aria-hidden="true" className="pointer-events-none flex min-w-0 items-center gap-xs pr-md pl-(--size-checkout-metadata-inset) text-caption">
-      {agentCount > 0 ? (
-        <span className="flex shrink-0 items-center gap-xs" data-checkout-agents={agentCount}>
-          {representative ? <StatusMark symbol={representative.symbol} className={markTone(representative)} /> : null}
-          <AgentMark kind={representative?.agent_kind} />
-          {agentCount > 1 ? <span className="font-mono text-subtle-foreground">+{agentCount - 1}</span> : null}
-        </span>
-      ) : null}
-      {purpose ? (
-        <span className="min-w-0 truncate text-muted-foreground" data-purpose={checkout.purpose?.origin}>
-          {purpose}
-        </span>
+    <span aria-hidden="true" className="pointer-events-none flex min-h-(--size-badge-height) min-w-0 items-center gap-sm pl-(--size-checkout-metadata-inset) text-caption">
+      <span className="min-w-0 flex-1 truncate text-muted-foreground" data-purpose={purpose === null ? undefined : origin}>
+        {purpose}
+      </span>
+      {age ? (
+        <RowEnd>
+          <CheckoutAge age={age} />
+          <FoldLane />
+        </RowEnd>
       ) : null}
     </span>
   );

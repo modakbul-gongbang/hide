@@ -126,10 +126,12 @@ export async function keyboardFocus(page: Page, control: Locator): Promise<void>
 }
 
 /**
- * Where the rows of the list on screen end (PRD sidebar-readability D-3): the
- * distinct right edges of the times (an agent's elapsed, a checkout's age, a
- * project's activity) and the distinct centres of the fold chevrons, shown or
- * waiting for the pointer. One of each means every row ends on the same grid.
+ * Where the rows of the list on screen end (PRD sidebar-readability D-3,
+ * D-14): the distinct right edges of what ends each line before its fold slot
+ * (an agent's elapsed, a checkout's age on either line, a project's or a
+ * checkout's status badge with no age after it) and the distinct centres of
+ * the fold chevrons, shown or waiting for the pointer. One of each means every
+ * row ends on the same grid.
  */
 export async function sidebarColumns(page: Page): Promise<{ times: number[]; chevrons: number[] }> {
   return page.evaluate(() => {
@@ -140,7 +142,14 @@ export async function sidebarColumns(page: Page): Promise<{ times: number[]; che
         .map((part) => part.getBoundingClientRect());
     const distinct = (values: number[]) => [...new Set(values.map((value) => Math.round(value)))].sort((a, b) => a - b);
     return {
-      times: distinct(boxes("[data-agent-elapsed], [data-checkout-age], [data-project-activity]").map((box) => box.right)),
+      times: distinct(
+        [
+          ...boxes("[data-agent-elapsed], [data-checkout-age]"),
+          ...Array.from(document.querySelectorAll(`${list} :is([data-project-status], [data-checkout-status])`))
+            .filter((badge) => badge.getClientRects().length > 0 && !badge.nextElementSibling?.matches("[data-checkout-age]"))
+            .map((badge) => badge.getBoundingClientRect()),
+        ].map((box) => box.right),
+      ),
       chevrons: distinct(boxes("[data-agent-tree-toggle], [data-checkout-toggle], [data-project-toggle]").map((box) => box.left + box.width / 2)),
     };
   });
@@ -162,7 +171,7 @@ export async function sidebarOverflow(page: Page, width: string): Promise<string
     }
     for (const row of Array.from(document.querySelectorAll<HTMLElement>("[data-pane], [data-checkout-row] > *, [data-project] > *"))) {
       const right = row.getBoundingClientRect().right;
-      for (const part of Array.from(row.querySelectorAll<HTMLElement>("[data-agent-elapsed], [data-checkout-age], [data-project-activity], button"))) {
+      for (const part of Array.from(row.querySelectorAll<HTMLElement>("[data-agent-elapsed], [data-checkout-age], [data-project-status], [data-checkout-status], button"))) {
         if (part.getBoundingClientRect().right > right + 0.5) problems.push(`${part.textContent ?? part.tagName} passes its row`);
       }
     }

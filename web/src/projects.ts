@@ -4,7 +4,7 @@
 // inactive projects, and per project a fold of inactive checkouts. The
 // split only reads flags the core set; no age or merge rule is repeated.
 
-import type { AgentRow, Checkout, InactiveProjectGroup, PullRequest, Workspace } from "./snapshot";
+import type { Checkout, InactiveProjectGroup, MarkCounts, PullRequest, Workspace } from "./snapshot";
 
 export type ProjectRow =
   | { kind: "header"; title: string; count: number }
@@ -72,21 +72,19 @@ export function folderCheckout(workspace: Workspace): Checkout | null {
   return !workspace.is_git && workspace.checkouts.length === 1 ? (workspace.checkouts[0] ?? null) : null;
 }
 
-/** The count first (it names the project's contents), then the recency the order was decided by. */
-export function activityLabel(workspace: Workspace, agents: AgentRow[], nowMs: number): string {
-  const paneIds = new Set(workspace.checkouts.flatMap((c) => c.tabs).flatMap((t) => t.panes).map((p) => p.id));
-  const agentCount = agents.filter((agent) => paneIds.has(agent.pane_id)).length;
-  const checkoutCount = workspace.checkouts.length;
-  const counts =
-    agentCount > 0
-      ? agentCount === 1
-        ? "1 agent"
-        : `${agentCount} agents`
-      : checkoutCount === 1
-        ? "1 workspace"
-        : `${checkoutCount} workspaces`;
-  const recency = relativeActivity(workspace.last_activity_unix_ms, nowMs);
-  return recency ? `${counts} · ${recency}` : counts;
+/**
+ * A project's status badge: every checkout's marks added up, so the project
+ * row says what its checkouts' rows would show (docs/status-model.md, The
+ * status badge).
+ */
+export function projectMarks(workspace: Workspace): MarkCounts {
+  const total: MarkCounts = { error: 0, approval: 0, question: 0, working: 0, done: 0, idle: 0 };
+  for (const checkout of workspace.checkouts) {
+    const marks = checkout.agent_summary?.marks;
+    if (!marks) continue;
+    for (const state of Object.keys(total) as (keyof MarkCounts)[]) total[state] += marks[state];
+  }
+  return total;
 }
 
 /** The PR badge's text and color token, mirrored from `CheckoutCardPresentation.badgeLabel/badgeColor`. */
@@ -120,8 +118,6 @@ export type CheckoutPresentation = {
   kindTone: string;
   /** The last commit's age; absent for a missing folder and until Git has been read. */
   age: string | null;
-  /** Live agents here, each counted once. */
-  agentCount: number;
   /** Line two waits for Git to be read, so a row does not grow and shrink as the facts arrive. */
   secondLineReady: boolean;
   /** A merged or closed pull request's row is drawn dimmed. */
@@ -204,7 +200,6 @@ export function checkoutPresentation(workspace: Workspace, checkout: Checkout, n
     kind,
     kindTone,
     age,
-    agentCount,
     secondLineReady: !gitLoading,
     settled: pr?.badge === "merged" || pr?.badge === "closed",
     detail: lines.join("\n"),
