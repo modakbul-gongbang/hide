@@ -1,6 +1,7 @@
 //! Bounded process-name reads for panes in the attach window, on their host.
 use super::*;
 use crate::reader::BackgroundRead;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Clone, Debug, PartialEq)]
 struct Request {
@@ -14,6 +15,14 @@ pub(super) struct ProcessReader {
     reader: BackgroundRead<Request, Answer>,
     desired: Request,
     connection: u64,
+    cancelled: Arc<AtomicBool>,
+}
+
+impl Drop for ProcessReader {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Release);
+        self.reader.join_pending();
+    }
 }
 
 impl ProcessReader {
@@ -21,14 +30,17 @@ impl ProcessReader {
         let connector = Arc::clone(&context.api_connector);
         let owner = context.runtime.clone();
         let target = context.log_target().to_owned();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = Arc::clone(&cancelled);
         Self {
+            cancelled,
             reader: BackgroundRead::new(
                 Duration::from_secs(30),
                 Duration::ZERO,
                 move |request: &Request| {
                     let mut names = Vec::with_capacity(request.panes.len());
                     for (pane_id, _) in &request.panes {
-                        if owner.upgrade().is_none() {
+                        if worker_cancelled.load(Ordering::Acquire) || owner.upgrade().is_none() {
                             break;
                         }
                         let result = wire::pane_process_info_params(pane_id)
@@ -77,8 +89,11 @@ impl ProcessReader {
             SessionSyncTarget::Local { .. } => None,
             SessionSyncTarget::Remote { target_id, .. } => Some(target_id.as_str()),
         };
-        let tabs = match runtime.lock() {
-            Ok(guard) => guard.process_info_attached_tabs(target),
+        let (tabs, focused) = match runtime.lock() {
+            Ok(guard) => (
+                guard.process_info_attached_tabs(target),
+                guard.process_info_focused_pane(target),
+            ),
             Err(_) => return false,
         };
         drop(runtime);
@@ -94,11 +109,15 @@ impl ProcessReader {
             })
             .take(crate::runtime::ATTACHED_TAB_LIMIT)
             .filter_map(|layout| {
+                let focused = focused
+                    .as_deref()
+                    .filter(|id| layout.panes.iter().any(|pane| pane.pane_id == *id))
+                    .unwrap_or(&layout.focused_pane_id);
                 replica
                     .state
                     .panes
                     .iter()
-                    .find(|pane| pane.pane_id == layout.focused_pane_id)
+                    .find(|pane| pane.pane_id == focused)
                     .map(|pane| (pane.pane_id.clone(), pane.agent_status.clone()))
             })
             .collect::<Vec<_>>();
@@ -132,5 +151,54 @@ impl ProcessReader {
             }
         }
         changed
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn process_reader_shutdown_joins_current_request_and_cancels_remaining_panes() {
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let herdr = crate::fake_herdr::FakeHerdr::start("process-owner", move |method, params| {
+            assert_eq!(method, "pane.process_info");
+            started_tx.send(()).unwrap();
+            release_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+            json!({"type":"pane_process_info", "process_info":{"pane_id":params["pane_id"], "foreground_processes":[]}})
+        });
+        let runtime = Arc::new(std::sync::Mutex::new(Runtime::new(
+            serde_json::from_value(json!({"schema_version":crate::model::SCHEMA_VERSION, "herdr_socket_path":null, "app_state_path":"/tmp/hide-process-owner-unused.json"})).unwrap(),
+            crate::environment::EnvironmentReport { statuses: Vec::new(), home_path: None, herdr_socket_path_override: None, codex_home: None },
+        )));
+        let context = SessionSyncContext::remote(
+            "fixture",
+            "Fixture",
+            Arc::new(herdr.connector()),
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+        );
+        let mut reader = ProcessReader::new(&context);
+        let cancelled = Arc::clone(&reader.cancelled);
+        let request = Request {
+            generation: 1,
+            panes: (1..=5)
+                .map(|i| (format!("w1:p{i}"), "idle".into()))
+                .collect(),
+        };
+        assert!(reader.reader.poll(request).is_none());
+        started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        let dropped = std::thread::spawn(move || drop(reader));
+        while !cancelled.load(Ordering::Acquire) {
+            std::thread::yield_now();
+        }
+        release_tx.send(()).unwrap();
+        dropped.join().unwrap();
+        assert_eq!(herdr.methods(), ["pane.process_info"]);
+        assert!(
+            Arc::strong_count(&runtime) > 0,
+            "the runtime is still alive when its reader ends"
+        );
     }
 }

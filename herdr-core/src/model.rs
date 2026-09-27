@@ -1181,6 +1181,8 @@ pub struct OverlayActionSnapshot {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TabNaming {
     pub focused_pane_id: String,
+    pub number: u32,
+    pub processes: BTreeMap<String, String>,
     pub raw: String,
     pub automatic: String,
 }

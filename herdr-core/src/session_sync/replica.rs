@@ -382,6 +382,17 @@ impl SessionReplica {
                                 focused_pane_id: focused
                                     .map(|pane| remote_pane_id(target_id, pane))
                                     .unwrap_or_default(),
+                                number: tab.number,
+                                processes: state
+                                    .panes
+                                    .iter()
+                                    .filter(|pane| pane.tab_id == tab.tab_id)
+                                    .filter_map(|pane| {
+                                        pane.foreground_process.clone().map(|name| {
+                                            (remote_pane_id(target_id, &pane.pane_id), name)
+                                        })
+                                    })
+                                    .collect(),
                                 raw: tab.label.clone(),
                                 automatic: crate::model::display_tab_label(
                                     "",

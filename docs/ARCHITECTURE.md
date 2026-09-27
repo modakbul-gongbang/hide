@@ -11,6 +11,10 @@ The code is the executable authority: `herdr-core/src/` for the core, `hided/src
 The core (`herdr-core`) owns all state behind one `Mutex<Runtime>`.
 The shell dispatches typed JSON events in and receives snapshot and delta frames out over hided's WebSocket (see hided and the WebSocket boundary) when the change notifier announces.
 The event sync coordinator (`session_sync/coordinator.rs`) delegates Herdr snapshot and subscription lifecycle to `session_sync/subscription.rs`, opens `events.subscribe` first and reads `session.snapshot` second, applies the topology events that follow, and refreshes agent telemetry with `agent.list` once per second.
+Tab names use core focus and the same agent row as the sidebar; process names arrive through a coordinator-owned off-lock `pane.process_info` reader on each host's connector.
+Its single worker reads at most the five attached tabs' focused panes, on focus or agent-state changes or a 30-second recheck, rejects obsolete generations, and publishes only changed names.
+Shutdown cancels the remaining batch and joins the current bounded socket request outside the runtime lock.
+`rename_tab` keeps retry intent separate from the committed label; only Herdr success commits it, and a refusal or timeout preserves the prior label and a request-correlated inline retry result.
 Herdr's stream carries no sequence and cannot be resumed from a position, so subscribing before the snapshot is the only way not to lose an event between the two, and every reconnect is a fresh subscription followed by a fresh snapshot.
 The price of that order is that an event emitted just before the snapshot was taken arrives as well; for one second after the snapshot the replica reconciles (`ApplyMode::Reconcile`), dropping with a diagnostic an event the snapshot already accounts for, and after that window an event the replica cannot apply is a real divergence that rebuilds it.
 `wire.rs` names the day Herdr sequences its stream: a test fails when the event schema declares `sequence` or the subscribe params take `after_sequence`, because a resume cursor would then be worth building back.

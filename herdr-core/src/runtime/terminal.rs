@@ -1147,6 +1147,12 @@ impl Runtime {
         self.snapshot.focused.surface = Surface::Terminal;
         self.snapshot.focused.pane_id = pane_id.clone();
         self.snapshot.ui_state.selected_pane_id = pane_id;
+        sync_pane_status(
+            &mut self.snapshot.navigator.workspaces,
+            &self.snapshot.navigator.agents,
+            self.snapshot.focused.pane_id.as_deref(),
+        );
+        self.sync_active_tab_projection();
         self.snapshot.zoomed = zoomed;
         for pane_id in pane_ids {
             self.ensure_terminal_pane(&pane_id);
@@ -1264,6 +1270,22 @@ impl Runtime {
             })
             .into_iter()
             .collect()
+    }
+
+    pub(crate) fn process_info_focused_pane(&self, target: Option<&str>) -> Option<String> {
+        match target {
+            None => self.snapshot.focused.pane_id.clone(),
+            Some(target) => self
+                .snapshot
+                .status
+                .remote
+                .iter()
+                .find(|status| status.target_id == target)
+                .and_then(|status| status.session.as_ref())
+                .and_then(|session| session.focused_pane_id.as_deref())
+                .and_then(|id| remote_pane_source_id(target, id))
+                .map(str::to_owned),
+        }
     }
 
     pub(super) fn focused_visible_tab_id(&self) -> Option<String> {

@@ -205,7 +205,15 @@ impl Runtime {
                 format!("Tab {}: {message}", pending.receipt.tab_id),
             );
         }
-        self.snapshot.status.tab_rename = Some(pending.receipt.clone());
+        if self
+            .snapshot
+            .status
+            .tab_rename
+            .as_ref()
+            .is_some_and(|receipt| receipt.request_id == request_id)
+        {
+            self.snapshot.status.tab_rename = Some(pending.receipt.clone());
+        }
         for workspace in &mut self.snapshot.navigator.workspaces {
             for checkout in &mut workspace.checkouts {
                 for tab in &mut checkout.tabs {

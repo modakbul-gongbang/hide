@@ -598,7 +598,11 @@ fn is_remote_scoped_pane_id(pane_id: &str) -> bool {
 /// Left alone it publishes `Done` and demands a close confirmation for every
 /// pane the operator has already read. One owner decides the answer; every
 /// tree copies it, local and remote alike, because a pane is a pane.
-fn sync_pane_status(workspaces: &mut [WorkspaceSnapshot], agents: &[SidebarAgentSnapshot]) -> bool {
+fn sync_pane_status(
+    workspaces: &mut [WorkspaceSnapshot],
+    agents: &[SidebarAgentSnapshot],
+    focused: Option<&str>,
+) -> bool {
     let by_pane = agents
         .iter()
         .map(|agent| {
@@ -648,13 +652,43 @@ fn sync_pane_status(workspaces: &mut [WorkspaceSnapshot], agents: &[SidebarAgent
         .flat_map(|workspace| &mut workspace.checkouts)
         .flat_map(|checkout| &mut checkout.tabs)
     {
-        let representative = agent_by_pane
+        if let Some(focused) = focused.filter(|id| tab.panes.iter().any(|pane| pane.id == *id)) {
+            changed |= tab.naming.focused_pane_id != focused;
+            tab.naming.focused_pane_id = focused.to_owned();
+        }
+        let agent = agent_by_pane
             .get(tab.naming.focused_pane_id.as_str())
-            .map(|agent| crate::model::TabAgentSnapshot::from(*agent));
+            .copied();
+        if !tab.naming.focused_pane_id.is_empty() {
+            tab.naming.automatic = crate::model::display_tab_label(
+                "",
+                tab.naming.number,
+                agent.map(|agent| agent.identity_label.as_str()),
+                tab.naming
+                    .processes
+                    .get(&tab.naming.focused_pane_id)
+                    .map(String::as_str),
+            );
+            let label = crate::model::display_tab_label(
+                &tab.naming.raw,
+                tab.naming.number,
+                Some(&tab.naming.automatic),
+                None,
+            );
+            changed |= tab.label.as_deref() != Some(&label);
+            tab.label = Some(label);
+        }
+        let representative = agent.map(crate::model::TabAgentSnapshot::from);
         if tab.agent != representative {
             tab.agent = representative;
             changed = true;
         }
+    }
+    for checkout in workspaces
+        .iter_mut()
+        .flat_map(|workspace| &mut workspace.checkouts)
+    {
+        rename::refresh_strip_labels(checkout);
     }
     // What the pane body and its menu say about sleep follows the same row,
     // and a pane whose agent left takes neither with it.

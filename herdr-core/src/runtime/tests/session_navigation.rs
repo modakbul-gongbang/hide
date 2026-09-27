@@ -2852,6 +2852,7 @@ fn tab_rename_keeps_the_committed_name_on_failure_and_ignores_old_receipts() {
         focused_pane_id: String::new(),
         raw: "Saved".into(),
         automatic: "작업 제목".into(),
+        ..Default::default()
     };
     tab.label = Some("Saved".into());
     checkout.tabs.push(tab.clone());
@@ -2899,4 +2900,65 @@ fn tab_rename_keeps_the_committed_name_on_failure_and_ignores_old_receipts() {
     incoming.label = Some("External".into());
     runtime.apply_tab_rename(&mut incoming);
     assert_eq!(incoming.label.as_deref(), Some("External"));
+
+    let herdr =
+        crate::fake_herdr::FakeHerdr::start("rename-busy", |_, _| serde_json::json!({"type":"ok"}));
+    runtime.live = Some(live::LiveContext {
+        socket_path: herdr.socket_path().to_owned(),
+        herdr_bin: None,
+        runtime: std::sync::Weak::new(),
+        notifier: crate::handle::ChangeNotifier::noop(),
+        api_connector: Arc::new(herdr.connector()),
+    });
+    runtime.rename_tab(request("slow", "First"));
+    runtime.rename_tab(request("newer", "Retry me"));
+    runtime.ingest_tab_rename_result("slow", Ok(()));
+    let receipt = runtime.snapshot.status.tab_rename.as_ref().unwrap();
+    assert_eq!(
+        (&*receipt.request_id, &*receipt.phase, &*receipt.label),
+        ("newer", "failed", "Retry me")
+    );
+    runtime.live = None;
+}
+
+#[test]
+fn tab_name_follows_core_focus_before_herdr_and_on_refusal() {
+    let path = "/private/tmp/hide-tab-focus-name";
+    let (mut runtime, _) = tab_order_runtime(path);
+    let mut payload = tab_order_payload(path, &["w-order:t1"], &["w-order:t1"], "w-order:t1");
+    let mut second = payload.panes[0].clone();
+    second.pane_id = "w-order:p2".into();
+    second.foreground_process = Some("cargo".into());
+    payload.panes[0].foreground_process = Some("zsh".into());
+    payload.panes.push(second);
+    let mut second_rect = payload.layouts[0].panes[0].clone();
+    second_rect.pane_id = "w-order:p2".into();
+    second_rect.rect.x = 40;
+    second_rect.rect.width = 40;
+    payload.layouts[0].panes[0].rect.width = 40;
+    payload.layouts[0].panes.push(second_rect);
+    payload.layouts[0].splits = serde_json::from_value(serde_json::json!([{
+        "direction":"right", "ratio":0.5,
+        "rect":{"x":0,"y":0,"width":80,"height":24}
+    }]))
+    .unwrap();
+    runtime.ingest_session(Ok(payload));
+    assert_eq!(runtime.snapshot.tab.label.as_deref(), Some("zsh"));
+    runtime.dispatch_json(&correlated_pane_focus_event("w-order:p2", "label-focus"));
+    assert_eq!(
+        runtime.snapshot.focused.pane_id.as_deref(),
+        Some("w-order:p2")
+    );
+    assert_eq!(runtime.snapshot.tab.label.as_deref(), Some("cargo"));
+    assert_eq!(runtime.snapshot.tab.naming.focused_pane_id, "w-order:p2");
+    assert_eq!(
+        runtime
+            .snapshot
+            .status
+            .pane_focus_request
+            .as_ref()
+            .unwrap()
+            .phase,
+        "failed"
+    );
 }

@@ -277,6 +277,22 @@ impl Runtime {
                 agent: representative.map(Into::into),
                 naming: crate::model::TabNaming {
                     focused_pane_id: layout.focused_pane_id.clone(),
+                    number: session_tab.number,
+                    processes: payload
+                        .panes
+                        .iter()
+                        .filter(|pane| {
+                            layout
+                                .panes
+                                .iter()
+                                .any(|entry| entry.pane_id == pane.pane_id)
+                        })
+                        .filter_map(|pane| {
+                            pane.foreground_process
+                                .clone()
+                                .map(|name| (pane.pane_id.clone(), name))
+                        })
+                        .collect(),
                     raw: session_tab.label.clone(),
                     automatic: crate::model::display_tab_label(
                         "",

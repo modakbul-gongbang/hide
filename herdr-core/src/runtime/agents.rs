@@ -1021,8 +1021,11 @@ impl Runtime {
         if lineage_pruned {
             self.persist_ui_state();
         }
-        let synced = sync_pane_status(&mut session.workspaces, &session.agents)
-            | sync_remote_pane_relations(session);
+        let synced = sync_pane_status(
+            &mut session.workspaces,
+            &session.agents,
+            session.focused_pane_id.as_deref(),
+        ) | sync_remote_pane_relations(session);
         let pruned = prune_pane_text_scales(
             &mut self.snapshot.ui_state.pane_text_scales,
             &session.workspaces,
@@ -1062,7 +1065,11 @@ impl Runtime {
     /// Copies each local pane's status word and close-confirmation answer from
     /// the agent rows that just had the read axis applied.
     pub(super) fn sync_pane_status_from_agents(&mut self, agents: &[SidebarAgentSnapshot]) -> bool {
-        sync_pane_status(&mut self.snapshot.navigator.workspaces, agents)
+        sync_pane_status(
+            &mut self.snapshot.navigator.workspaces,
+            agents,
+            self.snapshot.focused.pane_id.as_deref(),
+        )
     }
 
     /// Recomputes the two inactive folds from current core facts. No row is
