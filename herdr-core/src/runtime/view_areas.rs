@@ -1064,7 +1064,7 @@ impl Runtime {
         let ViewLayoutPayload { workspace, action } = payload;
         let key = (workspace.device_id, workspace.path);
         if !self.area_workspace_is_current(&key, "view") {
-            return false;
+            return true;
         }
         // The action names displays by what the last frame showed; bring
         // their bindings up to date first.

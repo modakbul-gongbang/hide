@@ -745,12 +745,7 @@ export function createActions(dispatch: DispatchFn) {
       });
     };
 
-  const closeTab = (tabId?: string) => {
-      // The close chord closes the active display when the View area holds
-      // the keyboard or is all that shows, on this machine or a device, and
-      // the Agent tab otherwise.
-      const display = tabId ? null : activeDisplayNow();
-      if (display && viewAreaInUse(rest())) return closeView(display.display.id);
+  const closeTab = (tabId: string) => {
       if (remoteContext(rest())) {
         const host = remoteHost("Close tab");
         if (!host) return;
@@ -1114,13 +1109,7 @@ export function createActions(dispatch: DispatchFn) {
         });
         return;
       }
-      const here = current();
-      if (!here) return;
-      dispatch({
-        schema_version: 2,
-        kind: "reorder_tab",
-        payload: { workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, tab_id: stripId, to_index: toIndex },
-      });
+      diagnostic("reorder_tab: local tabs are ordered by their Agent area");
     },
 
     closeFocused() {
@@ -1153,8 +1142,8 @@ export function createActions(dispatch: DispatchFn) {
         return;
       }
       const here = current();
-      if (!here?.tab || !id) return diagnostic("close_pane: no focused pane");
-      const pane = here.tab.panes.find((row) => row.id === id);
+      if (!here || !id) return diagnostic("close_pane: no focused pane");
+      const pane = here.checkout.tabs.flatMap((tab) => tab.panes).find((row) => row.id === id);
       if (!pane) return diagnostic("close_pane: the pane is no longer visible");
       requestClose("pane", id, [pane], null, useShellStore.getState().agents);
     },

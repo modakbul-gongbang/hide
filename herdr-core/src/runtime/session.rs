@@ -471,6 +471,21 @@ impl Runtime {
     /// Herdr reports the order it actually has, and a refusal leaves the strip
     /// on the order Herdr last reported.
     pub(super) fn reorder_tab(&mut self, payload: ReorderTabPayload) -> bool {
+        // Only the legacy single-surface host still arranges local strip
+        // entries. The web host persists Agent order through agent_layout;
+        // never let an obsolete local request move Herdr's tabs there.
+        if self.separate_view_areas()
+            && self.snapshot.navigator.workspaces.iter().any(|workspace| {
+                workspace.id == payload.workspace_id && workspace.remote_target_id.is_none()
+            })
+        {
+            self.set_error(
+                "tab.area_order_required",
+                "Use the Agent area to move this tab",
+                false,
+            );
+            return true;
+        }
         // The checkout is this machine's or a device's; a device's strip is
         // placed by the same rule, and its Herdr tabs move on its own Herdr.
         let local = self

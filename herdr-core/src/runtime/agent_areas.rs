@@ -47,8 +47,10 @@ impl Runtime {
         self.push_diagnostic(
             format!("{column}_layout.stale_workspace"),
             format!(
-                "Ignored area intent for {} on {}; that Workspace is no longer in front",
-                key.1, key.0
+                "Ignored area intent for {} on {}; the front Workspace is {:?}",
+                key.1,
+                key.0,
+                self.front_workspace_key()
             ),
         );
         false
@@ -68,7 +70,7 @@ impl Runtime {
     pub(super) fn apply_agent_layout(&mut self, payload: AgentLayoutPayload) -> bool {
         let key = (payload.workspace.device_id, payload.workspace.path);
         if !self.area_workspace_is_current(&key, "agent") {
-            return false;
+            return true;
         }
         if key.0 != workspace::LOCAL_DEVICE_ID || self.workspace_views.is_none() {
             self.set_error(

@@ -12,7 +12,7 @@ import { filterEntries, groupEntries, searchEntries, type SearchEntry } from "./
 import { explorerContext } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
-import { drawnViews } from "./viewFocus";
+import { drawnViews, keyboardOwner } from "./viewFocus";
 
 // The two palettes (PRD B12, B13) on the System command palette: a query
 // field, a list cmdk's own arrow keys and Enter walk, and Escape closes
@@ -198,9 +198,10 @@ function DiffPalette({ actions }: { actions: Actions }) {
 function SearchPalette({ actions }: { actions: Actions }) {
   const rest = useShellStore((s) => s.rest);
   const [query, setQuery] = useState("");
+  const [fromAgent] = useState(() => keyboardOwner().kind === "pane");
   const workspaceOnScreen = useUiStore((s) => s.screen?.kind === "workspace");
   const placement = useUiStore((s) => s.toolsPlacement);
-  const entries = filterEntries(searchEntries(rest, workspaceOnScreen ? { drawn: drawnViews(), placement, agent: areaFrame("agent") } : null), query);
+  const entries = filterEntries(searchEntries(rest, workspaceOnScreen ? { drawn: drawnViews(), placement, agent: fromAgent ? areaFrame("agent") : null } : null), query);
 
   const activate = (entry: SearchEntry | undefined) => {
     // A command that cannot run now stays in the list with its reason.
