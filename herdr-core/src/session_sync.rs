@@ -12,7 +12,7 @@ use serde_json::{Value, json};
 
 use crate::wire::{self, parse_subscription_line};
 
-use crate::ffi::ChangeNotifier;
+use crate::handle::ChangeNotifier;
 use crate::live::{LiveContext, SessionFetchError};
 use crate::model::{
     CheckoutSnapshot, PaneSnapshot, RemotePaneLayoutFrame, RemotePaneLayoutSnapshot,

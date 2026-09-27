@@ -117,8 +117,7 @@ In the web shell the daemon holds that flag for every connected page: each page 
 A background feature asks a resident process for an answer, so `hide-ai` owns that process the way `oh-my-principle`'s resident-process practice requires: one spawn helper, one shutdown path, a child that dies with its owner, and caps that turn a leak into a reported failure rather than a larger number.
 This exists because on 2026-09-17 a single label watcher held 1,699 `codex app-server` descendants and 11.6 GB for two idle days with no signal at all.
 
-The macOS shell converts SIGTERM into AppKit's ordinary termination path and explicitly destroys herdr-core before exit.
-That path cancels the analysis coordinator and reaches each backend's existing child shutdown rather than relying on Swift object deinitialization to happen before process exit.
+`hide stop` sends `hided` SIGTERM, then SIGKILL after five seconds if it has not exited (`hided/src/cli.rs`); `hided` installs no signal handler for either, so on that path a background AI child's end relies on the OS closing the inherited stdin pipe when the owning process exits, not on an explicit graceful shutdown running first.
 
 Every child the crate starts goes through one spawn helper (`hide-ai/src/process.rs`).
 The codex app-server is owned through the stdin pipe it inherits: when the owner dies, the pipe closes and the whole tree ends, which is what makes a `kill -9` of the owner leave no survivors.
@@ -184,7 +183,7 @@ The Codex usage endpoint is called outside `Mutex<Runtime>`; a 429 honors `Retry
 An offline response keeps a non-expired success for at most 15 minutes; Codex can then fall back to the latest weekly window in a local session JSONL file.
 
 Both providers are first read one second after launch, every five minutes while a shell window is visible, and at once when the popover opens on a read older than a minute.
-The Swift shell reports its main window and its popover, and the web shell its page visibility and its popover, through the two `ui_state_update` hints `contracts/hided-ws.schema.json` declares as `uiStateUsageHints`.
+The web shell reports its page visibility and its popover through the two `ui_state_update` hints `contracts/hided-ws.schema.json` declares as `uiStateUsageHints`.
 The previous Claude `.usage-cache.json` input is not read.
 Failures produce one structured event containing only provider, HTTP status where there is one, and error kind.
 

@@ -10,7 +10,7 @@ Fixes ship as a normal release; the advisory is published once the release is ou
 
 ## What is in scope
 
-- The hide app: the Swift shell under `macos/` and the Rust core under `herdr-core/`.
+- The hide app: the Electron desktop host under `desktop/`, the web shell under `web/`, the daemon under `hided/`, and the Rust core under `herdr-core/`.
 - The build and release scripts under `scripts/` and the workflows under `.github/workflows/`.
 - The bundled Herdr runtime pin. hide ships a specific Herdr binary and verifies its digest at build time; a problem in Herdr itself belongs to [Herdr](https://herdr.dev), but a problem in how hide pins, verifies, or launches it belongs here.
 

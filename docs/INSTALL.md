@@ -6,24 +6,18 @@ You can install a published release when one is available or build the same app 
 ## Requirements
 
 - An Apple Silicon Mac with macOS 14 or later.
-- Xcode Command Line Tools or full Xcode with Swift 6.
-- A current stable Rust toolchain with Rust 2024 edition support for source builds.
-- Node.js 22 and pnpm 10 for the bundled Workspace CLI's web assets in source builds.
-- Network access during the first source build for pinned Rust crates, Swift packages, and the pinned Herdr runtime asset.
-- Claude Code or Codex installed and signed in only if you want hide to launch that agent.
+- No Xcode is required to install or run hide.
+- For source builds only: a current stable Rust toolchain with Rust 2024 edition support, Node.js 22, and pnpm 10.
+- For source builds only: network access for the pinned Rust crates, the npm packages, the Electron runtime download, and the pinned Herdr asset.
+- An agent CLI (Claude Code or Codex), installed and signed in, only if you want hide to launch that agent.
 
 Check the build tools before a source install:
 
 ```sh
-swift --version
 rustc --version
 cargo --version
-```
-
-If `swift` is unavailable, install Apple's command line tools:
-
-```sh
-xcode-select --install
+node --version
+pnpm --version
 ```
 
 ## Install a release
@@ -67,25 +61,21 @@ Clone the repository and build the release bundle:
 git clone https://github.com/modakbul-gongbang/hide.git
 cd hide
 pnpm install --frozen-lockfile
-./scripts/build-app.sh
+HIDE_VERSION=<version> pnpm --dir desktop package
 ```
 
-The build must finish with these outputs:
+`HIDE_VERSION` sets the version the packaged app reports.
+Omit it to build from a checkout that a Git tag matching `v[0-9]*` already describes; the packaging script fails rather than ship a version nothing was released under.
 
-- `dist/hide.app`
-- `dist/hide-v<version>-macos-arm64.zip`, with the version derived from the Git tag or supplied through `HIDE_VERSION`
-- the matching `.zip.sha256` sidecar
+Packaging builds the web shell, builds the release `hided`, `hide`, `hide-agent-hooks`, and `hide-host-helper` binaries, fetches and digest-verifies the pinned Herdr binary, and stops with a named error and no app if any of those binaries is missing or not executable.
+It then packages everything into `desktop/out/hide-darwin-arm64/hide.app`, ad-hoc signs it, verifies the signature, and writes `desktop/out/hide-v<version>-macos-arm64.zip` with a `.sha256` sidecar.
 
 Install the app into the system Applications directory and launch the installed bundle:
 
 ```sh
-sudo /usr/bin/ditto --rsrc --extattr --qtn dist/hide.app /Applications/hide.app
+sudo /usr/bin/ditto --rsrc --extattr --qtn desktop/out/hide-darwin-arm64/hide.app /Applications/hide.app
 open /Applications/hide.app
 ```
-
-The build script compiles `herdr-core`, the Workspace CLI and agent hook helper, builds the web assets and Swift shell, copies the app icon and pet theme, downloads the pinned Herdr v0.9.1 arm64 binary when needed, verifies its version and SHA-256 digest, ad-hoc signs the bundle, and creates the release archive and checksum.
-The bundled `Contents/MacOS/hide` is used by the SessionStart helper even when no separate `hide` command is on the shell's `PATH`.
-After a successful local build, `dist/` retains only that current Hide zip/checksum pair; published historical versions remain available from GitHub Releases, and unrelated local files are preserved.
 
 ## Verify the installed app
 
@@ -98,29 +88,25 @@ Verify the bundle signature:
 After opening hide, confirm the installed executable is the one running:
 
 ```sh
-pgrep -fl '/Applications/hide.app/Contents/MacOS/HerdrMacOS'
+pgrep -fl '/Applications/hide.app/Contents/MacOS/hide'
 ```
 
-Exactly one matching process should be active before checking the UI.
-Also run `pgrep -fl HerdrMacOS` to rule out a second dev or worktree instance; matching only the installed path cannot detect those.
+Exactly one matching process should be active before checking the UI; a second match, at another path, is a dev or worktree build still running.
+The app's bundle id is `me.grab.hide.desktop`.
 
 ## First launch
 
-hide runs the Herdr it bundles.
-On launch it verifies the bundled Herdr v0.9.1 binary against the digest recorded in the app, then starts `herdr server` on the default local socket (`~/.config/herdr/herdr.sock`) when no server is running there.
-Set `HERDR_SOCKET_PATH` to an absolute path before launching to use another socket; hide and every `herdr` process it starts follow the same value.
+The app runs its own bundled `hide` CLI, which starts `hided` beside it.
+`hided` serves the web shell inside the app's window and passes the app's bundled Herdr binary to that CLI as `HERDR_BIN_PATH` unless the environment already sets that variable.
+The CLI search order, and `HIDE_CLI_PATH`, are documented in [ARCHITECTURE.md](ARCHITECTURE.md), "The desktop host".
 
-A Herdr server that is already running on that socket is used as it is when it speaks the protocol revision hide was built against.
-When it does not, hide stays disconnected and blocks workspace, terminal, chat, and agent creation before any command is sent.
-The compatibility alert compares the protocol numbers and points to the older component: it opens the safe restart guide for an older running Herdr, or the hide Releases page for an older hide.
-It can also copy version and protocol diagnostics, but it never stops or replaces the running server.
+A Herdr server must be running for panes to attach.
+The binary the app bundles is at `hide.app/Contents/Resources/herdr`; running it once, with no arguments, starts the default server on `~/.config/herdr/herdr.sock`.
+Set `HERDR_SOCKET_PATH` to an absolute path before launching to use another socket.
+A server already running on the socket hided uses is used as it is; hide never stops or replaces it.
 
-A separate Herdr installation is not required.
-The bundled binary is at `hide.app/Contents/Resources/herdr-runtime/herdr` if you want the matching CLI on your `PATH`.
 Authentication is not bundled: SSH, Herdr, Claude Code, and Codex continue to own their own sign-in state and credentials.
-
 If you want to start agents from hide, install and sign in to the relevant CLI before launching the app.
-hide resolves those executables from the macOS login shell path and reports an explicit error when the selected CLI is unavailable.
 
 ## Connect another Mac over SSH
 
@@ -134,47 +120,34 @@ Each device row in Settings shows whether the remote session is connected and, w
 
 ## Update
 
-Quit hide, verify the new release archive or rebuild from the new source revision, then replace `/Applications/hide.app` with the new bundle and reopen it.
-Application state under `~/Library/Application Support/hide/` remains separate from the app bundle and is not removed by an update.
+Quit hide, replace `/Applications/hide.app` with the new release or rebuild, and reopen it.
+State under `~/.local/state/hide` and the desktop profile at `~/Library/Application Support/hide-desktop` both persist across an update.
+Files the previous Swift app left under `~/Library/Application Support/hide/` are not read by the current app, apart from `state.json`'s shortcut bindings, which are imported once, and can be deleted by hand.
+Agent hooks that earlier app installed name a helper inside its own bundle, so after the first launch Settings reports them as missing their helper; Install there rewrites them to this app's helper.
 
 ## Uninstall
 
 Quit hide and move `/Applications/hide.app` to the Trash.
-This removes the application but keeps its saved UI state under `~/Library/Application Support/hide/`.
-Delete that directory only when you deliberately want to reset hide's saved state.
+This removes the application but keeps `~/.local/state/hide` and `~/Library/Application Support/hide-desktop`.
+Delete both directories only when you deliberately want to reset hide's saved state.
 
 ## Troubleshooting
 
-### The app opens from the checkout but the installed app looks different
+### The window shows a connection failure instead of the app
 
-A source fix is not visible to an app bundle that was built earlier.
-Identify the exact PIDs and bundles first, and coordinate before normally quitting an app somebody is using.
-Quit only owned test instances, rebuild and reinstall when intended, then launch the exact `/Applications/hide.app` bundle.
-For QA, use the isolation and restoration procedure in [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md); do not stop the operator's Herdr server.
+The desktop host shows a status page while it is connecting, and a failure page with a `Retry` button when it cannot reach the daemon: `cli_missing` when no `hide` executable was found, `start_failed` when the CLI could not start it, and `no_response` when it started but never answered.
+Read the host log at `<profile>/logs/desktop.log` (the profile is `~/Library/Application Support/hide-desktop`, or `HIDE_DESKTOP_USER_DATA_DIR`) for the detail behind whichever reason the page shows.
+
+### No Herdr session
+
+If the app connects but no workspace, terminal, or agent can start, no `herdr server` is running on the socket hided uses.
+The daemon logs `herdr_bin.missing` when it cannot find a herdr binary at all: check `HERDR_BIN_PATH`, then PATH, then run the bundled `hide.app/Contents/Resources/herdr` once to start the default server.
 
 <!-- herdr-provenance:start -->
 hide distributes the [upstream Herdr release v0.9.1](https://github.com/herdrdev/herdr/releases/tag/v0.9.1).
 The bundled binary is not modified by hide.
 The weekly `herdr-update.yml` workflow proposes upstream stable releases with `--repo herdrdev/herdr`; updates must pass contract and runtime checks.
 <!-- herdr-provenance:end -->
-
-### hide says its bundled Herdr is missing or failed verification
-
-The binary at `hide.app/Contents/Resources/herdr-runtime/herdr` is absent or its digest is not the one the app was built with.
-Reinstall hide from a release archive whose checksum verified, or rebuild it; the startup diagnostic names which of the two checks failed.
-
-### hide says the running Herdr speaks another protocol
-
-A Herdr server started outside hide (an installed CLI, an older hide) owns the socket and was built against a different protocol revision.
-The alert compares the required and running protocol numbers so it does not tell you to update the wrong component.
-
-If the running Herdr is older, finish or save the work in its panes first.
-Then stop that session from a terminal with `herdr session stop default`, or use `herdr server stop` for an explicitly supervised server, and reopen hide.
-Hide will start the compatible Herdr bundled inside the app, so a separate install or `herdr update` is not required.
-
-If the running Herdr is newer, choose `Open Hide Releases` and install a compatible hide release.
-If either protocol number is unavailable, choose `Copy Diagnostics` and include the result in the issue report instead of guessing which component to replace.
-No workspace or agent was created, and hide leaves the running server and its panes untouched until you deliberately perform the safe recovery step.
 
 ### An agent cannot start
 

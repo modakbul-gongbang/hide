@@ -531,7 +531,7 @@ fn worktree_rows_sort_main_then_open_then_commit_time() {
 /// A web Overview names its project for measuring: every checkout of it and
 /// the shared Git directory join the disk request, the project reads as
 /// measuring until the reader answers, then carries the total. A project that
-/// is not a local Git project is refused, and the Swift shell's empty payload
+/// is not a local Git project is refused, and an older client's empty payload
 /// still means "measure the right panel's checkout again".
 #[test]
 fn a_named_project_overview_measures_its_whole_disk() {
@@ -1580,7 +1580,7 @@ fn created_worktree_starts_collapsed_and_keeps_purpose_failure_non_blocking() {
     let _ = std::fs::remove_file(state_path);
 }
 
-/// B18. Unicode-scalar validation matches the Swift sheet and fails inside
+/// B18. Unicode-scalar validation counts scalars, not bytes, and fails inside
 /// the caller-visible task operation instead of publishing a detached alert.
 #[test]
 fn invalid_purpose_fails_the_sheet_operation_with_the_shared_scalar_limit() {

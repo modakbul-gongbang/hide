@@ -570,7 +570,7 @@ export function allProjectsStats(workspaces: readonly (Workspace | null)[]): All
   return { projects: workspaces.length, openPullRequests: known ? openPullRequests : null, merged: known ? merged : null };
 }
 
-/** A size the way the Swift Overview writes it: `812 MB`, `1.4 GB`, binary units. */
+/** A size the way the Overview writes it: `812 MB`, `1.4 GB`, binary units. */
 export function formatBytes(bytes: number): string {
   const units = ["B", "KB", "MB", "GB", "TB"];
   let value = bytes;

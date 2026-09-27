@@ -59,7 +59,7 @@ int main(void) {
 `;
 
 export function pinnedHerdrVersion(): string {
-  const manifest = path.resolve("..", "macos/Sources/HerdrMacOS/Resources/herdr-bundle.json");
+  const manifest = path.resolve("..", "contracts/herdr-bundle.json");
   return (JSON.parse(fs.readFileSync(manifest, "utf8")) as { version: string }).version;
 }
 

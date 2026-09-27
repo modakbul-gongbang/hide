@@ -16,26 +16,17 @@ cd "$(dirname "$0")/.."
 mkdir -p target
 exec > >(tee target/hide-full.log) 2>&1
 
-# verify / rust and swift lanes
+# verify / rust, web shell and desktop app lanes (short of the Playwright flows)
 bash scripts/verify-cargo.sh lint
 bash scripts/verify-cargo.sh test
-bash scripts/verify-swift.sh test
-bash scripts/check-right-panel-sections.sh
-bash scripts/check-shortcut-contract.sh
+bash scripts/verify-web.sh
 
 # verify / repository invariants lane
 python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 bash scripts/check-harness-ignore-anchor.sh
 bash scripts/check-agent-asset-committed.sh
-python3 scripts/check-core-bridge-structure.py
 bash scripts/check-capability-readers-off-lock.sh
-bash scripts/check-terminal-row-cache.sh
-bash scripts/check-packaged-resource-access.sh
 bash scripts/check-no-workstation-identity.sh
-bash scripts/check-git-worktree-presentation.sh
-bash scripts/check-git-worktree-states.sh
-bash scripts/check-worktree-base-policy.sh
-bash scripts/check-worktree-catalog-presentation.sh
 bash scripts/check-worktree-removal-boundary.sh
 zsh scripts/check-herdr-pin-single-source.sh
 zsh scripts/check-herdr-contract.sh --schema-only

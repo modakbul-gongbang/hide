@@ -302,7 +302,7 @@ export type Workspace = {
   removal?: { pane_count: number; running_agent_count: number };
   checkouts: Checkout[];
   inactive_checkouts: { expanded: boolean; checkout_ids: string[] };
-  /** The repository's open issues, as the Swift shell reads them. */
+  /** The repository's open issues, in the shape older readers read. */
   home_issues?: ProjectIssues;
   /** The project's tasks, the Overview's Tasks and Agents views read these. */
   tasks?: ProjectTasks;
@@ -460,8 +460,8 @@ export type EditorOpeningSnapshot = { workspace_id: string; checkout_id: string;
  * The core's editor section: every open document (one buffer per device,
  * checkout and document, S5.5) and the document of the active View area's
  * active display. The web shell reads documents from the `documents` section
- * instead (`DocumentsSection`); the wire's `document` field is the Swift
- * shell's and is always null here.
+ * instead (`DocumentsSection`); the wire's `document` field serves a
+ * client without View areas and is always null here.
  */
 export type EditorSnapshot = {
   tabs: EditorTabSnapshot[];
@@ -549,7 +549,7 @@ export type ChangesSnapshot = {
   base_branch: string | null;
   selected_path: string | null;
   selected_committed: boolean;
-  /** The Swift shell's selected diff; the web shell reads `diffs`. */
+  /** The selected diff of a client without View areas; the web shell reads `diffs`. */
   diff: { path: string; text: string; notice: string | null } | null;
   /** One bounded patch per visible diff display of the front Workspace (S7 contract 3.2); absent when none shows. */
   diffs?: DiffSnapshot[];
@@ -845,7 +845,7 @@ export type SnapshotRest = {
     /** `system`, `light` or `dark`; the page reads anything else as Dark. */
     theme?: string;
     font_size?: number;
-    /** The macOS pane chords the Swift app and the desktop app share, in the Swift app's format. */
+    /** The desktop app's macOS pane chords, in the removed native app's format. */
     shortcut_bindings?: Record<string, string>;
     browser_shortcut_bindings?: Record<string, string>;
     /** Sleep idle agents after this many hours; null or absent is Never (PRD agent-sleep). */

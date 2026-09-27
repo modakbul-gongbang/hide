@@ -14,13 +14,6 @@ updates:
     groups:
       cargo-minor-and-patch:
         update-types: [minor, patch]
-  - package-ecosystem: swift
-    directory: /macos
-    schedule:
-      interval: weekly
-      day: monday
-    cooldown:
-      default-days: 7
   - package-ecosystem: github-actions
     directory: /
     schedule:

@@ -25,10 +25,9 @@
 }
 
 /*
- * The Seti glyph subset the file rows draw, the same bytes the macOS shell
- * bundles (macos/Sources/HerdrMacOS/Resources/seti-subset.woff, MIT, notice
- * at macos/Resources/THIRD_PARTY_NOTICES/seti-ui-MIT.txt) and the same
- * codepoints SetiFileIconCatalog resolves. block rather than swap: the glyphs
+ * The Seti glyph subset the file rows draw (MIT, notice at
+ * desktop/resources/THIRD_PARTY_NOTICES/seti-ui-MIT.txt) and the codepoints
+ * fileIcons.ts resolves. block rather than swap: the glyphs
  * are private-use codepoints, so a fallback face would draw tofu for every row
  * until the font landed.
  */

@@ -27,21 +27,6 @@ spikes/*/target
 __pycache__/
 *.pyc
 .env
-# SwiftPM build output
-.build/
-.build-boundary/
-macos/build/
-# Stray SwiftPM compile output; these carry absolute paths
-*.d
-*.o
-*.swiftdeps
-# The compiler writes a `~` backup beside each of the above; ignoring only the
-# plain name let four of them reach `git status` as untracked candidates.
-*~
-*.swiftmodule
-*.swiftsourceinfo
-*.swiftdoc
-*.dia
 
 # A per-user agent permission file, not a project input.
 .claude/settings.local.json

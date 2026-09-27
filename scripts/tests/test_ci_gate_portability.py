@@ -23,7 +23,7 @@ def scripts_named_by_workflows():
     """Every repository script a workflow invokes, and what those scripts call."""
     named, pending = set(), []
     for workflow in WORKFLOWS.glob('*.yml'):
-        for match in re.finditer(r'(?:scripts|macos/scripts)/[\w./-]+', workflow.read_text()):
+        for match in re.finditer(r'scripts/[\w./-]+', workflow.read_text()):
             pending.append(match.group(0))
     while pending:
         relative = pending.pop()
@@ -33,7 +33,7 @@ def scripts_named_by_workflows():
         if not path.is_file():
             continue
         named.add(relative)
-        for match in re.finditer(r'(?:scripts|macos/scripts)/[\w./-]+', path.read_text()):
+        for match in re.finditer(r'scripts/[\w./-]+', path.read_text()):
             pending.append(match.group(0))
     return named
 
@@ -41,7 +41,7 @@ def scripts_named_by_workflows():
 class CIGatePortability(unittest.TestCase):
     def test_every_script_a_workflow_reaches_exists(self):
         for workflow in WORKFLOWS.glob('*.yml'):
-            for match in re.finditer(r'(?:bash|zsh|sh|node|python3) ((?:scripts|macos/scripts)/[\w./-]+)',
+            for match in re.finditer(r'(?:bash|zsh|sh|node|python3) (scripts/[\w./-]+)',
                                      workflow.read_text()):
                 relative = match.group(1)
                 self.assertTrue((ROOT / relative).is_file(),

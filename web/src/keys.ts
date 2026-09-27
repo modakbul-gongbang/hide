@@ -1,4 +1,4 @@
-/** Swift ModifiedTerminalInputPolicy, for xterm.js attachCustomKeyEventHandler. */
+/** The modified-key input policy, for xterm.js attachCustomKeyEventHandler. */
 
 export const SHIFT_ENTER = new Uint8Array([0x1b, 0x0d]);
 export const COMMAND_DELETE = new Uint8Array([0x15]);

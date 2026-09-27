@@ -9,8 +9,8 @@
 //! ([`crate::view_layout`]) - and never a terminal layout: Herdr keeps panes,
 //! splits and zoom.
 //!
-//! It lives in its own versioned file, apart from `core-state.json` and the
-//! Swift shell's state, so a shell that does not know it never reads it and an
+//! It lives in its own versioned file, apart from `core-state.json`, so a
+//! shell that does not know it never reads it and an
 //! older build's settings are never rewritten by it. A schema 1 file (S6, one
 //! strip of View tabs per Workspace) migrates on load into one area and is
 //! written as schema 2 by the next save. A file this build cannot read, of

@@ -567,10 +567,10 @@ fn an_open_for_a_project_no_longer_named_changes_nothing() {
 }
 
 #[test]
-fn the_swift_refresh_and_archive_open_keep_their_focused_checkout_meaning() {
+fn the_empty_refresh_and_archive_open_keep_their_focused_checkout_meaning() {
     let mut runtime = runtime();
 
-    // The Swift shell sends `{}`; no Project is named and the right panel's
+    // An older client sends `{}`; no Project is named and the right panel's
     // Sessions answer for the focused checkout as before.
     for payload in [serde_json::json!({}), serde_json::Value::Null] {
         let event = serde_json::json!({"schema_version": SCHEMA_VERSION, "kind": "sessions_refresh", "payload": payload});

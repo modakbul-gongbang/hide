@@ -2,7 +2,7 @@
 // renders it, reports an edit as a `file_draft`, and replaces its own text
 // only when the core's contents are the ones this view last sent (an echo) or
 // a real external change. A stale echo of an earlier keystroke is dropped
-// rather than applied, which is the rule the Swift editor uses.
+// rather than applied.
 //
 // One document may show in several displays at once (S7 B4, D-03): every
 // view of it joins the document's channel (`sync.ts`), so an edit in one view

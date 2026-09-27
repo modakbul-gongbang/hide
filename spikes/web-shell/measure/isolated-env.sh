@@ -14,7 +14,7 @@ run_dir="${S0_RUN_DIR:-$worktree_root/agents/runs/web-shell-pivot-s0}"
 mkdir -p "$run_dir" "$run_dir/logs" "$run_dir/fixture" "$run_dir/chrome-profile"
 
 operator_socket="${HOME}/.config/herdr/herdr.sock"
-manifest="$worktree_root/macos/Sources/HerdrMacOS/Resources/herdr-bundle.json"
+manifest="$worktree_root/contracts/herdr-bundle.json"
 pin_sha="$(jq -er '.sha256' "$manifest")"
 pin_version="$(jq -er '.version' "$manifest")"
 cached_herdr="${HIDE_HERDR_CACHE:-${XDG_CACHE_HOME:-$HOME/Library/Caches}/hide/herdr-runtime}/$pin_sha/herdr"

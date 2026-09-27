@@ -12,8 +12,8 @@
 // so a wheel batch becomes one `terminal_scroll` per animation frame and the
 // core answers with the viewport it now shows.
 //
-// A pointer gesture follows the Swift `TerminalPointerRoutingState` (PRD S2
-// B20): a drag selects locally, and a single primary click that never
+// A pointer gesture follows the routing policy (PRD S2 B20): a drag
+// selects locally, and a single primary click that never
 // dragged is replayed on release as one `terminal_click` with the pressed
 // cell; the core decides whether the program gets a mouse report. ⌥ + press
 // and a multi-click stay local. A copy of the selection is assembled here
@@ -253,8 +253,8 @@ function flushWheel(paneId: string, instance: Instance) {
     payload: {
       pane_id: paneId,
       // A DOM deltaY grows downward while AppKit's scrollingDeltaY grows
-      // upward, so this ternary is the mirror of the Swift one, not its
-      // opposite; Herdr's `up` shows older lines. The core's line count is
+      // upward, so this ternary reads the DOM sign, not AppKit's; Herdr's
+      // `up` shows older lines. The core's line count is
       // a u16, so a scripted burst is clamped rather than refused.
       direction: rows > 0 ? "down" : "up",
       lines: Math.min(Math.abs(rows), SCROLL_LINES_MAX),
@@ -271,8 +271,8 @@ function onWheel(paneId: string, instance: Instance, event: WheelEvent) {
   // into cursor-key bytes on the PTY, and a mouse-tracking program gets
   // xterm's own wheel report; Herdr decides both from terminal_scroll.
   event.stopImmediatePropagation();
-  // ⌥ + wheel stays with the browser, as in the Swift shell: nothing to
-  // Herdr and nothing to the PTY.
+  // ⌥ + wheel stays with the browser: nothing to Herdr and nothing to
+  // the PTY.
   if (event.altKey) return;
   event.preventDefault();
   const geometry = cellGeometry(instance);
@@ -324,7 +324,7 @@ function cellAt(geometry: CellGeometry, event: { clientX: number; clientY: numbe
 function onMouseDown(instance: Instance, event: MouseEvent) {
   instance.press = null;
   // The primary button alone can become a click; ⌥ + press and a second
-  // click of a multi-click are the Swift `application` and `localSelection`
+  // click of a multi-click are the `application` and `localSelection`
   // routes, and neither is replayed to the program.
   if (event.button !== 0 || event.altKey || event.detail !== 1) return;
   const geometry = cellGeometry(instance);

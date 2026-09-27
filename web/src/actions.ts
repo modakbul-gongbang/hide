@@ -177,7 +177,7 @@ export function createActions(dispatch: DispatchFn) {
   const taskIdNow = () => rest()?.task_operation?.id ?? 0;
 
   /**
-   * One close through the Swift flow. `targetId` names the SSH device the
+   * One close through the consequence flow. `targetId` names the SSH device the
    * pane or tab lives on, and the close goes there as `remote_control`; a
    * local close is the core's own `close_pane`/`close_tab`.
    */

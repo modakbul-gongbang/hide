@@ -165,7 +165,7 @@ export class DesktopHost {
     const attempt = ++this.attempts;
     this.stopWatch();
     this.setState({ kind: "connecting" });
-    this.log.event("discovery.start", { attempt, trigger });
+    this.log.event("discovery.start", { attempt, trigger, herdr: this.bundledHerdr() ? "bundled" : "inherited" });
     const cli = await this.findCli(attempt);
     if (!cli) return this.fail(attempt, "cli_missing", "no executable hide CLI");
     const answer = parseConnect(await this.runCli(cli.path, ["connect"], CONNECT_TIMEOUT_MS));
@@ -183,6 +183,7 @@ export class DesktopHost {
       {
         override: this.env.cliPath,
         worktreeRoot: app.isPackaged ? null : path.resolve(app.getAppPath(), ".."),
+        bundledDir: this.bundledDir(),
         searchPath: this.env.path,
         remembered: typeof stored === "string" ? stored : null,
         // A packaged app opened from Finder has launchd's PATH, not the operator's.
@@ -228,13 +229,33 @@ export class DesktopHost {
     }
   }
 
+  /** The packaged app's `Contents/Resources`, where `hide`, `hided` and `herdr` ship side by side. */
+  private bundledDir(): string | null {
+    return app.isPackaged ? process.resourcesPath : null;
+  }
+
+  /**
+   * The Herdr a daemon started from here attaches pane terminals with: the
+   * bundled binary, unless the environment already names one (an isolated
+   * e2e, a development server), which is passed through unchanged (D-07).
+   */
+  private bundledHerdr(): string | null {
+    const dir = this.bundledDir();
+    return dir && this.env.herdrBinPath === null ? path.join(dir, "herdr") : null;
+  }
+
+  private childEnvironment(): Record<string, string | undefined> {
+    const herdr = this.bundledHerdr();
+    return herdr ? { ...this.env.inherited, HERDR_BIN_PATH: herdr } : this.env.inherited;
+  }
+
   private runCli(file: string, args: readonly string[], timeoutMs: number): Promise<ChildResult> {
     // A call queued behind the one quit killed never starts; it answers as a
     // child that could not start, which every caller already reads as a stop.
     const run = this.cliChain.then(() =>
       this.quitting
         ? { code: null, signal: null, stdout: "", stderr: "", timedOut: false, spawnError: "host is quitting" }
-        : this.runner.run(file, args, timeoutMs),
+        : this.runner.run(file, args, timeoutMs, this.childEnvironment()),
     );
     this.cliChain = run.catch(() => undefined);
     return run;

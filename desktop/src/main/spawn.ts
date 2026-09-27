@@ -30,10 +30,11 @@ export class ChildRunner {
     return this.current !== null;
   }
 
-  run(file: string, args: readonly string[], timeoutMs: number): Promise<ChildResult> {
+  /** `env` is the child's whole environment; without it the child inherits this process's. */
+  run(file: string, args: readonly string[], timeoutMs: number, env?: Record<string, string | undefined>): Promise<ChildResult> {
     if (this.current) return Promise.reject(new Error(`over budget: ${MAX_CHILDREN} child already running`));
     return new Promise((resolve) => {
-      const child = spawn(file, args, { stdio: ["ignore", "pipe", "pipe"] });
+      const child = spawn(file, args, { stdio: ["ignore", "pipe", "pipe"], env });
       this.current = child;
       let stdout = "";
       let stderr = "";

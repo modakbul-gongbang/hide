@@ -2,7 +2,7 @@ use std::sync::{Mutex, Weak, mpsc};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::ffi::ChangeNotifier;
+use crate::handle::ChangeNotifier;
 use crate::runtime::Runtime;
 
 const RETRY_SECONDS: [u64; 4] = [5, 10, 20, 30];

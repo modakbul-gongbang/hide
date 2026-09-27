@@ -14,7 +14,7 @@ mkdir -p "$run_dir" "$run_dir/logs" "$run_dir/fixture" "$run_dir/chrome-profile"
 run_dir="$(cd "$run_dir" && pwd)"
 
 operator_socket="${HOME}/.config/herdr/herdr.sock"
-manifest="$worktree_root/macos/Sources/HerdrMacOS/Resources/herdr-bundle.json"
+manifest="$worktree_root/contracts/herdr-bundle.json"
 pin_version="$(jq -er '.version' "$manifest")"
 if [[ -n "${HERDR_BIN_PATH:-}" && -x "${HERDR_BIN_PATH}" ]]; then
   herdr_bin="$HERDR_BIN_PATH"

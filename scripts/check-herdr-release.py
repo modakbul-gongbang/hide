@@ -12,7 +12,7 @@ import subprocess
 import tempfile
 
 ROOT = Path(__file__).resolve().parent.parent
-MANIFEST = ROOT / 'macos/Sources/HerdrMacOS/Resources/herdr-bundle.json'
+MANIFEST = ROOT / 'contracts/herdr-bundle.json'
 
 
 def run(*args, cwd=ROOT):
@@ -85,7 +85,7 @@ def bump(args):
     require(planned['outcome'] == 'planned', 'cross-repository dry run is not planned')
     require(planned['source_url'] == 'https://github.com/herdrdev/herdr/releases/download/v0.8.2/herdr-macos-aarch64', 'cross-repository URL differs')
     documents = ['README.md', 'docs/INSTALL.md', 'contracts/README.md', 'AGENTS.md',
-                 'macos/Resources/THIRD_PARTY_NOTICES/herdr-APACHE-2.0.txt']
+                 'desktop/resources/THIRD_PARTY_NOTICES/herdr-APACHE-2.0.txt']
     with tempfile.TemporaryDirectory(prefix='herdr-doc-bump-') as directory:
         fixture = Path(directory)
         for relative in documents + ['scripts/bump-herdr.sh', 'contracts/herdr-api.schema.json', str(MANIFEST.relative_to(ROOT))]:

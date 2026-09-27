@@ -3,8 +3,7 @@
 This document owns what Hide's UI does: the rules for how each screen and control behaves, independent of any platform's exact pixel values.
 It replaces the behavioral content of the retired `DESIGN.md`.
 Visual authority (what a control looks like) lives in the Pen library and `web/src/components/ui`/`web/src/components`, described in [DESIGN_WORKFLOW.md](DESIGN_WORKFLOW.md); numeric authority lives in `design/tokens.json`.
-The native macOS shell (`macos/`) still ships until S6 and is frozen for this change: `HideTheme.swift` is not regenerated or hand-edited, and its own design-contract tests are gone.
-Where a rule is currently native-only, its Swift owner is named below; a web owner is added wherever the web shell (`web/src/`) already implements the equivalent behavior.
+Each rule below names the code that owns it: a web owner in `web/src/` and, where the behavior is core-decided, a core owner in `herdr-core/src/`.
 
 ## Web Workspace
 
@@ -161,7 +160,7 @@ The browser display's toolbar and its loading, load failed, and plain browser ta
 Several View areas leave the Agent side as it was already drawn: the side panel toggle, the tool column, and the child chips below behave the same with one area or six.
 
 A pane whose agent delegated work shows every direct child on one row under its header, each chip a status mark, the provider mark, and a capped title; the row scrolls sideways instead of growing, and a pane with no children has no row.
-Its library masters are `Component / Pane child chip` and `Component / Pane child row`; the native pane header keeps its first child and `+N` until the native shell changes.
+Its library masters are `Component / Pane child chip` and `Component / Pane child row`.
 A chip opens the existing child at once; while that move is in flight the chip shows a pending mark and repeats of it are ignored, and a failure shows the core's reason under the header with Retry (when the core says it can be retried) and Dismiss.
 A child pane has a compact Return mark in its identity row, named with the parent in its tooltip and accessible name.
 The pane menu (from its overflow control or a right-click on the header) lists the parent, the other siblings, and the children as explicit Open items, then Copy pane name and Close pane; opening it moves no focus and marks nothing read.
@@ -212,11 +211,11 @@ The list place shows one small mark per state: loading, no sessions yet, no matc
 The open session shows its row's provider, checkout, and time with Copy source location, its request as the title, then each request and answer in order as plain text; injected context, where Project Memory travels, is not shown.
 A session that cannot be opened shows the same reason in the detail place with Retry, which reads the history again and then the session.
 When another window names another Project, this one says so and offers `Show this project's sessions`, which names this Project again only when chosen, so two windows never take it from each other.
-The web shell has no Project Memory entry point, disabled control, or placeholder until the Memory stage (PRD S8); Memory is managed in the macOS app.
+The web shell has no Project Memory entry point, disabled control, or placeholder until the Memory stage (PRD S8); Memory currently has no UI in any shell and works only through the `UserPromptSubmit`/`SessionStart` hooks (see [PERFORMANCE_TESTING.md: Project Memory cost contract](PERFORMANCE_TESTING.md#project-memory-cost-contract)).
 
 ## Terminal image attachment boundary
 
-Web owner: `web/src/attachments.ts`. Native owner: `TerminalFileDrop.swift`, `ImeTerminalView.swift`. Core owner: `herdr-core/src/runtime/attachments.rs`, `herdr-core/src/remote/attachments.rs`.
+Web owner: `web/src/attachments.ts`, `web/src/PaneView.tsx`. Core owner: `herdr-core/src/runtime/attachments.rs`, `herdr-core/src/remote/attachments.rs`.
 
 Dropping local file URLs into a visible terminal focuses that receiving pane and starts one attachment intent through the existing ordered writer.
 Paste captures PNG or TIFF clipboard images at the same ingress; ordinary text and keys keep their existing terminal behavior.
@@ -239,9 +238,8 @@ Reintroducing a shared attachment shelf requires a supported provider contract f
 
 ## Project Home
 
-Native owner: `HideTheme.Home` and the SwiftUI Project Home views.
 Web owner: `web/src/ProjectOverview.tsx` (the Project Overview screen), `web/src/MainScreen.tsx` (All projects), `web/src/TaskBoards.tsx` (the Tasks and Agents boards both scopes draw), `web/src/WaitingBand.tsx` (the waiting band), `web/src/projectBoard.ts` (the board rules); a card's agent row is the Agents list's `web/src/components/agent-row.tsx`.
-The web boards follow PRD task-agents-views (`agents/prd/task-agents-views/prd.md`); the frozen Swift Project Home keeps its four Git columns and no longer shares the web's rules.
+The web boards follow PRD task-agents-views (`agents/prd/task-agents-views/prd.md`).
 
 Project Home uses the shared tab choice, badges, agent identity marks, settings field, icon buttons, and command tooltip.
 On the web, Tasks is the session default: a board of tasks in five columns, `백로그 · 준비 · 진행 중 · 리뷰 · 완료`, each headed `name · count`, under an ad hoc strip.
@@ -297,7 +295,7 @@ A card row carries no chevron and no descendant badge.
 
 ## Explorer file management
 
-Web owner: `web/src/ExplorerTree.tsx`, `web/src/explorer.ts`. Native owner: `WorkspaceOutlineView.swift`, `WorkspaceOutlinePresentation.swift`, `changes.rs`.
+Web owner: `web/src/ExplorerTree.tsx`, `web/src/explorer.ts`. Core owner: `herdr-core/src/changes.rs`.
 
 The tree's context menu follows VS Code's order: New File, New Folder, a separator, then on a file row Open with Default App and a separator, then Reveal in Finder, Copy Path, Copy Relative Path, a separator, Rename, a separator, Delete.
 A folder row has no open items, because its open is Reveal in Finder; the empty area below the rows stands for the root and offers only the two creations; a remote tree is read-only and offers only the two copies.
@@ -339,7 +337,7 @@ Switching Workspaces replaces the decoration root, and no per-row, hover, select
 
 ## Editor preview tab
 
-Native owner: `runtime/editor.rs` (`place_editor_tab`, `promote_editor_tab`), `EditorTabSnapshot.preview`. The web Workspace's one-preview-per-View-area model is the same idea applied per area; see [Web Workspace](#web-workspace).
+Core owner: `herdr-core/src/runtime/editor.rs` (`place_editor_tab`, `promote_editor_tab`), `EditorTabSnapshot.preview`. The web Workspace's one-preview-per-View-area model is the same idea applied per area; see [Web Workspace](#web-workspace).
 
 A single click on an Explorer file or a History row opens it in the checkout's one preview tab (VS Code's model): the strip draws the title in italic, and the next single click replaces the tab in the same slot instead of adding one.
 The core owns the preview flag and decides replacement and promotion; the shell only says what the click meant.
@@ -352,7 +350,7 @@ The tooltip and the accessibility label read `name · Preview` while the tab is 
 
 ## File document toolbar and Markdown
 
-Native owner: `EditorViewerOverlay.swift`, `PDFDocumentView.swift`, `MarkdownLiveEditor.swift`, `MarkdownLiveSource.swift`, `MarkdownListEditing.swift`. Web owner for the editor surface: `web/src/Editor.tsx`.
+Web owner: `web/src/Editor.tsx`, `web/src/viewers/FileViewer.tsx`.
 
 The central file surface uses one document toolbar, preserving the tab strip and Explorer.
 The current folder and filename give context; Find uses the platform's native find bar, Wrap changes the source text container, and reveal actions target Explorer and Finder.
@@ -389,7 +387,7 @@ The text that results is ordinary Markdown, with nothing hidden or special in it
 
 ## Projects and checkout context
 
-Native owner (sidebar tree): `SidebarPresentation.swift`, `sidebar.rs`. Native owner (Overview panel): `OverviewPresentation.swift`, `CheckoutOverview.swift`, `project_context.rs`, `worktrees.rs`, `disk.rs`, `worktree_cleanup.rs`, `runtime/projects.rs`. Web owner: `web/src/sidebar.tsx`, `web/src/projects.ts`.
+Core owner: `herdr-core/src/sidebar.rs`, `herdr-core/src/project_context.rs`, `herdr-core/src/worktrees.rs`, `herdr-core/src/disk.rs`, `herdr-core/src/worktree_cleanup.rs`, `herdr-core/src/runtime/projects.rs`. Web owner: `web/src/sidebar.tsx`, `web/src/projects.ts`.
 
 ### Sidebar hierarchy
 
@@ -397,13 +395,12 @@ The sidebar hierarchy is Project > Workspace > Agents; a Workspace corresponds t
 Two checkouts of one repository share a project cycle.
 Each checkout row shows a kind glyph, selected in priority order: the pull-request lifecycle icon when current GitHub data has a pull request, then branch, home for the primary checkout, commit for detached HEAD, or folder for a plain folder.
 Open, draft, merged, and closed pull requests keep their own lifecycle shapes and colors, stale GitHub data mutes only the icon, an unavailable GitHub lookup falls back to the branch glyph, and a missing folder colors its branch glyph as danger and omits the age.
-Workspaces with nested agent rows toggle disclosure across the whole row; workspaces without nested agent rows open on click (the Swift shell).
 In the web shell every row reads on the left and ends the same way on the right: its time or its status badge, then a fold slot kept at rest, so nothing moves when a control shows and the times and badges of project, checkout and agent rows end on one column while their chevrons stand on another.
 A folded chevron is always shown; an unfolded one shows under the pointer, while focus is inside the row, while its menu is open, and always on an input with no hover.
 Nothing on a row stands for its menu: a right-click, or the menu key or ⇧F10 on the focused row, opens it.
 A web checkout row always opens its checkout: its chevron, drawn only while agents run there, opens and closes their rows, and its last-commit age stays in place whatever the pointer does and while the menu is open.
 An opened checkout and its agent rows share one small group fill; no card border nests inside another.
-A web checkout's agent rows start closed, so its status badge counts them, and the checkouts the operator opens are kept in the core's ui state across launches; the Swift shell keeps its own disclosure until it is removed.
+A web checkout's agent rows start closed, so its status badge counts them, and the checkouts the operator opens are kept in the core's ui state across launches.
 A status badge counts agents under the mark each agent's own row draws, one mark and count per state, worst first (`× ! ? ● ✓ ○`), with idle agents included and zero states left out (docs/status-model.md, Workspace aggregation).
 A web project row folds its checkouts from its chevron on the right, and the rest of the row opens the project's Overview; both folds are this machine's, so a selected SSH device's tree is drawn with nothing folded.
 A web project row carries no time: it ends in its checkouts' badges added up, which stay while its checkouts are open because they are the project's own summary, and a project with no agent draws none.
@@ -490,10 +487,10 @@ An add that lands mid-removal cancels the removal and says so, rather than losin
 
 ## Recent navigation
 
-Native owner: `AgentMRU.swift`, `ShellModel.swift`, `ShellModelNavigation.swift`. Web owner: `web/src/recent.ts`, `web/src/keyboard.ts`, and `CycleOverlay` in `web/src/Overlays.tsx`.
+Web owner: `web/src/recent.ts`, `web/src/keyboard.ts`, and `CycleOverlay` in `web/src/Overlays.tsx`.
 
 Cycling recent surfaces walks every unified surface in recent-use order, across every project, checkout, and device the session holds: terminal, file/editor, and diff tabs, and on the web every View-area display (file, diff, and browser).
-The overlay ("Recent Panels", ⌃Tab / ⌃⇧Tab in the desktop app and the Swift app, ⌥` / ⌥⇧` in a browser, where Chrome keeps ⌃Tab) returns to the actually previous surface on a single chord, and repeated chords toggle between the last two surfaces; holding the modifier while repeating the chord walks older visits rather than tab-strip or agent-list order.
+The overlay ("Recent Panels", ⌃Tab / ⌃⇧Tab in the desktop app, ⌥` / ⌥⇧` in a browser, where Chrome keeps ⌃Tab) returns to the actually previous surface on a single chord, and repeated chords toggle between the last two surfaces; holding the modifier while repeating the chord walks older visits rather than tab-strip or agent-list order.
 A second cycle ("Recent Projects", ⌥Tab / ⌥⇧Tab) scopes to projects globally and restores each project's last used surface.
 Committing a row brings its surface forward in its own project and checkout, switching the Workspace when needed, as one event; a display's View area shows if only Agents showed, and the keyboard lands in it.
 On the web a surface is in use where the keyboard is: the focused checkout's active display while the keyboard is in its View area (or only Views show), else its visible Herdr tab; a commit's intermediate frames are not visits.
@@ -515,7 +512,7 @@ History is session-local and retains only existing projects and surfaces; a dele
 
 ## Device picker
 
-Web owner: `web/src/DevicePicker.tsx`. Native owner: the sidebar device trigger and its themed popover.
+Web owner: `web/src/DevicePicker.tsx`.
 
 The bottom-sidebar device trigger shows a laptop-or-server icon and the selected device name, and opens a popover (not a native system menu).
 The list is one flat two-line row per device: the actual device name above, then Local or Remote, connection state, and available agent count below.
@@ -524,14 +521,14 @@ The selected device shows a selected wash and a checkmark; keyboard focus is sep
 Up and Down move focus, Return or a click selects, and Escape dismisses without a selection change.
 Empty lists say `No devices available`, long names truncate in their title line, and the complete identity remains in the row's accessibility label.
 The list scrolls once its rows exceed the shared height cap.
-The web shell draws the same trigger and list at the bottom of its sidebar from the shared tokens, with line icons standing in for the native SF Symbols.
+The trigger and list sit at the bottom of the sidebar, drawn from the shared tokens with line icons.
 
 ## Weekly usage
 
-Web owner: `web/src/components/weekly-usage.tsx`, `web/src/usage.ts`. Native owner: the sidebar utility bar's usage button and `HideUsagePopover`.
-The core reads the numbers and names each row's state (`navigator.provider_usage`, [AI_PROVIDERS.md: weekly usage display](AI_PROVIDERS.md#weekly-usage-display)); the shells only draw them.
+Web owner: `web/src/components/weekly-usage.tsx`, `web/src/usage.ts`.
+The core reads the numbers and names each row's state (`navigator.provider_usage`, [AI_PROVIDERS.md: weekly usage display](AI_PROVIDERS.md#weekly-usage-display)); the shell only draws them.
 
-The sidebar footer reads, as the native utility bar does, the device picker at its left, then one chip per provider and the Settings gear at its right; a chip is the provider mark and the rounded percent of the seven-day window.
+The sidebar footer reads the device picker at its left, then one chip per provider and the Settings gear at its right; a chip is the provider mark and the rounded percent of the seven-day window.
 A percent reads in the success color below 70, the warning color from 70 and the destructive color from 90.
 A provider that is loading or unavailable is a dimmed mark with no percent; a stale or fallback reading keeps its percent.
 The chips' accessible name lists every provider with its reading.
@@ -545,7 +542,7 @@ The core keeps one value of each, so with several pages open the last page to re
 
 ## Search keyboard navigation
 
-Native owner: Command+K (agent/workspace search) and Command+P (file search). Web owner: `web/src/search.ts`, `web/src/Palette.tsx`, `web/src/components/search-field.tsx`.
+Web owner: `web/src/search.ts`, `web/src/Palette.tsx`, `web/src/components/search-field.tsx`.
 
 Agent/workspace search and file search share the same focused query field and first-result selection behavior.
 An agent result is titled by the identity every other surface uses and subtitled by the row's second line, falling back to the status word when the state chose no sentence; the pane id leaves the printed row but still matches the query and is read by accessibility, so a result can be found by title, sentence, or id.
@@ -563,8 +560,7 @@ A stale result is checked against the live result set before execution, and file
 
 ## Pane header lineage and ownership
 
-Native owner: `PaneLineageHeader.swift`, `ShellModel.swift`, and the [agent workflow contract](../design/agent-workflow-review.md), which is the native shell's authoritative lineage/ownership document.
-Web owner: `web/src/PaneRelations.tsx`, `web/src/lineage.ts`, and the [Agent panes and the Agents explorer](#agent-panes-and-the-agents-explorer) subsection of Web Workspace above.
+Web owner: `web/src/PaneRelations.tsx`, `web/src/lineage.ts`, and the [Agent panes and the Agents explorer](#agent-panes-and-the-agents-explorer) subsection of Web Workspace above; the [agent workflow contract](../design/agent-workflow-review.md) is the authoritative lineage/ownership document.
 
 The pane header keeps one identity row naming the pane and its status; a pane with children gains a second row for child chips that exists only when there are children.
 An authoritative parent becomes a compact Return control in the first row, with icon-only fallback before current identity or actions are truncated.
@@ -579,7 +575,7 @@ Ownership is drawn as emphasis, not as a new color or container: the operator's 
 A child's question or completion reaches the operator through its ancestors: the ancestor row turns unread and its descendant badge changes, and the ancestor's own group does not move.
 An uninstrumented mark (agent detected but its subagents not visible to Hide) is drawn only where an agent was detected, is a mark plus an accessible name and never a color alone, and its subagent count sits beside it as a badge; a count Hide cannot read is drawn as unknown and never as a zero, because a zero claims the agent is working alone.
 An Overview agent row reuses the same agent identity and state presentation as the sidebar and relationship sheet; a missing row means the current live projection has no agent there, and an uninstrumented mark never means zero.
-The header wash marks the pane Hide is showing, while the outer primary indicator marks the terminal that owns the native keyboard responder; moving keyboard focus into Overview keeps the shown wash and removes the terminal outline.
+The header wash marks the pane Hide is showing, while the outer primary indicator marks the terminal that owns keyboard focus; moving keyboard focus into Overview keeps the shown wash and removes the terminal outline.
 Unread weight is never reused to mean parent, child, delegated, or selected.
 
 ## Keycaps, tooltips, and icon buttons

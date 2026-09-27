@@ -511,8 +511,8 @@ impl Runtime {
         snapshot
     }
 
-    /// Installs the helper packages this daemon carries; the Swift shell
-    /// passes none.
+    /// Installs the helper packages this daemon carries; a daemon that
+    /// carries none passes none.
     pub(super) fn helper_packages_from(options: &CoreOptions) -> (HelperPackages, String) {
         (
             HelperPackages::new(options.host_helper_dir.as_ref().map(PathBuf::from)),

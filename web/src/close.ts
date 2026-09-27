@@ -1,5 +1,4 @@
-// The close flow, mirrored from the Swift shell (`ShellModel.requestTabClose`,
-// `closeCurrentPane`, `ConsequencePolicy`): a pane whose activity is unknown
+// The close flow: a pane whose activity is unknown
 // is not closed until status is refreshed; a pane with working or attention
 // state asks once; an idle pane closes immediately with `confirmed: false`.
 // The decision is pure so the tab bar, the pane header and the shortcut
@@ -46,7 +45,7 @@ export function closeDecision(kind: CloseKind, panes: PaneRow[], agents: AgentRo
       };
 }
 
-/** The notice the Swift shell shows for an unknown activity status; `refresh_status` is the way out. */
+/** The notice for an unknown activity status; `refresh_status` is the way out. */
 export function statusUnknownNotice(label: string): string {
   return `Activity status for ${label} is unknown. Check status before closing.`;
 }

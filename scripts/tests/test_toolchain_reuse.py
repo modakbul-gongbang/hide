@@ -42,7 +42,7 @@ CARGO_CALL = re.compile(r'(?:^|[|;&(]|\bexec |\bthen |\$\()\s*cargo\b')
 
 
 def tracked_shell_scripts():
-    listed = subprocess.check_output(['git', 'ls-files', 'scripts', 'macos/scripts'],
+    listed = subprocess.check_output(['git', 'ls-files', 'scripts'],
                                      cwd=ROOT, text=True).split()
     return [relative for relative in listed if relative.endswith('.sh')]
 
