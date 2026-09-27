@@ -38,7 +38,7 @@ import {
 import { hostKind } from "./host";
 import { displayCommand, hostRegistry } from "./shortcuts";
 import { contextWorkspaces, deviceCatalogLine, remoteContext, remoteView } from "./remote";
-import { agentMenu, checkoutMenu, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
+import { agentMenu, checkoutMenu, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
 import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
@@ -858,7 +858,7 @@ const FolderRowView = memo(function FolderRowView({
       <EntryContextMenu
         label={`${workspace.label} actions`}
         items={() => folderMenu(workspace, checkout, menuHost(), purposeProblem)}
-        onSelect={(item) => (CHECKOUT_ITEMS.has(item) ? runCheckoutItem(actions, workspace, checkout, item) : runProjectItem(actions, workspace, item))}
+        onSelect={(item) => (FOLDER_CHECKOUT_ITEMS.has(item) ? runCheckoutItem(actions, workspace, checkout, item) : runProjectItem(actions, workspace, item))}
         className="group flex items-stretch"
         data-project-menu={workspace.id}
       >
@@ -1098,9 +1098,6 @@ function menuHost(): MenuHost {
   const host = hostKind();
   return { finder: host === "electron", newTabChord: displayCommand("new_tab", host, hostRegistry(useShellStore.getState().rest?.ui_state, host).registry) };
 }
-
-/** The ids a plain folder's row routes to its checkout rather than its project. */
-const CHECKOUT_ITEMS = new Set<MenuItem["id"]>(["open_checkout", "new_tab_here", "open_pull_request", "set_purpose", "set_primary", "copy_branch", "delete_worktree"]);
 
 function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["id"]) {
   switch (item) {

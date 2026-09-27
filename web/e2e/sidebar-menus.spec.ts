@@ -125,20 +125,20 @@ test("the sidebar's row menus: pin an unregistered project, open a tab, move the
     await expect(menu.locator('[data-menu-item="unpin"]')).toHaveText(/Unpin/);
     await page.keyboard.press("Escape");
 
-    // B4: the checkout row's menu; the worktree is not the default yet.
+    // B4: the checkout row's menu; the worktree is not the default yet. Delete
+    // worktree… stays disabled until the worktree reader has read the row, a
+    // few seconds after launch, so the menu is read again until it has.
+    const checkoutLines = async (): Promise<string[]> => {
+      const open = await openMenu(page, feature.locator("[data-checkout-menu]"), `${BRANCH} actions`);
+      const lines = await menuLines(open);
+      await page.keyboard.press("Escape");
+      await expect(open).toHaveCount(0);
+      return lines;
+    };
+    await expect
+      .poll(checkoutLines, { timeout: 30_000 })
+      .toEqual(["Open", "New tab here ⌥T", "─", "Set purpose…", "Set as default checkout", "Copy branch name", "Copy path", "─", "Delete worktree…"]);
     menu = await openMenu(page, feature.locator("[data-checkout-menu]"), `${BRANCH} actions`);
-    expect(await menuLines(menu)).toEqual([
-      "Open",
-      "New tab here ⌥T",
-      "─",
-      "Set purpose…",
-      "Set as default checkout",
-      "Copy branch name",
-      "Copy path",
-      "─",
-      // The worktree's gate refuses while its pane is open; the reason is drawn under the item.
-      "Delete worktree… (disabled)",
-    ]);
     await screenshot(page, "sidebar-menus-checkout-dark");
     await page.keyboard.press("Escape");
     menu = await openMenu(page, main.locator("[data-checkout-menu]"), "main actions");

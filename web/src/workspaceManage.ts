@@ -166,6 +166,9 @@ export function projectRemovalConsequences(workspace: Workspace): string[] {
   return lines;
 }
 
+/** The checkout items a plain folder's row adds after its project's; its row routes these to the checkout. */
+export const FOLDER_CHECKOUT_ITEMS: ReadonlySet<MenuItem["id"]> = new Set<MenuItem["id"]>(["open_checkout", "open_pull_request", "set_purpose"]);
+
 /**
  * A plain folder's one row (`folderCheckout`): the project's items, then its
  * checkout's that the project's do not already cover. The folder is the
@@ -173,8 +176,7 @@ export function projectRemovalConsequences(workspace: Workspace): string[] {
  * has no other checkout to make the default.
  */
 export function folderMenu(workspace: Workspace, checkout: Checkout, host: MenuHost, purposeProblem: string | null = null): MenuItem[] {
-  const own = new Set<MenuItem["id"]>(["open_checkout", "open_pull_request", "set_purpose"]);
-  const [first, ...rest] = checkoutMenu(workspace, checkout, host, purposeProblem).filter((item) => own.has(item.id));
+  const [first, ...rest] = checkoutMenu(workspace, checkout, host, purposeProblem).filter((item) => FOLDER_CHECKOUT_ITEMS.has(item.id));
   return first ? [...projectMenu(workspace, host), { ...first, separated: true }, ...rest.map((item) => ({ ...item, separated: false }))] : projectMenu(workspace, host);
 }
 
