@@ -1006,23 +1006,55 @@ impl Runtime {
             .collect::<HashSet<_>>();
         self.visible_tab_ids
             .retain(|checkout_id, _| live_checkout_ids.contains(checkout_id));
+        let mut agent_layout_changed = false;
+        let mut agent_layout_errors = Vec::new();
         for workspace in workspaces.iter_mut() {
             for checkout in workspace.checkouts.iter_mut() {
+                let key = (workspace.device_id.clone(), checkout.path.clone());
+                let mut restored_agent_tab = None;
+                if workspace.device_id == workspace::LOCAL_DEVICE_ID
+                    && let Some(store) = self.workspace_views.as_mut()
+                {
+                    let first = store.agent_live.insert(key.clone());
+                    let layout = &mut store.views.entry(&key.0, &key.1).agent_layout;
+                    let topology = checkout
+                        .tabs
+                        .iter()
+                        .filter_map(|tab| Some((tab.id.clone()?, tab.delegated)))
+                        .collect::<Vec<_>>();
+                    match layout.reconcile(&topology) {
+                        Ok(changed) => agent_layout_changed |= changed,
+                        Err(error) => {
+                            agent_layout_errors.push(format!("{}: {error:?}", checkout.id))
+                        }
+                    }
+                    if first
+                        || self
+                            .visible_tab_ids
+                            .get(&checkout.id)
+                            .is_some_and(|id| !topology.iter().any(|(tab, _)| tab == id))
+                    {
+                        restored_agent_tab = layout.active().map(str::to_owned);
+                    }
+                }
                 let has_tab = |tab_id: &str| {
                     checkout
                         .tabs
                         .iter()
                         .any(|tab| tab.id.as_deref() == Some(tab_id))
                 };
-                let hide_tab = self
-                    .visible_tab_ids
-                    .get(&checkout.id)
-                    .filter(|tab_id| has_tab(tab_id))
-                    .cloned();
+                let hide_tab = restored_agent_tab.clone().or_else(|| {
+                    self.visible_tab_ids
+                        .get(&checkout.id)
+                        .filter(|tab_id| has_tab(tab_id))
+                        .cloned()
+                });
                 let herdr_tab = herdr
                     .focused_tab_id
                     .as_deref()
-                    .filter(|tab_id| herdr_focus_moved && has_tab(tab_id))
+                    .filter(|tab_id| {
+                        restored_agent_tab.is_none() && herdr_focus_moved && has_tab(tab_id)
+                    })
                     .map(str::to_owned);
                 let pending_tab = self
                     .pending_tab_focus
@@ -1115,6 +1147,12 @@ impl Runtime {
                     }
                 }
             }
+        }
+        if agent_layout_changed {
+            self.persist_workspace_views();
+        }
+        for error in agent_layout_errors {
+            self.push_diagnostic("agent_layout.reconcile_refused", error);
         }
         if confirmed_pending {
             self.pending_tab_focus = None;

@@ -890,6 +890,7 @@ pub(super) enum Event {
     WorkspaceView(WorkspaceViewPayload),
     PanelCovers(PanelCoversPayload),
     ViewLayout(ViewLayoutPayload),
+    AgentLayout(AgentLayoutPayload),
     BrowserOpen(BrowserOpenPayload),
     BrowserState(BrowserStatePayload),
     Key(KeyPayload),
@@ -1168,6 +1169,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pet_shortcut_update" => decode!(PetShortcutPayload, PetShortcutUpdate),
         "workspace_view" => decode!(WorkspaceViewPayload, WorkspaceView),
         "panel_covers" => decode!(PanelCoversPayload, PanelCovers),
+        "agent_layout" => decode!(AgentLayoutPayload, AgentLayout),
         "view_layout" => decode!(ViewLayoutPayload, ViewLayout),
         "browser_open" => decode!(BrowserOpenPayload, BrowserOpen),
         "browser_state" => decode!(BrowserStatePayload, BrowserState),
@@ -1183,6 +1185,7 @@ impl Runtime {
         match event {
             Event::WorkspaceView(payload) => self.apply_workspace_view(payload),
             Event::PanelCovers(payload) => self.apply_panel_covers(payload),
+            Event::AgentLayout(payload) => self.apply_agent_layout(payload),
             Event::ViewLayout(payload) => self.apply_view_layout(payload),
             Event::BrowserOpen(payload) => self.open_browser(payload),
             Event::BrowserState(payload) => self.record_browser_state(payload),

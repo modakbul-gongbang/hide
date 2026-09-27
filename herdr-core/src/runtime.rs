@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+mod agent_areas;
 mod agent_sleep;
 mod agents;
 mod attachments;
@@ -29,6 +30,7 @@ mod workspace_view;
 pub use hosts::WorkspaceRemoteRoute;
 pub use snapshot_delta::serialize_snapshot_delta;
 
+use agent_areas::AgentLayoutPayload;
 use agent_sleep::{AgentSleepSetPayload, AgentWakePayload};
 use events::*;
 use operations::*;

@@ -157,22 +157,6 @@ enum ViewLayoutAction {
     },
 }
 
-impl ViewLayoutAction {
-    fn name(&self) -> &'static str {
-        match self {
-            Self::Focus { .. } => "focus",
-            Self::FocusArea { .. } => "focus_area",
-            Self::Move { .. } => "move",
-            Self::Split { .. } => "split",
-            Self::Resize { .. } => "resize",
-            Self::Close { .. } => "close",
-            Self::KeepOpen { .. } => "keep_open",
-            Self::Retry { .. } => "retry",
-            Self::Navigate { .. } => "navigate",
-        }
-    }
-}
-
 /// What every display of one Workspace's tree reads to say its state.
 struct DisplayFacts<'a> {
     /// The checkout in front, whose reads a display can be waiting on.
@@ -1079,24 +1063,8 @@ impl Runtime {
         }
         let ViewLayoutPayload { workspace, action } = payload;
         let key = (workspace.device_id, workspace.path);
-        let front = self.front_workspace_key();
-        if front.as_ref() != Some(&key) {
-            // The screen already shows another Workspace, so there is nothing
-            // on it to explain; the log keeps both (design principle 13).
-            let front = front.map_or_else(
-                || "no Workspace".to_owned(),
-                |(device, path)| format!("{path} on {device}"),
-            );
-            self.push_diagnostic(
-                "view_layout.stale_workspace",
-                format!(
-                    "A {} for {} on {} arrived while {front} is in front; nothing changed",
-                    action.name(),
-                    key.1,
-                    key.0
-                ),
-            );
-            return true;
+        if !self.area_workspace_is_current(&key, "view") {
+            return false;
         }
         // The action names displays by what the last frame showed; bring
         // their bindings up to date first.
@@ -1470,7 +1438,7 @@ impl Runtime {
         })
     }
 
-    fn split_request_seen(&self, key: &WorkspaceKey, request_id: &str) -> bool {
+    pub(super) fn split_request_seen(&self, key: &WorkspaceKey, request_id: &str) -> bool {
         self.workspace_views.as_ref().is_some_and(|store| {
             store
                 .split_requests
@@ -1479,7 +1447,7 @@ impl Runtime {
         })
     }
 
-    fn remember_split_request(&mut self, key: &WorkspaceKey, request_id: String) {
+    pub(super) fn remember_split_request(&mut self, key: &WorkspaceKey, request_id: String) {
         if let Some(store) = self.workspace_views.as_mut() {
             let seen = store.split_requests.entry(key.clone()).or_default();
             seen.push_back(request_id);

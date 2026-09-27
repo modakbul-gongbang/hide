@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use crate::fake_herdr::FakeHerdr;
 
+mod agent_areas;
 #[path = "tests/agent_sleep.rs"]
 mod agent_sleep;
 #[path = "tests/agents_settings_remote.rs"]

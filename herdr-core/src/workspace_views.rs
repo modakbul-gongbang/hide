@@ -128,6 +128,7 @@ pub struct WorkspaceView {
     pub tools_share: Option<f32>,
     pub last_used_unix_ms: u64,
     pub layout: Layout,
+    pub agent_layout: crate::agent_layout::Layout,
 }
 
 /// A stored entry as any build since schema 2 wrote it: the side panel's
@@ -157,6 +158,8 @@ struct StoredView {
     last_used_unix_ms: u64,
     #[serde(default)]
     layout: Layout,
+    #[serde(default)]
+    agent_layout: crate::agent_layout::Layout,
     #[serde(default)]
     mode: Option<LegacyMode>,
     #[serde(default)]
@@ -190,6 +193,7 @@ impl StoredView {
             tools_share: self.tools_share,
             last_used_unix_ms: self.last_used_unix_ms,
             layout: self.layout,
+            agent_layout: self.agent_layout,
         }
     }
 }
@@ -241,6 +245,7 @@ impl WorkspaceView {
             tools_share: None,
             last_used_unix_ms: 0,
             layout: Layout::default(),
+            agent_layout: crate::agent_layout::Layout::default(),
         }
     }
 
@@ -403,6 +408,7 @@ impl V1View {
             tools_share: None,
             last_used_unix_ms: self.last_used_unix_ms,
             layout,
+            agent_layout: crate::agent_layout::Layout::default(),
         }
     }
 }
@@ -490,7 +496,12 @@ fn settle(
     for view in &mut workspaces {
         view.views_over_share = clamp_views_over_share(view.views_over_share);
         view.tools_share = view.tools_share.map(clamp_views_over_share);
-        for note in view.layout.repair() {
+        for note in view
+            .layout
+            .repair()
+            .into_iter()
+            .chain(view.agent_layout.repair())
+        {
             repairs.push(format!("{} on {}: {note}", view.path, view.device_id));
         }
     }

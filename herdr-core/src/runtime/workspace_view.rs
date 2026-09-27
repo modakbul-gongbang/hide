@@ -34,6 +34,7 @@ pub(super) struct WorkspaceViewStore {
     /// of one that no display shows gets a display; any other Workspace keeps
     /// the tree the file carried until it is shown.
     pub(super) live: HashSet<WorkspaceKey>,
+    pub(super) agent_live: HashSet<WorkspaceKey>,
     /// The Workspace the last sync saw in front.
     pub(super) front: Option<WorkspaceKey>,
     /// The front Workspace whose side panel the shell reports drawing over
@@ -218,6 +219,7 @@ impl WorkspaceViewStore {
                 path,
                 views,
                 live: HashSet::new(),
+                agent_live: HashSet::new(),
                 front: None,
                 covered: None,
                 generation: 0,
@@ -553,6 +555,7 @@ impl Runtime {
         }
         self.restore_front_when_ready();
         self.reconcile_view_displays();
+        self.sync_agent_selection();
         if let Some(store) = self.workspace_views.as_ref()
             && self.snapshot.browser_views_revision != Some(store.generation)
         {
@@ -651,6 +654,7 @@ impl Runtime {
             covered: Some(key) == store.covered.as_ref(),
             resumed: Some(key) == store.resumable.as_ref(),
             layout: self.view_layout_snapshot(key, &view.layout),
+            agent_layout: self.agent_layout_snapshot(&view.agent_layout),
         });
         self.snapshot.workspace_view = published;
         // The one global panel every existing reader gates on (the Changes
