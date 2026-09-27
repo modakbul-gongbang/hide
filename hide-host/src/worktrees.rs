@@ -1003,7 +1003,7 @@ pub fn registered(root: &Path) -> Result<Vec<Registered>, String> {
 /// Removes the worktree folder and its registration, keeping the branch.
 ///
 /// Every build cache the checkout owns lives inside it (`target/`,
-/// `macos/.build/`), so this one Git command is the whole cleanup.
+/// `web/dist/`), so this one Git command is the whole cleanup.
 pub fn remove_worktree(repository_root: &Path, checkout: &Path) -> Result<String, String> {
     let answer = git(
         repository_root,

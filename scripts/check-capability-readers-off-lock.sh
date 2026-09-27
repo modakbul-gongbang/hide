@@ -103,8 +103,8 @@ done
 
 # 5. The changes pump is started by the core, once, and nowhere else.
 pump_starts="$(grep -rl 'ChangesPump::spawn' herdr-core/src --include='*.rs' | sort | tr '\n' ' ')"
-if [[ "$pump_starts" != "herdr-core/src/ffi.rs " ]]; then
-    printf 'the changes pump is started from %s, not only by the core in ffi.rs\n' "${pump_starts:-nowhere}" >&2
+if [[ "$pump_starts" != "herdr-core/src/handle.rs " ]]; then
+    printf 'the changes pump is started from %s, not only by the core in handle.rs\n' "${pump_starts:-nowhere}" >&2
     exit 1
 fi
 

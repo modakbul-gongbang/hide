@@ -41,7 +41,7 @@ When no base is given, use the merge base with the default branch. A finding out
 
 Every finding must be checked, not inferred:
 
-- For "nothing reaches this", show the search that found no caller (`rg` for the symbol across the repository, including tests, scripts, and generated bindings; for a Swift or Rust public symbol, check the FFI header and the other language's call sites too).
+- For "nothing reaches this", show the search that found no caller (`rg` for the symbol across the repository, including tests, scripts, and generated bindings; for a Rust public symbol, check every crate in the workspace and the daemon's call sites too).
 - For "this duplicates that", name both locations.
 - For "this indirection has one caller", show the caller count.
 

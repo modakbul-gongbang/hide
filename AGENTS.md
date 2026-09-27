@@ -8,16 +8,14 @@ Before changing browser displays, read `docs/BROWSER_DISPLAYS.md` for who owns a
 
 ## Repository Layout
 
-- `macos/` - the production macOS application: a SwiftUI shell that renders the core snapshot and dispatches typed events back. Build and sign it with `macos/scripts/build_dev_app.sh`. It coexists with the web shell until S6.
 - `hided/` - the product daemon and `hide` CLI. It links `herdr-core` on an owner thread, serves loopback HTTP (`/`, `/assets`, `/health`) and a token-gated WebSocket for dispatch and snapshot deltas.
 - `web/` - the React web shell (Vite, zustand, xterm.js). Build output is `web/dist/` inside this worktree and is gitignored.
-- `desktop/` - the Electron desktop host: the web shell hided serves, in its own macOS window, attached through `hide connect`; it embeds no daemon and never stops one. Build output is `desktop/dist/` and the unsigned local app `desktop/out/`, both gitignored; see `docs/ARCHITECTURE.md`, The desktop host.
-- `herdr-core/` - platform-neutral Rust runtime and the six-function C ABI (`herdr-core/include/herdr_core.h`) the shell links against, plus the pub Rust API `hided` uses. It projects Herdr-owned pane topology and owns Hide's UI state; the shell owns neither.
+- `desktop/` - the Electron desktop host and the only shipped app: the web shell hided serves, in its own macOS window, attached through `hide connect`. The packaged `hide.app` carries `hided`, `hide`, `hide-agent-hooks`, the device helper and the pinned Herdr flat in `Contents/Resources`, ad-hoc signed by `pnpm --dir desktop package`; it never stops a daemon it did not start. Build output is `desktop/dist/` and the app and archive under `desktop/out/`, all gitignored; see `docs/ARCHITECTURE.md`, The desktop host.
+- `herdr-core/` - platform-neutral Rust runtime, an rlib whose owner-thread handle (`herdr-core/src/handle.rs`) `hided` drives. It projects Herdr-owned pane topology and owns Hide's UI state; the shell owns neither.
 - `hide-agent-hooks/` - the only code that writes a configuration file the operator owns (each agent runtime's hook file). A separate crate because a `settings.json` write must never sit behind the render lock; see `docs/agent-hooks.md`.
 - `hide-ai/` - the provider boundary for background AI features, backed by the user's own logged-in CLIs; see `docs/AI_PROVIDERS.md`.
 - `hide-session/` - shared local Claude and Codex session location, incremental reading, and conversation parsing used by the plugin and core usage fallback.
 - `plugins/` - Herdr plugins shipped from this repository, each installable on its own with `herdr plugin install <owner>/<repo>/plugins/<name>`: `agent-context-labels/`.
-- `spikes/swift-shell-pivot/` - the Stage 0 spike and its `VERDICTS.md`, a frozen record; do not edit it to reflect later changes.
 
 ## Before Opening A Pull Request
 
@@ -41,9 +39,9 @@ They once did: an evidence tree reached 123 MB and carried a browser profile wit
 `docs/BUILD.md` owns the reasons; these are the rules.
 
 - No build directory is ever shared between worktrees: cargo names artifacts by workspace-relative path, so two checkouts sharing one read each other's build as fresh, and its lock serializes the parallel builds worktrees exist for.
-- The release archive is `target/release/libherdr_core.a` inside the worktree that built it; `build_dev_app.sh`, `build-app.sh` and `verify-swift.sh` read that fixed path, so never redirect a release build with `CARGO_TARGET_DIR`, `--target-dir` or `--build-path`.
-- Every build lands inside the worktree, cargo in `target/` and SwiftPM in `macos/.build/`, both ignored; `git worktree remove` is the whole cleanup, and nothing under `/tmp` belongs to a checkout.
-- `scripts/verify-cargo.sh` and `scripts/verify-swift.sh` are the only Rust and Swift verification entrypoints; a check script calls them rather than cargo or swift directly.
+- The release binaries are `target/release/{hided,hide,hide-agent-hooks,hide-host-helper}` inside the worktree that built them; `desktop/scripts/package.mjs` reads that fixed path, so never redirect a release build with `CARGO_TARGET_DIR` or `--target-dir`.
+- Every build lands inside the worktree, cargo in `target/`, the web shell in `web/dist/`, the desktop host in `desktop/dist/` and the packaged app in `desktop/out/`, all ignored; `git worktree remove` is the whole cleanup, and nothing under `/tmp` belongs to a checkout.
+- `scripts/verify-cargo.sh` and `scripts/verify-web.sh` are the only Rust and web verification entrypoints; a check script calls them rather than cargo or pnpm directly.
 - Every script that calls cargo sources `scripts/toolchain-env.sh`, so an isolated HOME reuses the machine's toolchain; without it rustup installs a private 1.4 GB copy and exits 0.
 - The PRD harness binds `scripts/verify-cargo.sh`, because a verify command runs with no shell and an `ENV=value cargo ...` binding fails with ENOENT at verify time.
 - `[profile.dev] incremental = false` is deliberate: an agent worktree is built a few times and discarded, which never repays an incremental cache.
@@ -53,7 +51,7 @@ They once did: an evidence tree reached 123 MB and carried a browser profile wit
 
 ## Runtime Architecture
 
-Read `docs/ARCHITECTURE.md` in full before changing anything under `herdr-core/` or `macos/`; it owns the reasons behind these boundaries.
+Read `docs/ARCHITECTURE.md` in full before changing anything under `herdr-core/`, `hided/` or `desktop/`; it owns the reasons behind these boundaries.
 
 - The core owns all state behind one `Mutex<Runtime>`; the shell dispatches typed events in and pulls one snapshot out when the notifier announces, and holds no authority of its own.
 - Herdr owns pane existence, split geometry, zoom, cwd, agent lifecycle and the PTY; the core owns each checkout's visible tab, the keyboard focus pane, panel visibility and text scale, and changes those on the event that asked for it, telling Herdr afterwards.
@@ -74,7 +72,7 @@ The CLI is a wrapper over the same local socket API: use CLI wrappers for shell 
 
 - Do not guess method names, parameters, response fields, or protocol compatibility from existing call sites.
   Check the target binary with `herdr --version` and `herdr api schema --json`, then compare with `contracts/herdr-api.schema.json` through `scripts/check-herdr-contract.sh`.
-- The pin lives only in `macos/Sources/HerdrMacOS/Resources/herdr-bundle.json`, and the contract is what that exact binary answers, never a copy from a Herdr checkout; `check-herdr-pin-single-source.sh` fails when anything restates it.
+- The pin lives only in `contracts/herdr-bundle.json`, and the contract is what that exact binary answers, never a copy from a Herdr checkout; `check-herdr-pin-single-source.sh` fails when anything restates it.
   Move it with `scripts/bump-herdr.sh <release-tag>`.
 - `herdr-core/src/wire.rs` is the only place generated wire types are converted into the core's inputs; do not write wire deserialization in `session_sync/{projection,replica}.rs` or import generated types into domain, runtime or sidebar code.
   `docs/ARCHITECTURE.md` lists the schema gaps the boundary still handwrites and the tests that demand migration when the schema closes them.
@@ -126,7 +124,7 @@ Conventions:
 Read [docs/UI_BEHAVIOR.md](docs/UI_BEHAVIOR.md) before changing any surface a user looks at; it owns what the UI does.
 Read [docs/DESIGN_WORKFLOW.md](docs/DESIGN_WORKFLOW.md) before making a design change; it owns how a change moves from scratch to a shipped PR, including the token/System-part/Component procedures and the screen transplant procedure.
 Visual authority is the Pen library (`design/hide-ui.lib.pen`), numeric authority is `design/tokens.json`, and code authority is `web/src/components/ui` and `web/src/components`.
-`design/tokens.json` is web-only: `scripts/gen-tokens.mjs` writes `web/src/tokens.css`, and it no longer generates or updates `HideTheme.swift`, which is frozen for the Swift shell's remaining coexistence period (see `macos/AGENTS.md`).
+`scripts/gen-tokens.mjs` writes `design/tokens.json` to `web/src/tokens.css`; nothing else consumes the tokens.
 Run `node scripts/check-design-contract.mjs` before delivery; it is the entrypoint `design-contract.yml` runs.
 
 ### The Design Library

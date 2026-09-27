@@ -34,8 +34,8 @@ use operations::*;
 use view_areas::{BrowserOpenPayload, BrowserStatePayload, ViewLayoutPayload};
 use workspace_view::{AreaIntent, PanelCoversPayload, WorkspaceViewPayload, WorkspaceViewStore};
 
-use crate::ffi::ChangeNotifier;
 use crate::fork::{ForkRequest, ForkableAgent, fork_name, is_forkable};
+use crate::handle::ChangeNotifier;
 use crate::live::{
     LiveContext, PaneControlAction, PaneControlOutcome, PaneResizeDirection, PaneSplitDirection,
     RemoteControlAction, RemoteControlContext, RemoteControlOutcome, RemoteTerminalContext,
@@ -1238,7 +1238,7 @@ impl Runtime {
         let shortcuts_imported = options
             .shortcut_import_path
             .as_deref()
-            .is_some_and(|source| import_swift_shortcuts(&mut snapshot, Path::new(source)));
+            .is_some_and(|source| import_native_app_shortcuts(&mut snapshot, Path::new(source)));
         snapshot.navigator.devices = workspace::devices(&snapshot.ui_state.device_registrations);
         // This machine's row names the root a device consent would name, so
         // the add form can show it before the first device exists.
@@ -1493,7 +1493,7 @@ impl Runtime {
     }
 
     /// The daemon installs only handles opened under its pinned registrations.
-    /// An empty set still enforces the boundary; Swift leaves this as `None`.
+    /// An empty set still enforces the boundary; a client that pins nothing leaves this as `None`.
     /// Returns whether the front Workspace's View tabs, which waited for its
     /// root, began to restore, so the caller announces the change.
     pub fn set_file_roots(&mut self, roots: crate::files::FileRoots) -> bool {
@@ -1873,19 +1873,19 @@ fn worktree_agent_line(
     }
 }
 
-/// Brings the Swift app's pane chords across once: only while the core's own
+/// Brings the removed native app's pane chords across once: only while the core's own
 /// set is empty and no import ran before, so a set the operator edited here,
 /// or reset to defaults after the import, is never overwritten. Returns
 /// whether the UI state changed and needs saving. A file that is there but
 /// cannot be used is recorded and left for the next launch to try again.
-fn import_swift_shortcuts(snapshot: &mut Snapshot, source: &Path) -> bool {
+fn import_native_app_shortcuts(snapshot: &mut Snapshot, source: &Path) -> bool {
     let ui_state = &mut snapshot.ui_state;
     if ui_state.shortcut_bindings_imported || !ui_state.shortcut_bindings.is_empty() {
         return false;
     }
-    let refused = match persistence::read_swift_shortcuts(source) {
-        persistence::SwiftShortcuts::Missing => return false,
-        persistence::SwiftShortcuts::Found(bindings) if events::bindings_fit(&bindings) => {
+    let refused = match persistence::read_native_app_shortcuts(source) {
+        persistence::NativeAppShortcuts::Missing => return false,
+        persistence::NativeAppShortcuts::Found(bindings) if events::bindings_fit(&bindings) => {
             crate::diagnostic!(serde_json::json!({
                 "component": "ui_state",
                 "kind": "ui_state.shortcuts_imported",
@@ -1896,8 +1896,8 @@ fn import_swift_shortcuts(snapshot: &mut Snapshot, source: &Path) -> bool {
             ui_state.shortcut_bindings_imported = true;
             return true;
         }
-        persistence::SwiftShortcuts::Found(_) => "too many or too long",
-        persistence::SwiftShortcuts::Unreadable => "unreadable",
+        persistence::NativeAppShortcuts::Found(_) => "too many or too long",
+        persistence::NativeAppShortcuts::Unreadable => "unreadable",
     };
     let message = format!("The macOS app's pane shortcuts were not brought across: {refused}");
     crate::diagnostic!(serde_json::json!({

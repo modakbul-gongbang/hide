@@ -956,8 +956,8 @@ function AddDevice({ actions, devices, helperRoot }: { actions: Actions; devices
 // --- Shortcuts -----------------------------------------------------------------
 
 function ShortcutsTab({ actions }: { actions: Actions }) {
-  // Each host edits its own set: the desktop app the macOS set it shares with
-  // the Swift app, the browser its own (user decision 2026-09-26).
+  // Each host edits its own set: the desktop app the macOS set, the browser
+  // its own (user decision 2026-09-26).
   const host = hostKind();
   const stored = useShellStore((s) => storedBindings(s.rest?.ui_state, host));
   const { registry, diagnostic } = resolvedRegistry(stored, host);

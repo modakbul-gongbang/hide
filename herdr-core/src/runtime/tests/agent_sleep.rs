@@ -153,7 +153,7 @@ fn the_sleep_setting_survives_a_restart_and_a_ui_state_update() {
 }
 
 /// B10, B20: a sleeping agent keeps its row, name and place with the moon;
-/// an awake row carries no `sleep` key, so the Swift shell's decode holds.
+/// an awake row carries no `sleep` key, so an older reader's decode holds.
 #[test]
 fn a_slept_agent_keeps_its_row_after_herdr_forgets_it() {
     let (mut runtime, _) = asleep();

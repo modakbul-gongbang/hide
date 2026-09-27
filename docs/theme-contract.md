@@ -1,8 +1,12 @@
 # Theme Asset Contract
 
 `assets/pet-theme/<theme-id>/theme.json` is the source of truth for the
-pose-to-asset mapping. The loader is
-`macos/Sources/HerdrMacOS/PetTheme.swift`.
+pose-to-asset mapping. There is no pet window in the current app, and no
+asset loader reads this manifest today; the pet window is tracked as
+[backlog issue #184](https://github.com/modakbul-gongbang/hide/issues/184).
+This file documents the contract a future pet reads.
+`herdr-core/src/pet.rs` (`herdr_core::pet::pose`) is the core-side owner of
+the pose a loader would draw; it computes the pose without drawing anything.
 
 ## Manifest
 
@@ -67,21 +71,17 @@ Paths in `states` are relative to the theme directory.
 
 ## Where themes live at runtime
 
-The installed bundle carries `assets/pet-theme` as
-`hide.app/Contents/Resources/pet-theme` (copied by
-`macos/scripts/build_dev_app.sh`). A build run straight from the checkout has
-no bundle, so the loader falls back to the repository copy, and
-`--pet-theme-root <dir>` overrides both for verification.
-
-Finding no theme at all is reported on stderr and drawn in the pet window as
-an explicit "Pet art unavailable" state - never as an empty window.
+Nothing currently packages `assets/pet-theme` into an app bundle or reads it
+at runtime; the artwork stays in the repository checkout only, waiting on the
+Electron pet feature tracked in issue #184.
+A future loader that finds no theme at all should report it on stderr and
+draw an explicit "Pet art unavailable" state in the pet window - never an
+empty window.
 
 ## Adding art
 
 Add the manifest-referenced asset under `assets/`, then add or repoint its entry in `states`.
 Use the bundled campfire artwork as the style reference and inspect `theme.json` for current filenames rather than maintaining a second slot table.
 Keep a shared ground line and facing direction across sprite frames, and verify real alpha rather than a painted checkerboard background.
-The native renderer plays frames on a `.common`-mode timer; there is no webview animation loop.
-A PNG/WebP pair is not required by the loader.
-Rebuild the resource-complete bundle after changing assets.
-A second theme needs all required poses; the currently selected theme is `default`, so adding a directory alone does not add a theme selector.
+A PNG/WebP pair is not required by this contract.
+A second theme needs all required poses; `default` is the bundled theme, so adding a directory alone does not add a theme selector.

@@ -66,8 +66,8 @@ export function displayRows(rows: ExplorerRow[], draft: ExplorerDraft | null): D
   return base;
 }
 
-/** The row height the virtual list lays out with; the Swift outline is 22 and
- * this reads the same order of token rather than writing a second number. */
+/** The row height the virtual list lays out with; 22 is the outline row
+ * token, read here rather than written as a second number. */
 function rowHeight(): number {
   const value = getComputedStyle(document.documentElement).getPropertyValue("--size-pane-child-row");
   return Number.parseFloat(value) || 24;

@@ -22,7 +22,7 @@ class CapabilityReaderGate(unittest.TestCase):
             shutil.copy2(ROOT / 'scripts/check-capability-readers-off-lock.sh', root / 'scripts')
             for reader in ('changes', 'ports', 'worktrees', 'github', 'disk', 'ai', 'usage'):
                 (sources / f'{reader}.rs').write_text('fn read_if_due() {}\n// BackgroundRead\n')
-            (sources / 'ffi.rs').write_text('let changes = changes::ChangesPump::spawn();\n')
+            (sources / 'handle.rs').write_text('let changes = changes::ChangesPump::spawn();\n')
             requests = ('worktrees', 'github', 'disk', 'ai')
             (sources / 'session_sync.rs').write_text('mod coordinator;\n')
             (session_sync_modules / 'coordinator.rs').write_text(
@@ -58,7 +58,7 @@ class CapabilityReaderGate(unittest.TestCase):
             shutil.copy2(ROOT / 'scripts/check-capability-readers-off-lock.sh', root / 'scripts')
             for reader in ('changes', 'ports', 'worktrees', 'github', 'disk', 'ai', 'usage'):
                 (sources / f'{reader}.rs').write_text('fn read_if_due() {}\n// BackgroundRead\n')
-            (sources / 'ffi.rs').write_text('let changes = changes::ChangesPump::spawn();\n')
+            (sources / 'handle.rs').write_text('let changes = changes::ChangesPump::spawn();\n')
             (sources / 'session_sync' / 'coordinator.rs').write_text(
                 '\n'.join(f'let {r}_reader = {r}::Reader::new();'
                           for r in ('changes', 'worktrees', 'github', 'disk', 'ai', 'ports', 'usage'))
@@ -84,7 +84,7 @@ class CapabilityReaderGate(unittest.TestCase):
             shutil.copy2(runtime_module, root / 'scripts')
             for reader in ('changes', 'ports', 'worktrees', 'github', 'disk', 'ai', 'usage'):
                 (sources / f'{reader}.rs').write_text('fn read_if_due() {}\n// BackgroundRead\n')
-            (sources / 'ffi.rs').write_text('let changes = changes::ChangesPump::spawn();\n')
+            (sources / 'handle.rs').write_text('let changes = changes::ChangesPump::spawn();\n')
             requests = ('worktrees', 'github', 'disk', 'ai')
             (sources / 'session_sync.rs').write_text('mod coordinator;\n')
             (sources / 'session_sync' / 'coordinator.rs').write_text(

@@ -1,100 +1,55 @@
 # Dev Runtime: Which App Is Actually Running
 
-The single biggest time sink so far is verifying a change against the wrong
-process. Read this before running or screenshotting the app.
+The single biggest time sink so far is verifying a change against the wrong process.
+Read this before running or screenshotting the app.
 For responsiveness, rendering, CPU, or memory checks, also read [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md) in full.
 
-## One instance, always
+## One instance, per profile
 
-`hide` (bundle display name) and `HerdrMacOS` (executable inside the
-bundle) are the same app, not two. Several instances can be alive at once:
+`hide` is the Electron desktop host (`desktop/`); three kinds of instance can exist on this machine:
 
-- an installed copy, if one has been placed in `/Applications`
-- the assembled dev bundle at
-  `macos/build/assembled/hide.app`, from `macos/scripts/build_dev_app.sh`
-- a bare `swift run` from the checkout
+- an installed packaged bundle, normally at `/Applications/hide.app`, built and ad-hoc signed by `pnpm --dir desktop package`
+- an unpackaged instance from `pnpm --dir desktop dev`, which runs the checkout's own `electron .` rather than a bundled app
+- a Playwright `_electron` instance from `pnpm --dir desktop e2e` (`desktop/e2e/fixture.ts`), which refuses to launch without its own private `HIDE_STATE_DIR`, `HOME`, `HERDR_SOCKET_PATH` and `HIDE_DESKTOP_USER_DATA_DIR`
 
-When more than one runs, the pet's show/hide state, its saved position, the
-menu bar item, and the `herdr-ide://` URL scheme all cross-talk between them.
-Observed symptoms while this was still herdr-pet: "the pet is not visible"
-(twice) and "a big window opens instead of the pet" (once). Neither was a
-code bug.
+Every instance keeps one Electron `requestSingleInstanceLock()` per profile directory (`desktop/src/main/index.ts`): a second launch that resolves to the *same* profile does not start a second process, it wakes the first one's window (`second-instance` -> `host.reopen`) and quits itself.
+The profile defaults to `~/Library/Application Support/hide-desktop` for every instance, packaged or not, unless `HIDE_DESKTOP_USER_DATA_DIR` names a different directory.
+That means an unpackaged `pnpm --dir desktop dev` run started while the operator's installed app is already running does not open a second window at all: it silently focuses the operator's live app and exits, because both share the default profile.
+Never rely on "it opened a window" as proof that your build is the one running; always start a dev or QA instance with its own `HIDE_DESKTOP_USER_DATA_DIR`, so it cannot collide with, focus, or in any way touch the operator's instance.
 
 Before any visual check:
 
 ```sh
-pgrep -fl HerdrMacOS   # must list exactly one process
+pgrep -fl 'hide.app/Contents/MacOS/hide'          # a packaged instance
+pgrep -fl 'electron/dist/Electron.app/Contents/MacOS/Electron'   # an unpackaged dev or e2e instance
 ```
 
-If more than one is listed, identify each exact PID and bundle before proceeding.
-Quit only test instances you own; coordinate with the operator before normally quitting their app, and record its bundle path for restoration.
-Never kill all matching processes or stop the operator's Herdr server to obtain a clean screenshot.
+Identify every matching PID and its profile before proceeding: read the host log's first line at `<profile>/logs/desktop.log` (or `$HIDE_DESKTOP_USER_DATA_DIR/logs/desktop.log` for an isolated instance), a JSON line whose `event` is `host.start` and whose fields carry `packaged` (`true` for an installed bundle, `false` for `pnpm --dir desktop dev`) and `version`.
+Quit only an instance you started under your own private profile; coordinate with the operator before quitting anything running under the default profile, and never quit, restart, focus, or otherwise manipulate the operator's own instance for QA (see [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md) for the native isolation and foreground-interaction boundaries this extends to).
 
-## Verify against the assembled bundle, not `swift run`
+## Verify against a rebuilt package, not a live dev instance
 
-A source fix is invisible to an already-running app. Repeatedly "fixing"
-something the user still sees broken usually means they are looking at an
-older copy.
+A source fix is invisible to an already-running app, packaged or not, because Electron loads the bundled `desktop/dist/` once at launch.
+Repeatedly "fixing" something the user still sees broken usually means they are looking at a build from before the fix.
 
-For any change the user will confirm visually:
+For any change the user will confirm visually in the installed app:
 
 ```sh
-macos/scripts/build_dev_app.sh   # prints the assembled .app path
+pnpm --dir desktop package   # prints the new hide.app path and archive under desktop/out/
 ```
 
-That script builds herdr-core in release, builds the Swift shell, copies
-`assets/pet-theme` into `Contents/Resources/pet-theme`, writes
-`Resources/Info.plist` into the bundle, and ad-hoc signs the result. Launch
-that bundle, then confirm with a real screenshot. State explicitly which
-build the user is looking at when reporting a fix.
-
-A bare `swift run` has no bundle resources: the pet theme then loads from the
-repository checkout instead, and the URL scheme is not registered at all.
-
-## Pet state survives your edit
-
-The pet persists its position, visibility, and global shortcut through herdr-core's UI state file, which `--state-path` can override.
-The release bundle defaults to `hide/state.json` under the user's Application Support directory; other bundle identifiers use `hide/instances/<bundle-id>/state.json` there.
-`/tmp/herdr-ide-verify-ui-state.json` is only the default for `--verification-ui-fixture`, not a normal launch.
-The file is rewritten whenever the pet moves or is toggled, so editing it while the app runs is pointless.
-For an owned fixture, quit its exact process before resetting its private state and relaunching.
-Do not reset the operator's state file for QA; supply a separate `--state-path` and follow the performance guide's server-isolation procedure.
-SSH devices live in that state file too, so a verification launch with its own `--state-path` registers none and makes no SSH connection attempt.
-
-See [pet-window-macos.md](pet-window-macos.md) for the off-screen guards; a
-saved position outside every connected screen is clamped back into view
-rather than succeeding invisibly.
-
-## Deep links reach the bundle, not `swift run`
-
-The app accepts `herdr-ide://hide`, `herdr-ide://show`, and
-`herdr-ide://toggle`. macOS resolves a URL scheme through the bundle's
-`Info.plist` (`CFBundleURLTypes`), which only the assembled bundle has.
-
-```sh
-plutil -p "macos/build/assembled/hide.app/Contents/Info.plist" | grep herdr-ide
-open "herdr-ide://toggle"
-```
-
-The retired pet app's `herdr-pet://` scheme is deliberately **not**
-registered. `open herdr-pet://toggle` must not affect this app; if it does
-something, an old Herdr Pet bundle is still installed.
-
-The pet's own global shortcut does not go through the URL scheme at all, so a
-broken deep link and a broken shortcut are separate failures with separate
-checks.
+Reinstall that bundle (or point the operator at the new `desktop/out/hide-v<version>-macos-<arch>.zip`), relaunch, and confirm with a real screenshot.
+For a faster loop that does not need reinstalling anything, `pnpm --dir desktop dev` picks up a rebuilt `desktop/dist/` and this worktree's own `target/{debug,release}/hide` on its next launch; state explicitly which build (dev or packaged, and its `host.start` version) the user is looking at when reporting a fix.
 
 ## Bundled artwork ownership
 
-The production identity is `hide` (`me.grab.hide`).
-The app bundles `macos/Resources/hide.icns`; `macos/scripts/generate_app_icon.sh` defaults to `docs/assets/hide-icon-candidates/hide-icon-02.png` as its source.
-Other icon candidates are reference artwork, not runtime alternatives.
-Provider artwork lives in `macos/Sources/HerdrMacOS/Resources/` as `agent-claude.png` and `agent-codex.png`.
-Keep packaging aligned with `macos/Resources/THIRD_PARTY_NOTICES/`; bundled artwork is not a grant of trademark permission.
-Use [theme-contract.md](theme-contract.md) for pet artwork and [UI_BEHAVIOR.md](UI_BEHAVIOR.md) for shell behavior.
+The production identity is `hide` (`me.grab.hide.desktop`).
+The app bundles `desktop/resources/hide.icns` as its icon (`desktop/scripts/package.mjs`).
+Provider marks (`agent-claude.png`, `agent-codex.png`) live in `web/src/assets/`, drawn by the web shell itself rather than bundled as native app resources.
+Keep packaging aligned with `desktop/resources/THIRD_PARTY_NOTICES/`; bundled artwork is not a grant of trademark permission.
+Use [UI_BEHAVIOR.md](UI_BEHAVIOR.md) for shell behavior.
 
-## Driving pet states without real agents
+## Pet, deep links and other retired native-only features
 
-Use [verification-fixtures.md](verification-fixtures.md) for the scripted pet server and machine-readable receipt.
-That guide owns fixture setup; [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md) owns native isolation and cleanup.
-A scripted server must be checked against the current protocol before use and must never share the operator's state or socket.
+The removed native shell had a pet window, a `herdr-ide://` deep-link scheme, global shortcuts, a menu bar item and Dock badges; none of that exists in this host.
+See the electron backlog issue (issue 184) for what of it, if anything, is still wanted.

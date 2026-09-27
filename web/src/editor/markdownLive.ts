@@ -4,7 +4,7 @@
 // the text and the selection, so it is testable without a browser, and the
 // CodeMirror plugin is only the part that turns it into decorations.
 //
-// Live draws what the Swift editor draws and hides the same markup: heading
+// Live draws the rendered document and hides the markup: heading
 // hashes, emphasis and code delimiters, link syntax and its URL, quote
 // prefixes, list indentation and the code fences. A line whose selection
 // touches it keeps its source, which is how the operator edits the markup.
@@ -24,7 +24,7 @@ export type LiveRange = {
   checked?: boolean;
 };
 
-/** The Live view's whole-document byte bound, the same one Swift uses: above
+/** The Live view's whole-document byte bound: above
  * it the parse is off and the document reads as source (D-07). */
 export const MARKDOWN_LIVE_BYTE_LIMIT = 256 * 1024;
 
@@ -91,7 +91,7 @@ export function markdownLivePlan(tree: Tree, doc: Text, selection: { from: numbe
           return;
         }
         // A fence is revealed by a selection anywhere in its block, which is
-        // the unit the Swift plan uses for a fenced code block.
+        // the unit a fenced code block is edited in.
         const block = enclosing(node, "FencedCode");
         if (block && !overlaps(block.from, block.to)) {
           const line = doc.lineAt(node.from);

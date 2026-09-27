@@ -2171,12 +2171,12 @@ mod tests {
     #[test]
     fn axes_no_state_name_array_remains_in_the_shell() {
         let shell = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../macos")
+            .join("../web/src")
             .canonicalize()
             .expect("the shell sits beside the core");
         let mut offenders = Vec::new();
         let mut scanned = 0_usize;
-        let mut stack = vec![shell.join("Sources"), shell.join("Tests")];
+        let mut stack = vec![shell];
         while let Some(entry) = stack.pop() {
             if entry.is_dir() {
                 for child in std::fs::read_dir(&entry).expect("readable directory") {
@@ -2184,7 +2184,10 @@ mod tests {
                 }
                 continue;
             }
-            if entry.extension().and_then(|value| value.to_str()) != Some("swift") {
+            if !matches!(
+                entry.extension().and_then(|value| value.to_str()),
+                Some("ts" | "tsx")
+            ) {
                 continue;
             }
             scanned += 1;

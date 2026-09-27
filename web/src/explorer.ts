@@ -50,10 +50,10 @@ const TITLES: Record<ChangedFileStatus, string> = {
 };
 
 /** Index order is risk order, lowest first; a folder shows its riskiest
- * descendant, which is the rule the Swift outline's decorations apply. */
+ * descendant. */
 const RISK: ChangedFileStatus[] = ["conflict", "deleted", "renamed", "modified", "added", "untracked"];
 
-/** The colour the Swift outline gives each status (WorkspaceOutlineView). */
+/** The colour each status is drawn in. */
 export function gitBadgeColor(status: ChangedFileStatus): string {
   switch (status) {
     case "added":
@@ -153,8 +153,8 @@ export function decorationFor(
 }
 
 /**
- * The rows the tree shows, flattened in the order the Swift outline shows
- * them: the listing's own order, a folder's children directly under it, and
+ * The rows the tree shows, flattened in the order the tree shows them:
+ * the listing's own order, a folder's children directly under it, and
  * nothing under a folder whose listing has not arrived yet.
  */
 export function explorerRows({
@@ -194,13 +194,13 @@ export function explorerRows({
   return rows;
 }
 
-/** The cell's tooltip, as the Swift outline sets it. */
+/** The cell's tooltip. */
 export function rowTitle(row: ExplorerRow, rootPath: string): string {
   const presented = relativeTo(row.path, rootPath);
   return row.decoration ? `${presented} · ${row.decoration.title}` : presented;
 }
 
-/** The cell's accessibility label, as the Swift outline sets it. */
+/** The cell's accessibility label. */
 export function rowAccessibilityLabel(row: ExplorerRow): string {
   return row.decoration ? `${row.name}, ${row.decoration.title}` : row.name;
 }

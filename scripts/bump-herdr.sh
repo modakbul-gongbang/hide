@@ -66,7 +66,7 @@ fi
 
 script_dir=${0:A:h}
 project_root=${script_dir:h}
-manifest=$project_root/macos/Sources/HerdrMacOS/Resources/herdr-bundle.json
+manifest=$project_root/contracts/herdr-bundle.json
 contract=$project_root/contracts/herdr-api.schema.json
 [[ -f "$manifest" ]] || {
   print -u2 -- "error: pinned Herdr runtime manifest is missing: $manifest"
@@ -157,7 +157,7 @@ derived_documents=(
   docs/INSTALL.md
   contracts/README.md
   AGENTS.md
-  macos/Resources/THIRD_PARTY_NOTICES/herdr-APACHE-2.0.txt
+  desktop/resources/THIRD_PARTY_NOTICES/herdr-APACHE-2.0.txt
 )
 
 replacements_json=$temporary_root/replacements.json

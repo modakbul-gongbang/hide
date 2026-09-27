@@ -6,9 +6,8 @@
 # the pull request instead of shipping.
 #
 # `/Users/example` is the one home directory allowed, for fixtures that need a
-# path shaped like a real one. `macos/Vendor/` is upstream code and carries its
-# own authors' examples. `spikes/` is a frozen record and is scanned too: it
-# was where the last leak lived.
+# path shaped like a real one. `spikes/` is a frozen record and is scanned too:
+# it was where the last leak lived.
 #
 # The text scan is only half of it. The leak that reached the public history
 # was a committed browser profile and 184 screenshots, and a text scan passed
@@ -22,7 +21,7 @@ pattern='/Users/|hoyeonlee|grabs-mac-mini|tail56d7a2'
 allowed='/Users/example'
 
 # This script carries the pattern itself, so it is the one file excluded.
-hits="$(git grep -nE "$pattern" -- . ':!macos/Vendor' ':!agents' ':!scripts/check-no-workstation-identity.sh' \
+hits="$(git grep -nE "$pattern" -- . ':!agents' ':!scripts/check-no-workstation-identity.sh' \
     | grep -vF "$allowed" || true)"
 if [[ -n "$hits" ]]; then
     printf 'workstation identities are present in tracked files:\n%s\n' "$hits" >&2

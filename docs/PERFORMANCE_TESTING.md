@@ -1,4 +1,4 @@
-# Native performance and rendering verification
+# Performance and rendering verification
 
 Read this before investigating terminal lag, flicker, selection, scrolling, resize, tab switching, CPU, memory, or snapshot/attach performance.
 This is a repeatable verification procedure, not a record that any particular build passed.
@@ -12,105 +12,26 @@ This table describes the checked-in workflows, not a claim that a particular PR'
 
 | Layer | What it catches | Current execution |
 | --- | --- | --- |
-| Deterministic regression tests and structural checks | Blank repaint buffers, cache bounds, incorrect state transitions, blocking work in forbidden paths | Rust and Swift suites plus repository checks run on every PR and main push in `.github/workflows/pr.yml`; the native design workflow adds static design checks |
-| Native interaction QA | Actual focus, input, drag, scroll, resize, compositor-visible flicker, and bundle mistakes | Local, isolated, logged-in macOS session; not wired into CI |
-| Controlled performance comparison | Warm/cold latency distributions, periodic stalls, CPU/lock contention, sustained RSS, and cost that grows with process uptime | Local matched baseline/candidate measurements; no checked-in scheduled or required native performance job |
+| Deterministic regression tests and structural checks | Blank repaint buffers, cache bounds, incorrect state transitions, blocking work in forbidden paths | The Rust workspace suite and repository invariant checks run on every PR and main push in `.github/workflows/pr.yml`; `design-contract.yml` adds static design checks |
+| Automated end-to-end | Real window launch, attach to a private Herdr server, IPC between the desktop host and `hided`, occluded-window rendering, packaging mistakes | Playwright drives the web shell in a browser and the desktop app through `desktop/e2e/fixture.ts`; both run in the `web` job of `pr.yml` and are required by `verify` |
+| Controlled performance comparison | Warm/cold latency distributions, periodic stalls, CPU/lock contention, sustained RSS, and cost that grows with process uptime | Local matched baseline/candidate measurements (`scripts/web-shell-measure/run.sh`); no checked-in scheduled or required performance job |
 
-Swift renderer tests can instantiate AppKit views and compare pixels without launching and driving the complete app.
-That is useful automated rendering coverage, but it does not exercise the physical display, live Herdr transport, foreground focus, or actual agent TUI interaction end to end.
-The required `check-terminal-row-cache.sh` structural gate additionally checks that the draw loop reaches expensive text preparation through the cache, not through a direct call on every repaint.
-It protects that source-level cost boundary; it does not measure frame latency or replace the bitmap and retention tests.
-The latency summarizer's Python tests run in the required repository-invariants lane.
-Browser-host Node tests and fixture/replay commands do not become CI gates merely because this guide lists them.
+The repository-invariant Python tests run in the required `scripts` lane of `pr.yml`.
+Fixture/replay commands under `scripts/web-shell-measure/` do not become CI gates merely because this guide lists them.
 Check the workflow before claiming any of them runs automatically.
 
 ### Maintenance and review policy
 
 1. Every change runs the applicable CI regression gates; a rendering/performance bug gets a deterministic regression test when it can reproduce the observed failure economically.
-2. Changes to terminal drawing, selection, input/scroll routing, display pacing, geometry, focus, or attach lifecycle also require the affected native scenarios before being called verified.
-   Record the exact bundle and evidence; if the run is unavailable, mark native QA unrun and leave that acceptance claim open.
-3. Changes to caching, scheduling, snapshots, locking, dependencies, or claims of improved speed/memory require the affected controlled baseline/candidate measurements as well.
-   Apply the ten-minute RSS procedure only when making a memory claim; do not impose it on unrelated documentation changes.
+2. Changes to terminal drawing, selection, input/scroll routing, snapshot delivery, geometry, focus, or attach lifecycle also require the affected `desktop/e2e/*.spec.ts` or `web/e2e/*.spec.ts` scenario before being called verified.
+   When a scenario cannot be automated yet, exercise it manually against the packaged app and record that the check was manual.
+3. Changes to caching, scheduling, snapshots, locking, or claims of improved speed/memory require the affected controlled baseline/candidate measurement (`scripts/web-shell-measure/run.sh`) as well.
+   Apply it only when making a memory or latency claim; do not impose it on unrelated documentation changes.
 4. The change author records those results in the PR's existing Evidence section, and the reviewer checks coverage and exclusions as well as CI.
-   A green `verify` job cannot enforce the local native requirement by itself today.
 5. Keep the regression test beside its component, reusable measurement tools in `scripts/`, procedure and comparison policy here, and each run's raw evidence under `agents/runs/`.
    Never turn a one-off trace or historical number into a hardcoded universal latency limit.
 
-For future unattended coverage, add an owned logged-in macOS QA runner only after app isolation, permissions, fixture setup, cleanup, and baseline identity are reproducible without an operator's desktop.
-Serialize native jobs on that desktop and keep API credentials and private transcripts out of untrusted PR jobs.
-Start with an explicitly triggered native smoke lane, then add scheduled measurements and reviewed thresholds after enough comparable runs exist.
-This is the proposed next automation step, not infrastructure this repository already has.
-
 ## 1. Define the claim before running anything
-
-### High-frequency action contracts
-
-Review the entire input dependency path, including shared observable state and overlays, even when the diff does not touch an event handler.
-State the cost per input, its notification fan-out, how it scales with total versus visible items, and what bounds pending work.
-An asynchronous task still costs work and can accumulate a queue; it is not a performance exemption.
-
-| Action | Required work | Work that must not follow every input |
-| --- | --- | --- |
-| Sidebar wheel | Resolve the actual target and deliver native scrolling | Project/catalog rebuild, unrelated state publication, disk/network I/O |
-| Tooltip dismissal / hover exit | Publish a real transition once and cancel obsolete reveal | Repeated no-op publication to every tooltip consumer |
-| Hidden shortcut hints | No target exposure projection while hidden | Per-control recomputation of the complete hint set |
-| Terminal wheel / typing | Prompt delivery preserving routing, ordering, and signed scroll quantity | Wait for an unrelated frame; drop intentional input as a duplicate |
-| IME composition step / terminal feed while composing | Show the new marked text; re-anchor the overlay once the caret has moved | Rebuild the overlay's attribute dictionary or attributed string when neither the text nor the caret changed |
-| Drag / repaint | Update affected geometry or damaged visible content | Per-event persistence or rebuilding unchanged rows |
-| Pane/tab mutation | Create one target-scoped operation record, use the existing session coordinator for confirmation, and coalesce same-pane same-axis resize to its latest signed delta | Per-tick polling, lock-held I/O, an unbounded retry queue, or a global error publication |
-| Ambiguous close | Start one read-only status check for the close scope and settle it against the connection generation and fresh topology | Destructive close resend, reopen before absence is confirmed, or treating transport success as topology proof |
-
-The 250 ms asynchronous-operation tick advances deadlines under the coordinator lock and publishes only real state transitions; it performs no network or subprocess I/O.
-One close status check reads the current session once and fans that snapshot out to all eligible local close reservations.
-
-### Two-level recent navigation cost contract
-
-`AgentMRU.swift` contains the shared recent-item ordering and held-cycle implementation, with project and per-project tab adapters.
-`ShellModel` observes incoming core navigation revisions and caches all unified surfaces; it does not reconstruct this projection for repeated Tab input, editor content deltas, or find-only deltas.
-A topology/rest snapshot or active editor change reconciles retained history; retained storage is O(P + T) for P projects and T unified surfaces.
-Projection follows the existing tab strip and indexes source tabs instead of searching the retained list once per strip entry.
-Editor source indexing is per checkout; agent lookup is indexed once per device and visits each checkout pane once.
-Reconciliation is O(A + N + T + C*E), with A agents, N panes, C checkouts and E retained editor tabs; this cost is outside repeated key input.
-Starting a gesture snapshots its relevant MRU in O(P) or O(Tproject); every subsequent step changes one index in O(1), with no core dispatch until commit.
-Only the active cycle publishes once per changed highlight; repeated cancellation and a one-item cycle publish no cycle change.
-Empty and single-item navigation and closing an empty strip produce no notice or shell publication; these are normal no-ops, not failures.
-Reconciliation emits existing structured trace events with reason, removal count, and snapshot revision, without paths, labels, or shell-wide notice updates.
-The existing cycle presentation has a dedicated observable owner read only by the overlay; preview steps send no shell-wide notification and therefore do not rebuild the retained sidebar or tab strip.
-The overlay projects at most nine rows through cached identity lookups, regardless of retained list size.
-Its agent marks reuse `AgentBadge` and the bundled-image cache, without scanning retained agents or scheduling image loads per repeated key.
-The synthetic-key release check has one replaceable timer; repeated key-up cannot queue unbounded commits.
-Search arrow input retains one selected result ID and scans the current result IDs in O(R), with no core dispatch until activation.
-A changed highlight redraws only the search sheet, reusing its existing project/agent projection; this is O(W*A + R) for W projects and A retained agents, not a shell-wide notification.
-Search arrow navigation schedules no per-key task or timer; scrolling follows only a changed selected ID, and repeated input at either list boundary keeps the selection unchanged.
-Both search sheets share `HideSearchKeyboard` and its identity-based selection model.
-File-search arrow work is bounded by the existing 80-result limit, independent of the retained file index; query filtering keeps its existing background ranking and rejects cancelled queries or replaced indexes before publication.
-`WorkspaceFileSearchTests` covers selected-file activation, filtering to zero results, retired selections and repeated movement at the result limit.
-Numbered agent routing checks event type and modifiers before one physical-key lookup; unrelated text input does not scan the agent list or publish navigation state.
-
-Regression owners are `RecentNavigationTests` (2, 9, and 10,000 retained entries over 20,000 input steps, bounded visible rows, deletion convergence), `RecentNavigationIntegrationTests` (actual core restoration and notification counts), and `PaneShortcutSettingsTests` (physical numbered keys, modifier ownership and release).
-Native verification must additionally exercise both directions, modifier hold/release, Escape, project restoration across checkouts, and terminal/file/diff/Browser surfaces in the isolated fixture.
-Report those native checks as unverified if the sole-running-instance gate blocks launching the dev bundle; deterministic tests do not prove native event delivery or Korean text legibility.
-
-### Regression ownership and honest coverage
-
-| Boundary | Automated owner | What remains outside that test |
-| --- | --- | --- |
-| No-op publication and cancelled tooltip reveal | `HideTooltipTests` | Physical wheel monitor delivery and compositor latency |
-| Stationary native-scroll routing and pointer crossing | `PaneShortcutSettingsTests` | Complete SwiftUI sidebar frame cost and physical trackpad behavior |
-| Native sidebar row ownership and scrolling | `SidebarListTests` | System event-monitor cost and physical input-to-presentation latency |
-| First/subsequent wheel delivery and keyboard order | `live.rs` writer tests | Transport-to-visible-scroll latency |
-| Render repair and prepared row retention | Swift renderer tests and `check-terminal-row-cache.sh` | Live output and display presentation |
-| Counts, exclusions, unknown refresh rates, retained stalls | `scripts/tests/test_terminal_latency.py` | Causal pairing of an input with its requested content change |
-
-The Rust/Swift tests and latency-summary tests run in PR CI.
-Hidden-overlay projection cost and whole-sidebar isolation do not yet have an end-to-end automated guard; review the source and profile the affected native scenario rather than calling them covered by the tooltip tests.
-For a growth claim, hold the visible row count fixed, vary total retained items and input count independently, and compare work and pending-queue growth after warm-up.
-This controlled scaling run remains local QA, not an implemented CI benchmark.
-Assert stable observable boundaries rather than private helper call graphs; use a targeted structural gate only when the cost contract cannot be observed economically in component tests.
-Restore a realistic old defect temporarily and predict which regression will fail before running it; keep the mutation out of the final diff.
-Do not turn scheduler-sensitive elapsed time into a universal performance threshold.
-
-### Measurement claim
 
 Write the symptom, exact reproduction sequence, expected visible result, affected clients, and baseline/candidate revisions in the run record.
 Separate these questions: does the content render correctly, how long does an internal stage take, how long until the user sees the requested change, and does retained memory grow?
@@ -125,37 +46,31 @@ If the conditions cannot be matched, label the result a functional reference or 
 
 ## 2. Identify the build and protect the operator
 
-Before visual checks, record the exact executable path, bundle identifier/version, PID, source revision, dirty diff, core archive hash, bundled Herdr version, and build configuration.
-Inspect running processes rather than assuming the app launched from this checkout is the visible one.
+Before visual checks, record the exact executable path, source revision, dirty diff, bundled Herdr version, build configuration, and PID for `hided` and, for the desktop app, its dev or packaged Electron process.
+Inspect running processes rather than assuming the build launched from this checkout is the visible one.
 
 ```sh
-pgrep -fl HerdrMacOS
+pgrep -fl hided
 ```
 
-The operator app and an isolated candidate may run simultaneously; a global single-instance requirement does not apply.
-Identify the candidate by executable path, bundle identifier, PID and exact window ID before capture or interaction, and re-resolve them after any restart.
-Keep the operator app running by default; building and automated tests do not require quitting it.
-Never quit, restart, activate, or otherwise manipulate the operator app for QA without explicit coordination; never kill all matching processes.
-If an explicitly coordinated scenario requires stopping it, record its exact bundle path and restore that same bundle afterward, leaving its Herdr server and terminals intact.
-A worktree-specific bundle identifier or separate app state file does not isolate the Herdr server's shared focus.
-Prove the private server, socket, app state and fixtures are isolated before running both apps; ambiguous targeting or shared state blocks the affected check, not the operator's work.
-Background exact-window screenshots need not activate the candidate, but foreground keyboard, IME, drag and focus scenarios can interrupt the logged-in user's work.
-Coordinate a bounded foreground QA window for those scenarios, or use a separately authorized machine/session; do not claim that background capture verifies foreground interaction.
+The operator's app and an isolated candidate may run simultaneously; there is no global single-instance requirement.
+Identify the candidate by executable path, PID, and exact window ID before capture or interaction, and re-resolve them after any restart.
+Keep the operator's app running by default; building and automated tests do not require quitting it.
+Never quit, restart, activate, or otherwise manipulate the operator's app, panes, or server for QA without explicit coordination; never kill all matching processes.
+Prove the private server, socket, `HIDE_STATE_DIR` and `HIDE_DESKTOP_USER_DATA_DIR` are isolated before running both apps; ambiguous targeting or shared state blocks the affected check, not the operator's work.
+Background exact-window screenshots need not activate the candidate, but foreground keyboard, IME, drag and focus scenarios can interrupt the logged-in user's work; coordinate a bounded foreground QA window for those, or use a separately authorized machine/session.
 
-Build a resource-complete, signed bundle using the existing scripts:
+Build with the existing scripts:
 
 ```sh
-bash macos/scripts/build_dev_app.sh
-# For optimized performance measurements, in a separate build checkout:
-zsh scripts/build-app.sh
+bash scripts/verify-cargo.sh release
+pnpm --dir desktop package
 ```
 
-The dev script builds a debug Swift shell with a release Rust core; it is not a release-performance baseline.
-The release script writes `dist/` artifacts and requires a version tag or its documented `HIDE_VERSION` input; do not run it over another run's retained outputs.
-Archive baseline and candidate separately, including their Swift resource bundles and pinned runtime.
-Use independent checkout-local Rust and Swift build directories; do not share release output directories across revisions.
-The shell links `target/release/libherdr_core.a`, so a relocated Cargo output alone does not change the linker input.
-Verify the linked archive hash and expected runtime diagnostics: a fresh Swift package fingerprint can otherwise accompany a stale core archive.
+`verify-cargo.sh release` builds the release `hided`, `hide`, `hide-host-helper`, and `hide-agent-hooks` binaries; release `hided` embeds `web/dist`, so run `pnpm --dir web build` first.
+`pnpm --dir desktop package` (`desktop/scripts/package.mjs`) runs that release build, fetches the pinned Herdr through `scripts/fetch-herdr-runtime.sh`, and packages `desktop/out/hide-darwin-<arch>/hide.app`; it refuses to produce an app if any binary it ships is missing or not executable.
+For an unpackaged dev run, `pnpm --dir desktop dev` finds this worktree's `target/{debug,release}/hide`.
+Archive baseline and candidate from separate worktrees so each keeps its own `target/` and `desktop/out/`; never redirect build output with `CARGO_TARGET_DIR` or share it across revisions.
 Building, testing, installing, launching, committing, and merging are separate states; report each accurately.
 
 ## 3. Isolate runtime state before making fixtures
@@ -172,239 +87,120 @@ Every invocation, including cleanup, must use the same explicit routing environm
 | `XDG_CONFIG_HOME`, `XDG_STATE_HOME` | Private configuration and state roots under the run directory |
 | `HERDR_PANE_ID`, `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID` | Clear inherited identifiers before launching the fixture |
 | `HERDR_ENV` | Clear inherited nesting marker when starting the standalone reference TUI |
-| Hide `--state-path`, `--workspace-root` | Explicit run-owned app state file and disposable checkout; the state file also holds the SSH devices, so a private one registers none |
+| `HIDE_STATE_DIR`, `HERDR_BIN_PATH` | A run-owned `hided` state directory and pinned Herdr binary path |
+| `HIDE_DESKTOP_USER_DATA_DIR` | A run-owned Electron user-data directory for the desktop app |
 
-The shell forwards `HERDR_SESSION`, `HERDR_CONFIG_PATH`, `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and its resolved socket to every child Herdr process, so the server it starts and the core that reads it stay inside the same routing boundary.
+`desktop/e2e/fixture.ts` builds exactly this environment and refuses to launch unless `HOME`, `HIDE_STATE_DIR`, `HIDE_DESKTOP_USER_DATA_DIR`, and `HERDR_SOCKET_PATH` all resolve under the run's own temporary directory; `web/e2e/herdr-fixture.ts` does the same for the private Herdr server and clears the inherited `HERDR_PANE_ID`/`HERDR_TAB_ID`/`HERDR_WORKSPACE_ID`/`HERDR_ENV` identifiers.
+Follow that same pattern for an ad hoc fixture: forward `HERDR_SESSION`, `HERDR_CONFIG_PATH`, `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and the resolved socket to every child Herdr process, so the server it starts and the core that reads it stay inside the same routing boundary.
 Check the pinned runtime's path behavior when updating it.
 The tested session layout stores sessions under `<XDG_CONFIG_HOME>/herdr/sessions/<HERDR_SESSION>`; changing `HERDR_CONFIG_PATH` alone does not isolate session data.
 The client socket inserts `-client` before `.sock`; allow room for that suffix in the platform's Unix socket path limit.
 Do not repurpose `HOME` or assume a private local socket disables SSH discovery.
 Inspect remote registrations, automatic SSH connection attempts, and remote client state too; an unexpected remote connection is an isolation failure to resolve before interacting.
-SSH devices are registrations in the app state file, so a run-owned `--state-path` is what keeps a scenario that does not exercise remote behavior from making an SSH connection attempt.
+SSH devices are registrations kept under the daemon's state directory, so a run-owned `HIDE_STATE_DIR` is what keeps a scenario that does not exercise remote behavior from making an SSH connection attempt.
 Do not edit the operator's SSH configuration or stop remote services to make a local fixture pass.
 
 Save process/socket ownership before launch, prove the private server has zero workspaces before creating fixtures, and verify that the operator server gained no QA connection.
 Use explicit fixture IDs, not current-focus shortcuts, for mutations.
 Record operator agent count separately from private pane/agent and attached-child counts: isolation does not remove shared machine load.
 
-## 4. Reproduce with real native interactions
+## 4. Reproduce with real interactions
 
-Use the installed Peekaboo CLI directly, not an MCP server.
-Missing Screen Recording or Accessibility permission blocks native automation.
+`desktop/e2e/*.spec.ts` and `web/e2e/*.spec.ts` are the primary reproduction path: Playwright drives the real window against an isolated `hided` and a private, pinned Herdr server, and both run in CI.
+Read the closest existing spec before writing a new one; `desktop/e2e/browser.spec.ts` covers the occluded-window case and launches with `--disable-backgrounding-occluded-windows` (see [BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md)) so an occluded window keeps painting for capture.
+
+For manual QA on a packaged or dev build that a spec cannot yet reach, use the installed Peekaboo CLI directly, not an MCP server.
+Missing Screen Recording or Accessibility permission blocks automation.
 
 ```sh
 /opt/homebrew/bin/peekaboo permissions status --json
 /opt/homebrew/bin/peekaboo app list --json
 ```
 
-Discover windows with `peekaboo window list --app <exact-app> --json`, then take a fresh `peekaboo see --app <exact-app> --json` snapshot.
+Discover windows with `peekaboo window list --app hide --json`, then take a fresh `peekaboo see --app hide --json` snapshot.
 For observation while the operator works, prefer `peekaboo see --window-id <candidate-window-id> --no-elements --path <run-path> --json` after resolving that window to the candidate PID.
 Do not activate, raise, move or unminimize the window merely to obtain a screenshot without coordination.
-Verify the selected capture engine returns the target window rather than a screen-region crop, and check the resulting image and unchanged foreground app.
-Occluded-window capture is not proof of minimized, hidden or off-Space capture support; report blank, stale or unavailable frames explicitly rather than silently focusing the app.
-Record occlusion and foreground state; a background window image cannot establish foreground appearance, IME behavior, physical display flicker or matched performance.
+Occluded-window capture is not proof of minimized, hidden, or off-Space capture support; report blank, stale, or unavailable frames explicitly rather than silently focusing the app.
 Confirm the exact PID/window before each mutation, prefer fresh element IDs, and verify the result with another observation.
-If an automation command reports a failed postcondition, inspect actual state before retrying; the action may already have happened.
-If daemon-backed targeting is wrong, inspect local CLI help and use `--no-remote` with the same exact target, then verify again.
-Coordinate origins can differ between move, drag, and screenshot operations; never reuse unverified coordinates.
 Do not automate credentials, unlock prompts, or authentication.
 
-Exercise ordinary shell history, a long Claude transcript, and a long Codex transcript separately: their repaint and mouse-routing behavior differs.
-Use disposable fixtures and fork inactive transcripts when needed; do not resume or send input to an operator's live agent.
-Typing tests should leave text unsubmitted unless command execution or model work was explicitly placed in scope.
-Live output-generation load is a separate test, not something proved by typing into an idle transcript.
-
-| Scenario | Verify visibly and record |
-| --- | --- |
-| Continuous typing and deletion | Input appears, surrounding content remains intact, no whole-body blanking; include Korean IME and wide glyphs when relevant |
-| Wheel up/down and reversal | Requested content moves, first wheel is not artificially delayed, cancellation and history boundaries do not wedge later input |
-| Text selection | Multiline highlight is stable during output; check inside, exactly on, and 1 px outside each edge so top-row dragging does not scroll inside or leave an outside dead band |
-| Continuous output | Parsing progresses and visible content updates without periodic stalls or unbounded row retention |
-| Resize and split | Held content survives intermediate sizes and is replaced by a matching full frame at settled geometry |
-| Tab switch, hide, and revisit | Correct pane appears, hidden panes do not draw, released attaches are not retained indefinitely, revisiting restores content |
-| Repeated repaint | Selection, exposure, and repeated AppKit callbacks preserve text even within one display tick |
-
+Exercise ordinary shell history, a long Claude transcript, and a long Codex transcript separately: their repaint and scroll behavior can differ.
+Use disposable fixtures; do not resume or send input to an operator's live agent.
 Capture real screenshots for visible claims; a running process or passing unit test is not UI evidence.
-For flicker, record a bounded window region with `screencapture -v -R <x,y,width,height>` and inspect the resulting dimensions and frame rate before analysis.
-Do not assume `-l` window targeting crops a video just because it crops a still image.
-Inspect both full frames and a terminal-body crop that excludes stable chrome and input footers.
-A blank-frame detector must be calibrated against the fixture's background and known populated/blank frames; record crop and thresholds instead of copying another run's coordinates.
-No detected blank frame means only that the detector found none at the capture rate.
-For example, 60 fps video can miss a single 120 Hz frame, and whole-body blank detection does not cover partial corruption.
+For flicker, record a bounded window region and inspect the resulting dimensions and frame rate before analysis; a blank-frame detector must be calibrated against the fixture's background and known populated/blank frames.
 
 ## 5. Measure the boundary actually under discussion
 
-Replace placeholders below with recorded values; write every output into the run directory.
-Capture debug intervals from the exact app PID:
-
-```sh
-/usr/bin/log stream --process <app-pid> --level debug --style ndjson \
-  --predicate 'subsystem == "me.grab.hide" AND category == "TerminalLatency"' \
-  > <run-dir>/terminal-latency.ndjson
-python3 scripts/summarize-terminal-latency.py <run-dir>/terminal-latency.ndjson \
-  --started-after <unix-seconds>
-```
-
-Record the capture process so only that process is stopped after the observation window.
-The debug mirror carries the same interval end values as the signposts and does not require Instruments.
-The summarizer reports nearest-rank percentiles and exclusions; keep the raw trace with the result.
-It aggregates recorded interval-end events only.
-An interval still pending when capture stops may appear in neither completed samples nor exclusions; compare against observed input counts and report missing endings rather than treating them as successes.
-Use distinct capture windows per scenario and stop capture at the end; `--started-after` is a lower bound, not an end-time filter.
-
-| Interval | What it measures | What it does not prove |
-| --- | --- | --- |
-| `key_to_send` | Main-actor input delegate to actual transport flush | Physical keypress to visible application response |
-| `receive_to_draw` | Delivery to the registered terminal view through software drawing | Server rendering time or compositor presentation time |
-| `wheel_to_draw` | Wheel event to the next draw | A causally corresponding scroll repaint |
-| `tab_to_first_draw` | Traced tab activation to its first draw | Correct content, which still needs visual confirmation |
-
-At a history boundary a wheel may change nothing; its interval can remain pending until much later unrelated output.
-That can yield a many-second `wheel_to_draw` value without a many-second visible stall.
-Retain such observations and explain them, but never call the unfiltered wheel metric end-to-end scroll latency or remove outliers merely because they look bad.
-For a causal comparison, associate the input timestamp with the requested content-region change and use the same window-server display timestamp method in Hide and the reference TUI.
-If that pairing is unavailable, report only the internal proxy and functional scroll behavior.
-Automation command duration includes focus, IPC, and event injection overhead; it is not the operator's key latency.
-Hidden, released, consumed, capacity-limited, and pre-window intervals are exclusions, never zero-latency successes.
-A reported refresh rate of zero means unknown, not a zero-Hz display.
-
 ### CPU, lock contention, and idle work
 
-Sample the exact app PID and its private Herdr server in separate short windows during both idle and driven conditions:
+Sample `hided`'s PID and its private Herdr server in separate short windows during both idle and driven conditions:
 
 ```sh
-/usr/bin/sample <app-pid> 3 -file <run-dir>/app-sample.txt
+/usr/bin/sample <hided-pid> 3 -file <run-dir>/hided-sample.txt
 /usr/bin/sample <private-server-pid> 3 -file <run-dir>/server-sample.txt
 uptime
-ps -p <app-pid>,<private-server-pid> -o pid,ppid,%cpu,rss,etime,command
+ps -p <hided-pid>,<private-server-pid> -o pid,ppid,%cpu,rss,etime,command
 ```
 
-Retain contemporaneous load, process lists, selected pane/grid, attached children, refresh rate, foreground interruptions, and Screen Sharing/WindowServer activity.
+Retain contemporaneous load, process lists, selected pane/grid, attached children, and refresh rate.
 Inspect symbolication before calculating mutex-wait ratios; predominantly `???` frames mean no usable answer, not zero contention.
-Long sampling windows under high load have failed to symbolicate in past runs; collect several short valid windows and report rejected windows too.
 State the denominator and thread when reporting a wait fraction, and distinguish waiting on the runtime mutex from time spent holding it.
 During idle observation, inspect snapshot publications, `rest` revisions, attach counts, and git subprocess activity rather than inferring no work from a static UI.
-`bash scripts/measure-git-section-idle.sh` drives that idle observation for the Overview Git context against an isolated server and records the subprocess and publication counts the paragraph above asks for.
-Core diagnostics are mirrored in the app state directory's `Logs/core.jsonl`, with one previous 1 MiB file; copy both into the run evidence before rotation loses the relevant window.
 
-### Memory and renderer replay
+### Memory and long-uptime degradation
 
 For an RSS claim, take eleven one-minute samples across ten minutes per build and retain process lists, endpoints, range, and median.
+Use `scripts/web-shell-measure/memory.py` (see "Web shell echo and frame measurement" below) as the reference sampler for the browser process tree's RSS, `hided`'s RSS, and the page's JS heap.
 Keep pane count, occlusion, warm-up, and workload comparable; memory pressure can lower RSS without an allocation improvement.
-An isolated renderer replay can identify repeated row preparation, retained generations, and eviction spikes, but cannot establish native input latency.
-Replay the same captured frames on both revisions, use optimized builds, and report cold draw, warm distribution, retained-entry peak, and bulk-release events separately.
-A cache that stays bounded may remove periodic destruction spikes while leaving median/p95 unchanged or slightly higher; report that result as it is.
-
-### Accumulated state and long-uptime degradation
 
 A build that is fast at launch can still become slow after hours, because cost that grows with process age is invisible in any short window taken on a fresh process.
-Whenever the report is "it got slow", record the app's uptime first and treat a fresh-launch measurement as the baseline, not the answer.
+Whenever the report is "it got slow", record `hided`'s uptime first and treat a fresh-launch measurement as the baseline, not the answer.
 
 ```sh
-ps -p <app-pid> -o pid,etime,%cpu,rss,command
-ps -M <app-pid>
-vmmap --summary <app-pid> | grep -E "Physical footprint"
-heap <app-pid> | head -60
+ps -p <hided-pid> -o pid,etime,%cpu,rss,command
+vmmap --summary <hided-pid> | grep -E "Physical footprint"
 ```
 
-`ps -M` lists cumulative user and system time per thread since the thread started; a thread whose system time keeps growing while the workload is steady is polling, and the main thread's user time against `etime` is its average busy fraction over the whole run.
-Compare the peak physical footprint with the current one; a peak far above the current value means the process held a large transient working set at some point.
-Compare `heap` object counts against a fresh launch under the same pane count; a class whose count grows with uptime is retained or interned somewhere.
-Then take the short `sample` windows above on the long-running process and on a freshly launched one with the same workspace, panes, and workload, and compare the hottest frames rather than the totals.
-
-Process-wide tables that outlive the objects that fed them are the case to look for explicitly.
-`NSAttributedString(string:attributes:)` interns each attribute dictionary into a UIFoundation weak hash table; churn from continuously redrawn rows fills it with dead entries, and after hours every insert pays `rehashAround` on a long chain.
-That cost appears in a sample as `+[NSAttributeDictionary newWithDictionary:]` above `-[NSConcreteHashTable rehashAround:]`, and it is confirmed rather than assumed by the restart test below.
-The same shape can hide behind any process-global cache, weak table, autorelease-heavy loop, or unbounded log or event buffer; the sample frame differs, the method does not.
-
-The restart test separates accumulated state from workload: quit the app, relaunch it against the same private server so the panes and their processes are unchanged, and repeat the same sample window within a minute.
-A hot path that disappears on relaunch and returns only after hours is accumulated state and needs an ownership or bounding fix under section 6, not a faster implementation of the same path.
+`etime` against a thread's or the process's `%cpu` gives its average busy fraction over the whole run; compare the peak physical footprint against the current one, since a peak far above the current value means the process held a large transient working set at some point.
+The restart test separates accumulated state from workload: quit `hided`, relaunch it against the same private server so the panes and their processes are unchanged, and repeat the same sample window within a minute.
+A hot path that disappears on relaunch and returns only after hours is accumulated state and needs an ownership or bounding fix, not a faster implementation of the same path.
 A hot path that is equally hot on the fresh process is workload, and belongs to the boundaries above.
 Record uptime, the restart time, and both sample windows in the run directory, and state which of the two conclusions the evidence supports.
 
 ## 6. Preserve the architecture while fixing the cause
 
-- Keep the sidebar in `SidebarList`, backed by the platform table, with existing row actions and styling.
-  A custom window wheel cache cannot protect earlier system event observers: cursor processing can hit-test the hosting tree before `PaneCommandWindow.sendEvent` runs.
-  Compare that full call path when investigating scroll delay, rather than measuring only the app's wheel handler.
-  Replacing the native list with a `ScrollView` containing nested SwiftUI rows reintroduces whole-document responder traversal; `SidebarListTests` guards this native ownership boundary, not a universal latency threshold.
-- Tooltip dismissal, hover exit, and anchor retention publish only actual state changes.
-  Mutating a struct held in `@Published` can emit even when its method returns without changing a field; compute the next value before assigning it.
-  Exercise repeated dismissal with no visible tooltip, because wheel events must not invalidate all tooltip-bearing controls.
-  The balloon overlay contains only visible tooltips or exposed hints, resolves hint exposure once per update, and skips target projection while hints are hidden.
 - Keep subprocesses, blocking I/O, and large serialization outside `Mutex<Runtime>`.
-  `snapshot_delta_payload` takes owned data under the lock; `serialize_snapshot_delta` serializes without a runtime to lock.
-  Extend `PrecomputedCatalog`, `CatalogCache`, and `RootIndex` rather than adding per-tick or per-tab git calls; stale precomputation keeps the accepted catalog.
+  `snapshot_delta_payload` (`herdr-core/src/runtime/snapshot_delta.rs`) takes owned data under the lock; `serialize_snapshot_delta` serializes without a runtime to lock.
+  Extend `PrecomputedCatalog`, `CatalogCache`, and `RootIndex` (`herdr-core/src/session_sync.rs`, `herdr-core/src/workspace.rs`) rather than adding per-tick or per-tab git calls; stale precomputation keeps the accepted catalog.
+- Announce once per burst and clear the `ChangeNotifier` (`herdr-core/src/handle.rs`) latch before taking the snapshot lock.
+  Read-then-clear can swallow a concurrent change.
 - Size snapshot traffic by changes: terminal sequence cursors, rarely-changing revisioned `rest`, and per-event scalars.
   An unused heartbeat timestamp can still dirty `rest` and resend the full navigator every second.
-- Send every whole-row wheel promptly; combine signed rows only from consecutive requests already waiting in the writer queue, send no cancelling sum, and never wait for a terminal frame or timer.
-  Preserve actual pointer cell/modifiers and Herdr-owned mouse/history routing; do not invent fallback geometry, reconstruct history from viewport frames, or append a same-size resize to force repaint.
-  Resolve the first wheel at its real AppKit target, then reuse that route only while events stay consecutive and stationary, so a sidebar gesture does not repeat SwiftUI's responder-tree hit test on every tick.
-  A wheel on a pane with no session yet (no view size, or an attach still starting) emits its diagnostic once and is summed and sent with the pane's first frame, never dropped.
-  An observed pane's wheel is `pane.scroll` on a worker off the mutex: two socket requests per landed wheel, at most one in flight per pane, and the wheels arriving meanwhile summed into one pending value; a net zero sends nothing.
-  The accepted matching-pane Claude policy sends SGR press/release without Enter and records its detection basis; other or unknown panes retain local selection.
-- Parse immediately, settle geometry over two stable display ticks, and submit pending damage once per display tick.
-  Hidden panes remain undrawn; matching full frames replace a held canvas after geometry/control transitions.
-  AppKit draw callbacks repair backing stores and must not be rejected because a draw already occurred in the same tick.
-  Retain only each visible row's latest prepared state, not thousands of obsolete generations until a global flush.
-  Keep keyboard delivery direct from the main-actor delegate to the writer without another asynchronous hop.
-- Announce once per burst and clear the notifier latch before taking the snapshot lock.
-  Read-then-clear can swallow a concurrent change.
 - Keep async operation records bounded by active intent and conflict scope.
   A close or topology mutation uses an absolute five-second stage deadline; expiry becomes a caller-visible unknown result and never schedules a destructive resend.
   Status checks are read-only and are started only for an ambiguous close or an explicit status action, so unknown activity does not become a polling loop.
 
 Follow engineering principles 1, 7, 12, and 13: remove obsolete paths, reuse existing mechanisms, test observable outcomes, and fix the failure class.
-For a backing-store bug, repeated draws into fresh pixel buffers should preserve nonempty content; a test that merely approves a frame gate repeats the faulty assumption.
 For timing tests, distinguish a deterministic policy threshold from eventual UI delivery under scheduler load.
 Do not weaken an externally promised deadline to make a flaky test pass.
 
 ## 7. Regression gates, cleanup, and verdict
 
-### File drop and editor typography
-
-File drop checks pasteboard URL types at drag entry and does no file work on ordinary pointer movement.
-An explicit file or image paste reserves one core-owned intent before a single worker reads at most eight files, 20 MiB each and 40 MiB total; native clipboard decoding runs off-main and is limited to 16 megapixels and 20 MiB encoded data.
-Remote attachment bytes pass through the existing authenticated SFTP boundary with a 45-second transfer timeout, not through a JSON event or the runtime mutex.
-While an intent is pending, only its originating pane adds O(input bytes) work to the key path, retaining at most 64 KiB; keys for every other pane retain their existing path.
-Appending held input does not publish a new snapshot; admission, completion, refusal and failure transitions do.
-The complete ordered path payload and held input use one existing terminal writer send after success, without synthetic Enter; failure keeps input held until explicit Retry or Cancel.
-One worker and one clipboard preparation task are admitted globally, with at most one additional refusal notice, and immediate-directory staging inspection stops at 128 entries and 256 MiB.
-Expiry is 24 hours on the next explicit intent, not a timer or idle scan.
-`TerminalFileDropTests` checks native focus, Control-V fallback, image Command-V/Control-V, IME preservation, private PNG normalization, size limits, scoped core failure, held Enter and ordered retry through the real bridge.
-Rust attachment tests cover source validation and quoted bytes; the ignored `remote_attachment_sftp_roundtrip_probe` uses the existing `HERDR_TEST_SSH_ALIAS` to verify actual upload, a same-byte retry that compares the staged file byte for byte, and exact generated-file cleanup without terminal input.
-Record idle and driven measurements separately with representative clipboard size, file count, remote latency and queue load; a compile or unit test does not establish native responsiveness.
-Native OS drag geometry remains a separate user review when desktop automation is unavailable.
-Editor highlighting uses the configured font at creation and actual font changes; identical language/font updates schedule no new full-document highlight.
-`FileDocumentStateTests` observes real attributed font sizes across background highlighting, unrelated view updates and explicit zoom changes, including Korean fallback.
-
-### Terminal link activation
-
-Links activate only on Command+Click, using SwiftTerm's existing `hoverWithModifier` policy.
-Unmodified pointer movement does not resolve implicit links or advertise link activation.
-The change adds no pointer state, timer, snapshot publication or consumer fan-out; link work stays bounded by the visible row and existing hover state.
-Ordinary clicks keep delayed replay, ordinary drags keep local selection, and Option+drag keeps the mouse-aware application route.
-`TerminalLinkActivationTests` drives the real AppKit terminal host with implicit and OSC 8 links and observes activation, replay and selection.
-The test fails against the previous hover policy; its maintenance cost is one native fixture with no provider or timing dependency.
-Native QA must additionally inspect modifier press/release, cursor and highlight on the isolated candidate.
-
 Use the existing suite wrappers, then the applicable gates in [CONTRIBUTING.md](../CONTRIBUTING.md):
 
 ```sh
 bash scripts/verify-cargo.sh test
-bash scripts/verify-swift.sh test
-python3 -m unittest discover -s scripts/tests -p 'test_terminal_latency.py'
+bash scripts/verify-web.sh
 ```
 
-The Swift wrapper rebuilds/checks the Rust archive before linking; it also accepts a test filter as its first argument for a focused iteration.
 Run the full relevant suite before delivery, and retain pre-fix failure plus post-fix success for the specific regression when feasible.
-Do not substitute a renderer microbenchmark for native QA or a native smoke test for long-duration/load coverage.
+Do not substitute a unit test for end-to-end coverage or an end-to-end smoke test for long-duration/load coverage.
 
 Stop only owned recording/logging processes, the test app, fixture clients, and the explicitly routed private server.
 Verify their exit and socket cleanup before removing or trashing only the exact recorded private state paths.
 Never use broad process-name kills, a workspace root as a deletion target, or an unscoped `herdr server stop`.
-Leave the operator app untouched unless its shutdown was explicitly coordinated; in that case restore the recorded bundle.
-Verify the owned candidate exited, the operator app remains available, and operator server ownership is unchanged; multiple independently identified instances are not themselves a verification failure.
+Leave the operator's app untouched unless its shutdown was explicitly coordinated; in that case restore it afterward.
+Verify the owned candidate exited, the operator's app remains available, and operator server ownership is unchanged; multiple independently identified instances are not themselves a verification failure.
 
 The run verdict must include:
 
@@ -414,17 +210,17 @@ The run verdict must include:
 - Regression tests and gates run, failures, and remaining checks explicitly marked unrun or blocked.
 - Cleanup/restoration evidence and whether the fix was merely committed, built, installed, or merged.
 
-Use a qualified verdict when coverage is bounded: “no whole-body blanking observed in these recordings” is supportable; “all performance issues resolved” is not.
+Use a qualified verdict when coverage is bounded: "no whole-body blanking observed in these recordings" is supportable; "all performance issues resolved" is not.
 
 ## Web shell echo and frame measurement
 
-`scripts/web-shell-measure/run.sh` measures the product `hided` the way the S0 spike measured its prototype, so the numbers stay comparable to the S0 Swift baseline.
+`scripts/web-shell-measure/run.sh` measures the product `hided` the way the S0 spike measured its prototype, so the numbers stay comparable to the S0 spike baseline.
 It owns every process it starts: an isolated pinned Herdr server on a socket inside a run-specific mode-0700 directory under `/tmp` (`isolated-env.sh`, the same routing table as section 3), one linked Git checkout and workspace with a `stty -echo -icanon; cat` pane, the release `hided` with its embedded `web/dist`, and one Google Chrome with an automatically assigned CDP port on the page opened with `?probe=1`.
 The runner reads Chrome's CDP port from its own profile and sends the page URL over standard input so the token is absent from the Chrome command line.
 The operator's socket is only read, before and after, for the topology counts written beside the results.
 
 Echo (PRD B8) is three trials of fifty `herdr pane send-text` markers.
-`t0` is the CLI return timestamp and `t1` is the xterm write completion that first shows the marker in the parsed buffer, read through `window.__hideProbe`; the sample is `t1 - t0`, nearest-rank percentiles, the median of the three trial p95s against the S0 Swift baseline p95 plus 5 ms.
+`t0` is the CLI return timestamp and `t1` is the xterm write completion that first shows the marker in the parsed buffer, read through `window.__hideProbe`; the sample is `t1 - t0`, nearest-rank percentiles, the median of the three trial p95s against the S0 spike baseline p95 plus 5 ms.
 The baseline is reused from the S0 report rather than re-measured, and `summarize.py` carries it as a named constant so a rerun does not quietly move it.
 
 Frames (PRD B12) is one 120 s window with the pane printing a line every 8 ms while a `requestAnimationFrame` loop injected through CDP records every frame's `dt`; the result is the fraction of frames over 16.7 ms, the WebSocket frame count the page received during the window, and the pane tail that proves the driver ran.
@@ -441,10 +237,8 @@ A Chrome window opens on the desktop for the run; the loop throttles in an occlu
 
 ## Projects and Overview cost contract
 
-Shared control hover, pressed and keyboard-focus appearance stays in local SwiftUI state.
-`HideSearchField` observes the existing search keyboard modifier's focus instead of creating another focus owner.
 The shared input surface and empty-state renderer add no timers, tasks, I/O or core state.
-Row hover/focus remains local to visible controls, and native sidebar/outline scrolling is retained.
+Row hover/focus remains local to visible controls.
 Search migration retains its existing filtering and result-ID reconciliation cost; it does not add another search index or per-keystroke subprocess.
 These visual transitions neither dispatch runtime events nor mark the snapshot rest payload dirty.
 Choice controls publish only a changed selection; repeated activation of the selected option has no action.
@@ -460,14 +254,14 @@ Identical catalog snapshots settle to the same ordering and revision, so the she
 UI persistence reuses the runtime worker context with one active save and one pending flag; serialization, write, fsync and rename occur outside Runtime's mutex.
 Sequential writes prevent an older state from overwriting a newer one; intermediate UI saves may coalesce, while pane input never enters this queue.
 A write failure publishes the existing caller-visible save error.
-FFI destruction stops producers and joins the last save outside the mutex; forced process termination does not guarantee a pending save.
+Dropping `Core` (`herdr-core/src/handle.rs`) stops producers and joins the last save outside the mutex before the process exits; forced process termination does not guarantee a pending save.
 Standalone unit runtimes without a worker context retain synchronous persistence outside any shared runtime mutex.
 
 A pin is one more key in the same sort and one more exclusion in the same fold pass; `workspace_pin_set` re-sorts the projected list in place and persists through the existing off-lock save, and the removal counts ride the checkout summary pass rather than a second visit of the panes.
 Closing a project's panes for `Remove project…` runs on the same worker pattern as worktree deletion, outside the mutex, with one in-flight close per project.
 Regression owners are `projects_follow_authoritative_activity_and_identical_snapshots_settle`, `overview_tracks_live_checkout_panes_and_drops_retired_lineage`, `pinned_projects_lead_their_device_in_activity_order`, `pinning_a_registration_reorders_the_row_and_persists_the_flag`, and the `removing_a_registration_*` and `removing_registration_*` tests.
-Native acceptance uses many private projects, Search and disclosure, live pane retirement/movement, pin and unpin, and registration removal with and without open panes.
-Measure baseline and candidate idle/driven work separately with the same project/pane count; tests alone do not prove native responsiveness.
+Manual acceptance in the desktop app uses many private projects, Search and disclosure, live pane retirement/movement, pin and unpin, and registration removal with and without open panes.
+Measure baseline and candidate idle/driven work separately with the same project/pane count; tests alone do not prove desktop responsiveness.
 
 ### Project worktrees, disk and cleanup
 
@@ -476,10 +270,10 @@ The Overview reads nothing of its own: every group header and stat cell is deriv
 The catalog pass is bounded by the worktree count; a project with many worktrees pays one status, one rev-list and one stat per worktree per change, never per tick or per agent update.
 A change is scoped to its own repository: each project carries its own freshness key (its git directory stamps and its working-tree sample), so a commit in one registered project re-reads that project alone and every other project is answered from the worker's last read; `a_commit_in_one_project_does_not_rerun_status_in_another` owns this.
 Every `git` the catalog runs is bounded by `GIT_DEADLINE` (15 s) and drained off-thread past the pipe buffer; a repository that outruns it reports its status unavailable and a `git.deadline_exceeded` diagnostic rather than holding the other projects' answer, which a status over evicted iCloud files once did for minutes.
-Group ordering, chips and search are pure functions of the snapshot in `OverviewPresentation`; agent status updates redraw rows and never recompute the catalog.
-List rows use the existing lazy native scrolling and search keyboard patterns.
+Group ordering, chips and search are pure functions of the accepted snapshot; agent status updates redraw rows and never recompute the catalog.
+List rows use the existing lazy-loading and search keyboard patterns.
 
-Disk reuses DiskReader, triggered by opening Git/Overview or explicit refresh, with one inflight read and coalesced pending input.
+Disk reuses `DiskReader` (`herdr-core/src/disk.rs`), triggered by opening Git/Overview or explicit refresh, with one inflight read and coalesced pending input.
 The filesystem walk counts `st_blocks * 512`, partitions nested checkout/shared-Git roots by longest ownership, and deduplicates `(device, inode)` across components.
 It counts a symlink's own allocation without following it and rejects alias roots rather than escaping the declared boundary.
 It is bounded to thirty seconds and one million visited/pending entries per request; failed or incomplete components have no total and remain visible beside a confirmed subtotal.
@@ -494,8 +288,8 @@ The UI therefore describes a fresh eligibility check rather than a permanent unu
 A stale, missing or failed check is caller-visible and never becomes permission to delete.
 Completed intents are retained until dismissal; duplicate confirmation does no work, and retry through a fresh review excludes already removed targets.
 
-Regression owners include `overview_open_section_focuses_the_checkout_and_switches_the_panel_in_one_event`, `agent_start_in_checkout_reports_through_the_task_operation_slot`, `behind_upstream_is_absent_without_an_upstream_and_counts_the_fetched_side`, `linked_worktrees_carry_their_creation_time_and_the_main_worktree_none`, disk filesystem fixtures, cleanup filesystem fixtures and `OverviewPresentationTests`.
-Native acceptance additionally covers row click versus header click versus the `N files` chip, narrow Korean/English wrapping of branch names and tasks, `…`/`?` cells, and cleanup review/cancel/exclusion/success/stale refusal in private fixtures only.
+Regression owners include `overview_open_section_focuses_the_checkout_and_switches_the_panel_in_one_event`, `agent_start_in_checkout_reports_through_the_task_operation_slot`, `behind_upstream_is_absent_without_an_upstream_and_counts_the_fetched_side`, `linked_worktrees_carry_their_creation_time_and_the_main_worktree_none`, disk filesystem fixtures and cleanup filesystem fixtures.
+Manual acceptance in the desktop app additionally covers row click versus header click versus the `N files` chip, narrow Korean/English wrapping of branch names and tasks, `…`/`?` cells, and cleanup review/cancel/exclusion/success/stale refusal in private fixtures only.
 
 ## Project Memory cost contract
 
@@ -523,15 +317,9 @@ Missing, locked, corrupt, stale, unresolved, or over-deadline inputs exit succes
 If the first prompt arrives before that durable receipt is projected, the hook omits Memory for that prompt and retries on the next prompt; it never guesses the delivered set or creates a receipt sidecar or other second store.
 
 Regression owners are the `hide-project` identity tests, `hide-session` provider-neutral catalog and cursor tests, `hide-memory` Project-isolation, lifecycle, convergence, FTS transaction, redaction, ranking and budget tests, `hide-agent-hooks` fixture/config/fail-open tests, and core atomic-event and editor-preview tests.
-Native acceptance uses one exact worktree-local signed app PID and window against a private Herdr server and private app state.
+Manual acceptance in the desktop app uses one exact worktree-local `hided` PID and window against a private Herdr server and private app state.
 Record hook idle and driven timing separately, including sample count and failures, and record provider request count, queue/inflight bounds, child descendants, and RSS separately from the prompt path.
-An automated deadline test proves bounded return under its fixture conditions; it does not prove every storage device or native interaction remains below 100 ms.
-
-### Background candidate launch
-
-Debug candidates support `--verification-background` from the first window presentation, including the pre-runtime recheck.
-It orders the exact candidate window behind existing windows without activating the application or making the window key.
-This works with a live private server as well as snapshot fixtures; it does not authorize foreground input.
+An automated deadline test proves bounded return under its fixture conditions; it does not prove every storage device or interaction remains below 100 ms.
 
 ### Project Home projection and issue reads
 
@@ -542,5 +330,5 @@ The GitHub reader keeps its existing single worker and per-project generation ca
 At most 200 linked identities and backlog entries are retained per project; one extra list result reports overflow.
 Closed and cross-repository identities are resolved in one bounded query.
 Manual writes use the existing task-operation slot and a terminating worker; cleanup shares the bounded purpose mirror queue.
-Native acceptance includes empty-checkout entry, overlay dismissal, both groupings, issue linking, stale facts, narrow widths and mixed Korean/English labels.
-`ProjectHomeTests` and `runtime::tests::issues` own projection memoization, stage priority, deduplication, issue precedence and transition-only refresh regressions.
+Manual acceptance in the desktop app includes empty-checkout entry, overlay dismissal, both groupings, issue linking, stale facts, narrow widths and mixed Korean/English labels.
+`runtime::tests::issues` owns projection memoization, stage priority, deduplication, issue precedence and transition-only refresh regressions.

@@ -6,7 +6,6 @@ publish = false
 
 [lib]
 name = "herdr_core"
-crate-type = ["rlib", "staticlib"]
 
 [dependencies]
 anyhow = "=1.0.104"

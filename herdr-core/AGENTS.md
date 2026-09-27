@@ -11,7 +11,7 @@ Do not copy those contracts here.
 - Keep `lib.rs` as the module and export map; behavior belongs in the owning module.
 - Default modules and helpers to private or `pub(crate)`.
 - Add a public module or item only when a crate consumer needs that surface.
-- Keep the C ABI implementation in `ffi.rs` and its exported entry points re-exported from `lib.rs`.
+- Keep the owner-thread handle hided drives in `handle.rs` and re-export only `Core` from `lib.rs`; the crate has no C ABI.
 - Keep conversions to and from the generated Herdr contract in `wire.rs`.
 - Before changing that boundary, follow the Herdr API procedure in the root `AGENTS.md`.
 - Extend the existing feature owner instead of adding a second module for the same decision.
@@ -33,7 +33,7 @@ Do not copy those contracts here.
 
 - Put focused unit tests at the end of the owning module in `#[cfg(test)] mod tests`.
 - Use a separate `*_tests.rs` file only for a large regression suite that the owning module explicitly includes.
-- Put public ABI coverage in `herdr-core/tests/` and stable input data in `herdr-core/tests/fixtures/`.
+- Put crate-boundary coverage in `herdr-core/tests/` and stable input data in `herdr-core/tests/fixtures/`.
 - Name tests as snake_case statements of the observable result or rejected transition.
 - Exercise private helpers through the owning module's stable behavior whenever that boundary can express the case.
 - Keep test doubles inside the test module and implement the same boundary trait as production.

@@ -10,7 +10,6 @@ pub mod domain;
 mod environment;
 #[cfg(test)]
 mod fake_herdr;
-mod ffi;
 mod files;
 pub use files::FileRoots;
 pub mod find;
@@ -18,6 +17,7 @@ pub mod fixture;
 mod fork;
 mod git_dir;
 mod github;
+mod handle;
 pub mod herdr_contract;
 pub mod host_access;
 pub mod issues;
@@ -46,10 +46,7 @@ pub mod workspace_views;
 mod worktrees;
 mod zoneinfo;
 
-pub use ffi::{
-    Core, HerdrBytes, HerdrCore, herdr_core_create, herdr_core_destroy, herdr_core_dispatch,
-    herdr_core_free_bytes, herdr_core_on_change, herdr_core_snapshot,
-};
+pub use handle::Core;
 pub use model::{CoreOptions, SCHEMA_VERSION, Snapshot, SnapshotDeltaPayload};
 pub use runtime::WorkspaceRemoteRoute;
 pub use runtime::serialize_snapshot_delta;

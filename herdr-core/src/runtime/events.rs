@@ -504,7 +504,7 @@ pub(super) struct FileViewPayload {
 
 /// `tab_id` names the document the draft is for; the web shell always
 /// sends it, because several documents show at once (PRD S7 A4). Absent,
-/// the draft is the active tab's, as the Swift shell sends it.
+/// the draft is the active tab's, as an older client sends it.
 #[derive(Debug, Deserialize)]
 pub(super) struct FileDraftPayload {
     #[serde(default)]
@@ -528,14 +528,14 @@ pub(super) struct UiStateUpdatePayload {
     #[serde(default)]
     pub(super) right_panel_section: Option<String>,
     pub(super) expanded_paths: Vec<String>,
-    /// Absent keeps the devices' expansion: the Swift shell does not carry it.
+    /// Absent keeps the devices' expansion: an older client does not carry it.
     #[serde(default)]
     pub(super) device_expanded_paths: Option<BTreeMap<String, Vec<String>>>,
     #[serde(default)]
     pub(super) collapsed_workspace_ids: Vec<String>,
     #[serde(default)]
     pub(super) collapsed_checkout_ids: Option<Vec<String>>,
-    /// Absent keeps the web's opened checkouts: the Swift shell does not carry them.
+    /// Absent keeps the web's opened checkouts: an older client does not carry them.
     #[serde(default)]
     pub(super) expanded_checkout_ids: Option<Vec<String>>,
     #[serde(default)]
@@ -580,7 +580,7 @@ pub(super) struct SessionsFilterPayload {
 }
 
 /// Without a `workspace_id` the refresh reads the focused checkout's Project
-/// for the Swift right panel, as it always has. With one it names that
+/// for the right panel, as it always has. With one it names that
 /// catalog Project for a screen's Sessions (`project_sessions.rs`), whatever
 /// is focused, and reads its history again.
 #[derive(Debug, Default, Deserialize)]
@@ -591,7 +591,7 @@ pub(super) struct SessionsRefreshPayload {
     pub(super) device_id: Option<String>,
 }
 
-/// Without a `workspace_id` the measurement is the Swift right panel's, the
+/// Without a `workspace_id` the measurement is the right panel's, the
 /// focused checkout's project. With one it names that local Git project for
 /// a web Overview's facts line, whatever is focused, and measures it again.
 #[derive(Debug, Default, Deserialize)]
@@ -1095,7 +1095,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "ui_state_update" => serde_json::from_value::<Box<UiStateUpdatePayload>>(payload)
             .map(Event::UiStateUpdate)
             .map_err(|_| invalid_payload(&kind)),
-        // The Swift shell sends `{}`; a payload that is absent reads the same.
+        // An older client sends `{}`; a payload that is absent reads the same.
         "sessions_refresh" => serde_json::from_value::<Option<SessionsRefreshPayload>>(payload)
             .map(|payload| Event::SessionsRefresh(payload.unwrap_or_default()))
             .map_err(|_| invalid_payload(&kind)),
@@ -1132,7 +1132,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "overview_open_section" => decode!(OverviewOpenSectionPayload, OverviewOpenSection),
         "agent_start_in_checkout" => decode!(AgentStartInCheckoutPayload, AgentStartInCheckout),
         "card_refresh" => Ok(Event::CardRefresh),
-        // The Swift shell sends `{}`; a payload that is absent reads the same.
+        // An older client sends `{}`; a payload that is absent reads the same.
         "card_measure_disk" => serde_json::from_value::<Option<CardMeasureDiskPayload>>(payload)
             .map(|payload| Event::CardMeasureDisk(payload.unwrap_or_default()))
             .map_err(|_| invalid_payload(&kind)),

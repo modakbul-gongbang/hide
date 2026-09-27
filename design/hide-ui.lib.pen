@@ -5900,7 +5900,7 @@
                       "id": "hJDwP",
                       "name": "Label",
                       "fill": "$--foreground",
-                      "content": "GitWorktreesView.swift",
+                      "content": "GitWorktreesView.tsx",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-body",
                       "fontWeight": "normal"
@@ -6271,7 +6271,7 @@
                   "icon": "file-code"
                 },
                 "kj232": {
-                  "content": "new-example.swift",
+                  "content": "new-example.tsx",
                   "fill": "$--foreground"
                 },
                 "ZzvYJ": {
@@ -6740,7 +6740,7 @@
                           "icon": "file-code"
                         },
                         "kj232": {
-                          "content": "new-example.swift",
+                          "content": "new-example.tsx",
                           "fill": "$--foreground"
                         },
                         "ZzvYJ": {
@@ -7259,7 +7259,7 @@
               "fill": {
                 "type": "image",
                 "enabled": true,
-                "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                "url": "../web/src/assets/agent-codex.png",
                 "mode": "fit"
               }
             },
@@ -7826,7 +7826,7 @@
                               "fill": {
                                 "type": "image",
                                 "enabled": true,
-                                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                                "url": "../web/src/assets/agent-claude.png",
                                 "mode": "fit"
                               }
                             },
@@ -8278,7 +8278,7 @@
                               "fill": {
                                 "type": "image",
                                 "enabled": true,
-                                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                                "url": "../web/src/assets/agent-claude.png",
                                 "mode": "fit"
                               }
                             },
@@ -8730,7 +8730,7 @@
                               "fill": {
                                 "type": "image",
                                 "enabled": true,
-                                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                                "url": "../web/src/assets/agent-claude.png",
                                 "mode": "fit"
                               }
                             },
@@ -9182,7 +9182,7 @@
                               "fill": {
                                 "type": "image",
                                 "enabled": true,
-                                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                                "url": "../web/src/assets/agent-claude.png",
                                 "mode": "fit"
                               }
                             },
@@ -11058,7 +11058,7 @@
                               "fill": {
                                 "type": "image",
                                 "enabled": true,
-                                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                                "url": "../web/src/assets/agent-claude.png",
                                 "mode": "fit"
                               }
                             },
@@ -11293,7 +11293,7 @@
               "fill": {
                 "type": "image",
                 "enabled": true,
-                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "url": "../web/src/assets/agent-claude.png",
                 "mode": "fit"
               }
             },
@@ -11337,7 +11337,7 @@
               "fill": {
                 "type": "image",
                 "enabled": true,
-                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "url": "../web/src/assets/agent-claude.png",
                 "mode": "fit"
               }
             },
@@ -11355,7 +11355,7 @@
               "fill": {
                 "type": "image",
                 "enabled": true,
-                "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                "url": "../web/src/assets/agent-codex.png",
                 "mode": "fit"
               }
             },
@@ -11491,7 +11491,7 @@
               "fill": {
                 "type": "image",
                 "enabled": true,
-                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "url": "../web/src/assets/agent-claude.png",
                 "mode": "fit"
               }
             },
@@ -11533,7 +11533,7 @@
               "fill": {
                 "type": "image",
                 "enabled": true,
-                "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                "url": "../web/src/assets/agent-claude.png",
                 "mode": "fit"
               }
             },
@@ -11551,7 +11551,7 @@
               "fill": {
                 "type": "image",
                 "enabled": true,
-                "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                "url": "../web/src/assets/agent-codex.png",
                 "mode": "fit"
               }
             },
@@ -17013,7 +17013,7 @@
                   "fill": {
                     "type": "image",
                     "enabled": true,
-                    "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                    "url": "../web/src/assets/agent-claude.png",
                     "mode": "fit"
                   }
                 },
@@ -17063,7 +17063,7 @@
                       "fill": {
                         "type": "image",
                         "enabled": true,
-                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                        "url": "../web/src/assets/agent-codex.png",
                         "mode": "fit"
                       }
                     },
@@ -17097,7 +17097,7 @@
                       "fill": {
                         "type": "image",
                         "enabled": true,
-                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                        "url": "../web/src/assets/agent-codex.png",
                         "mode": "fit"
                       }
                     },
@@ -17395,7 +17395,7 @@
                       "fill": {
                         "type": "image",
                         "enabled": true,
-                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                        "url": "../web/src/assets/agent-claude.png",
                         "mode": "fit"
                       }
                     },
@@ -17488,7 +17488,7 @@
                   "fill": {
                     "type": "image",
                     "enabled": true,
-                    "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                    "url": "../web/src/assets/agent-codex.png",
                     "mode": "fit"
                   }
                 },
@@ -30640,7 +30640,7 @@
                   "fill": {
                     "type": "image",
                     "enabled": true,
-                    "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                    "url": "../web/src/assets/agent-claude.png",
                     "mode": "fit"
                   }
                 },
@@ -30694,7 +30694,7 @@
                       "fill": {
                         "type": "image",
                         "enabled": true,
-                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                        "url": "../web/src/assets/agent-claude.png",
                         "mode": "fit"
                       }
                     },
@@ -30811,7 +30811,7 @@
                       "fill": {
                         "type": "image",
                         "enabled": true,
-                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                        "url": "../web/src/assets/agent-claude.png",
                         "mode": "fit"
                       }
                     },
@@ -30831,7 +30831,7 @@
                       "fill": {
                         "type": "image",
                         "enabled": true,
-                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                        "url": "../web/src/assets/agent-codex.png",
                         "mode": "fit"
                       }
                     },
@@ -30851,7 +30851,7 @@
                       "fill": {
                         "type": "image",
                         "enabled": true,
-                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                        "url": "../web/src/assets/agent-claude.png",
                         "mode": "fit"
                       }
                     },
@@ -30871,7 +30871,7 @@
                       "fill": {
                         "type": "image",
                         "enabled": true,
-                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                        "url": "../web/src/assets/agent-codex.png",
                         "mode": "fit"
                       },
                       "opacity": 0.5
@@ -30976,7 +30976,7 @@
                           "fill": {
                             "type": "image",
                             "enabled": true,
-                            "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                            "url": "../web/src/assets/agent-claude.png",
                             "mode": "fit"
                           }
                         },
@@ -31015,7 +31015,7 @@
                           "fill": {
                             "type": "image",
                             "enabled": true,
-                            "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                            "url": "../web/src/assets/agent-claude.png",
                             "mode": "fit"
                           }
                         },
@@ -31065,7 +31065,7 @@
                           "fill": {
                             "type": "image",
                             "enabled": true,
-                            "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                            "url": "../web/src/assets/agent-codex.png",
                             "mode": "fit"
                           }
                         },
@@ -31188,7 +31188,7 @@
                           "fill": {
                             "type": "image",
                             "enabled": true,
-                            "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                            "url": "../web/src/assets/agent-claude.png",
                             "mode": "fit"
                           },
                           "opacity": 0.5
@@ -31236,7 +31236,7 @@
                           "fill": {
                             "type": "image",
                             "enabled": true,
-                            "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                            "url": "../web/src/assets/agent-codex.png",
                             "mode": "fit"
                           },
                           "opacity": 0.5
@@ -31305,7 +31305,7 @@
                       "fill": {
                         "type": "image",
                         "enabled": true,
-                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                        "url": "../web/src/assets/agent-claude.png",
                         "mode": "fit"
                       }
                     },
@@ -31345,7 +31345,7 @@
                       "fill": {
                         "type": "image",
                         "enabled": true,
-                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                        "url": "../web/src/assets/agent-claude.png",
                         "mode": "fit"
                       }
                     },
@@ -31384,7 +31384,7 @@
                       "fill": {
                         "type": "image",
                         "enabled": true,
-                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-codex.png",
+                        "url": "../web/src/assets/agent-codex.png",
                         "mode": "fit"
                       }
                     },
@@ -31424,7 +31424,7 @@
                       "fill": {
                         "type": "image",
                         "enabled": true,
-                        "url": "../macos/Sources/HerdrMacOS/Resources/agent-claude.png",
+                        "url": "../web/src/assets/agent-claude.png",
                         "mode": "fit"
                       },
                       "opacity": 0.5

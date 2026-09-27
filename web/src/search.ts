@@ -10,7 +10,7 @@ import type { SnapshotRest } from "./snapshot";
 import { besideUnavailable, shownTool, viewCommands, type Geometry, type LayoutSizes, type ToolsPlacement, type ViewCommandId } from "./viewLayout";
 import { PANEL_STATES, workspaceViewOf, type PanelState, type Tool } from "./workspace";
 
-/** The header an entry is drawn under, in the Swift search view's form (`herdr-ide > AGENTS`). */
+/** The header an entry is drawn under, in the search view's form (`herdr-ide > AGENTS`). */
 export type SearchGroup = { id: string; label: string };
 
 const COMMANDS_GROUP: SearchGroup = { id: "commands", label: "WORKSPACE > COMMANDS" };
@@ -37,8 +37,8 @@ export type SearchEntry = {
   unavailable?: string | null;
 };
 
-/** The fuzzy score of `query` against `candidate`, mirroring the Swift scorer
- * (`WorkspaceFileSearchIndex.fuzzyScore`): characters in order, early and
+/** The fuzzy score of `query` against `candidate`, the same scorer hided's
+ * index runs (`hided/src/index.rs`): characters in order, early and
  * adjacent matches higher, shorter candidates first on a tie. */
 export function fuzzyScore(candidate: string, query: string): number | null {
   if (query.length === 0) return 0;
@@ -137,7 +137,7 @@ export function workspaceCommands(rest: SnapshotRest | null, screen: WorkspaceOn
  * screen, then agents, projects and checkouts of the context on screen, so a
  * pick on a selected SSH device focuses that host's row rather than one on
  * this machine behind it. An agent is grouped under the first project whose
- * checkouts hold its pane, as the Swift search view groups it.
+ * checkouts hold its pane.
  */
 export function searchEntries(rest: SnapshotRest | null, screen: WorkspaceOnScreen | null = null): SearchEntry[] {
   if (!rest) return [];

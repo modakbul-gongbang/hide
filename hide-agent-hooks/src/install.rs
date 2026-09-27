@@ -148,22 +148,22 @@ pub fn claim_first_run(home: &Path) -> io::Result<bool> {
 /// the operator's own configuration file and run by every future session of
 /// that agent. So the only path worth writing is one that survives a
 /// rebuild, and inside this project that means the bundle's own
-/// `Contents/MacOS`. A development build's executable sits under
-/// `target/debug/deps`, which Cargo removes on the next build; installing
-/// from there once left every Claude and Codex session on the machine
-/// failing four hooks per turn.
+/// `Contents/Resources`, where the daemon and the helper ship side by side.
+/// A development build's executable sits under `target/debug/deps`, which
+/// Cargo removes on the next build; installing from there once left every
+/// Claude and Codex session on the machine failing four hooks per turn.
 ///
 /// So this refuses rather than resolving something plausible. The layout is
-/// checked, not the file name: `<name>.app/Contents/MacOS/<executable>`.
+/// checked, not the file name: `<name>.app/Contents/Resources/<executable>`.
 pub fn helper_for(executable: &Path) -> Result<PathBuf, InstallFailure> {
     let refuse = || InstallFailure::HelperNotBundled {
         executable: executable.display().to_string(),
     };
-    let macos = executable.parent().ok_or_else(refuse)?;
-    if macos.file_name() != Some(OsStr::new("MacOS")) {
+    let resources = executable.parent().ok_or_else(refuse)?;
+    if resources.file_name() != Some(OsStr::new("Resources")) {
         return Err(refuse());
     }
-    let contents = macos.parent().ok_or_else(refuse)?;
+    let contents = resources.parent().ok_or_else(refuse)?;
     if contents.file_name() != Some(OsStr::new("Contents")) {
         return Err(refuse());
     }
@@ -171,7 +171,7 @@ pub fn helper_for(executable: &Path) -> Result<PathBuf, InstallFailure> {
     if bundle.extension() != Some(OsStr::new("app")) {
         return Err(refuse());
     }
-    let helper = macos.join(crate::runtime::HELPER_BINARY_NAME);
+    let helper = resources.join(crate::runtime::HELPER_BINARY_NAME);
     if !helper.is_file() {
         return Err(InstallFailure::HelperMissing {
             path: bundle.display().to_string(),
@@ -515,7 +515,7 @@ mod tests {
         // build, so every session afterwards ran a command that was gone.
         let deps = fixture.home().join("target/debug/deps");
         fs::create_dir_all(&deps).unwrap();
-        let executable = deps.join("HerdrMacOS");
+        let executable = deps.join("hided");
         fs::write(&executable, b"binary").unwrap();
         fs::write(deps.join(crate::runtime::HELPER_BINARY_NAME), b"binary").unwrap();
 
@@ -536,11 +536,11 @@ mod tests {
     }
 
     #[test]
-    fn only_the_bundles_own_macos_directory_resolves_the_helper() {
+    fn only_the_bundles_own_resources_directory_resolves_the_helper() {
         let fixture = Fixture::new("bundled");
-        let macos = fixture.home().join("hide.app/Contents/MacOS");
-        fs::create_dir_all(&macos).unwrap();
-        let executable = macos.join("HerdrMacOS");
+        let resources = fixture.home().join("hide.app/Contents/Resources");
+        fs::create_dir_all(&resources).unwrap();
+        let executable = resources.join("hided");
         fs::write(&executable, b"binary").unwrap();
 
         // A bundle that shipped without the helper is a missing file, not a
@@ -551,15 +551,17 @@ mod tests {
             "got {missing:?}"
         );
 
-        let helper = macos.join(crate::runtime::HELPER_BINARY_NAME);
+        let helper = resources.join(crate::runtime::HELPER_BINARY_NAME);
         fs::write(&helper, b"binary").unwrap();
         assert_eq!(helper_for(&executable).unwrap(), helper);
 
         // A directory that merely ends in .app is not enough on its own, and
-        // neither is a MacOS directory outside one.
+        // neither is a Resources directory outside one, nor the bundle's
+        // Contents/MacOS, where the host executable lives without the helper.
         for wrong in [
-            fixture.home().join("hide.app/MacOS/HerdrMacOS"),
-            fixture.home().join("elsewhere/Contents/MacOS/HerdrMacOS"),
+            fixture.home().join("hide.app/Resources/hided"),
+            fixture.home().join("elsewhere/Contents/Resources/hided"),
+            fixture.home().join("hide.app/Contents/MacOS/hided"),
         ] {
             fs::create_dir_all(wrong.parent().unwrap()).unwrap();
             fs::write(&wrong, b"binary").unwrap();
@@ -586,7 +588,7 @@ mod tests {
         fs::create_dir_all(runtime.home_directory(fixture.home())).unwrap();
         let helper = fixture
             .home()
-            .join("hide.app/Contents/MacOS/hide-agent-hooks");
+            .join("hide.app/Contents/Resources/hide-agent-hooks");
         fs::create_dir_all(helper.parent().unwrap()).unwrap();
         fs::write(&helper, b"binary").unwrap();
         install(runtime, fixture.home(), &helper).unwrap();
