@@ -15,10 +15,16 @@
 set -euo pipefail
 # Optional unattended mode: no native window and no operator socket read.
 isolated_headless=false
+memory_series=false
 case "${1:-}" in
   '') ;;
   --isolated-headless) isolated_headless=true ;;
   *) echo 'usage: run.sh [--isolated-headless]' >&2; exit 2 ;;
+esac
+case "${2:-}" in
+  '') ;;
+  --memory-series) memory_series=true; export MEASURE_FRAME_WINDOW_MS=600000 ;;
+  *) echo 'second argument must be --memory-series' >&2; exit 2 ;;
 esac
 measure_dir="$(cd "$(dirname "$0")" && pwd)"
 source "$measure_dir/isolated-env.sh"
@@ -128,6 +134,7 @@ reset_fixture() {
   echo "socket=$HERDR_SOCKET_PATH"
   echo "scenario=$scenario"
   echo "isolated_headless=$isolated_headless"
+  echo "memory_series=$memory_series"
   echo "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   uptime
 } > "$MEASURE_RUN_DIR/identity.txt"
@@ -261,16 +268,24 @@ export MEASURE_DRIVEN_PANES="$MEASURE_PANE_ID"
 if [[ "$scenario" == areas* ]]; then
   for pane in "${extra_panes[@]}"; do MEASURE_DRIVEN_PANES+=",$pane"; done
 fi
-note 'frames: 120 s driven window, every shown Agent area'
+note "frames: ${MEASURE_FRAME_WINDOW_MS:-120000} ms driven window, every shown Agent area"
 reset_fixture
 "$HERDR_BIN_PATH" pane send-keys "$MEASURE_PANE_ID" ctrl+c >/dev/null
 sleep 0.5
 uptime > "$MEASURE_RUN_DIR/frames-uptime-before.txt"
 spawn_owned resources-driven python3 "$measure_dir/resources.py" "$hided_pid" "$server_pid" "$chrome_pid"
 resource_pid=$owned_pid
+if $memory_series; then
+  spawn_owned memory-series python3 "$measure_dir/resources.py" "$hided_pid" "$server_pid" "$chrome_pid" --memory-series
+  memory_pid=$owned_pid
+fi
 node "$measure_dir/frames.mjs" > "$MEASURE_RUN_DIR/frames.json"
 wait "$resource_pid"
 cp "$MEASURE_RUN_DIR/logs/resources-driven.log" "$MEASURE_RUN_DIR/resources-driven.json"
+if $memory_series; then
+  wait "$memory_pid"
+  cp "$MEASURE_RUN_DIR/logs/memory-series.log" "$MEASURE_RUN_DIR/memory-series.json"
+fi
 uptime > "$MEASURE_RUN_DIR/frames-uptime-after.txt"
 "$HERDR_BIN_PATH" pane read "$MEASURE_PANE_ID" --source recent-unwrapped --lines 5 > "$MEASURE_RUN_DIR/frames-pane-tail.txt" || true
 ps -p "$hided_pid" -o pid,%cpu,rss,etime,command > "$MEASURE_RUN_DIR/driven-hided-frames.ps"
