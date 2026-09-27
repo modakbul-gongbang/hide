@@ -33713,10 +33713,6 @@
       "type": "number",
       "value": 24
     },
-    "--size-control-regular": {
-      "type": "number",
-      "value": 36
-    },
     "--size-checkbox": {
       "type": "number",
       "value": 16
