@@ -142,6 +142,8 @@ Read the host log at `<profile>/logs/desktop.log` (the profile is `~/Library/App
 
 If the app connects but no workspace, terminal, or agent can start, no `herdr server` is running on the socket hided uses.
 The daemon logs `herdr_bin.missing` when it cannot find a herdr binary at all: check `HERDR_BIN_PATH`, then PATH, then run the bundled `hide.app/Contents/Resources/herdr` once to start the default server.
+When `HERDR_BIN_PATH` names a file that no longer exists, `hide connect` and the daemon refuse to start and print that path: the Herdr server was started from an app bundle that has since been replaced, and every pane it opens still carries the old path.
+Launch the app from the Finder or the Dock rather than from inside a Herdr pane, or hand the server off to the new bundle's `herdr`.
 
 <!-- herdr-provenance:start -->
 hide distributes the [upstream Herdr release v0.9.1](https://github.com/herdrdev/herdr/releases/tag/v0.9.1).
