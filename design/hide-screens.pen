@@ -28395,7 +28395,7 @@
           "type": "text",
           "id": "screen-projects-sidebar-spec",
           "name": "sidebar.tsx, projects.ts: th",
-          "content": "sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. Line two is the purpose with the last-commit age on the time column, kept wherever agents run; a checkout with neither is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age.",
+          "content": "sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. Line two is the purpose with the last-commit age on the time column, kept wherever agents run; a checkout with neither is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -30330,6 +30330,784 @@
               "layout": "vertical",
               "fill": "$--sidebar",
               "clip": true
+            },
+            {
+              "type": "frame",
+              "id": "psb-hover-l",
+              "name": "Checkout row under the pointer, with its card",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "psb-h-list-l",
+                  "name": "Projects list, cut",
+                  "children": [
+                    {
+                      "id": "psb-h-p-l",
+                      "type": "ref",
+                      "ref": "hideui:qdhY0",
+                      "name": "herdr-ide",
+                      "width": 284,
+                      "height": 36,
+                      "descendants": {
+                        "hideui:mIzlX": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "folder-git-2"
+                        },
+                        "hideui:JkPyX": {
+                          "fill": "$--foreground",
+                          "content": "herdr-ide"
+                        },
+                        "hideui:project-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:project-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:project-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:project-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:project-question-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "3"
+                        },
+                        "hideui:project-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:project-working-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "5"
+                        },
+                        "hideui:project-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:project-done-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:project-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:project-idle-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:nZkan": {
+                          "fill": "$--muted-foreground"
+                        },
+                        "hideui:iBYjj": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-down"
+                        },
+                        "hideui:wgtfo": {
+                          "opacity": 0
+                        },
+                        "hideui:project-error": {
+                          "enabled": false
+                        },
+                        "hideui:project-approval": {
+                          "enabled": false
+                        },
+                        "hideui:project-question": {
+                          "enabled": true
+                        },
+                        "hideui:project-working": {
+                          "enabled": true
+                        },
+                        "hideui:project-done": {
+                          "enabled": true
+                        },
+                        "hideui:project-idle": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-h-overview-l",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "Overview",
+                      "width": 284,
+                      "height": 36,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        6
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "layout-dashboard"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "Overview",
+                          "fontWeight": "500"
+                        },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:QetL0": {
+                          "width": 274
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "opacity": 0
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": false,
+                          "width": 274
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-h-c3-l",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "quick/155-browser-display",
+                      "width": 284,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        6
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "git-branch"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "quick/155-browser-display",
+                          "fontWeight": "500"
+                        },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "#155 browser display (WebCon…",
+                          "enabled": true
+                        },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "content": "40m",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 274
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-error": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-approval": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-question": {
+                          "enabled": true
+                        },
+                        "hideui:checkout-working": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-done": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-idle": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "opacity": 1
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 274
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-h-c4-l",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "quick/154-search-palette",
+                      "width": 284,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        6
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--pr-draft",
+                          "icon": "git-pull-request-draft"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "quick/154-search-palette",
+                          "fontWeight": "500"
+                        },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "#154 ⌘K search palette UI",
+                          "enabled": true
+                        },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "content": "1h",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 274
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-error": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-approval": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-question": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-working": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-done": {
+                          "enabled": true
+                        },
+                        "hideui:checkout-idle": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "opacity": 1
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 274
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-h-c1-l",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "electron-shortcut-bindings",
+                      "width": 284,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        6
+                      ],
+                      "fill": "$--accent",
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--pr-open",
+                          "icon": "git-pull-request"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "electron-shortcut-bindings",
+                          "fontWeight": "500"
+                        },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "Electron desktop host for the we…",
+                          "enabled": true
+                        },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "content": "2h",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 274
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-error": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-approval": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-question": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-working": {
+                          "enabled": true
+                        },
+                        "hideui:checkout-done": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-idle": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "opacity": 1
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 274
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-h-c5-l",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "design/workspace-ux-prop…",
+                      "width": 284,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        6
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "git-branch"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "design/workspace-ux-prop…",
+                          "fontWeight": "500"
+                        },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "Workspace UX 제안과 상태 소유…",
+                          "enabled": true
+                        },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "content": "5h",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 274
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "opacity": 0
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 274
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        }
+                      }
+                    }
+                  ],
+                  "width": 292,
+                  "layout": "vertical",
+                  "padding": [
+                    4,
+                    4
+                  ],
+                  "fill": "$--sidebar",
+                  "cornerRadius": "$--radius-sm",
+                  "clip": true,
+                  "x": 0,
+                  "y": 0
+                },
+                {
+                  "id": "psb-h-card-l",
+                  "type": "ref",
+                  "ref": "hideui:pr-card",
+                  "name": "PR hover card",
+                  "fill": "$--popover",
+                  "stroke": "$--border",
+                  "x": 300,
+                  "y": 164,
+                  "descendants": {
+                    "hideui:pr-card-badge": {
+                      "stroke": "$--border"
+                    },
+                    "hideui:pr-card-badge-icon": {
+                      "fill": "$--pr-open"
+                    },
+                    "hideui:pr-card-badge-label": {
+                      "fill": "$--pr-open",
+                      "content": "Open"
+                    },
+                    "hideui:pr-card-draft": {
+                      "fill": "$--pr-draft"
+                    },
+                    "hideui:pr-card-number": {
+                      "fill": "$--muted-foreground",
+                      "content": "#149"
+                    },
+                    "hideui:pr-card-open-label": {
+                      "fill": "$--pr-open"
+                    },
+                    "hideui:pr-card-open-icon": {
+                      "fill": "$--pr-open"
+                    },
+                    "hideui:pr-card-title": {
+                      "fill": "$--foreground",
+                      "content": "Electron desktop host for the web shell"
+                    },
+                    "hideui:pr-card-missing": {
+                      "fill": "$--destructive"
+                    },
+                    "hideui:pr-card-rule": {
+                      "fill": "$--border"
+                    },
+                    "hideui:pr-card-label-review": {
+                      "fill": "$--muted-foreground"
+                    },
+                    "hideui:pr-card-review": {
+                      "fill": "$--success"
+                    },
+                    "hideui:pr-card-label-checks": {
+                      "fill": "$--muted-foreground"
+                    },
+                    "hideui:pr-card-checks": {
+                      "fill": "$--success",
+                      "content": "Passing"
+                    },
+                    "hideui:pr-card-label-branch": {
+                      "fill": "$--muted-foreground"
+                    },
+                    "hideui:pr-card-branch": {
+                      "fill": "$--foreground",
+                      "content": "electron-shortcut-bindings"
+                    },
+                    "hideui:pr-card-label-agents": {
+                      "fill": "$--muted-foreground"
+                    },
+                    "hideui:pr-card-agents-question-mark": {
+                      "fill": "$--warning"
+                    },
+                    "hideui:pr-card-agents-question-count": {
+                      "fill": "$--foreground"
+                    },
+                    "hideui:pr-card-agents-working-mark": {
+                      "fill": "$--agent-working"
+                    },
+                    "hideui:pr-card-agents-working-count": {
+                      "fill": "$--foreground",
+                      "content": "1"
+                    },
+                    "hideui:pr-card-agents-idle-mark": {
+                      "fill": "$--subtle-foreground"
+                    },
+                    "hideui:pr-card-agents-idle-count": {
+                      "fill": "$--foreground"
+                    },
+                    "hideui:pr-card-label-commit": {
+                      "fill": "$--muted-foreground"
+                    },
+                    "hideui:pr-card-commit": {
+                      "fill": "$--foreground",
+                      "content": "2h ago"
+                    },
+                    "hideui:pr-card-label-path": {
+                      "fill": "$--muted-foreground"
+                    },
+                    "hideui:pr-card-path": {
+                      "fill": "$--muted-foreground",
+                      "content": "~/projects/herdr-ide.worktrees/electron-shortcut-bindings"
+                    },
+                    "hideui:pr-card-row-review": {
+                      "enabled": false
+                    },
+                    "hideui:pr-card-agents-question": {
+                      "enabled": false
+                    },
+                    "hideui:pr-card-agents-idle": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ],
+              "width": 660,
+              "height": 272
             }
           ],
           "theme": {
@@ -32270,6 +33048,784 @@
               "layout": "vertical",
               "fill": "$--sidebar",
               "clip": true
+            },
+            {
+              "type": "frame",
+              "id": "psb-hover-d",
+              "name": "Checkout row under the pointer, with its card",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "psb-h-list-d",
+                  "name": "Projects list, cut",
+                  "children": [
+                    {
+                      "id": "psb-h-p-d",
+                      "type": "ref",
+                      "ref": "hideui:qdhY0",
+                      "name": "herdr-ide",
+                      "width": 284,
+                      "height": 36,
+                      "descendants": {
+                        "hideui:mIzlX": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "folder-git-2"
+                        },
+                        "hideui:JkPyX": {
+                          "fill": "$--foreground",
+                          "content": "herdr-ide"
+                        },
+                        "hideui:project-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:project-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:project-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:project-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:project-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:project-question-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "3"
+                        },
+                        "hideui:project-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:project-working-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "5"
+                        },
+                        "hideui:project-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:project-done-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:project-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:project-idle-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:nZkan": {
+                          "fill": "$--muted-foreground"
+                        },
+                        "hideui:iBYjj": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-down"
+                        },
+                        "hideui:wgtfo": {
+                          "opacity": 0
+                        },
+                        "hideui:project-error": {
+                          "enabled": false
+                        },
+                        "hideui:project-approval": {
+                          "enabled": false
+                        },
+                        "hideui:project-question": {
+                          "enabled": true
+                        },
+                        "hideui:project-working": {
+                          "enabled": true
+                        },
+                        "hideui:project-done": {
+                          "enabled": true
+                        },
+                        "hideui:project-idle": {
+                          "enabled": true
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-h-overview-d",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "Overview",
+                      "width": 284,
+                      "height": 36,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        6
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "layout-dashboard"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "Overview",
+                          "fontWeight": "500"
+                        },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:QetL0": {
+                          "width": 274
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "opacity": 0
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": false,
+                          "width": 274
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-h-c3-d",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "quick/155-browser-display",
+                      "width": 284,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        6
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "git-branch"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "quick/155-browser-display",
+                          "fontWeight": "500"
+                        },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "#155 browser display (WebCon…",
+                          "enabled": true
+                        },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "content": "40m",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 274
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-error": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-approval": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-question": {
+                          "enabled": true
+                        },
+                        "hideui:checkout-working": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-done": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-idle": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "opacity": 1
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 274
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-h-c4-d",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "quick/154-search-palette",
+                      "width": 284,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        6
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--pr-draft",
+                          "icon": "git-pull-request-draft"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "quick/154-search-palette",
+                          "fontWeight": "500"
+                        },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "#154 ⌘K search palette UI",
+                          "enabled": true
+                        },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "content": "1h",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 274
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-error": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-approval": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-question": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-working": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-done": {
+                          "enabled": true
+                        },
+                        "hideui:checkout-idle": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "opacity": 1
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 274
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-h-c1-d",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "electron-shortcut-bindings",
+                      "width": 284,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        6
+                      ],
+                      "fill": "$--accent",
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--pr-open",
+                          "icon": "git-pull-request"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "electron-shortcut-bindings",
+                          "fontWeight": "500"
+                        },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": true
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground",
+                          "content": "1"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "Electron desktop host for the we…",
+                          "enabled": true
+                        },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "content": "2h",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 274
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-error": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-approval": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-question": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-working": {
+                          "enabled": true
+                        },
+                        "hideui:checkout-done": {
+                          "enabled": false
+                        },
+                        "hideui:checkout-idle": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "opacity": 1
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 274
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        }
+                      }
+                    },
+                    {
+                      "id": "psb-h-c5-d",
+                      "type": "ref",
+                      "ref": "hideui:DLP27",
+                      "name": "design/workspace-ux-prop…",
+                      "width": 284,
+                      "height": 44,
+                      "padding": [
+                        0,
+                        4,
+                        0,
+                        6
+                      ],
+                      "descendants": {
+                        "hideui:VtSRn": {
+                          "fill": "$--subtle-foreground",
+                          "icon": "git-branch"
+                        },
+                        "hideui:q91d7": {
+                          "fill": "$--foreground",
+                          "content": "design/workspace-ux-prop…",
+                          "fontWeight": "500"
+                        },
+                        "hideui:checkout-status": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:checkout-error-glyph": {
+                          "fill": "$--destructive"
+                        },
+                        "hideui:checkout-error-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-approval-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-approval-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-question-glyph": {
+                          "fill": "$--warning"
+                        },
+                        "hideui:checkout-question-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-working-dot": {
+                          "fill": "$--agent-working"
+                        },
+                        "hideui:checkout-working-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-done-glyph": {
+                          "fill": "$--success"
+                        },
+                        "hideui:checkout-done-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-ring": {
+                          "stroke": "$--subtle-foreground"
+                        },
+                        "hideui:checkout-idle-count": {
+                          "fill": "$--subtle-foreground"
+                        },
+                        "hideui:TuosT": {
+                          "fill": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:CgZj3": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
+                        },
+                        "hideui:D37Vr": {
+                          "fill": "$--muted-foreground",
+                          "content": "Workspace UX 제안과 상태 소유…",
+                          "enabled": true
+                        },
+                        "hideui:line2-age": {
+                          "fill": "$--muted-foreground",
+                          "content": "5h",
+                          "enabled": true
+                        },
+                        "hideui:QetL0": {
+                          "width": 274
+                        },
+                        "hideui:TS5x9": {
+                          "enabled": false
+                        },
+                        "hideui:IXwZI": {
+                          "opacity": 0
+                        },
+                        "hideui:o6XLUj": {
+                          "enabled": true,
+                          "width": 274
+                        },
+                        "hideui:yfur4": {
+                          "width": 20
+                        }
+                      }
+                    }
+                  ],
+                  "width": 292,
+                  "layout": "vertical",
+                  "padding": [
+                    4,
+                    4
+                  ],
+                  "fill": "$--sidebar",
+                  "cornerRadius": "$--radius-sm",
+                  "clip": true,
+                  "x": 0,
+                  "y": 0
+                },
+                {
+                  "id": "psb-h-card-d",
+                  "type": "ref",
+                  "ref": "hideui:pr-card",
+                  "name": "PR hover card",
+                  "fill": "$--popover",
+                  "stroke": "$--border",
+                  "x": 300,
+                  "y": 164,
+                  "descendants": {
+                    "hideui:pr-card-badge": {
+                      "stroke": "$--border"
+                    },
+                    "hideui:pr-card-badge-icon": {
+                      "fill": "$--pr-open"
+                    },
+                    "hideui:pr-card-badge-label": {
+                      "fill": "$--pr-open",
+                      "content": "Open"
+                    },
+                    "hideui:pr-card-draft": {
+                      "fill": "$--pr-draft"
+                    },
+                    "hideui:pr-card-number": {
+                      "fill": "$--muted-foreground",
+                      "content": "#149"
+                    },
+                    "hideui:pr-card-open-label": {
+                      "fill": "$--pr-open"
+                    },
+                    "hideui:pr-card-open-icon": {
+                      "fill": "$--pr-open"
+                    },
+                    "hideui:pr-card-title": {
+                      "fill": "$--foreground",
+                      "content": "Electron desktop host for the web shell"
+                    },
+                    "hideui:pr-card-missing": {
+                      "fill": "$--destructive"
+                    },
+                    "hideui:pr-card-rule": {
+                      "fill": "$--border"
+                    },
+                    "hideui:pr-card-label-review": {
+                      "fill": "$--muted-foreground"
+                    },
+                    "hideui:pr-card-review": {
+                      "fill": "$--success"
+                    },
+                    "hideui:pr-card-label-checks": {
+                      "fill": "$--muted-foreground"
+                    },
+                    "hideui:pr-card-checks": {
+                      "fill": "$--success",
+                      "content": "Passing"
+                    },
+                    "hideui:pr-card-label-branch": {
+                      "fill": "$--muted-foreground"
+                    },
+                    "hideui:pr-card-branch": {
+                      "fill": "$--foreground",
+                      "content": "electron-shortcut-bindings"
+                    },
+                    "hideui:pr-card-label-agents": {
+                      "fill": "$--muted-foreground"
+                    },
+                    "hideui:pr-card-agents-question-mark": {
+                      "fill": "$--warning"
+                    },
+                    "hideui:pr-card-agents-question-count": {
+                      "fill": "$--foreground"
+                    },
+                    "hideui:pr-card-agents-working-mark": {
+                      "fill": "$--agent-working"
+                    },
+                    "hideui:pr-card-agents-working-count": {
+                      "fill": "$--foreground",
+                      "content": "1"
+                    },
+                    "hideui:pr-card-agents-idle-mark": {
+                      "fill": "$--subtle-foreground"
+                    },
+                    "hideui:pr-card-agents-idle-count": {
+                      "fill": "$--foreground"
+                    },
+                    "hideui:pr-card-label-commit": {
+                      "fill": "$--muted-foreground"
+                    },
+                    "hideui:pr-card-commit": {
+                      "fill": "$--foreground",
+                      "content": "2h ago"
+                    },
+                    "hideui:pr-card-label-path": {
+                      "fill": "$--muted-foreground"
+                    },
+                    "hideui:pr-card-path": {
+                      "fill": "$--muted-foreground",
+                      "content": "~/projects/herdr-ide.worktrees/electron-shortcut-bindings"
+                    },
+                    "hideui:pr-card-row-review": {
+                      "enabled": false
+                    },
+                    "hideui:pr-card-agents-question": {
+                      "enabled": false
+                    },
+                    "hideui:pr-card-agents-idle": {
+                      "enabled": false
+                    }
+                  }
+                }
+              ],
+              "width": 660,
+              "height": 272
             }
           ],
           "theme": {
