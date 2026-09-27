@@ -233,8 +233,16 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
       "Delete worktree…",
     ]);
     // The pull request comes after Open and New tab here; arrow down to it.
+    // The menu moves focus to the next item on a timer after each key, so
+    // each press waits for the move before the next.
     const focusedItem = () => page.evaluate(() => document.activeElement?.getAttribute("data-menu-item") ?? null);
-    for (let press = 0; press < 8 && (await focusedItem()) !== "open_pull_request"; press += 1) await page.keyboard.press("ArrowDown");
+    let focused = await focusedItem();
+    for (let press = 0; press < 8 && focused !== "open_pull_request"; press += 1) {
+      const before = focused;
+      await page.keyboard.press("ArrowDown");
+      await expect.poll(focusedItem).not.toBe(before);
+      focused = await focusedItem();
+    }
     await expect(menu.getByRole("menuitem", { name: /^Open pull request #180/ })).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(menu).toHaveCount(0);
