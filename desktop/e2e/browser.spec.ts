@@ -14,7 +14,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
-import { hostLog, isolate, launch, relaunch, screenshot, type Isolated } from "./fixture";
+import { hostLog, isolate, launch, relaunch, screenshot, shellPage, type Isolated } from "./fixture";
 
 test.describe.configure({ timeout: 240_000 });
 test.use({ actionTimeout: 15_000 });
@@ -332,7 +332,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   // A relaunch brings the pages back at the addresses they last showed.
   await app.close();
   app = await relaunch(run.env, { switches: PAINT_WHILE_OCCLUDED });
-  const again = await app.firstWindow();
+  const again = await shellPage(app);
   await enterWorkspace(again, "fixture");
   await expect(tab(again, "Page A")).toBeVisible({ timeout: 20_000 });
   await tab(again, "Page A").click();
