@@ -22,13 +22,13 @@ export function branchSlug(text: string, limit = 48): string {
   return slug.replace(/^-+|-+$/g, "");
 }
 
-/** The issue's number as the source shows it: `192` for `#192` or `owner/repo#192`, `3` for `L-3`; null when the task has no id. */
+/** The issue's number as the source shows it: `42` for `#42` or `owner/repo#42`, `3` for `L-3`; null when the task has no id. */
 function issueNumber(task: Task): string | null {
   const match = task.id?.match(/(\d+)$/);
   return match?.[1] ?? null;
 }
 
-/** What every name for this issue starts with: `192-` for a GitHub issue, `L-3-` for a local one. */
+/** What every name for this issue starts with: `42-` for a GitHub issue, `L-3-` for a local one. */
 export function namePrefix(task: Task): string {
   const number = issueNumber(task);
   if (!number) return "";
@@ -37,8 +37,8 @@ export function namePrefix(task: Task): string {
 
 /**
  * The name the dialog opens with: the prefix and the title's English words
- * (`192-hided-has-no-sigterm-handler`); a title with none, such as a Korean
- * one, gives `issue-192` or `L-3`.
+ * (`42-fix-the-login-flow`); a title with none, such as a Korean
+ * one, gives `issue-42` or `L-3`.
  */
 export function defaultWorktreeName(task: Task): string {
   const prefix = namePrefix(task);
