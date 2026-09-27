@@ -114,12 +114,15 @@ export function TasksView({
   onToggleDone: () => void;
 }) {
   // Backlog always stands, so a new issue has somewhere to go; another
-  // stage's column only while it holds a card.
+  // stage's column only while it holds a card. The tracks fill the page's
+  // width whatever the columns shown, so a column keeps its width as stages
+  // come and go, one column never spans the page, and a narrow page wraps
+  // the last column rather than clipping it.
   const columns = STAGES.map(({ stage, label }) => ({ stage, label, cards: stageCards(board, stage) })).filter((column) => column.stage === "backlog" || column.cards.length > 0);
   return (
     <div
       className="grid items-start gap-md px-lg pb-xl"
-      style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(var(--home-column-width), 1fr))` }}
+      style={{ gridTemplateColumns: "repeat(auto-fill, minmax(var(--home-column-width), 1fr))" }}
       data-tasks-board="true"
       data-overview-columns="tasks"
     >
