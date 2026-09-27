@@ -404,9 +404,9 @@ Neither the core nor the plugin renames the Herdr tab for this; the Recent Panel
 
 Project Home is the empty local checkout surface and the Shift-Command-H overlay.
 Its session-local choice defaults to Tasks; Agents groups the same card by the canonical root request's group.
-Tasks derives delivery in priority order: merged worktree or merged PR, open PR, changed files or ahead commits, then ready.
+Tasks derives delivery in priority order: merged worktree or merged PR, open PR, then in progress; an open issue no checkout works on is the backlog.
 Needs You changes the halo and stable sort priority, never this delivery stage.
-Main and non-Git checkouts appear only in the ad hoc row when they have agents.
+Main and non-Git checkouts appear on Tasks only while an agent there works on a linked issue; otherwise their agents are on the Agents inbox only.
 Completed columns start collapsed and disappear only with their underlying pane or worktree.
 
 `runtime/issues.rs` resolves workspace manual overrides, pane-family issue tokens, branch configuration, PR closing references, then the two supported branch prefixes.

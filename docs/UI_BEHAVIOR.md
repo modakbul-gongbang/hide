@@ -268,55 +268,67 @@ Reintroducing a shared attachment shelf requires a supported provider contract f
 
 ## Project Home
 
-Web owner: `web/src/ProjectOverview.tsx` (the Project Overview screen), `web/src/MainScreen.tsx` (All projects), `web/src/TaskBoards.tsx` (the Tasks and Agents boards both scopes draw), `web/src/WaitingBand.tsx` (the waiting band), `web/src/projectBoard.ts` (the board rules); a card's agent row is the Agents list's `web/src/components/agent-row.tsx`.
-The web boards follow PRD task-agents-views (`agents/prd/task-agents-views/prd.md`).
+Web owner: `web/src/ProjectOverview.tsx` (the Project Overview screen), `web/src/MainScreen.tsx` (All projects), `web/src/TaskBoards.tsx` (the Tasks views and the Agents inbox both scopes draw), `web/src/IssueDialogs.tsx` (New issue, Start and 이슈 연결), `web/src/issueStart.ts` (the Start dialog's first name and prompt), `web/src/projectBoard.ts` (the board rules); a card's agent row is the Agents list's `web/src/components/agent-row.tsx`.
+The web boards follow PRD task-agents-views (`agents/prd/task-agents-views/prd.md`), reworked issue-first on 2026-09-28: work starts from an issue, and a card reads issue, then agents, then pull request.
 
 Project Home uses the shared tab choice, badges, agent identity marks, settings field, icon buttons, and command tooltip.
-On the web, Tasks is the session default: a board of tasks in five columns, `백로그 · 준비 · 진행 중 · 리뷰 · 완료`, each headed `name · count`, under an ad hoc strip.
-A task comes from the project's task source, GitHub issues today, read through the operator's own `gh`; the core hands the web a source-neutral task (kind, the id the source shows, URL, title, open or closed), so no view reads a GitHub shape.
-A checkout's stage is 완료 when its worktree or its pull request is merged, 리뷰 with an open pull request, 진행 중 with changed files or commits ahead, and 준비 otherwise; agents and the task's own state never move it.
-Merged is Git ancestry against the base the core resolves, so a branch with no commits of its own reads as merged once its base resolves.
-백로그 holds the open tasks no checkout works on; an untracked checkout (a linked worktree with no task) is titled by its branch, carries only its pull request, and says `태스크 없음` quietly.
-The ad hoc strip holds the checkouts that are not linked worktrees (the primary checkout, a folder) and only while an agent works in them.
-완료 starts folded to one line per card (`title >`), and its header's `>` unfolds it; the facts line's merged count opens it.
+On the web, Tasks is the session default: a board of four columns, `백로그 · 진행 중 · 리뷰 · 완료`, each headed `name count`, on a page that scrolls as one; a column grows with its cards and its head stays in view while the page scrolls under it.
+백로그 always stands, so a new issue has somewhere to go; another column shows only while it holds a card.
 
-A task card reads top to bottom: the source glyph and the id small and muted before the title (a title of several lines keeps the id on its first), then a lock and the ids of the open tasks it waits on in warning (a task of another repository by `owner/repo#N`, a task with no id by its title), then the delivery facts (`N files` in warning and `↑N` while in progress, the `PR #n` chip, `↓N behind` on any card), then at most two agents, the ones that need the operator first, and `+N` for the rest.
-An issue is the work and a pull request is the result: the bare `#N` before a title is always the issue and opens it, and its tooltip names the source and the branch; the `PR #n` chip carries the pull-request glyph in its lifecycle colour (open green, draft grey, merged purple, closed red) and the CI mark once read, and opens the pull request.
+Every project on this Mac has one issue source, chosen in Settings › Issues: GitHub issues, read and written through the operator's own `gh`, or Local issues, which Hide keeps in `local-issues.json` in its state directory, numbered per project and shown as `L-N`.
+A project's source defaults to GitHub when its repository reads as a GitHub repository and to Local otherwise (a folder, a repository with no GitHub remote, or `gh` not installed); a project on a device has no source here.
+The core hands the web a source-neutral task (the id the source shows, URL, title, open or closed, when it last changed), so no view reads a GitHub shape, and a new source is one more adapter in `herdr-core/src/tasks.rs`.
+
+A checkout's stage is 완료 when its worktree or its pull request is merged, 리뷰 with an open pull request, and 진행 중 otherwise; agents and the issue's own state never move it.
+Merged is Git ancestry against the base the core resolves, so a branch with no commits of its own reads as merged once its base resolves; for that reason a Local issue is never closed by a merge, only by the operator.
+백로그 holds the open issues no checkout works on, most recently changed first; past 20 cards the rest wait behind `+N · 최근 갱신 순`.
+Every linked worktree is a card in its stage; a worktree with no issue leads with its branch, is titled by its purpose or its branch, and offers 이슈 연결 on hover.
+A worktree with no issue and no agent folds into one line at the foot of 진행 중, `에이전트 없는 워크트리 N`, which unfolds them dimmed.
+The primary checkout or a folder is a card only while an agent works there on a linked issue; an agent there with no issue is on the Agents inbox, not a task.
+완료 starts folded to one line per card (its branch; on All projects one line per project with its count), and its head unfolds it into cards; the facts line's merged count opens it.
+
+A task card reads top to bottom as the work flows: the source glyph and the id (on All projects the project beside it), the title in at most two lines, then a lock and the ids of the open tasks it waits on in warning, then where the work is and what it delivered (the PR chip with its CI mark and the review GitHub asks for, the branch, `↑N`, `N files` in warning, `↓N`), then at most two agents, the ones that need the operator first, and `+N 에이전트` for the rest.
+An issue is the work and a pull request is the result: the id opens the issue, and its tooltip names the source and the branch; the PR chip carries the pull-request glyph in its lifecycle colour (open green, draft grey, merged purple, closed red) and opens the pull request.
 A pull request that closes two issues shows the same chip on both cards.
-The title opens the task's checkout and an agent row opens its pane; the card has no link line.
-Start agent (Claude, Codex or a terminal alone) shows only on hover or focus of a 준비 card with no agent on this machine, and the header's one primary action is New agent.
+The title opens the task's checkout and an agent row opens its pane.
+Hover or focus shows the card's next step: `시작` on an open backlog issue of this Mac (`S` while the card has focus), `이슈 연결` on a worktree with none, and `⋯` with Claude, Codex or a terminal started in the checkout and, for a Local issue, closing or reopening it.
 Needs You uses the warning halo and an error uses danger, and raises the card to the top of its own column without moving it out of its stage; a completed card is dimmed.
-When the source cannot be read the board keeps the last tasks it read and each task card carries a small warning mark whose tooltip says the read failed and how old the tasks are; there is no banner, and the reason is in the diagnostic log.
-A column past 40 cards shows the first 40 and `스크롤 · N개 더 보기`, and a tall column scrolls inside itself; the board scrolls horizontally below its column minimum, and titles wrap.
-With no task source and no agent, Tasks is one sentence and `GitHub 이슈 연결`, whose popover says, in `gh`'s own words, why no source is connected.
+When the source cannot be read the board keeps the last tasks it read, each task card carries a small warning mark whose tooltip says the read failed and how old the tasks are, and 백로그's head carries the same mark; there is no banner, and the reason is in the diagnostic log.
 
-While an agent of the scope waits on the operator, a band between the header's facts line and the tabs lists each one, and there is no band when none does.
-It lists the agents asking first (an error before a question or approval), then the finished ones not yet looked at, each in the core's order; a delegated agent is never one of them, since its parent is the one that waits.
-A row is the agent's mark, where it works in mono (`#id · branch`, with the project first on All projects), its request in one line, its age and `>`, and the whole row opens that agent's pane as one event; the answer is given in the pane, and the band has no label, hint or separate open button.
+The header's primary action is `새 이슈` (`C` whenever the page itself has the keyboard); New agent, which starts work with no issue, is the quiet one beside it.
+New issue makes the issue in the page's project's source, and its `어디에` list moves it to another project on this Mac; `만들고 바로 시작` goes on to the Start dialog once the source has the issue.
+The Start dialog turns an issue into work in one step: a worktree named for the issue, its base, the agent, and the agent's first prompt.
+The name opens as the issue number and the title's English words (`192-hided-sigterm-handler`, `L-3-...`, or `issue-192` when the title has none), and when Settings › Issues allows it the background AI's name replaces it once it answers, unless the operator has typed; `↺ AI 이름으로` brings the AI's name back.
+A name that is already a branch says so, and when a worktree has it the primary button opens that worktree instead.
+The first prompt is filled from the issue's body, which the dialog reads when it opens, names the issue, and for a GitHub issue asks for a pull request that closes it when Settings › Issues says so; the operator edits it before starting.
+Starting creates the worktree, writes the link into it, starts the agent, and sends the prompt once the agent is ready; a folder project has no worktree, so its agent starts in the folder with the prompt.
+이슈 연결 is a search over the project's open issues, and a title no issue matches can be made into one in place and linked.
 
-`Board | Dependencies` on the right of the tab row is a mode of the Tasks view, not a tab; like the view it belongs to the page, so another scope keeps it.
+`Board | List | Dependencies` on the right of the tab row is a mode of the Tasks view, not a tab; like the view it belongs to the page, so another scope keeps it.
+List draws the same cards one row each, grouped by stage with the moving work first (진행 중, 리뷰, 백로그, 완료 folded): the stage glyph, the id and title, a `질문` or `확인` badge on a row waiting on the operator, and on the right the agents' marks, the PR chip, the branch, `↑N` and the age; a row with agents unfolds them under it, and one waiting on the operator starts unfolded.
 Dependencies draws the Board's task cards left to right with a quiet stage word at each card's top right: a task sits one column right of the longest chain of tasks it waits on, and an arrow runs from the blocker's right middle to the blocked card's left middle.
 Arrows carry no label; one legend line above the graph says the left task has to finish first.
 A blocked card is dimmed with its lock line, a done card is dimmed, and Needs You and error keep the Board's warning and danger borders.
-Tasks with no relation in scope gather below the graph under `관계 없는 태스크`, and untracked checkouts and the ad hoc strip stay on the Board.
+Tasks with no relation in scope gather below the graph under `관계 없는 태스크`, and worktrees with no issue stay on the Board.
 A blocker outside the scope, or one the source says is closed, is no arrow; an open one outside the scope is still named on the lock line.
-On All projects each card carries its project above its title and an arrow crosses projects, and a project with no source keeps its cell under the graph, saying `의존 관계를 그릴 태스크가 없음`.
+On All projects each card carries its project beside its id and an arrow crosses projects.
 When the source answers the issues but not their dependencies, the last blockers read stay and the task cards carry the same warning mark as a failed read.
 
-The Agents view keeps its three columns, `진행 중 · 내 확인 대기 · 끝`, one card per agent: its status mark, provider, title and age; a request it is waiting on in the warning colour; the checkout it works in (on All projects, `project · branch`); its task chip (the issue's `#N`, a local task's title with a file glyph, or a quiet `태스크 없음`) and, for an agent on an SSH device, a device chip.
-A delegated agent sits right under its parent, one step in, in its parent's column.
-A pull request shows here only in the task chip's tooltip (title, branch, pull request); the card opens the pane and the chip opens the task.
+The Agents view is an inbox of rows, grouped `내 차례 · 실행 중 · 쉬는 중 · 정리할 것`: the agents asking or finished and not yet looked at first (an error before a question before a result), then the working ones, then the resting ones, and folded last the resting ones in a merged worktree, which are there only to be closed.
+A row is the agent's status mark, provider and title, the line it asks or reports under it, and on the right its issue id (or, with none, its checkout; on All projects `project · branch`), the PR chip, a device chip for an agent on an SSH device, and its age; the row opens the pane and the chips open what they name.
+A delegated agent sits right under its parent, one step in, in its parent's group.
+The Agents tab carries the count of agents waiting on the operator, the only place outside the cards that says so; there is no band under the header.
 
 On the web, the sidebar picks the scope and the tabs under the title pick the view.
 All projects is every project on every device, a project is its Overview, and a checkout is its Workspace, which has no views of its own.
 The board is the Project Overview: the sidebar's project name or its Overview child (a plain folder's one row opens its checkout instead), All projects' project row, the palette and the Workspace toolbar menu open it, and ⌘⇧H opens it for the checkout in front.
 Escape, once no dialog or menu is open and no text field holds text, returns to the Workspace in front, or to All projects when there is none.
-The title row carries the path back (`All projects / Project`) and New agent; directly under it is one line of facts, then the `Tasks · Agents · Sessions` tabs, which show even while the project has no agent.
-The facts line holds only numbers the system has: the worktree count, the open pull-request count once GitHub has answered, the disk every worktree and the shared Git directory occupy, main's distance behind origin only above zero, and the merged worktrees only above zero.
-Opening a local Git project's Overview asks the core to measure its disk and to read its tasks; the size reads `… GB` while that runs and is left out, with the reason only in the diagnostic log, when a part cannot be read, and there is no refresh control.
+The title row carries the path back (`All projects / Project`), New agent and 새 이슈; directly under it is one line of facts, then the `Tasks · Agents · Sessions` tabs, which show even while the project has no agent.
+The facts line holds only numbers the system has: the open issues and their source once the source has answered, then for a Git project the worktree count, the open pull-request count once GitHub has answered, the disk every worktree and the shared Git directory occupy, main's distance behind origin only above zero, and the merged worktrees only above zero.
+Opening a local Git project's Overview asks the core to measure its disk and to read its issues; the size reads `… GB` while that runs and is left out, with the reason only in the diagnostic log, when a part cannot be read, and there is no refresh control.
 The view is the page's, so choosing another scope keeps Tasks, Agents or Sessions, and a scope without that view shows its first one.
-All projects has `Tasks · Agents · Projects`: the Tasks board mixes every project's tasks, and a project with agents and no task source is gathered under the board in one cell (`<project> · 태스크 출처 연결 안 됨`, its agent count, `GitHub 이슈 연결`) instead of spreading through the columns; the Agents board holds every agent; Projects is the list of every registered project by device.
-Its title row carries Add project, and its facts line the project count and, only when every project can give its part, the open pull-request and merged totals, which are plain facts there.
+All projects has `Tasks · Agents · Projects`: the Tasks board mixes every project's issues and worktrees, the Agents inbox holds every agent, and Projects is the list of every registered project by device.
+Its title row carries Add project and 새 이슈 (for the project in front, else the first one with a source), and its facts line the project count, the open issues once every source has answered, and, only when every project can give its part, the open pull-request and merged totals.
 New agent opens the New worktree dialog on a Git project and the folder's Workspace otherwise.
 Before the first snapshot the shell's own connecting state shows instead.
 While hided or a device is unreachable the board keeps the last snapshot and the existing connection or device line is the only signal.
