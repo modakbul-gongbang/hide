@@ -3,6 +3,8 @@ use std::time::Duration;
 
 use crate::fake_herdr::FakeHerdr;
 
+#[path = "tests/agent_sleep.rs"]
+mod agent_sleep;
 #[path = "tests/agents_settings_remote.rs"]
 mod agents_settings_remote;
 #[path = "tests/appearance.rs"]
@@ -467,6 +469,8 @@ fn pane(id: &str, cwd: &str) -> PaneSnapshot {
         ports: Vec::new(),
         children: None,
         lineage_path: Vec::new(),
+        sleep: None,
+        sleep_action: None,
     }
 }
 

@@ -907,6 +907,9 @@ pub(super) enum Event {
     CheckCloseStatus(CheckCloseStatusPayload),
     ReopenClosed,
     ForkPane(PaneTargetPayload),
+    AgentSleepSet(AgentSleepSetPayload),
+    AgentSleep(PaneTargetPayload),
+    AgentWake(AgentWakePayload),
     AgentTreeToggle(PaneTargetPayload),
     RemoteControl(RemoteControlPayload),
     RemoteFileList(RemoteFileListPayload),
@@ -1069,6 +1072,9 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "check_close_status" => decode!(CheckCloseStatusPayload, CheckCloseStatus),
         "reopen_closed" => Ok(Event::ReopenClosed),
         "fork_pane" => decode!(PaneTargetPayload, ForkPane),
+        "agent_sleep_set" => decode!(AgentSleepSetPayload, AgentSleepSet),
+        "agent_sleep" => decode!(PaneTargetPayload, AgentSleep),
+        "agent_wake" => decode!(AgentWakePayload, AgentWake),
         "agent_tree_toggle" => decode!(PaneTargetPayload, AgentTreeToggle),
         "remote_control" => decode!(RemoteControlPayload, RemoteControl),
         "remote_file_list" => decode!(RemoteFileListPayload, RemoteFileList),
@@ -1179,6 +1185,9 @@ impl Runtime {
             Event::AttachmentReady(payload) => self.attachment_ready(payload),
             Event::AttachmentAction(payload) => self.attachment_action(payload),
             Event::Key(payload) => {
+                if let Some(changed) = self.drop_input_to_sleeping_pane(&payload.pane_id) {
+                    return changed;
+                }
                 if let Some(changed) = self.hold_attachment_input(&payload) {
                     return changed;
                 }
@@ -1215,6 +1224,9 @@ impl Runtime {
                 true
             }
             Event::SessionSnapshot(payload) => self.ingest_session(Ok(payload)),
+            Event::AgentSleepSet(payload) => self.set_agent_sleep_after(payload),
+            Event::AgentSleep(payload) => self.request_agent_sleep(&payload.pane_id),
+            Event::AgentWake(payload) => self.request_agent_wake(payload),
             Event::RefreshStatus => self.request_status_refresh(),
             Event::PetSetVisible(payload) => self.set_pet_visible(payload.visible),
             Event::PetToggleVisible => {
@@ -3027,6 +3039,10 @@ impl Runtime {
                     editor_text_scale: current.editor_text_scale,
                     conversation_pane_ids: current.conversation_pane_ids,
                     pane_read_records: current.pane_read_records,
+                    // `agent_sleep_set` owns the setting and the core owns
+                    // the sleep records; a shared save carries both through.
+                    agent_sleep_after_hours: current.agent_sleep_after_hours,
+                    agent_sleep: current.agent_sleep,
                 };
                 // Visibility and popover activity wake the provider reader,
                 // but they are not durable preferences. The shell sends the

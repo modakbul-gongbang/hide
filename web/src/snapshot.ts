@@ -37,7 +37,23 @@ export type AgentRow = {
   lineage_collapsed?: boolean;
   /** The checkout this row runs in, set only when it differs from its parent's. */
   lineage_worktree_badge?: string | null;
+  /** Present only while Hide holds this agent asleep (PRD agent-sleep); absent when awake. */
+  sleep?: AgentSleep;
 };
+
+/** A sleeping agent's state (`AgentSleepSnapshot`): the row and the pane draw it. */
+export type AgentSleep = {
+  state: "sleeping" | "waking" | "failed";
+  /** Why the last wake failed, in plain words; set only when `failed`. */
+  reason?: string | null;
+  /** When it fell asleep, in Unix milliseconds. */
+  since_unix_ms: number;
+  /** The last progress line it reported before it slept. */
+  progress?: string | null;
+};
+
+/** The pane menu's Sleep agent item (`AgentSleepActionSnapshot`); absent where it does not apply. */
+export type AgentSleepAction = { available: boolean; reason?: string | null };
 
 export type DescendantCounts = { error: number; approval: number; question: number; working: number; done: number };
 
@@ -184,6 +200,8 @@ export type PaneRow = {
   identity_label: string | null;
   children?: PaneChildren | null;
   lineage_path?: LineageStep[];
+  sleep?: AgentSleep;
+  sleep_action?: AgentSleepAction;
 };
 
 export type Tab = {
@@ -830,6 +848,8 @@ export type SnapshotRest = {
     /** The macOS pane chords the Swift app and the desktop app share, in the Swift app's format. */
     shortcut_bindings?: Record<string, string>;
     browser_shortcut_bindings?: Record<string, string>;
+    /** Sleep idle agents after this many hours; null or absent is Never (PRD agent-sleep). */
+    agent_sleep_after_hours?: number | null;
     [key: string]: unknown;
   };
   status?: {

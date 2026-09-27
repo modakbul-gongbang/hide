@@ -300,6 +300,7 @@ mod tests {
             raised_hint: None,
             spawn_origin_pane_id: None,
             lineage_collapsed: false,
+            sleep: None,
         }
     }
 

@@ -358,6 +358,8 @@ impl SessionReplica {
                                     children: agent
                                         .map(|_| crate::model::PaneChildrenSnapshot::remote()),
                                     lineage_path: Vec::new(),
+                                    sleep: None,
+                                    sleep_action: None,
                                 }
                             })
                             .collect::<Vec<_>>();

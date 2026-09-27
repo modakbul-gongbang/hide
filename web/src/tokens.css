@@ -217,6 +217,7 @@
   --size-control-lg: 32px;
   --size-icon: 14px;
   --size-icon-sm: 12px;
+  --size-icon-lg: 20px;
 }
 
 /* `.light` and `.dark` also scope a subtree, so one page can show both (the dev gallery). */

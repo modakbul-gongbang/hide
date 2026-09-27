@@ -3,17 +3,39 @@
 // Nothing here reads the store, so every rule is tested without a browser.
 
 import type { DaemonInfo } from "./store";
-import type { AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, HerdrStatus, RemoteStatus } from "./snapshot";
+import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, HerdrStatus, RemoteStatus } from "./snapshot";
 
-export type SettingsTab = "general" | "appearance" | "agents" | "devices" | "shortcuts";
+export type SettingsTab = "general" | "appearance" | "agents" | "devices" | "performance" | "shortcuts";
 
 export const SETTINGS_TABS: readonly { id: SettingsTab; title: string; subtitle: string }[] = [
   { id: "general", title: "General", subtitle: "This daemon, the Herdr runtime behind it, and where its state lives." },
   { id: "appearance", title: "Appearance", subtitle: "Theme, accent and interface density." },
   { id: "agents", title: "Agents", subtitle: "The agent CLIs the daemon's machine can launch, Background AI, and hooks." },
   { id: "devices", title: "Devices", subtitle: "SSH targets. Authentication stays in the daemon machine's SSH environment." },
+  { id: "performance", title: "Performance", subtitle: "What this machine ends while you are away, and resumes when you come back." },
   { id: "shortcuts", title: "Shortcuts", subtitle: "The pane chords this host runs. Every other chord is on the ⌘/ sheet." },
 ];
+
+/**
+ * The Sleep idle agents choices (PRD agent-sleep D-10), in the hours the core
+ * accepts; Never is the default and sends null.
+ */
+export const SLEEP_AFTER_CHOICES: readonly { id: string; hours: number | null; label: string }[] = [
+  { id: "never", hours: null, label: "Never" },
+  { id: "12", hours: 12, label: "12 hours" },
+  { id: "24", hours: 24, label: "24 hours" },
+  { id: "72", hours: 72, label: "3 days" },
+];
+
+/** The chosen Sleep idle agents choice; a value this build does not offer reads as Never. */
+export function sleepAfterChoice(hours: unknown): string {
+  return SLEEP_AFTER_CHOICES.find((choice) => choice.hours !== null && choice.hours === hours)?.id ?? "never";
+}
+
+/** How many of this machine's agents sleep now (B3); another device's rows never sleep. */
+export function sleepingCount(agents: readonly AgentRow[] | undefined): number {
+  return (agents ?? []).filter((agent) => agent.sleep && !agent.pane_id.startsWith("remote:")).length;
+}
 
 /** The interface font sizes Appearance offers, the native Settings range. */
 export const FONT_SIZE_MIN = 11;

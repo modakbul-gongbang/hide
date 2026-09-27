@@ -105,6 +105,13 @@ struct StoredUiState {
     /// build for the size, as a first launch always does.
     #[serde(default)]
     pane_terminal_sizes: BTreeMap<String, (u16, u16)>,
+    /// Absent in a store written before agent sleep existed, which loads as
+    /// Never; a value that is not one of the choices loads as Never too.
+    #[serde(default)]
+    agent_sleep_after_hours: Option<u32>,
+    /// The stamps and the sleeping agents; absent loads as none.
+    #[serde(default)]
+    agent_sleep: crate::agent_sleep::AgentSleepStore,
 }
 
 /// A store written before the pet existed carries no visibility, and the pet
@@ -243,6 +250,14 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             editor_text_scale: stored.editor_text_scale,
             conversation_pane_ids: Default::default(),
             pane_read_records: stored.pane_read_records,
+            agent_sleep_after_hours: stored
+                .agent_sleep_after_hours
+                .filter(|hours| crate::agent_sleep::valid_after_hours(Some(*hours))),
+            agent_sleep: {
+                let mut store = stored.agent_sleep;
+                store.after_load();
+                store
+            },
         },
         stored.pane_terminal_sizes,
         disposition,
@@ -296,6 +311,8 @@ pub fn save(
         editor_text_scale: state.editor_text_scale,
         pane_read_records: state.pane_read_records.clone(),
         pane_terminal_sizes: pane_terminal_sizes.clone(),
+        agent_sleep_after_hours: state.agent_sleep_after_hours,
+        agent_sleep: state.agent_sleep.clone(),
     };
     let bytes = serde_json::to_vec_pretty(&stored)
         .map_err(|_| "UI state could not be encoded".to_owned())?;

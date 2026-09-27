@@ -1,11 +1,12 @@
-import { EllipsisIcon, XIcon } from "lucide-react";
+import { CircleAlertIcon, EllipsisIcon, MoonIcon, XIcon } from "lucide-react";
 import { memo, useEffect, useRef } from "react";
 import type { Actions } from "./actions";
 import { refusalText, submitFiles } from "./attachments";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { ChildChipRow, ReturnToParent, usePaneMenu } from "./PaneRelations";
-import type { PaneRow, TerminalPane } from "./snapshot";
+import { sleepCaption, wakingLine } from "./sleep";
+import type { AgentSleep, PaneRow, TerminalPane } from "./snapshot";
 import { useShellStore } from "./store";
 import { attachTerminal, bracketedPaste, focusTerminal, requestView, setTextScale } from "./terminals";
 
@@ -55,6 +56,58 @@ export function transportCaption(transport: TerminalPane | undefined, local = tr
     default:
       return { text: "starting…", reconnects: false };
   }
+}
+
+/**
+ * What a pane shows in place of its terminal while its agent sleeps (PRD
+ * agent-sleep B11-B14): the shell under it is not what the operator was
+ * talking to, so the terminal stays hidden until the agent is back.
+ */
+function SleepBody({ paneId, sleep, actions }: { paneId: string; sleep: AgentSleep; actions: Actions }) {
+  const now = Date.now();
+  return (
+    <div
+      className="absolute inset-0 flex flex-col items-center justify-center gap-sm bg-card px-lg text-center"
+      data-pane-sleep={sleep.state}
+    >
+      {sleep.state === "sleeping" ? (
+        <>
+          <MoonIcon className="size-(--size-icon-lg) text-muted-foreground" aria-hidden="true" />
+          <p className="text-subhead text-foreground">Sleeping</p>
+          {sleep.progress ? <p className="max-w-full truncate text-caption text-muted-foreground">{sleep.progress}</p> : null}
+          <Button size="sm" className="mt-xs" data-agent-wake={paneId} onClick={() => actions.wakeAgent(paneId)}>
+            Wake agent
+          </Button>
+        </>
+      ) : sleep.state === "waking" ? (
+        <>
+          <MoonIcon className="size-(--size-icon-lg) text-muted-foreground" aria-hidden="true" />
+          <p className="text-subhead text-foreground" role="status">
+            Waking…
+          </p>
+          <p className="text-caption text-muted-foreground">{wakingLine(sleep, now)}</p>
+        </>
+      ) : (
+        <>
+          <CircleAlertIcon className="size-(--size-icon-lg) text-destructive" aria-hidden="true" />
+          <p className="text-subhead text-foreground">Couldn’t resume this conversation</p>
+          {sleep.reason ? (
+            <p className="max-w-full text-caption text-muted-foreground" role="alert">
+              {sleep.reason}
+            </p>
+          ) : null}
+          <div className="mt-xs flex items-center gap-sm">
+            <Button size="sm" variant="secondary" data-agent-wake-retry={paneId} onClick={() => actions.wakeAgent(paneId)}>
+              Retry
+            </Button>
+            <Button size="sm" variant="outline" data-agent-wake-fresh={paneId} onClick={() => actions.wakeAgent(paneId, true)}>
+              Start new session
+            </Button>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 export const PaneView = memo(function PaneView({
@@ -139,6 +192,8 @@ export const PaneView = memo(function PaneView({
   }, [paneId]);
 
   const caption = transportCaption(transport, local, offline);
+  const sleep = local ? pane.sleep : undefined;
+  const sleepWords = sleep ? sleepCaption(sleep, Date.now()) : null;
   return (
     <section
       className="flex h-full min-h-0 min-w-0 flex-col bg-background"
@@ -165,7 +220,12 @@ export const PaneView = memo(function PaneView({
           {title}
         </span>
         </Hint>
-        {caption ? (
+        {sleepWords ? (
+          <span className="flex min-w-0 items-center gap-xxs truncate text-muted-foreground" data-pane-sleep-caption={sleep?.state}>
+            {sleepWords.moon ? <MoonIcon className="size-(--size-status-mark) shrink-0" aria-hidden="true" /> : null}
+            <span className="truncate">{sleepWords.text}</span>
+          </span>
+        ) : caption ? (
           <span className="truncate text-muted-foreground">{caption.text}</span>
         ) : (
           <span className="truncate text-muted-foreground">{pane.status_label}</span>
@@ -212,7 +272,8 @@ export const PaneView = memo(function PaneView({
             </Hint>
           </div>
         ) : null}
-        {caption?.reconnects ? (
+        {sleep ? <SleepBody paneId={paneId} sleep={sleep} actions={actions} /> : null}
+        {caption?.reconnects && !sleep ? (
           <button
             type="button"
             className="absolute inset-0 flex items-center justify-center bg-card text-caption text-subtle-foreground"
