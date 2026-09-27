@@ -28,14 +28,16 @@ export function applyEditorTheme() {
   for (const view of openEditors) view.dispatch({ effects });
 }
 
-// The base chrome: transparent over the shell background, with a caret and
-// selection that read against it, and a search panel in the shell's palette.
+// The base chrome: on the side panel's card, with a caret, a current line and
+// a selection that read against it in either theme, and a search panel in the
+// shell's palette. The selection takes the terminal's selection colour, the
+// one text selection the shell draws, so it stays apart from the current line.
 // Built once, so every editor shares one set of mounted style rules.
 const chrome = EditorView.theme(
   {
     "&": {
       color: "var(--foreground)",
-      backgroundColor: "var(--background)",
+      backgroundColor: "var(--card)",
       height: "100%",
     },
     ".cm-content": {
@@ -44,14 +46,14 @@ const chrome = EditorView.theme(
     },
     ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--primary)" },
     "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
-      { backgroundColor: "var(--secondary)" },
-    ".cm-activeLine": { backgroundColor: "var(--card)" },
+      { backgroundColor: "var(--terminal-selection)" },
+    ".cm-activeLine": { backgroundColor: "var(--secondary)" },
     ".cm-gutters": {
-      backgroundColor: "var(--background)",
+      backgroundColor: "var(--card)",
       color: "var(--muted-foreground)",
       border: "none",
     },
-    ".cm-activeLineGutter": { backgroundColor: "var(--card)", color: "var(--subtle-foreground)" },
+    ".cm-activeLineGutter": { backgroundColor: "var(--secondary)", color: "var(--subtle-foreground)" },
     ".cm-panels": { backgroundColor: "var(--card)", color: "var(--foreground)" },
     ".cm-panels.cm-panels-top": { borderBottom: "var(--size-hairline) solid var(--border)" },
     ".cm-searchMatch": { backgroundColor: "var(--secondary)", outline: "var(--size-hairline) solid var(--border)" },
@@ -116,7 +118,7 @@ export const liveTheme = EditorView.theme({
   ".cm-md-heading-4": { fontSize: "var(--text-editor-heading-4)", fontWeight: "600", lineHeight: "1.4" },
   ".cm-md-heading-5": { fontSize: "var(--text-editor-heading-5)", fontWeight: "600", lineHeight: "1.4" },
   ".cm-md-heading-6": { fontSize: "var(--text-editor-heading-6)", fontWeight: "600", lineHeight: "1.4" },
-  ".cm-md-code": { fontFamily: "var(--font-mono)", backgroundColor: "var(--card)" },
+  ".cm-md-code": { fontFamily: "var(--font-mono)", backgroundColor: "var(--secondary)" },
   ".cm-md-hidden-line": { display: "none" },
   ".cm-md-quote": {
     borderLeft: "var(--size-editor-quote-rule) solid var(--border)",
@@ -124,7 +126,7 @@ export const liveTheme = EditorView.theme({
     color: "var(--subtle-foreground)",
   },
   ".cm-md-link": { color: "var(--file-blue)", textDecoration: "underline" },
-  ".cm-md-code-inline": { fontFamily: "var(--font-mono)", backgroundColor: "var(--card)" },
+  ".cm-md-code-inline": { fontFamily: "var(--font-mono)", backgroundColor: "var(--secondary)" },
   ".cm-md-bullet": { color: "var(--subtle-foreground)" },
   ".cm-md-checkbox": { verticalAlign: "middle" },
 });

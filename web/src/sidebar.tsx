@@ -41,7 +41,7 @@ import {
   type ProjectRow,
 } from "./projects";
 import { hostKind } from "./host";
-import { displayCommand } from "./shortcuts";
+import { displayCommand, hostRegistry } from "./shortcuts";
 import { contextAgents, contextWorkspaces, deviceCatalogLine, remoteContext, remoteView } from "./remote";
 import { checkoutMenu, folderMenu, projectMenu, remotePurposeProblem, type MenuItem } from "./workspaceManage";
 import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
@@ -64,6 +64,8 @@ export function Sidebar({ actions }: { actions: Actions }) {
   // selected SSH device's lists; that device's state is on the canvas.
   const remote = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
   const status = remote ? null : herdrRowLabel(herdrState);
+  // The switch has no chord of its own until the operator binds one (issue 170).
+  const switchChord = useShellStore((s) => displayCommand("toggle_sidebar_view", hostKind(), hostRegistry(s.rest?.ui_state, hostKind()).registry));
   if (!visible) return null;
 
   return (
@@ -82,7 +84,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
           </button>
         ))}
         <span className="flex-1" />
-        <span className="text-muted-foreground">⌘E</span>
+        {switchChord ? <span className="text-muted-foreground">{switchChord}</span> : null}
       </div>
       <SearchField onOpen={() => actions.openSearch()} />
       {status ? (

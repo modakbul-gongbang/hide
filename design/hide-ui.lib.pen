@@ -367,9 +367,9 @@
                                 {
                                   "type": "text",
                                   "id": "fnd-pal-light-ink-muted-foreground-value",
-                                  "name": "#71717A",
+                                  "name": "#6D6D76",
                                   "fill": "$--muted-foreground",
-                                  "content": "#71717A",
+                                  "content": "#6D6D76",
                                   "fontFamily": "$--font-mono",
                                   "fontSize": "$--text-micro",
                                   "fontWeight": "normal"
@@ -859,9 +859,9 @@
                                 {
                                   "type": "text",
                                   "id": "fnd-pal-light-semantic-destructive-value",
-                                  "name": "#DC2626",
+                                  "name": "#D62323",
                                   "fill": "$--muted-foreground",
-                                  "content": "#DC2626",
+                                  "content": "#D62323",
                                   "fontFamily": "$--font-mono",
                                   "fontSize": "$--text-micro",
                                   "fontWeight": "normal"
@@ -1211,9 +1211,9 @@
                                 {
                                   "type": "text",
                                   "id": "fnd-pal-light-diff-diff-removed-value",
-                                  "name": "#DC2626",
+                                  "name": "#D62323",
                                   "fill": "$--muted-foreground",
-                                  "content": "#DC2626",
+                                  "content": "#D62323",
                                   "fontFamily": "$--font-mono",
                                   "fontSize": "$--text-micro",
                                   "fontWeight": "normal"
@@ -17303,284 +17303,6 @@
     },
     {
       "type": "frame",
-      "id": "layout-switch-sheet",
-      "x": 4040,
-      "y": 7264,
-      "name": "Component / Layout switch",
-      "width": 320,
-      "fill": "$--card",
-      "cornerRadius": "$--radius-md",
-      "layout": "vertical",
-      "gap": "$--spacing-lg",
-      "padding": "$--spacing-md",
-      "children": [
-        {
-          "type": "frame",
-          "id": "layout-switch-sheet-title",
-          "name": "Title block",
-          "width": "fill_container",
-          "layout": "vertical",
-          "gap": "$--spacing-xxs",
-          "children": [
-            {
-              "type": "text",
-              "id": "layout-switch-sheet-title-name",
-              "name": "Title",
-              "fill": "$--foreground",
-              "content": "Layout switch (web Workspace)",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-title",
-              "fontWeight": "600"
-            },
-            {
-              "type": "text",
-              "id": "layout-switch-sheet-title-spec",
-              "name": "Spec",
-              "fill": "$--subtle-foreground",
-              "content": "Agents only, Agents and Views, Views only as three adjacent icon buttons in one group; the chosen one sits on --color-elevated with a primary glyph, the others muted. Each icon tooltip is its accessible name; the chevron opens the same three names as a menu, and the palette carries them as commands. Choosing a layout only changes space.",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-caption",
-              "fontWeight": "normal",
-              "textGrowth": "fixed-width",
-              "width": "fill_container"
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "layout-switch-sheet-master",
-          "name": "Master",
-          "width": "fill_container",
-          "layout": "vertical",
-          "gap": "$--spacing-xs",
-          "children": [
-            {
-              "type": "text",
-              "id": "layout-switch-sheet-master-name",
-              "name": "State name",
-              "fill": "$--muted-foreground",
-              "content": "Master - glyphs muted; each state below chooses one",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-micro",
-              "fontWeight": "600"
-            },
-            {
-              "type": "frame",
-              "id": "layout-switch",
-              "name": "Component / Layout switch",
-              "reusable": true,
-              "gap": "$--spacing-xxs",
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "frame",
-                  "id": "layout-switch-group",
-                  "name": "Segmented group",
-                  "fill": "$--background",
-                  "cornerRadius": "$--radius-sm",
-                  "padding": "$--spacing-xxs",
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "id": "layout-switch-agents",
-                      "type": "ref",
-                      "ref": "Nyvom",
-                      "name": "Agents only",
-                      "descendants": {
-                        "ZIZFR": {
-                          "icon": "square-terminal",
-                          "fill": "$--muted-foreground"
-                        }
-                      }
-                    },
-                    {
-                      "id": "layout-switch-together",
-                      "type": "ref",
-                      "ref": "Nyvom",
-                      "name": "Agents and Views",
-                      "descendants": {
-                        "ZIZFR": {
-                          "icon": "columns-2",
-                          "fill": "$--muted-foreground"
-                        }
-                      }
-                    },
-                    {
-                      "id": "layout-switch-views",
-                      "type": "ref",
-                      "ref": "Nyvom",
-                      "name": "Views only",
-                      "descendants": {
-                        "ZIZFR": {
-                          "icon": "file-text",
-                          "fill": "$--muted-foreground"
-                        }
-                      }
-                    }
-                  ]
-                },
-                {
-                  "id": "layout-switch-menu",
-                  "type": "ref",
-                  "ref": "Nyvom",
-                  "name": "Layout menu",
-                  "descendants": {
-                    "ZIZFR": {
-                      "icon": "chevron-down",
-                      "fill": "$--muted-foreground"
-                    }
-                  }
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "layout-switch-state-agents",
-          "name": "State / Agents only chosen",
-          "width": "fill_container",
-          "layout": "vertical",
-          "gap": "$--spacing-xs",
-          "children": [
-            {
-              "type": "text",
-              "id": "layout-switch-state-agents-name",
-              "name": "State name",
-              "fill": "$--muted-foreground",
-              "content": "Agents only chosen",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-micro",
-              "fontWeight": "600"
-            },
-            {
-              "id": "layout-switch-agents-ref",
-              "type": "ref",
-              "ref": "layout-switch",
-              "name": "Agents only",
-              "descendants": {
-                "layout-switch-agents": {
-                  "fill": "$--secondary"
-                },
-                "layout-switch-agents/ZIZFR": {
-                  "fill": "$--foreground"
-                }
-              }
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "layout-switch-state-together",
-          "name": "State / Agents and Views chosen",
-          "width": "fill_container",
-          "layout": "vertical",
-          "gap": "$--spacing-xs",
-          "children": [
-            {
-              "type": "text",
-              "id": "layout-switch-state-together-name",
-              "name": "State name",
-              "fill": "$--muted-foreground",
-              "content": "Agents and Views chosen",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-micro",
-              "fontWeight": "600"
-            },
-            {
-              "id": "layout-switch-together-ref",
-              "type": "ref",
-              "ref": "layout-switch",
-              "name": "Agents and Views",
-              "descendants": {
-                "layout-switch-together": {
-                  "fill": "$--secondary"
-                },
-                "layout-switch-together/ZIZFR": {
-                  "fill": "$--foreground"
-                }
-              }
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "layout-switch-state-views",
-          "name": "State / Views only chosen",
-          "width": "fill_container",
-          "layout": "vertical",
-          "gap": "$--spacing-xs",
-          "children": [
-            {
-              "type": "text",
-              "id": "layout-switch-state-views-name",
-              "name": "State name",
-              "fill": "$--muted-foreground",
-              "content": "Views only chosen",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-micro",
-              "fontWeight": "600"
-            },
-            {
-              "id": "layout-switch-views-ref",
-              "type": "ref",
-              "ref": "layout-switch",
-              "name": "Views only",
-              "descendants": {
-                "layout-switch-views": {
-                  "fill": "$--secondary"
-                },
-                "layout-switch-views/ZIZFR": {
-                  "fill": "$--foreground"
-                }
-              }
-            }
-          ]
-        },
-        {
-          "type": "frame",
-          "id": "layout-switch-state-hover",
-          "name": "State / Hover on an unchosen layout",
-          "width": "fill_container",
-          "layout": "vertical",
-          "gap": "$--spacing-xs",
-          "children": [
-            {
-              "type": "text",
-              "id": "layout-switch-state-hover-name",
-              "name": "State name",
-              "fill": "$--muted-foreground",
-              "content": "Hover on an unchosen layout",
-              "fontFamily": "$--font-ui",
-              "fontSize": "$--text-micro",
-              "fontWeight": "600"
-            },
-            {
-              "id": "layout-switch-hover-ref",
-              "type": "ref",
-              "ref": "layout-switch",
-              "name": "Hover",
-              "descendants": {
-                "layout-switch-together": {
-                  "fill": "$--secondary"
-                },
-                "layout-switch-together/ZIZFR": {
-                  "fill": "$--foreground"
-                },
-                "layout-switch-views": {
-                  "fill": "$--color-hover-wash"
-                },
-                "layout-switch-views/ZIZFR": {
-                  "fill": "$--subtle-foreground"
-                }
-              }
-            }
-          ]
-        }
-      ]
-    },
-    {
-      "type": "frame",
       "id": "session-row-sheet",
       "x": 4440,
       "y": 7264,
@@ -31733,6 +31455,1727 @@
           ]
         }
       ]
+    },
+    {
+      "type": "frame",
+      "id": "side-panel-sheet",
+      "name": "Component / Side panel",
+      "children": [
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-title",
+          "name": "Title block",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-title-name",
+              "name": "Side panel (web Workspace)",
+              "content": "Side panel (web Workspace)",
+              "fill": "$--foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-title",
+              "fontWeight": "600"
+            },
+            {
+              "type": "text",
+              "id": "side-panel-sheet-title-spec",
+              "name": "Issue 170, \"Side panel hiera",
+              "content": "Issue 170, \"Side panel hierarchy, revised\": every control sits once, on the container it changes. The panel is a --card surface at the Workspace’s full height beside a toolbar that spans only the agent column, drawn over the agents until Pin docks it: a --spacing-sm gap in --background on its left, --radius-lg on its top-left corner, a --border hairline, no shadow. Row 1, at the toolbar row’s height: each View area’s tabs followed by its New tab, then the tool-column toggle (pressed while the tools show), Expand, Pin and the panel toggle. Closed, the panel toggle stays in that top-right spot in the toolbar with the open-view count. Row 2, level with the agents’ tab strip: the active document’s header, and over the tool column the Explorer and History icon tabs; one tool shows, with no title row and no ×. Hovering the gap, or dragging it, shows the resize grip in every state with a width, the tools-only panel included, over the agents or pinned: a --size-hairline line in --muted-foreground at --opacity-secondary with a centred --size-icon-button-toolbar pill (--card, --border hairline, --radius-md) holding arrow-left-right at --size-icon-sm in --muted-foreground; it replaces the primary guide. With no view open the card is the tool column and row 1 holds the tool tabs, Pin and the panel toggle. In a narrow window Expand and Pin are hidden and the tools open as the temporary overlay.",
+              "fill": "$--subtle-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-caption",
+              "fontWeight": "400",
+              "textGrowth": "fixed-width",
+              "width": 688
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xxs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-master-toggle",
+          "name": "Master / Toolbar panel toggle - panel closed, no views",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-master-toggle-name",
+              "name": "Toolbar panel toggle - panel",
+              "content": "Toolbar panel toggle - panel closed, no views",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "side-panel-toggle",
+              "name": "Component / Side panel toggle",
+              "children": [
+                {
+                  "id": "side-panel-toggle-button",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Show side panel",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "panel-right",
+                      "fill": "$--subtle-foreground"
+                    }
+                  },
+                  "x": 0,
+                  "y": 0
+                },
+                {
+                  "type": "frame",
+                  "id": "side-panel-toggle-badge",
+                  "name": "Open views badge",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "side-panel-toggle-count",
+                      "name": "2",
+                      "content": "2",
+                      "fill": "$--primary-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "600"
+                    }
+                  ],
+                  "enabled": false,
+                  "x": 12,
+                  "y": -2,
+                  "width": 14,
+                  "height": 14,
+                  "fill": "$--primary",
+                  "cornerRadius": "$--radius-lg",
+                  "layout": "horizontal",
+                  "justifyContent": "center",
+                  "alignItems": "center"
+                }
+              ],
+              "reusable": true,
+              "layout": "none",
+              "width": 24,
+              "height": 24
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-state-toggle-count",
+          "name": "State / Panel closed with two views open",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-state-toggle-count-name",
+              "name": "Panel closed with two views ",
+              "content": "Panel closed with two views open",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "side-panel-toggle-count-state",
+              "type": "ref",
+              "ref": "side-panel-toggle",
+              "name": "Closed, two views open",
+              "descendants": {
+                "side-panel-toggle-badge": {
+                  "enabled": true
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-master-tool-tabs",
+          "name": "Master / Tool tabs - Explorer showing",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-master-tool-tabs-name",
+              "name": "Tool tabs - Explorer showing",
+              "content": "Tool tabs - Explorer showing",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "side-panel-tool-tabs",
+              "name": "Component / Side panel tool tabs",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "side-panel-tool-explorer",
+                  "name": "Explorer",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "side-panel-tool-explorer-glyph",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "folder",
+                      "library": "lucide",
+                      "fill": "$--foreground"
+                    }
+                  ],
+                  "width": 32,
+                  "height": 32,
+                  "layout": "horizontal",
+                  "justifyContent": "center",
+                  "alignItems": "center",
+                  "stroke": "$--primary",
+                  "strokeWidth": {
+                    "bottom": "$--size-tab-indicator"
+                  },
+                  "strokeAlignment": "inner"
+                },
+                {
+                  "type": "frame",
+                  "id": "side-panel-tool-history",
+                  "name": "History",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "side-panel-tool-history-glyph",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 14,
+                      "height": 14,
+                      "icon": "git-branch",
+                      "library": "lucide",
+                      "fill": "$--subtle-foreground"
+                    }
+                  ],
+                  "width": 32,
+                  "height": 32,
+                  "layout": "horizontal",
+                  "justifyContent": "center",
+                  "alignItems": "center"
+                }
+              ],
+              "reusable": true,
+              "layout": "horizontal",
+              "height": 32,
+              "alignItems": "center"
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-state-tool-history",
+          "name": "State / Tool tabs - History showing",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-state-tool-history-name",
+              "name": "Tool tabs - History showing",
+              "content": "Tool tabs - History showing",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "side-panel-tool-tabs-history",
+              "type": "ref",
+              "ref": "side-panel-tool-tabs",
+              "name": "History showing",
+              "descendants": {
+                "side-panel-tool-explorer": {
+                  "strokeWidth": 0
+                },
+                "side-panel-tool-explorer-glyph": {
+                  "fill": "$--subtle-foreground"
+                },
+                "side-panel-tool-history": {
+                  "stroke": "$--primary",
+                  "strokeWidth": {
+                    "bottom": "$--size-tab-indicator"
+                  },
+                  "strokeAlignment": "inner"
+                },
+                "side-panel-tool-history-glyph": {
+                  "fill": "$--foreground"
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-master-actions",
+          "name": "Master / Panel actions - over, a view open, tools showing",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-master-actions-name",
+              "name": "Panel actions - over, a view",
+              "content": "Panel actions - over, a view open, tools showing",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "side-panel-actions",
+              "name": "Component / Side panel actions",
+              "children": [
+                {
+                  "id": "side-panel-tools-toggle",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Hide tools",
+                  "fill": "$--secondary",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "panel-right-dashed",
+                      "fill": "$--foreground"
+                    }
+                  }
+                },
+                {
+                  "id": "side-panel-expand",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Expand side panel",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "maximize-2",
+                      "fill": "$--subtle-foreground"
+                    }
+                  }
+                },
+                {
+                  "id": "side-panel-pin",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Pin side panel",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "pin",
+                      "fill": "$--subtle-foreground"
+                    }
+                  }
+                },
+                {
+                  "id": "side-panel-panel-toggle",
+                  "type": "ref",
+                  "ref": "Nyvom",
+                  "name": "Hide side panel",
+                  "fill": "$--secondary",
+                  "descendants": {
+                    "ZIZFR": {
+                      "icon": "panel-right",
+                      "fill": "$--foreground"
+                    }
+                  }
+                }
+              ],
+              "reusable": true,
+              "layout": "horizontal",
+              "gap": "$--spacing-xxs",
+              "alignItems": "center",
+              "padding": [
+                0,
+                "$--spacing-sm",
+                0,
+                "$--spacing-xs"
+              ]
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-state-actions-tools-hidden",
+          "name": "State / Actions with the tools hidden",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-state-actions-tools-hidden-name",
+              "name": "Actions with the tools hidde",
+              "content": "Actions with the tools hidden",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "side-panel-actions-tools-hidden",
+              "type": "ref",
+              "ref": "side-panel-actions",
+              "name": "Tools hidden",
+              "descendants": {
+                "side-panel-tools-toggle": {
+                  "fill": "#00000000",
+                  "name": "Show tools"
+                },
+                "side-panel-tools-toggle/ZIZFR": {
+                  "fill": "$--subtle-foreground"
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-state-actions-pinned",
+          "name": "State / Actions pinned (Pin reads Unpin)",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-state-actions-pinned-name",
+              "name": "Actions pinned (Pin reads Un",
+              "content": "Actions pinned (Pin reads Unpin)",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "side-panel-actions-pinned",
+              "type": "ref",
+              "ref": "side-panel-actions",
+              "name": "Pinned",
+              "descendants": {
+                "side-panel-pin": {
+                  "fill": "$--secondary"
+                },
+                "side-panel-pin/ZIZFR": {
+                  "icon": "pin-off",
+                  "fill": "$--foreground"
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-state-actions-expanded",
+          "name": "State / Actions expanded (Expand reads Restore width)",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-state-actions-expanded-name",
+              "name": "Actions expanded (Expand rea",
+              "content": "Actions expanded (Expand reads Restore width)",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "side-panel-actions-expanded",
+              "type": "ref",
+              "ref": "side-panel-actions",
+              "name": "Expanded",
+              "descendants": {
+                "side-panel-expand/ZIZFR": {
+                  "icon": "minimize-2"
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-state-actions-tools-only",
+          "name": "State / Actions with no view open (Pin and the panel toggle)",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-state-actions-tools-only-name",
+              "name": "Actions with no view open (P",
+              "content": "Actions with no view open (Pin and the panel toggle)",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "side-panel-actions-tools-only",
+              "type": "ref",
+              "ref": "side-panel-actions",
+              "name": "No view open",
+              "descendants": {
+                "side-panel-tools-toggle": {
+                  "enabled": false
+                },
+                "side-panel-expand": {
+                  "enabled": false
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-state-actions-narrow",
+          "name": "State / Actions in a narrow window (no Expand, no Pin)",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-state-actions-narrow-name",
+              "name": "Actions in a narrow window (",
+              "content": "Actions in a narrow window (no Expand, no Pin)",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "side-panel-actions-narrow",
+              "type": "ref",
+              "ref": "side-panel-actions",
+              "name": "Narrow window",
+              "descendants": {
+                "side-panel-expand": {
+                  "enabled": false
+                },
+                "side-panel-pin": {
+                  "enabled": false
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-master-grip",
+          "name": "Master / Resize grip - the edge hovered",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-master-grip-name",
+              "name": "Resize grip - the edge hover",
+              "content": "Resize grip - the edge hovered",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "side-panel-grip",
+              "name": "Component / Side panel grip",
+              "children": [
+                {
+                  "type": "rectangle",
+                  "id": "side-panel-grip-line-top",
+                  "name": "Line",
+                  "width": 1,
+                  "height": "fill_container",
+                  "fill": "$--muted-foreground",
+                  "opacity": 0.72
+                },
+                {
+                  "type": "frame",
+                  "id": "side-panel-grip-pill",
+                  "name": "Pill",
+                  "children": [
+                    {
+                      "type": "icon",
+                      "id": "side-panel-grip-glyph",
+                      "name": "Glyph",
+                      "enabled": true,
+                      "width": 12,
+                      "height": 12,
+                      "icon": "arrow-left-right",
+                      "library": "lucide",
+                      "fill": "$--muted-foreground"
+                    }
+                  ],
+                  "width": 24,
+                  "height": 24,
+                  "fill": "$--card",
+                  "stroke": "$--border",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inner",
+                  "cornerRadius": "$--radius-md",
+                  "layout": "horizontal",
+                  "justifyContent": "center",
+                  "alignItems": "center"
+                },
+                {
+                  "type": "rectangle",
+                  "id": "side-panel-grip-line-bottom",
+                  "name": "Line",
+                  "width": 1,
+                  "height": "fill_container",
+                  "fill": "$--muted-foreground",
+                  "opacity": 0.72
+                }
+              ],
+              "reusable": true,
+              "width": 24,
+              "height": 480,
+              "layout": "vertical",
+              "gap": 0,
+              "alignItems": "center"
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-state-grip-rest",
+          "name": "State / Resize grip at rest (nothing shows; the edge still takes the pointer)",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-state-grip-rest-name",
+              "name": "Resize grip at rest (nothing",
+              "content": "Resize grip at rest (nothing shows; the edge still takes the pointer)",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "side-panel-grip-rest",
+              "type": "ref",
+              "ref": "side-panel-grip",
+              "name": "At rest",
+              "descendants": {
+                "side-panel-grip-line-top": {
+                  "enabled": false
+                },
+                "side-panel-grip-pill": {
+                  "enabled": false
+                },
+                "side-panel-grip-line-bottom": {
+                  "enabled": false
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-state-grip-drag",
+          "name": "State / Resize grip while dragging (kept as hovered)",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-state-grip-drag-name",
+              "name": "Resize grip while dragging (",
+              "content": "Resize grip while dragging (kept as hovered)",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "side-panel-grip-drag",
+              "type": "ref",
+              "ref": "side-panel-grip",
+              "name": "Dragging"
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-master-panel",
+          "name": "Master / Over the agents, one file open, Explorer showing",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-master-panel-name",
+              "name": "Over the agents, one file op",
+              "content": "Over the agents, one file open, Explorer showing",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "type": "frame",
+              "id": "side-panel",
+              "name": "Component / Side panel",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "side-panel-gap",
+                  "name": "Gap",
+                  "children": [],
+                  "width": 8,
+                  "height": "fill_container"
+                },
+                {
+                  "type": "frame",
+                  "id": "side-panel-card",
+                  "name": "Card",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "side-panel-row-1",
+                      "name": "Row 1",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "side-panel-tabs",
+                          "name": "Area tabs",
+                          "children": [
+                            {
+                              "id": "side-panel-tab-active",
+                              "type": "ref",
+                              "ref": "view-tab",
+                              "name": "workspace_view.rs",
+                              "fill": "$--card",
+                              "stroke": "$--primary",
+                              "strokeWidth": {
+                                "bottom": "$--size-tab-indicator"
+                              },
+                              "strokeAlignment": "inner",
+                              "descendants": {
+                                "view-tab-mark": {
+                                  "icon": "file-code",
+                                  "fill": "$--file-orange"
+                                },
+                                "view-tab-title": {
+                                  "content": "workspace_view.rs",
+                                  "fill": "$--foreground"
+                                },
+                                "view-tab-close": {
+                                  "enabled": true
+                                },
+                                "view-tab-close/ZIZFR": {
+                                  "fill": "$--subtle-foreground"
+                                }
+                              }
+                            },
+                            {
+                              "id": "side-panel-tab-other",
+                              "type": "ref",
+                              "ref": "view-tab",
+                              "name": "UI_BEHAVIOR.md",
+                              "fill": "$--card",
+                              "descendants": {
+                                "view-tab-mark": {
+                                  "icon": "file-text",
+                                  "fill": "$--file-blue"
+                                },
+                                "view-tab-title": {
+                                  "content": "UI_BEHAVIOR.md",
+                                  "fill": "$--subtle-foreground"
+                                }
+                              }
+                            },
+                            {
+                              "id": "side-panel-new-tab",
+                              "type": "ref",
+                              "ref": "Nyvom",
+                              "name": "New tab: open a file",
+                              "width": 20,
+                              "height": 20,
+                              "descendants": {
+                                "ZIZFR": {
+                                  "icon": "plus",
+                                  "fill": "$--subtle-foreground"
+                                }
+                              }
+                            },
+                            {
+                              "type": "frame",
+                              "id": "side-panel-tabs-gap",
+                              "name": "Spacer",
+                              "children": [],
+                              "width": "fill_container",
+                              "height": 1
+                            },
+                            {
+                              "type": "frame",
+                              "id": "side-panel-view-actions",
+                              "name": "View actions",
+                              "children": [
+                                {
+                                  "type": "icon",
+                                  "id": "side-panel-view-actions-glyph",
+                                  "name": "Glyph",
+                                  "enabled": true,
+                                  "width": 14,
+                                  "height": 14,
+                                  "icon": "ellipsis",
+                                  "library": "lucide",
+                                  "fill": "$--subtle-foreground"
+                                }
+                              ],
+                              "width": 28,
+                              "height": 32,
+                              "layout": "horizontal",
+                              "justifyContent": "center",
+                              "alignItems": "center"
+                            }
+                          ],
+                          "width": "fill_container",
+                          "height": 32,
+                          "layout": "horizontal",
+                          "alignItems": "center",
+                          "clip": true
+                        },
+                        {
+                          "id": "side-panel-row-1-tools",
+                          "type": "ref",
+                          "ref": "side-panel-tool-tabs",
+                          "name": "Tool tabs (no view open)",
+                          "enabled": false
+                        },
+                        {
+                          "type": "frame",
+                          "id": "side-panel-row-1-gap",
+                          "name": "Spacer",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1,
+                          "enabled": false
+                        },
+                        {
+                          "id": "side-panel-strip-actions",
+                          "type": "ref",
+                          "ref": "side-panel-actions",
+                          "name": "Side panel actions"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": 32,
+                      "layout": "horizontal",
+                      "alignItems": "center",
+                      "stroke": "$--border",
+                      "strokeWidth": {
+                        "bottom": "$--size-hairline"
+                      },
+                      "strokeAlignment": "inner"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "side-panel-body",
+                      "name": "Body",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "side-panel-views",
+                          "name": "View areas",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "side-panel-doc-header",
+                              "name": "Document header",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "side-panel-doc-path",
+                                  "name": "herdr-core/src/runtime/works",
+                                  "content": "herdr-core/src/runtime/workspace_view.rs",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "side-panel-doc-live",
+                                  "name": "Live",
+                                  "content": "Live",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500",
+                                  "enabled": false
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "side-panel-doc-wrap",
+                                  "name": "Wrap",
+                                  "content": "Wrap",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "side-panel-doc-find",
+                                  "name": "Find",
+                                  "content": "Find",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "500"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": 32,
+                              "layout": "horizontal",
+                              "gap": "$--spacing-sm",
+                              "alignItems": "center",
+                              "padding": [
+                                0,
+                                "$--spacing-md"
+                              ],
+                              "stroke": "$--border",
+                              "strokeWidth": {
+                                "bottom": "$--size-hairline"
+                              },
+                              "strokeAlignment": "inner"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "side-panel-doc",
+                              "name": "Document",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "side-panel-doc-l1",
+                                  "name": "Line",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "side-panel-doc-l1-n",
+                                      "name": "483",
+                                      "content": "483",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-editor-base",
+                                      "fontWeight": "400",
+                                      "textGrowth": "fixed-width",
+                                      "width": 32,
+                                      "textAlign": "right"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "side-panel-doc-l1-t",
+                                      "name": "    fn settle_views_over_age",
+                                      "content": "    fn settle_views_over_agents(&mut self, key: &WorkspaceKey) {",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-editor-base",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-md"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "side-panel-doc-l2",
+                                  "name": "Line",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "side-panel-doc-l2-n",
+                                      "name": "484",
+                                      "content": "484",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-editor-base",
+                                      "fontWeight": "400",
+                                      "textGrowth": "fixed-width",
+                                      "width": 32,
+                                      "textAlign": "right"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "side-panel-doc-l2-t",
+                                      "name": "        let Some(view) = sel",
+                                      "content": "        let Some(view) = self",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-editor-base",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-md"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "side-panel-doc-l3",
+                                  "name": "Line",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "side-panel-doc-l3-n",
+                                      "name": "485",
+                                      "content": "485",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-editor-base",
+                                      "fontWeight": "400",
+                                      "textGrowth": "fixed-width",
+                                      "width": 32,
+                                      "textAlign": "right"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "side-panel-doc-l3-t",
+                                      "name": "            .workspace_views",
+                                      "content": "            .workspace_views",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-editor-base",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-md"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "side-panel-doc-l4",
+                                  "name": "Line",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "side-panel-doc-l4-n",
+                                      "name": "486",
+                                      "content": "486",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-editor-base",
+                                      "fontWeight": "400",
+                                      "textGrowth": "fixed-width",
+                                      "width": 32,
+                                      "textAlign": "right"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "side-panel-doc-l4-t",
+                                      "name": "            .as_ref()",
+                                      "content": "            .as_ref()",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-editor-base",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-md"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "layout": "vertical",
+                              "gap": "$--spacing-xxs",
+                              "padding": [
+                                "$--spacing-sm",
+                                0
+                              ],
+                              "fill": "$--card",
+                              "clip": true
+                            },
+                            {
+                              "type": "frame",
+                              "id": "side-panel-empty",
+                              "name": "Empty panel",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "side-panel-empty-text",
+                                  "name": "No file or diff is open in t",
+                                  "content": "No file or diff is open in this Workspace.",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "side-panel-empty-shortcut",
+                                  "name": "⌘P opens a file",
+                                  "content": "⌘P opens a file",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "enabled": false,
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "layout": "vertical",
+                              "gap": "$--spacing-xs",
+                              "justifyContent": "center",
+                              "alignItems": "center"
+                            }
+                          ],
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "layout": "vertical",
+                          "gap": 0
+                        },
+                        {
+                          "type": "frame",
+                          "id": "side-panel-tools",
+                          "name": "Tool column",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "side-panel-tool-lane",
+                              "name": "Row 2: tool tabs",
+                              "children": [
+                                {
+                                  "id": "side-panel-lane-tabs",
+                                  "type": "ref",
+                                  "ref": "side-panel-tool-tabs",
+                                  "name": "Tool tabs"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": 32,
+                              "layout": "horizontal",
+                              "alignItems": "center",
+                              "padding": [
+                                0,
+                                0,
+                                0,
+                                "$--spacing-xxs"
+                              ],
+                              "stroke": "$--border",
+                              "strokeWidth": {
+                                "bottom": "$--size-hairline"
+                              },
+                              "strokeAlignment": "inner"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "side-panel-explorer-root",
+                              "name": "Root",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "side-panel-explorer-root-name",
+                                  "name": "web-side-panel",
+                                  "content": "web-side-panel",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400",
+                                  "textGrowth": "fixed-width",
+                                  "width": "fill_container"
+                                },
+                                {
+                                  "id": "side-panel-explorer-refresh",
+                                  "type": "ref",
+                                  "ref": "Nyvom",
+                                  "name": "Refresh files",
+                                  "width": 20,
+                                  "height": 20,
+                                  "descendants": {
+                                    "ZIZFR": {
+                                      "icon": "refresh-cw",
+                                      "fill": "$--subtle-foreground"
+                                    }
+                                  }
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": 32,
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xs",
+                              "alignItems": "center",
+                              "padding": [
+                                0,
+                                "$--spacing-sm",
+                                0,
+                                "$--spacing-md"
+                              ],
+                              "stroke": "$--border",
+                              "strokeWidth": {
+                                "bottom": "$--size-hairline"
+                              },
+                              "strokeAlignment": "inner"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "side-panel-row-docs-indent",
+                              "name": "Tree indent",
+                              "children": [
+                                {
+                                  "id": "side-panel-row-docs",
+                                  "type": "ref",
+                                  "ref": "mSu8p",
+                                  "name": "docs",
+                                  "width": "fill_container",
+                                  "fill": "$--card",
+                                  "descendants": {
+                                    "vEOYq": {
+                                      "icon": "chevron-down",
+                                      "fill": "$--subtle-foreground"
+                                    },
+                                    "LWCQZ": {
+                                      "icon": "folder-open",
+                                      "fill": "$--subtle-foreground"
+                                    },
+                                    "kj232": {
+                                      "content": "docs",
+                                      "fill": "$--foreground"
+                                    },
+                                    "ZzvYJ": {
+                                      "content": "●",
+                                      "fill": "$--warning"
+                                    }
+                                  }
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "horizontal",
+                              "padding": [
+                                0,
+                                0,
+                                0,
+                                0
+                              ],
+                              "fill": "$--card"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "side-panel-row-md-indent",
+                              "name": "Tree indent",
+                              "children": [
+                                {
+                                  "id": "side-panel-row-md",
+                                  "type": "ref",
+                                  "ref": "mSu8p",
+                                  "name": "UI_BEHAVIOR.md",
+                                  "width": "fill_container",
+                                  "fill": "$--card",
+                                  "descendants": {
+                                    "vEOYq": {
+                                      "fill": []
+                                    },
+                                    "LWCQZ": {
+                                      "icon": "file-text",
+                                      "fill": "$--file-blue"
+                                    },
+                                    "kj232": {
+                                      "content": "UI_BEHAVIOR.md",
+                                      "fill": "$--foreground"
+                                    },
+                                    "ZzvYJ": {
+                                      "content": "M",
+                                      "fill": "$--warning"
+                                    }
+                                  }
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "horizontal",
+                              "padding": [
+                                0,
+                                0,
+                                0,
+                                "$--spacing-md"
+                              ],
+                              "fill": "$--card"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "side-panel-row-core-indent",
+                              "name": "Tree indent",
+                              "children": [
+                                {
+                                  "id": "side-panel-row-core",
+                                  "type": "ref",
+                                  "ref": "mSu8p",
+                                  "name": "herdr-core",
+                                  "width": "fill_container",
+                                  "fill": "$--card",
+                                  "descendants": {
+                                    "vEOYq": {
+                                      "icon": "chevron-down",
+                                      "fill": "$--subtle-foreground"
+                                    },
+                                    "LWCQZ": {
+                                      "icon": "folder-open",
+                                      "fill": "$--subtle-foreground"
+                                    },
+                                    "kj232": {
+                                      "content": "herdr-core",
+                                      "fill": "$--foreground"
+                                    },
+                                    "ZzvYJ": {
+                                      "content": "",
+                                      "fill": "$--warning"
+                                    }
+                                  }
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "horizontal",
+                              "padding": [
+                                0,
+                                0,
+                                0,
+                                0
+                              ],
+                              "fill": "$--card"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "side-panel-row-rs-indent",
+                              "name": "Tree indent",
+                              "children": [
+                                {
+                                  "id": "side-panel-row-rs",
+                                  "type": "ref",
+                                  "ref": "mSu8p",
+                                  "name": "workspace_view.rs",
+                                  "width": "fill_container",
+                                  "fill": "$--secondary",
+                                  "descendants": {
+                                    "vEOYq": {
+                                      "fill": []
+                                    },
+                                    "LWCQZ": {
+                                      "icon": "file-code",
+                                      "fill": "$--file-orange"
+                                    },
+                                    "kj232": {
+                                      "content": "workspace_view.rs",
+                                      "fill": "$--foreground"
+                                    },
+                                    "ZzvYJ": {
+                                      "content": "",
+                                      "fill": "$--warning"
+                                    }
+                                  }
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "horizontal",
+                              "padding": [
+                                0,
+                                0,
+                                0,
+                                "$--spacing-md"
+                              ],
+                              "fill": "$--secondary"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "side-panel-row-readme-indent",
+                              "name": "Tree indent",
+                              "children": [
+                                {
+                                  "id": "side-panel-row-readme",
+                                  "type": "ref",
+                                  "ref": "mSu8p",
+                                  "name": "README.md",
+                                  "width": "fill_container",
+                                  "fill": "$--card",
+                                  "descendants": {
+                                    "vEOYq": {
+                                      "fill": []
+                                    },
+                                    "LWCQZ": {
+                                      "icon": "file-text",
+                                      "fill": "$--file-blue"
+                                    },
+                                    "kj232": {
+                                      "content": "README.md",
+                                      "fill": "$--foreground"
+                                    },
+                                    "ZzvYJ": {
+                                      "content": "",
+                                      "fill": "$--warning"
+                                    }
+                                  }
+                                }
+                              ],
+                              "width": "fill_container",
+                              "layout": "horizontal",
+                              "padding": [
+                                0,
+                                0,
+                                0,
+                                0
+                              ],
+                              "fill": "$--card"
+                            }
+                          ],
+                          "width": 355,
+                          "height": "fill_container",
+                          "layout": "vertical",
+                          "gap": 0,
+                          "fill": "$--card",
+                          "stroke": "$--border",
+                          "strokeWidth": {
+                            "left": "$--size-hairline"
+                          },
+                          "strokeAlignment": "inner"
+                        }
+                      ],
+                      "width": "fill_container",
+                      "height": "fill_container",
+                      "layout": "horizontal",
+                      "gap": 0
+                    }
+                  ],
+                  "width": "fill_container",
+                  "height": "fill_container",
+                  "layout": "vertical",
+                  "gap": 0,
+                  "clip": true,
+                  "fill": "$--card",
+                  "cornerRadius": [
+                    "$--radius-lg",
+                    0,
+                    0,
+                    0
+                  ],
+                  "stroke": "$--border",
+                  "strokeWidth": "$--size-hairline",
+                  "strokeAlignment": "inner"
+                },
+                {
+                  "id": "side-panel-edge-grip",
+                  "type": "ref",
+                  "ref": "side-panel-grip",
+                  "name": "Resize grip",
+                  "enabled": false,
+                  "layoutPosition": "absolute",
+                  "x": -8,
+                  "y": 0,
+                  "height": 480
+                }
+              ],
+              "reusable": true,
+              "width": 668,
+              "height": 480,
+              "layout": "horizontal",
+              "gap": 0,
+              "fill": "$--background"
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-state-pinned",
+          "name": "State / Pinned, the gap hovered as the resize grip",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-state-pinned-name",
+              "name": "Pinned, the gap hovered as t",
+              "content": "Pinned, the gap hovered as the resize grip",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "side-panel-pinned",
+              "type": "ref",
+              "ref": "side-panel",
+              "name": "Pinned, grip hovered",
+              "descendants": {
+                "side-panel-edge-grip": {
+                  "enabled": true
+                },
+                "side-panel-strip-actions/side-panel-pin": {
+                  "fill": "$--secondary"
+                },
+                "side-panel-strip-actions/side-panel-pin/ZIZFR": {
+                  "icon": "pin-off",
+                  "fill": "$--foreground"
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-state-tools-hidden",
+          "name": "State / A file with the tools hidden",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-state-tools-hidden-name",
+              "name": "A file with the tools hidden",
+              "content": "A file with the tools hidden",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "side-panel-tools-hidden",
+              "type": "ref",
+              "ref": "side-panel",
+              "name": "Tools hidden",
+              "descendants": {
+                "side-panel-tools": {
+                  "enabled": false
+                },
+                "side-panel-strip-actions/side-panel-tools-toggle": {
+                  "fill": "#00000000"
+                },
+                "side-panel-strip-actions/side-panel-tools-toggle/ZIZFR": {
+                  "fill": "$--subtle-foreground"
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-state-tools-only",
+          "name": "State / No view open: the card is the tool column",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-state-tools-only-name",
+              "name": "No view open: the card is th",
+              "content": "No view open: the card is the tool column",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "side-panel-tools-only",
+              "type": "ref",
+              "ref": "side-panel",
+              "name": "Tools only",
+              "width": 363,
+              "descendants": {
+                "side-panel-tabs": {
+                  "enabled": false
+                },
+                "side-panel-row-1-tools": {
+                  "enabled": true
+                },
+                "side-panel-row-1-gap": {
+                  "enabled": true
+                },
+                "side-panel-row-1": {
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    "$--spacing-xxs"
+                  ]
+                },
+                "side-panel-strip-actions/side-panel-tools-toggle": {
+                  "enabled": false
+                },
+                "side-panel-strip-actions/side-panel-expand": {
+                  "enabled": false
+                },
+                "side-panel-views": {
+                  "enabled": false
+                },
+                "side-panel-tools": {
+                  "width": "fill_container",
+                  "strokeWidth": 0
+                },
+                "side-panel-tool-lane": {
+                  "enabled": false
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-state-tools-only-pinned",
+          "name": "State / No view open, pinned, the edge hovered as the resize grip",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-state-tools-only-pinned-name",
+              "name": "No view open, pinned, the ed",
+              "content": "No view open, pinned, the edge hovered as the resize grip",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "side-panel-tools-only-pinned",
+              "type": "ref",
+              "ref": "side-panel",
+              "name": "Tools only, pinned, grip hovered",
+              "width": 363,
+              "descendants": {
+                "side-panel-tabs": {
+                  "enabled": false
+                },
+                "side-panel-row-1-tools": {
+                  "enabled": true
+                },
+                "side-panel-row-1-gap": {
+                  "enabled": true
+                },
+                "side-panel-row-1": {
+                  "padding": [
+                    0,
+                    0,
+                    0,
+                    "$--spacing-xxs"
+                  ]
+                },
+                "side-panel-strip-actions/side-panel-tools-toggle": {
+                  "enabled": false
+                },
+                "side-panel-strip-actions/side-panel-expand": {
+                  "enabled": false
+                },
+                "side-panel-views": {
+                  "enabled": false
+                },
+                "side-panel-tools": {
+                  "width": "fill_container",
+                  "strokeWidth": 0
+                },
+                "side-panel-tool-lane": {
+                  "enabled": false
+                },
+                "side-panel-edge-grip": {
+                  "enabled": true
+                },
+                "side-panel-strip-actions/side-panel-pin": {
+                  "fill": "$--secondary"
+                },
+                "side-panel-strip-actions/side-panel-pin/ZIZFR": {
+                  "icon": "pin-off",
+                  "fill": "$--foreground"
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        },
+        {
+          "type": "frame",
+          "id": "side-panel-sheet-state-empty",
+          "name": "State / Empty: no view, tools hidden",
+          "children": [
+            {
+              "type": "text",
+              "id": "side-panel-sheet-state-empty-name",
+              "name": "Empty: no view, tools hidden",
+              "content": "Empty: no view, tools hidden",
+              "fill": "$--muted-foreground",
+              "fontFamily": "$--font-ui",
+              "fontSize": "$--text-micro",
+              "fontWeight": "600"
+            },
+            {
+              "id": "side-panel-empty-state",
+              "type": "ref",
+              "ref": "side-panel",
+              "name": "Empty",
+              "descendants": {
+                "side-panel-tab-active": {
+                  "enabled": false
+                },
+                "side-panel-tab-other": {
+                  "enabled": false
+                },
+                "side-panel-view-actions": {
+                  "enabled": false
+                },
+                "side-panel-strip-actions/side-panel-tools-toggle": {
+                  "fill": "#00000000"
+                },
+                "side-panel-strip-actions/side-panel-tools-toggle/ZIZFR": {
+                  "fill": "$--subtle-foreground"
+                },
+                "side-panel-strip-actions/side-panel-expand": {
+                  "enabled": false
+                },
+                "side-panel-doc-header": {
+                  "enabled": false
+                },
+                "side-panel-doc": {
+                  "enabled": false
+                },
+                "side-panel-empty": {
+                  "enabled": true
+                },
+                "side-panel-tools": {
+                  "enabled": false
+                }
+              }
+            }
+          ],
+          "width": "fill_container",
+          "layout": "vertical",
+          "gap": "$--spacing-xs"
+        }
+      ],
+      "x": 7200,
+      "y": 7264,
+      "width": 720,
+      "fill": "$--card",
+      "cornerRadius": "$--radius-md",
+      "layout": "vertical",
+      "gap": "$--spacing-lg",
+      "padding": "$--spacing-md"
     }
   ],
   "variables": {
@@ -31852,7 +33295,7 @@
       "type": "color",
       "value": [
         {
-          "value": "#71717A"
+          "value": "#6D6D76"
         },
         {
           "value": "#92959A",
@@ -31880,7 +33323,7 @@
       "type": "color",
       "value": [
         {
-          "value": "#DC2626"
+          "value": "#D62323"
         },
         {
           "value": "#FF595C",
@@ -32034,7 +33477,7 @@
       "type": "color",
       "value": [
         {
-          "value": "#DC2626"
+          "value": "#D62323"
         },
         {
           "value": "#FF595C",
@@ -32604,7 +34047,7 @@
       "type": "color",
       "value": [
         {
-          "value": "#2F7BA0"
+          "value": "#2D7598"
         },
         {
           "value": "#519ABA",
@@ -32618,7 +34061,7 @@
       "type": "color",
       "value": [
         {
-          "value": "#5B8C1F"
+          "value": "#507A1B"
         },
         {
           "value": "#8DC149",
@@ -32632,7 +34075,7 @@
       "type": "color",
       "value": [
         {
-          "value": "#C2571A"
+          "value": "#B45118"
         },
         {
           "value": "#E37933",
@@ -32660,7 +34103,7 @@
       "type": "color",
       "value": [
         {
-          "value": "#8A7D00"
+          "value": "#7B6F00"
         },
         {
           "value": "#CBCB41",

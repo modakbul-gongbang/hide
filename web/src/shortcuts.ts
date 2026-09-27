@@ -6,8 +6,11 @@
 // sheet can say so. The Electron column is the Swift chord set
 // (`ShellMenuCommand.swift`, `PaneShortcutSettings.swift`): the desktop host
 // has no browser keeping chords, so the moved ones return to their native
-// keys there. Its app menu is built from this same column
-// (`desktop/src/main/menu.ts`), so the menu and the sheet cannot disagree.
+// keys there. The one exception is ⌘E, which shows the Explorer in both
+// hosts (issue 170) while the Swift app keeps it on its sidebar switch; the
+// switch has no default chord here and can be bound in Settings. Its app
+// menu is built from this same column (`desktop/src/main/menu.ts`), so the
+// menu and the sheet cannot disagree.
 //
 // Chords match on `KeyboardEvent.code`, not `key`: macOS turns ⌥-letters into
 // dead keys and symbols (⌥T is "†"), and a physical position is what the
@@ -36,6 +39,7 @@ export type CommandId =
   | "open_file"
   | "toggle_left_sidebar"
   | "toggle_sidebar_view"
+  | "toggle_explorer"
   | "toggle_right_panel"
   | "project_home"
   | "keep_open"
@@ -80,8 +84,9 @@ export const REGISTRY: readonly Command[] = [
   { id: "open_file", title: "Open file", group: "Navigate", browser: { code: "KeyP", meta: true }, electron: { code: "KeyP", meta: true }, moved: false },
   { id: "project_home", title: "Project home", group: "Navigate", browser: { code: "KeyH", meta: true, shift: true }, electron: { code: "KeyH", meta: true, shift: true }, moved: false },
   { id: "toggle_left_sidebar", title: "Toggle left sidebar", group: "Panels", browser: { code: "KeyB", meta: true }, electron: { code: "KeyB", meta: true }, moved: false },
-  { id: "toggle_sidebar_view", title: "Toggle sidebar view", group: "Panels", browser: { code: "KeyE", meta: true }, electron: { code: "KeyE", meta: true }, moved: false },
-  { id: "toggle_right_panel", title: "Toggle right panel", group: "Panels", browser: { code: "KeyB", meta: true, shift: true }, electron: { code: "KeyB", meta: true, shift: true }, moved: false },
+  { id: "toggle_sidebar_view", title: "Toggle sidebar view", group: "Panels", browser: null, electron: null, moved: false },
+  { id: "toggle_explorer", title: "Toggle Explorer", group: "Panels", browser: { code: "KeyE", meta: true }, electron: { code: "KeyE", meta: true }, moved: false },
+  { id: "toggle_right_panel", title: "Toggle side panel", group: "Panels", browser: { code: "KeyB", meta: true, shift: true }, electron: { code: "KeyB", meta: true, shift: true }, moved: false },
   { id: "find_in_pane", title: "Find in pane", group: "Panes", browser: { code: "KeyF", meta: true }, electron: { code: "KeyF", meta: true }, moved: false },
   { id: "save_file", title: "Save file", group: "Panes", browser: { code: "KeyS", meta: true }, electron: { code: "KeyS", meta: true }, moved: false },
   { id: "keep_open", title: "Keep open", group: "Panes", browser: { code: "KeyK", meta: true, shift: true }, electron: { code: "KeyK", meta: true, shift: true }, moved: false },
@@ -158,6 +163,7 @@ export function matchHost(event: KeyEventLike, registry: readonly Command[], hos
 // in the Swift app's own format and command names (user decision 2026-09-26:
 // the desktop app honours the operator's Swift shortcut settings).
 export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
+  "toggle_sidebar_view",
   "split_right",
   "split_down",
   "toggle_zoom",
@@ -167,8 +173,14 @@ export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
   "text_reset",
 ];
 
-/** The macOS set's name for each editable command (`PaneCommand` in the Swift app). */
+/**
+ * The macOS set's name for each editable command (`PaneCommand` in the Swift
+ * app). `toggle_sidebar_view` has no pane command there: the Swift app keeps
+ * the key in the set and ignores it, the way this shell ignores
+ * `toggle_conversation`.
+ */
 const MACOS_KEYS: Readonly<Partial<Record<CommandId, string>>> = {
+  toggle_sidebar_view: "toggle_sidebar_view",
   split_right: "split_right",
   split_down: "split_down",
   toggle_zoom: "toggle_zoom",

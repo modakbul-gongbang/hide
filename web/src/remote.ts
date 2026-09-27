@@ -146,6 +146,14 @@ export function withDeviceForward(event: ReturnType<typeof remoteControl>) {
   return { ...event, payload: { ...event.payload, focus_device: true } };
 }
 
+/**
+ * The same request, chosen where it is drawn in the Agent area on screen, so
+ * the View areas drawn over the agents stay up (issue 170).
+ */
+export function inPlace<Event extends { payload: object }>(event: Event): Event {
+  return { ...event, payload: { ...event.payload, in_place: true } };
+}
+
 /** A remote pane's rectangle as CSS percentages of the canvas. */
 export function frameStyle(frame: { x: number; y: number; width: number; height: number }): Record<string, string> {
   const percent = (value: number) => `${Math.max(0, Math.min(1, value)) * 100}%`;

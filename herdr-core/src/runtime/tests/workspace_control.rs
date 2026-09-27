@@ -1,5 +1,6 @@
 use super::*;
 use crate::workspace_control::{Action, ActionPreparation, Edge, Query};
+use crate::workspace_views::PanelState;
 
 fn action_id(suffix: &str) -> String {
     format!("{}-{suffix}", unix_milliseconds())
@@ -418,6 +419,11 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
         )
         .unwrap();
     assert_eq!(runtime.snapshot.navigator.focused_workspace_id, before);
+    assert_eq!(
+        panel_of(&runtime, key),
+        PanelState::Closed,
+        "a background select leaves the side panel closed"
+    );
     runtime
         .workspace_control_action(
             "local",
@@ -435,6 +441,24 @@ fn selecting_a_hidden_view_reveals_only_when_requested() {
         runtime.snapshot.navigator.focused_workspace_id.as_deref(),
         Some("workspace-b")
     );
+    assert_eq!(
+        panel_of(&runtime, key),
+        PanelState::Open,
+        "a reveal opens the side panel"
+    );
+}
+
+fn panel_of(runtime: &Runtime, key: (&str, &str)) -> PanelState {
+    runtime
+        .workspace_views
+        .as_ref()
+        .unwrap()
+        .views
+        .workspaces
+        .iter()
+        .find(|view| view.is(key.0, key.1))
+        .map(|view| view.panel)
+        .unwrap()
 }
 
 #[test]

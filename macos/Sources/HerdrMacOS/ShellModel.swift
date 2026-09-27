@@ -2797,10 +2797,12 @@ final class ShellModel: ObservableObject {
             paneShortcuts = updated
             shortcutErrors[command] = nil
             shortcutDiagnostic = "Pane menu shortcuts were updated and saved."
+            let webOnly = (core.snapshot?.uiState.shortcutBindings ?? [:])
+                .filter { PaneShortcutPolicy.webOnlyKeys.contains($0.key) }
             core.persistUIState(
                 shortcutBindings: Dictionary(uniqueKeysWithValues: updated.map {
                     ($0.key.rawValue, $0.value.canonical)
-                })
+                }).merging(webOnly) { own, _ in own }
             )
         case let .failure(error):
             shortcutErrors[command] = error.localizedDescription

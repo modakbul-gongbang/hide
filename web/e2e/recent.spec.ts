@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, enterWorkspace, screenshot } from "./wire";
+import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
 
 test.describe.configure({ timeout: 120_000 });
 test.use({ actionTimeout: 15_000 });
@@ -48,6 +48,7 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     const cycleRow = page.locator("[data-cycle] [aria-selected=true]");
 
     // plan.txt pinned in the fixture Workspace's View area, the keyboard in it.
+    await showExplorer(page);
     await page.locator(`[data-explorer-row="${path.join(root, "plan.txt")}"]`).dblclick();
     const editor = page.locator("[data-view-area-id] [data-editor-body] .cm-content").first();
     await expect(editor).toContainText("plan line");

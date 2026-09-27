@@ -1,5 +1,5 @@
 use super::*;
-use crate::workspace_views::ViewMode;
+use crate::workspace_views::{PanelState, Tool};
 
 // PRD S6: a shell with separate Agent and View areas keeps each Workspace's
 // document beside its terminals, its layout and tools, and brings them back
@@ -60,13 +60,13 @@ pub(super) fn layout(runtime: &mut Runtime, payload: serde_json::Value) {
     assert_eq!(runtime.snapshot.status.last_error, None);
 }
 
-fn mode(runtime: &Runtime) -> ViewMode {
-    runtime
+fn panel(runtime: &Runtime) -> (PanelState, bool) {
+    let view = runtime
         .snapshot
         .workspace_view
         .as_ref()
-        .expect("a front Workspace")
-        .mode
+        .expect("a front Workspace");
+    (view.panel, view.pinned)
 }
 
 pub(super) fn active_label(runtime: &Runtime) -> Option<String> {
@@ -122,25 +122,25 @@ fn a_terminal_tab_choice_keeps_the_workspace_document_only_with_separate_areas()
     }
 }
 
-/// D-08, B11, B12: an explicit file open from Agents-only and an explicit
-/// agent choice from Views-only bring the other area back; a status update
-/// moves nothing.
+/// D-08, B11, B12, issue 170: an explicit file open opens a closed side
+/// panel, an agent chosen from elsewhere closes one that floats over the
+/// agents, and a status update moves nothing.
 #[test]
 fn explicit_opens_bring_the_hidden_area_back_and_status_changes_do_not() {
     let (runtime, checkout_id, directory) = strip_checkout("area-intent");
     let mut runtime = with_views(runtime, &views_path("area-intent"));
     with_tabs(&mut runtime, &directory);
     assert_eq!(
-        mode(&runtime),
-        ViewMode::Agents,
+        panel(&runtime),
+        (PanelState::Closed, false),
         "a new Workspace has no View to show yet"
     );
 
     open(&mut runtime, &checkout_id, &directory.join("notes.md"));
-    assert_eq!(mode(&runtime), ViewMode::Together);
+    assert_eq!(panel(&runtime), (PanelState::Open, false));
 
-    layout(&mut runtime, serde_json::json!({"mode": "views"}));
-    // B22: choosing Views alone makes no split.
+    layout(&mut runtime, serde_json::json!({"panel": "expanded"}));
+    // B22: expanding the panel makes no split.
     assert!(matches!(
         runtime
             .snapshot
@@ -159,61 +159,313 @@ fn explicit_opens_bring_the_hidden_area_back_and_status_changes_do_not() {
         "w-order:t2",
     )));
     assert_eq!(
-        mode(&runtime),
-        ViewMode::Views,
+        panel(&runtime),
+        (PanelState::Expanded, false),
         "a session update is not a request"
     );
     runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2"));
-    assert_eq!(mode(&runtime), ViewMode::Together);
+    assert_eq!(panel(&runtime), (PanelState::Closed, false));
 }
 
-/// D-05, A5: the tools are the Workspace's, and the one global panel every
-/// existing reader gates on follows them.
+/// Issue 170: a pinned panel the shell draws over the whole body (a narrow
+/// window) closes on an agent chosen from elsewhere, like one that floats.
+/// The report is taken only for the Workspace in front and is never saved.
+#[test]
+fn a_pinned_panel_drawn_over_the_agents_closes_on_an_agent_choice() {
+    let (runtime, checkout_id, directory) = strip_checkout("panel-covers");
+    let state = views_path("panel-covers");
+    let mut runtime = with_views(runtime, &state);
+    with_tabs(&mut runtime, &directory);
+    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+    layout(&mut runtime, serde_json::json!({"pinned": true}));
+    let path = directory.to_string_lossy().into_owned();
+    let covers = |runtime: &mut Runtime, path: &str, covers: bool| {
+        runtime.dispatch_json(&explorer_event(
+            "panel_covers",
+            serde_json::json!({"workspace": {"device_id": "local", "path": path}, "covers": covers}),
+        ));
+        assert_eq!(runtime.snapshot.status.last_error, None);
+    };
+
+    // A report naming a Workspace that is not in front changes nothing.
+    covers(&mut runtime, "/elsewhere", true);
+    runtime.sync_workspace_view();
+    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().covered);
+    runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2"));
+    assert_eq!(
+        panel(&runtime),
+        (PanelState::Open, true),
+        "a pinned panel beside the agents stays"
+    );
+
+    covers(&mut runtime, &path, true);
+    runtime.sync_workspace_view();
+    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().covered);
+    runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2"));
+    assert_eq!(
+        panel(&runtime),
+        (PanelState::Closed, true),
+        "the chosen agent is uncovered"
+    );
+    let written = std::fs::read_to_string(&state).expect("saved");
+    assert!(
+        !written.contains("covered"),
+        "a viewport fact is never saved"
+    );
+
+    covers(&mut runtime, &path, false);
+    runtime.sync_workspace_view();
+    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().covered);
+}
+
+/// Issue 170: the side panel closes on an agent chosen from elsewhere and
+/// opens again on request, closing no view; a choice among the agents beside
+/// it leaves it up; a pinned panel sits beside the agents, so an agent choice
+/// only brings an expanded one back to its width; and the file keeps the
+/// panel, its pin and its width.
+#[test]
+fn the_side_panel_closes_and_opens_without_closing_a_view() {
+    let (runtime, checkout_id, directory) = strip_checkout("views-over");
+    let state = views_path("views-over");
+    let mut runtime = with_views(runtime, &state);
+    with_tabs(&mut runtime, &directory);
+    open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+    assert_eq!(panel(&runtime), (PanelState::Open, false));
+
+    // A session update is not a request: the panel stays up.
+    let tabs = ["w-order:t1", "w-order:t2"];
+    runtime.ingest_session(Ok(tab_order_payload(
+        &directory.to_string_lossy(),
+        &tabs,
+        &tabs,
+        "w-order:t2",
+    )));
+    assert_eq!(panel(&runtime).0, PanelState::Open);
+    // A tab chosen where it shows, beside the panel, leaves it up.
+    let mut in_place: serde_json::Value =
+        serde_json::from_slice(&focus_tab_event(&checkout_id, "w-order:t2")).unwrap();
+    in_place["payload"]["in_place"] = serde_json::json!(true);
+    runtime.dispatch_json(&serde_json::to_vec(&in_place).unwrap());
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(
+        panel(&runtime).0,
+        PanelState::Open,
+        "a choice among the visible agents"
+    );
+    // One chosen from elsewhere closes it.
+    runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2"));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(panel(&runtime), (PanelState::Closed, false));
+    assert_eq!(
+        active_label(&runtime).as_deref(),
+        Some("notes.md"),
+        "closing the panel closes no view"
+    );
+
+    layout(
+        &mut runtime,
+        serde_json::json!({"panel": "open", "pinned": true, "views_over_share": 0.45}),
+    );
+    assert_eq!(panel(&runtime), (PanelState::Open, true));
+    let (saved, _) = crate::workspace_views::load(&state, 0);
+    assert!(
+        saved
+            .workspaces
+            .iter()
+            .any(|view| view.panel == PanelState::Open
+                && view.pinned
+                && view.views_over_share == 0.45),
+        "the file keeps the panel open, pinned, at its width"
+    );
+    runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2"));
+    assert_eq!(
+        panel(&runtime),
+        (PanelState::Open, true),
+        "a pinned panel covers no agent"
+    );
+    layout(&mut runtime, serde_json::json!({"panel": "expanded"}));
+    runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2"));
+    assert_eq!(
+        panel(&runtime),
+        (PanelState::Open, true),
+        "an expanded pinned panel goes back to its width"
+    );
+    layout(&mut runtime, serde_json::json!({"views_over_share": 3.0}));
+    assert_eq!(
+        runtime
+            .snapshot
+            .workspace_view
+            .as_ref()
+            .unwrap()
+            .views_over_share,
+        crate::workspace_views::MAX_VIEWS_OVER_SHARE
+    );
+    // A panel holding only the tools keeps a width of its own, the tool
+    // column's until it is resized, clamped like the other.
+    let shares = |runtime: &Runtime| {
+        let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+        (view.views_over_share, view.tools_share)
+    };
+    assert_eq!(shares(&runtime).1, None);
+    layout(&mut runtime, serde_json::json!({"tools_share": 0.3}));
+    assert_eq!(
+        shares(&runtime),
+        (crate::workspace_views::MAX_VIEWS_OVER_SHARE, Some(0.3))
+    );
+    layout(&mut runtime, serde_json::json!({"tools_share": 0.01}));
+    assert_eq!(
+        shares(&runtime).1,
+        Some(crate::workspace_views::MIN_VIEWS_OVER_SHARE)
+    );
+    let (saved, _) = crate::workspace_views::load(&state, 0);
+    assert!(
+        saved
+            .workspaces
+            .iter()
+            .any(|view| view.tools_share == Some(crate::workspace_views::MIN_VIEWS_OVER_SHARE)),
+        "the file keeps the tools-only width"
+    );
+
+    // Closing the last view leaves the panel where it is: it narrows to the
+    // Explorer, or says nothing is open.
+    layout(&mut runtime, serde_json::json!({"pinned": false}));
+    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+    let workspace = serde_json::json!({"device_id": view.device_id, "path": view.path});
+    let display = match &view.layout.root {
+        crate::model::ViewNodeSnapshot::Area(area) => area.active.clone(),
+        _ => None,
+    }
+    .expect("one display");
+    runtime.dispatch_json(&explorer_event(
+        "view_layout",
+        serde_json::json!({"workspace": workspace, "action": "close", "display_id": display}),
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+    assert_eq!(
+        (view.layout.display_count, view.panel),
+        (0, PanelState::Open)
+    );
+}
+
+/// Issue 170, revised: the column holds one tool; choosing one while the
+/// panel is closed opens the panel on it with the column shown, a reveal too,
+/// and a payload that names the panel keeps its word.
+#[test]
+fn a_tool_chosen_while_the_panel_is_closed_opens_the_panel_on_it() {
+    let (runtime, _checkout_id, directory) = strip_checkout("tool-opens");
+    let mut runtime = with_views(runtime, &views_path("tool-opens"));
+    let tools = |runtime: &Runtime| {
+        let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+        (view.tool, view.tools)
+    };
+    // A new Workspace starts closed, on the Explorer with the column shown.
+    assert_eq!(panel(&runtime).0, PanelState::Closed);
+    assert_eq!(tools(&runtime), (Tool::Explorer, true));
+    assert!(!runtime.snapshot.ui_state.right_panel_visible);
+
+    layout(&mut runtime, serde_json::json!({"tool": "changes"}));
+    assert_eq!(panel(&runtime).0, PanelState::Open);
+    assert_eq!(tools(&runtime), (Tool::Changes, true));
+    assert!(runtime.snapshot.ui_state.right_panel_visible);
+    // One tool at a time: choosing the other swaps it.
+    layout(&mut runtime, serde_json::json!({"tool": "explorer"}));
+    assert_eq!(tools(&runtime), (Tool::Explorer, true));
+
+    // Hiding the column keeps the tool that comes back, and the panel.
+    layout(&mut runtime, serde_json::json!({"tools": false}));
+    assert_eq!(tools(&runtime), (Tool::Explorer, false));
+    assert_eq!(panel(&runtime).0, PanelState::Open);
+    assert!(!runtime.snapshot.ui_state.right_panel_visible);
+
+    layout(&mut runtime, serde_json::json!({"panel": "closed"}));
+    layout(
+        &mut runtime,
+        serde_json::json!({"reveal": directory.join("notes.md").to_string_lossy()}),
+    );
+    assert_eq!(panel(&runtime).0, PanelState::Open);
+    assert_eq!(
+        tools(&runtime),
+        (Tool::Explorer, true),
+        "a reveal shows the column on the Explorer"
+    );
+
+    layout(
+        &mut runtime,
+        serde_json::json!({"panel": "closed", "tool": "changes"}),
+    );
+    assert_eq!(panel(&runtime).0, PanelState::Closed);
+    assert_eq!(tools(&runtime), (Tool::Changes, true));
+
+    // Showing the column opens a closed panel on the tool it holds.
+    layout(&mut runtime, serde_json::json!({"tools": true}));
+    assert_eq!(panel(&runtime).0, PanelState::Open);
+    assert_eq!(tools(&runtime), (Tool::Changes, true));
+
+    // `reveal_path` opens a closed panel on the Explorer too.
+    layout(&mut runtime, serde_json::json!({"panel": "closed"}));
+    let checkout_id = runtime
+        .snapshot
+        .navigator
+        .focused_checkout_id
+        .clone()
+        .unwrap();
+    runtime.dispatch_json(&explorer_event(
+        "reveal_path",
+        serde_json::json!({
+            "path": directory.join("notes.md"), "workspace_id": runtime.snapshot.navigator.focused_workspace_id,
+            "checkout_id": checkout_id, "is_directory": false,
+        }),
+    ));
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(panel(&runtime).0, PanelState::Open);
+    assert_eq!(tools(&runtime), (Tool::Explorer, true));
+}
+
+/// D-05, A5: the tool is the Workspace's, and the one global panel every
+/// existing reader gates on follows it; an unknown value is refused.
 #[test]
 fn workspace_tools_drive_the_panel_the_changes_reader_gates_on() {
     let (runtime, _checkout_id, _directory) = strip_checkout("tools");
     let mut runtime = with_views(runtime, &views_path("tools"));
-    layout(
-        &mut runtime,
-        serde_json::json!({"explorer": false, "changes": true}),
-    );
-    let view = runtime
-        .snapshot
-        .workspace_view
-        .clone()
-        .expect("front Workspace");
-    assert!(!view.explorer && view.changes);
+    layout(&mut runtime, serde_json::json!({"tool": "changes"}));
     assert!(runtime.snapshot.ui_state.right_panel_visible);
     assert_eq!(
         runtime.snapshot.ui_state.right_panel_section,
         RightPanelSection::Changes
     );
 
-    layout(&mut runtime, serde_json::json!({"explorer": true}));
+    layout(&mut runtime, serde_json::json!({"tool": "explorer"}));
     assert_eq!(
         runtime.snapshot.ui_state.right_panel_section,
         RightPanelSection::Explorer
     );
 
-    layout(
-        &mut runtime,
-        serde_json::json!({"explorer": false, "changes": false}),
-    );
+    layout(&mut runtime, serde_json::json!({"tools": false}));
     assert!(!runtime.snapshot.ui_state.right_panel_visible);
 
-    runtime.dispatch_json(&explorer_event(
-        "workspace_view",
-        serde_json::json!({"mode": "sideways"}),
-    ));
-    assert_eq!(
-        runtime
-            .snapshot
-            .status
-            .last_error
-            .as_ref()
-            .map(|error| error.kind.as_str()),
-        Some("workspace_view.unknown_mode")
-    );
+    for (payload, kind) in [
+        (
+            serde_json::json!({"panel": "sideways"}),
+            "workspace_view.unknown_panel",
+        ),
+        (
+            serde_json::json!({"tool": "terminal"}),
+            "workspace_view.unknown_tool",
+        ),
+    ] {
+        runtime.dispatch_json(&explorer_event("workspace_view", payload));
+        assert_eq!(
+            runtime
+                .snapshot
+                .status
+                .last_error
+                .as_ref()
+                .map(|error| error.kind.as_str()),
+            Some(kind)
+        );
+    }
+    assert!(!runtime.snapshot.ui_state.right_panel_visible);
 }
 
 /// B19: the daemon opens a checkout's root after the first snapshot names
@@ -374,25 +626,25 @@ fn returning_to_a_workspace_without_agent_tabs_keeps_its_active_view_tab() {
     assert_eq!(active_label(&runtime).as_deref(), Some("notes.md"));
 }
 
-/// B10, AGENTS.md one event per action: revealing a file shows the Explorer
+/// B10, AGENTS.md one event per action: revealing a file shows the column on the Explorer
 /// and unfolds its folders in the same `workspace_view`, and a path outside
 /// the Workspace is refused without showing anything.
 #[test]
 fn a_reveal_shows_the_explorer_and_unfolds_the_folders_in_one_event() {
     let (runtime, _checkout_id, directory) = strip_checkout("reveal");
     let mut runtime = with_views(runtime, &views_path("reveal"));
-    layout(&mut runtime, serde_json::json!({"explorer": false}));
+    layout(&mut runtime, serde_json::json!({"tools": false}));
     let root = directory.to_string_lossy().into_owned();
 
     runtime.dispatch_json(&explorer_event(
         "workspace_view",
-        serde_json::json!({"explorer": true, "reveal": "/elsewhere/a.txt"}),
+        serde_json::json!({"reveal": "/elsewhere/a.txt"}),
     ));
     assert!(runtime.snapshot.status.last_error.is_some());
-    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().explorer);
+    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().tools);
     runtime.dispatch_json(&explorer_event(
         "workspace_view",
-        serde_json::json!({"explorer": true, "reveal": format!("{root}/../elsewhere/a.txt")}),
+        serde_json::json!({"reveal": format!("{root}/../elsewhere/a.txt")}),
     ));
     assert_eq!(
         runtime
@@ -404,13 +656,13 @@ fn a_reveal_shows_the_explorer_and_unfolds_the_folders_in_one_event() {
         Some("workspace_view.reveal_outside"),
         "a path that climbs out of the Workspace is refused, not unfolded"
     );
-    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().explorer);
+    assert!(!runtime.snapshot.workspace_view.as_ref().unwrap().tools);
 
     layout(
         &mut runtime,
-        serde_json::json!({"explorer": true, "reveal": format!("{root}/src/deep/a.rs")}),
+        serde_json::json!({"reveal": format!("{root}/src/deep/a.rs")}),
     );
-    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().explorer);
+    assert!(runtime.snapshot.workspace_view.as_ref().unwrap().tools);
     let expanded = &runtime.snapshot.ui_state.expanded_paths;
     assert!(expanded.contains(&format!("{root}/src")));
     assert!(expanded.contains(&format!("{root}/src/deep")));
@@ -586,7 +838,7 @@ fn workspace_tools_never_reach_the_older_settings_file() {
     let mut runtime = with_views(runtime, &views_path("settings"));
     layout(
         &mut runtime,
-        serde_json::json!({"explorer": !saved.0, "changes": false}),
+        serde_json::json!({"tool": "explorer", "tools": !saved.0}),
     );
     assert_eq!(runtime.snapshot.ui_state.right_panel_visible, !saved.0);
     let written = runtime.ui_state_to_save();
@@ -612,7 +864,7 @@ fn removing_a_device_forgets_its_workspace_views() {
             ..Default::default()
         });
     let store = runtime.workspace_views.as_mut().unwrap();
-    store.views.entry("studio", "/srv/app").mode = ViewMode::Views;
+    store.views.entry("studio", "/srv/app").panel = PanelState::Expanded;
     store.views.entry("local", &directory.to_string_lossy());
 
     assert!(runtime.dispatch_json(&explorer_event(

@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
-import { countSent, screenshot } from "./wire";
+import { countSent, screenshot, showExplorer, showTool } from "./wire";
 
 test.describe.configure({ timeout: 90_000 });
 
@@ -41,11 +41,11 @@ test("History opens a scoped patch, then updates after editing the original file
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator('[data-sidebar-mode="projects"]').click();
     await page.locator("[data-project]", { hasText: "history-repo" }).locator("[data-checkout]").first().click();
-    // The Workspace opens with the Explorer; History is a second tool beside it (S6 B10).
-    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
-    await page.locator('[data-tool-toggle="changes"]').click();
-    await expect(page.locator('[data-tool="changes"]')).toBeVisible();
-    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
+    // The side panel's column holds one tool; History's tab swaps the
+    // Explorer out (S6 B10, issue 170).
+    await showExplorer(page);
+    await showTool(page, "changes");
+    await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     await expect(page.locator('[data-history-group-section="working"]')).toBeVisible();
     await expect(page.locator('[data-history-group-section="committed"]')).toBeVisible();
     const row = page.locator('[data-history-group="working"][data-history-path="한글 notes.txt"]');
@@ -63,12 +63,13 @@ test("History opens a scoped patch, then updates after editing the original file
     await expect(page.locator('[data-diff-group="committed"] [data-patch-view] .cm-content')).toContainText("+branch");
     await row.click();
     await expect(page.locator('[data-diff-group="working"]')).toBeVisible();
-    // ⌘⇧B hides every tool that shows, and brings the Explorer back alone.
+    // ⌘⇧B closes the side panel with its tool, and brings it back on the
+    // same tool (issue 170).
     await page.keyboard.press("Meta+Shift+KeyB");
     await expect(page.locator("[data-workspace-tools]")).toHaveCount(0);
     await page.keyboard.press("Meta+Shift+KeyB");
-    await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
-    await expect(page.locator('[data-tool="changes"]')).toHaveCount(0);
+    await expect(page.locator('[data-tool="changes"]')).toBeVisible();
+    await showExplorer(page);
 
     const fileRow = page.locator(`[data-explorer-row="${file}"]`);
     await expect(fileRow).toBeVisible();
@@ -78,7 +79,7 @@ test("History opens a scoped patch, then updates after editing the original file
     await page.keyboard.press("Meta+KeyA");
     await page.keyboard.type("first\nthird\n");
     await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("first\nthird\n");
-    await page.locator('[data-tool-toggle="changes"]').click();
+    await showTool(page, "changes");
     await row.click();
     await expect(page.locator('[data-patch-view] .cm-content')).toContainText("+third");
     await expect(page.locator('[data-patch-view] .cm-content')).not.toContainText("second <script>");
@@ -136,7 +137,7 @@ test("registered subfolder History opens inside patches and hides sibling change
     const project = page.locator("[data-project]", { hasText: "registered" });
     await expect(project).toBeVisible({ timeout: 20_000 });
     await project.locator("[data-checkout]").first().click();
-    await page.locator('[data-tool-toggle="changes"]').click();
+    await showTool(page, "changes");
     const history = page.locator('[data-history-root]');
     await expect(history).toHaveAttribute("data-history-root", registered);
     await expect(page.locator('[data-history-path="inside.txt"]')).toBeVisible();

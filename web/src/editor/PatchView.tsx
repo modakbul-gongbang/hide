@@ -22,7 +22,7 @@ const patchTheme = EditorView.theme({
   ".cm-gutterElement": { paddingRight: "var(--spacing-xs)" },
   ".cm-patch-added": { backgroundColor: "color-mix(in srgb, var(--diff-added) 15%, transparent)" },
   ".cm-patch-removed": { backgroundColor: "color-mix(in srgb, var(--diff-removed) 15%, transparent)" },
-  ".cm-patch-hunk": { backgroundColor: "var(--card)", color: "var(--file-blue)" },
+  ".cm-patch-hunk": { backgroundColor: "var(--secondary)", color: "var(--file-blue)" },
   ".cm-patch-header": { color: "var(--muted-foreground)" },
 });
 

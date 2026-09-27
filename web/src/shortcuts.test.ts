@@ -47,7 +47,10 @@ describe("shortcut registry", () => {
       open_file: "⌘P",
       project_home: "⇧⌘H",
       toggle_left_sidebar: "⌘B",
-      toggle_sidebar_view: "⌘E",
+      // ⌘E shows the Explorer in both hosts (issue 170); the Swift app keeps
+      // it on its sidebar switch, which has no chord here until one is bound.
+      toggle_sidebar_view: "",
+      toggle_explorer: "⌘E",
       toggle_right_panel: "⇧⌘B",
       find_in_pane: "⌘F",
       save_file: "⌘S",
@@ -67,7 +70,7 @@ describe("shortcut registry", () => {
   });
 
   it("binds every electron chord once", () => {
-    const shown = REGISTRY.map((command) => displayCommand(command.id, "electron"));
+    const shown = REGISTRY.map((command) => displayCommand(command.id, "electron")).filter(Boolean);
     expect(new Set(shown).size).toBe(shown.length);
   });
 
@@ -175,11 +178,27 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
     expect(effectiveRegistry({ split_right: "alt+KeyR", split_down: "alt+KeyR" }).registry).toBe(REGISTRY);
   });
 
-  it("edits only the seven pane commands the browser host runs", () => {
+  it("edits the seven pane commands the browser host runs and the sidebar switch", () => {
     expect([...EDITABLE_PANE_COMMANDS].sort()).toEqual(
-      ["close_pane", "split_down", "split_right", "text_larger", "text_reset", "text_smaller", "toggle_zoom"].sort(),
+      ["close_pane", "split_down", "split_right", "text_larger", "text_reset", "text_smaller", "toggle_sidebar_view", "toggle_zoom"].sort(),
     );
     for (const id of EDITABLE_PANE_COMMANDS) expect(REGISTRY.some((command) => command.id === id)).toBe(true);
+  });
+
+  it("runs the Explorer on ⌘E and leaves the sidebar switch unbound until the operator binds it (issue 170)", () => {
+    const press = { code: "KeyE", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false };
+    for (const host of ["browser", "electron"] as const) {
+      expect(matchHost(press, REGISTRY, host)?.id).toBe("toggle_explorer");
+      expect(displayCommand("toggle_sidebar_view", host)).toBe("");
+      expect(bindingProblem("toggle_sidebar_view", { code: "KeyE", meta: true }, REGISTRY, host)).toMatch(/already Toggle Explorer/);
+    }
+    const browser = effectiveRegistry({ toggle_sidebar_view: "meta+shift+KeyE" });
+    expect(browser.diagnostic).toBeNull();
+    expect(displayCommand("toggle_sidebar_view", "browser", browser.registry)).toBe("⇧⌘E");
+    // The desktop app keeps it in the macOS set the Swift app shares, under its own name.
+    const desktop = effectiveRegistry({ toggle_sidebar_view: "command+shift+e", split_right: "command+option+r" }, "electron");
+    expect(desktop.diagnostic).toBeNull();
+    expect(displayCommand("toggle_sidebar_view", "electron", desktop.registry)).toBe("⇧⌘E");
   });
 });
 

@@ -114,6 +114,31 @@ export async function relaunch(env: Record<string, string>, { appDir = DESKTOP_D
 }
 
 /**
+ * The page that holds the shell. A browser display is a page of its own to
+ * Playwright, and one a relaunch restores can be the first page it reports,
+ * so the shell is found by what it draws rather than by order.
+ */
+export async function shellPage(app: ElectronApplication): Promise<Page> {
+  let shell: Page | null = null;
+  await expect
+    .poll(
+      async () => {
+        for (const page of app.windows()) {
+          const drawn = await page.locator("[data-main-screen], [data-workspace-screen]").count().catch(() => 0);
+          if (drawn > 0) {
+            shell = page;
+            return true;
+          }
+        }
+        return false;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+  return shell!;
+}
+
+/**
  * The built app copied under this run's directory, so an unpackaged launch
  * has no worktree `target/` beside it and searches for `hide` the way an
  * installed app does.

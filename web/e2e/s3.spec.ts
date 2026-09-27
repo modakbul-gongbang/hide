@@ -11,7 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, enterWorkspace, screenshot } from "./wire";
+import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
 
 const SOURCE = "export const answer = 41;\n";
 
@@ -102,12 +102,14 @@ async function openCheckout(page: Page, beforeLoad?: (page: Page) => Promise<voi
     await beforeLoad?.(page);
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
 
-    // Focus the repository checkout: its Workspace opens with the Explorer
-    // among its tools, which is where the tree lives (S6 D-05, B10).
+    // Focus the repository checkout and show the Explorer, whose toggle opens
+    // the side panel with it: that is where the tree lives (S6 D-05, B10;
+    // issue 170).
     await page.locator('[data-sidebar-mode="projects"]').click();
     const row = page.locator("[data-project]", { hasText: "repo" }).locator("[data-checkout]").first();
     await row.click();
     await expect(row).toHaveAttribute("aria-current", "true");
+    await showExplorer(page);
     await expect(page.locator('[data-right-panel="explorer"]')).toBeVisible();
     await expect(page.locator(`[data-explorer-row="${repo}/src"]`)).toBeVisible();
 
@@ -925,8 +927,8 @@ test("⌘P opens a file by name and ⌘K switches checkout", async ({ page }) =>
     await expect(page.locator('[data-right-panel="explorer"]')).toHaveCount(0);
 
     // ⌘P: hided indexes the checkout, ranks the typed name and opens it in the
-    // preview tab (B12). The Explorer stays as the operator left it (S6 B10);
-    // the row is revealed for when it is shown.
+    // preview tab (B12). The open brings the side panel back with the
+    // Explorer the Workspace keeps, its row revealed (S6 B10, issue 170).
     await page.keyboard.press("Meta+KeyP");
     const input = page.locator('[data-palette="Open file"] [data-palette-input]');
     await expect(input).toBeVisible();
@@ -937,8 +939,6 @@ test("⌘P opens a file by name and ⌘K switches checkout", async ({ page }) =>
     await row.click();
     await expect(page.locator("[data-palette-input]")).toHaveCount(0);
     await expect(page.locator('[data-tab-kind="file"]').filter({ hasText: "main.ts" })).toHaveCount(1);
-    await expect(page.locator('[data-right-panel="explorer"]')).toHaveCount(0);
-    await page.keyboard.press("Meta+Shift+KeyB");
     await expect(page.locator('[data-right-panel="explorer"]')).toBeVisible();
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveAttribute("data-selected", "true", { timeout: 10_000 });
     expect(sent.get("file_index") ?? 0).toBeGreaterThanOrEqual(1);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRow, Checkout, StripTab, Tab } from "./snapshot";
-import { agentEntries, agentWidth, drawnMode, shareAt, tabAgent, tabIdentity, type WorkspaceView } from "./workspace";
+import { agentEntries, panelCoversToSend, panelFrame, panelShareAt, tabAgent, tabIdentity, type WorkspaceView } from "./workspace";
 
 const strip: StripTab[] = [
   { id: "herdr:1", kind: "herdr", source_id: "t1", label: "1", preview: false },
@@ -38,29 +38,92 @@ describe("tab identity", () => {
   });
 });
 
-describe("the Agent/View boundary", () => {
-  it("keeps each area at its minimum and splits evenly when both minimums cannot fit", () => {
-    expect(agentWidth(0.5, 1000, 320)).toBe(500);
-    expect(agentWidth(0.1, 1000, 320)).toBe(320);
-    expect(agentWidth(0.95, 1000, 320)).toBe(680);
-    expect(agentWidth(0.2, 600, 320)).toBe(300);
-    expect(shareAt(100, 1000, 320)).toBeCloseTo(0.32);
-  });
-});
+describe("the side panel", () => {
+  const sizes = { areaMin: 224, toolColumn: 260, gap: 0, hairline: 0 };
+  const view = (panel: WorkspaceView["panel"], extra: Partial<WorkspaceView> = {}) => ({ panel, pinned: false, views_over_share: 0.6, tools_share: null, tools: true, ...extra });
+  const frame = (panel: WorkspaceView["panel"], views: boolean, body: number, extra: Partial<WorkspaceView> = {}) => panelFrame({ view: view(panel, extra), views, body, sizes });
 
-describe("the drawn layout", () => {
-  const view = (mode: WorkspaceView["mode"], displays: number): WorkspaceView =>
-    ({ device_id: "local", path: "/r", mode, explorer: true, changes: false, agent_share: 0.5, layout: { display_count: displays } }) as unknown as WorkspaceView;
-
-  it("leaves View areas with nothing open out of Together and Views only, keeping the stored mode's return", () => {
-    expect(drawnMode(view("together", 0), false)).toBe("agents");
-    expect(drawnMode(view("views", 0), false)).toBe("agents");
-    expect(drawnMode(view("together", 1), false)).toBe("together");
-    expect(drawnMode(view("views", 2), false)).toBe("views");
+  it("floats at its share over agents that keep the body's width, and a pinned one narrows them to its edge", () => {
+    expect(frame("open", true, 1400)).toMatchObject({ shown: "open", content: "views", width: 840, agentsRight: 0, resize: "views_over_share", narrow: false });
+    expect(frame("open", true, 1400, { pinned: true })).toMatchObject({ width: 840, agentsRight: 840 });
+    expect(frame("closed", true, 1400, { pinned: true })).toMatchObject({ shown: "closed", width: 0, agentsRight: 0 });
   });
 
-  it("keeps the View areas while a file is opening, so the opening state has a place", () => {
-    expect(drawnMode(view("together", 0), true)).toBe("together");
-    expect(drawnMode(view("agents", 3), false)).toBe("agents");
+  it("covers the whole body when expanded, and a pinned one leaves the agents at their docked width underneath", () => {
+    expect(frame("expanded", true, 1400)).toMatchObject({ shown: "expanded", width: 1400, agentsRight: 0, resize: null });
+    expect(frame("expanded", true, 1400, { pinned: true })).toMatchObject({ width: 1400, agentsRight: 840 });
+  });
+
+  it("is only as wide as the tool column while no view is open, and says nothing is open only without a tool", () => {
+    expect(frame("open", false, 1400)).toMatchObject({ content: "tools", width: 260, resize: "tools_share", need: 260 });
+    expect(frame("expanded", false, 1400)).toMatchObject({ shown: "open", content: "tools", width: 260 });
+    expect(frame("open", false, 1400, { tools: false })).toMatchObject({ content: "empty", width: 840, resize: "views_over_share" });
+    // Only views expand, so the empty state never covers the agents.
+    expect(frame("expanded", false, 1400, { tools: false })).toMatchObject({ shown: "open", content: "empty", width: 840 });
+  });
+
+  it("resizes the tools-only panel to a width of its own, never under the tool column or over the agents' minimum", () => {
+    expect(frame("open", false, 1400, { tools_share: 0.4 })).toMatchObject({ content: "tools", width: 560, resize: "tools_share" });
+    expect(frame("open", false, 1400, { tools_share: 0.4, pinned: true })).toMatchObject({ width: 560, agentsRight: 560 });
+    expect(frame("open", false, 1400, { tools_share: 0.2 }).width).toBe(280);
+    expect(frame("open", false, 1000, { tools_share: 0.2 }).width).toBe(260);
+    expect(frame("open", false, 1000, { tools_share: 0.8 }).width).toBe(776);
+    // The View areas keep their own width beside it.
+    expect(frame("open", true, 1400, { tools_share: 0.4 }).width).toBe(840);
+  });
+
+  it("places nothing before the body is measured, so no terminal fits to a guess", () => {
+    expect(frame("open", true, 0, { pinned: true })).toMatchObject({ width: 0, agentsRight: 0, toolsOverlay: false });
+    expect(frame("open", false, 0, { pinned: true, tools: false })).toMatchObject({ width: 0, agentsRight: 0 });
+  });
+
+  it("keeps a View area and the tool column beside it, and the agents left of it, at their minimum", () => {
+    expect(frame("open", true, 1400, { views_over_share: 0.2 }).width).toBe(484);
+    expect(frame("open", true, 1400, { views_over_share: 0.2, tools: false }).width).toBe(280);
+    expect(frame("open", true, 1000, { views_over_share: 0.8 }).width).toBe(776);
+  });
+
+  it("takes the whole body in a window too narrow for both, unsaved, and a pinned one floats there", () => {
+    expect(frame("open", true, 707, { pinned: true })).toMatchObject({ shown: "expanded", narrow: true, width: 707, agentsRight: 0, resize: null, toolsOverlay: true });
+    // With no view the tool column is the panel, never an overlay.
+    expect(frame("open", false, 400)).toMatchObject({ narrow: true, content: "tools", toolsOverlay: false });
+    expect(frame("open", true, 708, { pinned: true })).toMatchObject({ shown: "open", narrow: false, agentsRight: 484 });
+  });
+
+  it("counts its gap and hairlines in every minimum, with the tool column holding its hairlines inside its token", () => {
+    const framed = { ...sizes, gap: 8, hairline: 1 };
+    const at = (views: boolean, body: number, extra: Partial<WorkspaceView> = {}) => panelFrame({ view: view("open", extra), views, body, sizes: framed });
+    // Alone the column is the card, both hairlines inside it.
+    expect(at(false, 1400)).toMatchObject({ content: "tools", width: 268 });
+    // Beside a view it holds the card's right hairline; the left one is the View area's.
+    expect(at(true, 1400, { views_over_share: 0.2 }).width).toBe(493);
+    expect(at(true, 1400, { views_over_share: 0.2, tools: false }).width).toBe(280);
+    expect(at(true, 716)).toMatchObject({ narrow: true });
+    expect(at(true, 717)).toMatchObject({ narrow: false });
+  });
+
+  it("folds the tools into an overlay in a window too narrow for both, and only there", () => {
+    expect(frame("expanded", true, 707).toolsOverlay).toBe(true);
+    expect(frame("expanded", true, 708).toolsOverlay).toBe(false);
+    expect(frame("expanded", true, 707, { tools: false }).toolsOverlay).toBe(false);
+    expect(frame("open", true, 1400).toolsOverlay).toBe(false);
+  });
+
+  it("reports whether it covers the body once per change, and two pages that disagree each report once", () => {
+    expect(panelCoversToSend(true, false, null)).toBe(true);
+    expect(panelCoversToSend(true, true, null)).toBe(false);
+    // Sent and not echoed yet, or undone by another page: not sent again.
+    expect(panelCoversToSend(true, false, true)).toBe(false);
+    // Forgotten after another Workspace or a reconnect: sent again.
+    expect(panelCoversToSend(false, true, null)).toBe(true);
+    expect(panelCoversToSend(false, true, true)).toBe(true);
+  });
+
+  it("follows its left edge to a share the core keeps where it was released", () => {
+    expect(panelShareAt(560, 1400, 484, 224)).toBeCloseTo(0.6);
+    expect(panelShareAt(1300, 1400, 484, 224)).toBeCloseTo(484 / 1400);
+    expect(panelShareAt(10, 1400, 484, 224)).toBeCloseTo(0.8);
+    expect(panelShareAt(10, 1000, 484, 224)).toBeCloseTo(0.776);
+    expect(panelShareAt(10, 0, 484, 224)).toBe(0.2);
   });
 });

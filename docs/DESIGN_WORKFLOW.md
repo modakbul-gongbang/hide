@@ -92,8 +92,9 @@ It draws a project's Tasks board under its header: the title row with the path b
 Its web files are `web/src/ProjectOverview.tsx`, `web/src/TaskBoards.tsx`, `web/src/WaitingBand.tsx` and `web/src/projectBoard.ts`; its agent rows are `web/src/components/agent-row.tsx`.
 
 Workspace is `Screen / Workspace`.
-It draws the tab strip, the layout switch, and the split content of a terminal beside the Explorer.
-Its web files are `web/src/WorkspaceScreen.tsx`, `web/src/TabBar.tsx`, `web/src/ViewAreas.tsx`, and `web/src/ExplorerTree.tsx`.
+It draws the side panel (`Component / Side panel`) open at the Workspace's full height over the agent column, then the panel closed with two views still open.
+The toolbar spans only the agent column and has no tool toggles; the panel's first row holds each area's tabs and New tab, then the tool-column toggle, Expand, Pin and the panel toggle, which the toolbar carries with the open-view count while the panel is closed; its second row holds the document header and the Explorer and History tool tabs.
+Its web files are `web/src/WorkspaceScreen.tsx`, `web/src/TabBar.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, and `web/src/ExplorerTree.tsx`.
 
 Project Sessions is `Screen / Project Sessions`.
 It draws the Project Overview on its Sessions tab: the Overview's header over the provider-filtered session list with search, and the read-only detail pane.

@@ -8,16 +8,18 @@ import type { SnapshotRest } from "./snapshot";
 import type { Geometry, LayoutSizes, ViewFrame } from "./viewLayout";
 import { workspaceViewOf } from "./workspace";
 
-/** The View area when only Views show or the keyboard is inside it, else the Agent area. */
+/**
+ * The View area when the side panel shows View areas and either covers the
+ * whole body or holds the keyboard, else the Agent area (issue 170): the
+ * agents beside an open panel are live, so the keyboard decides there.
+ */
 export function viewAreaInUse(rest: SnapshotRest | null): boolean {
   const view = workspaceViewOf(rest);
-  if (!view) return false;
-  if (view.mode === "views") return true;
-  if (view.mode === "agents") return false;
-  if (typeof document === "undefined") return false;
-  // A narrow Together draws one working region (B13); while it is the View
-  // areas, they are all that shows, wherever the keyboard is.
-  if (drawnViews() !== null && document.querySelector("[data-agent-area]") === null) return true;
+  if (!view || view.panel === "closed") return false;
+  if (view.panel === "expanded" && (view.layout?.display_count ?? 0) > 0) return true;
+  if (drawnViews() === null || typeof document === "undefined") return false;
+  // A window too narrow for both draws an open panel over the whole body.
+  if (document.querySelector('[data-side-panel="expanded"]') !== null) return true;
   const active = document.activeElement;
   return active instanceof Element && active.closest("[data-view-area]") !== null;
 }

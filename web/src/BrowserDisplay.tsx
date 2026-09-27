@@ -15,7 +15,9 @@ import { workspaceViewOf } from "./workspace";
 // A browser display (issue 155): its toolbar and the place its page shows.
 // In the desktop app the page is a native view the host lays over the slot
 // below the toolbar; a plain browser tab cannot draw one there, and says so
-// with a way to open the address in a tab of its own.
+// with a way to open the address in a tab of its own. Either way the toolbar
+// row carries the address, so the row lines up with a document header beside
+// it (issue 170).
 
 export function BrowserDisplay({ display, workspace, actions }: { display: ViewDisplaySnapshot; workspace: ViewWorkspace; actions: Actions }) {
   const bridge = browserBridge();
@@ -23,13 +25,20 @@ export function BrowserDisplay({ display, workspace, actions }: { display: ViewD
   if (!bridge) {
     const web = /^https?:/i.test(url);
     return (
-      <AreaEmpty state="browser-host" text={`Pages open in the hide desktop app. ${url}`}>
-        {web ? (
-          <Button variant="secondary" data-browser-open-external={display.id} onClick={() => window.open(url, "_blank", "noopener,noreferrer")}>
-            Open in browser
-          </Button>
-        ) : null}
-      </AreaEmpty>
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-browser-display={display.id}>
+        <div className="flex h-(--size-tab-strip) shrink-0 items-center border-b border-border px-md" data-browser-toolbar={display.id}>
+          <span className="min-w-0 flex-1 truncate font-mono text-caption text-subtle-foreground" data-browser-address="true">
+            {addressShown(url)}
+          </span>
+        </div>
+        <AreaEmpty state="browser-host" text="Pages open in the hide desktop app.">
+          {web ? (
+            <Button variant="secondary" data-browser-open-external={display.id} onClick={() => window.open(url, "_blank", "noopener,noreferrer")}>
+              Open in browser
+            </Button>
+          ) : null}
+        </AreaEmpty>
+      </div>
     );
   }
   return <HostedPage display={display} workspace={workspaceKey(workspace)} actions={actions} />;
@@ -46,7 +55,7 @@ function HostedPage({ display, workspace, actions }: { display: ViewDisplaySnaps
   const command = (name: BrowserCommand) => browserBridge()?.command(workspace, display.id, name);
   const address = page?.url || display.url || "";
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background" data-browser-display={display.id}>
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-browser-display={display.id}>
       <div className="flex h-(--size-tab-strip) shrink-0 items-center gap-xs border-b border-border px-sm" data-browser-toolbar={display.id}>
         <Hint label="Back">
           <Button variant="ghost" size="icon-sm" disabled={!page?.canGoBack} onClick={() => command("back")} data-browser-command="back">

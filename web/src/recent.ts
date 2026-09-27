@@ -68,7 +68,7 @@ export function currentSurface(rest: SnapshotRest | null, viewInUse: boolean): S
 
 /**
  * What the core has in front: the device, checkout, visible tab, and the
- * front Workspace's mode and active display. Only a change here, or the
+ * front Workspace's panel state and active display. Only a change here, or the
  * keyboard moving between a checkout's areas, is a visit; an agent's status
  * or a sidebar click that has not landed yet moves none of it.
  */
@@ -77,7 +77,7 @@ export function focusSignature(rest: SnapshotRest | null): string {
   const checkout = localCheckouts(rest).find((row) => row.id === navigator?.focused_checkout_id);
   const layout = checkout ? frontLayoutOf(rest, checkout) : null;
   const display = layout ? activeDisplay(layout)?.display.id : null;
-  return [navigator?.focused_device_id, checkout?.id, checkout?.active_tab_id, workspaceViewOf(rest)?.mode, display].join("\u0000");
+  return [navigator?.focused_device_id, checkout?.id, checkout?.active_tab_id, workspaceViewOf(rest)?.panel, display].join("\u0000");
 }
 
 /**

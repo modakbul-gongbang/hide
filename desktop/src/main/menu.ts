@@ -58,6 +58,7 @@ export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pa
     "toggle_left_sidebar",
     "toggle_sidebar_view",
     "toggle_right_panel",
+    "toggle_explorer",
     null,
     "text_larger",
     "text_smaller",
@@ -76,8 +77,8 @@ export const KEYBOARD_ONLY: readonly CommandId[] = [
 ];
 
 function commandItem(command: Command, send: (id: CommandId) => void): MenuItemConstructorOptions {
-  if (!command.electron) throw new Error(`${command.id} has no electron chord`);
-  return { id: command.id, label: command.title, accelerator: accelerator(command.electron), click: () => send(command.id) };
+  // A command with no chord (the sidebar switch until the operator binds one) is a plain item.
+  return { id: command.id, label: command.title, accelerator: command.electron ? accelerator(command.electron) : undefined, click: () => send(command.id) };
 }
 
 // A reported set is a few pane commands; anything past these caps is not one.

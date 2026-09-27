@@ -65,8 +65,8 @@ pub(super) struct ViewLayoutPayload {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct ViewWorkspace {
-    device_id: String,
-    path: String,
+    pub(super) device_id: String,
+    pub(super) path: String,
 }
 
 /// The payload of `browser_open` (issue 155): show `url` as a page in a View
@@ -1809,8 +1809,8 @@ impl Runtime {
         open.then(|| tab_id.clone())
     }
 
-    /// The front Workspace's area-active displays while its mode shows
-    /// Views: what is on screen, one per area, in tree order.
+    /// The front Workspace's area-active displays while its View areas are on
+    /// screen: what is shown, one per area, in tree order.
     fn visible_view_displays(&self) -> Vec<&Display> {
         let Some(store) = self.workspace_views.as_ref() else {
             return Vec::new();
@@ -1822,7 +1822,7 @@ impl Runtime {
         else {
             return Vec::new();
         };
-        if !view.mode.shows_views() {
+        if !view.shows_views() {
             return Vec::new();
         }
         view.layout

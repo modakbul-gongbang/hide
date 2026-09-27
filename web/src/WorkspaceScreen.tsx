@@ -1,11 +1,9 @@
-import { Columns2Icon, FileTextIcon, FolderIcon, GitBranchIcon, TerminalIcon } from "lucide-react";
+import { ArrowLeftRightIcon, Maximize2Icon, Minimize2Icon, PanelRightDashedIcon, PanelRightIcon, PinIcon, PinOffIcon, PlusIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AreaEmpty } from "./AreaEmpty";
 import { EntryContextMenu, type MenuEntry } from "./components/entry-menu";
 import { Button } from "./components/ui/button";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
-import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
 import { Hint } from "./components/ui/tooltip";
 import { FindBar } from "./Overlays";
 import { PaneCanvas, RemotePaneCanvas } from "./PaneGrid";
@@ -14,69 +12,143 @@ import { remoteView } from "./remote";
 import { canRetryDevice, deviceLine } from "./settings";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, type Checkout } from "./snapshot";
 import { useShellStore } from "./store";
+import { focusTerminal } from "./terminals";
 import { AgentTabBar } from "./TabBar";
 import { Tools } from "./Tools";
-import { useUiStore, type WorkingRegion } from "./ui";
+import { useUiStore } from "./ui";
 import { ViewAreas } from "./ViewAreas";
-import { narrowWorkspace, shownTools } from "./viewLayout";
-import { LAYOUTS, agentEntries, agentWidth, drawnMode, layoutLabel, shareAt, workspaceViewOf, type ViewMode } from "./workspace";
+import { shownTool } from "./viewLayout";
+import { PANEL_STATES, agentEntries, panelCoversToSend, panelFrame, panelShareAt, panelWidth, workspaceViewOf, type PanelFrame, type PanelSizes, type PanelState, type Tool, type WorkspaceView } from "./workspace";
 import { hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
 
-// A Workspace (PRD S6 D-01..D-05, B4-B11; S7 B12, B13): one checkout's Agent
-// area (its Herdr tabs and their panes) and View areas (its files and diffs),
-// side by side or one at a time, with its tools beside them. The layout, the
-// tools and the boundary are the core's, per Workspace; this draws them and
-// sends one event per operator choice. A hidden area is unmounted, never
-// closed: its terminals park and stay fed, and its tabs stay in the core.
+// A Workspace (PRD S6 D-01..D-05, B4-B11; S7 B12, B13; issue 170): one
+// checkout's agent column (its toolbar, then its Herdr tabs and their panes),
+// always the Workspace's full width, and a side panel docked to its right
+// edge over it at the Workspace's full height, holding the View areas (its
+// files, diffs and pages) with the tool column beside them. The panel's
+// state, pin, width and tool are the core's, per Workspace; this draws them
+// and sends one event per operator choice. A closed panel is unmounted, never
+// closed: its views stay in the core.
 //
-// A window too narrow for what the core stored is drawn narrower without
-// changing it: the tools float over the work area once the operator asks for
-// one, and Together shows one working region at a time with a switch to the
-// other. None of that is sent or stored, so widening shows the stored layout
-// again.
+// Every control sits once, on the container it changes (issue 170, "Side
+// panel hierarchy, revised"): the toolbar holds only the path back and, while
+// the panel is closed, its toggle; the panel's first row, at the toolbar's
+// height, holds each area's tabs and New tab, then the tool column's toggle,
+// Expand, Pin and the panel toggle; its second row, level with the agents'
+// tab strip, holds the document header and the tool tabs.
+//
+// The panel floats over agents that keep their size and stay live beside it,
+// so opening, closing, resizing and expanding it never resizes a terminal;
+// only a pinned panel narrows the agent column to its left edge. A window too
+// narrow for both draws the panel over the whole Workspace, and a pinned one
+// floats there, without changing what the core stores, so widening brings it
+// back.
 
-const WIDE = { toolsOverlay: false, singleRegion: false };
+const CLOSED: PanelFrame = { shown: "closed", content: "empty", width: 0, agentsRight: 0, narrow: false, resize: null, need: 0, toolsOverlay: false };
 
 export function WorkspaceScreen({ actions }: { actions: Actions }) {
   const checkout = useShellStore((s) => frontCheckout(s.rest));
   const view = useShellStore((s) => workspaceViewOf(s.rest));
   const stored = useUiStore((s) => s.toolsPlacement);
-  const [body, setBody] = useState<HTMLDivElement | null>(null);
+  const [body, setBody] = useState<HTMLElement | null>(null);
   const width = useWidth(body);
-  const sizes = useMemo(() => ({ areaMin: tokenPx("--size-workspace-area-min"), panelMin: tokenPx("--size-panel-min"), divider: tokenPx("--size-resize-handle") }), []);
+  const sizes = useMemo<PanelSizes>(
+    () => ({ areaMin: tokenPx("--size-workspace-area-min"), toolColumn: tokenPx("--size-panel-ideal"), gap: tokenPx("--spacing-sm"), hairline: tokenPx("--size-hairline") }),
+    [],
+  );
   const opening = useShellStore((s) => (s.editor?.opening ?? []).some((row) => row.checkout_id === checkout?.id));
-  // With nothing open in the View areas the agents take their space; the
-  // stored layout, the toolbar's choice and the tools stay as they are.
-  const mode = view ? drawnMode(view, opening) : "agents";
-  const narrow = view ? narrowWorkspace({ bodyWidth: width, mode, ...sizes }) : WIDE;
-  // The column while there is room for it; past that, an overlay that stays
-  // closed until the operator asks for a tool (S7 B12).
+  const views = (view?.layout?.display_count ?? 0) > 0 || opening;
+  const frame = view ? panelFrame({ view, views, body: width, sizes }) : CLOSED;
+  // The tool column while the panel has room for it beside a View area;
+  // past that, an overlay inside the panel that stays closed until the
+  // operator asks for the tools (S7 B12).
+  // It runs as the panel shows too, so a tool asked for with a closed panel
+  // opens the overlay of a panel that turns out narrow.
+  const panelShown = frame.shown !== "closed";
   useEffect(() => {
-    useUiStore.getState().setToolsNarrow(narrow.toolsOverlay);
-  }, [narrow.toolsOverlay]);
+    useUiStore.getState().setToolsNarrow(frame.toolsOverlay);
+  }, [frame.toolsOverlay, panelShown]);
   // An overlay opened in one Workspace is not left open over the next one,
   // nor over this screen when the operator comes back to it; one left with
   // no tool to show closes too, so a tool shown later does not float over
   // the work by itself.
   const checkoutId = checkout?.id ?? null;
   useEffect(() => () => useUiStore.getState().closeTools(), [checkoutId]);
-  const toolless = view ? !view.explorer && !view.changes : true;
+  // Only the page sees the window, so it tells the core whether this
+  // Workspace's panel takes the whole body when it shows, a fact of the
+  // window and what the Workspace holds, not of the panel being open: it is
+  // sent once per crossing and never per resize, so an agent chosen from
+  // elsewhere uncovers it even when pinned (issue 170). Nothing is reported
+  // before the body is measured.
+  const covers = view ? panelFrame({ view: { ...view, panel: view.panel === "closed" ? "open" : view.panel }, views, body: width, sizes }).narrow : false;
+  const measured = width > 0;
+  const coreCovers = view?.covered === true;
+  const deviceId = view?.device_id ?? null;
+  const viewPath = view?.path ?? null;
+  // The page's last report holds only while it draws the same Workspace
+  // over one live connection: the core forgets its value whenever the front
+  // moves, and a report sent while the socket was down never arrived. When
+  // this screen is not drawn (All projects, an Overview) nothing is sent: the
+  // core keeps what the page last saw until the front moves.
+  const live = useShellStore((s) => s.connection === "live");
+  const lastSent = useRef<{ key: string; covers: boolean } | null>(null);
+  useEffect(() => {
+    if (!live) {
+      lastSent.current = null;
+      return;
+    }
+    if (!measured || deviceId === null || viewPath === null) return;
+    const key = `${deviceId}\u0000${viewPath}`;
+    if (lastSent.current?.key !== key) lastSent.current = null;
+    if (!panelCoversToSend(covers, coreCovers, lastSent.current?.covers ?? null)) return;
+    if (actions.reportPanelCovers({ device_id: deviceId, path: viewPath }, covers) === false) return;
+    lastSent.current = { key, covers };
+  }, [actions, live, measured, deviceId, viewPath, covers, coreCovers]);
+  const toolless = view ? !view.tools : true;
   useEffect(() => {
     if (toolless) useUiStore.getState().closeTools();
   }, [toolless]);
+  // A panel that closes with the keyboard inside it leaves no focus; it goes
+  // back to the pane the core has focused, as after a closing sheet, so no
+  // focus is reported for it.
+  const shown = frame.shown !== "closed";
+  const wasShown = useRef(shown);
+  useEffect(() => {
+    if (wasShown.current && !shown) {
+      const paneId = useShellStore.getState().focusedPaneId;
+      if (paneId) focusTerminal(paneId);
+    }
+    wasShown.current = shown;
+  }, [shown]);
   if (!checkout || !view) return null;
-  // Until the effect above has run, a window that just turned narrow is
+  // Until the effect above has run, a panel that just turned narrow is
   // drawn with the overlay closed.
-  const placement = narrow.toolsOverlay ? (stored === "open" ? "open" : "closed") : "column";
-  const { explorer, changes } = shownTools(view, placement);
+  const placement = frame.toolsOverlay ? (stored === "open" ? "open" : "closed") : "column";
+  const tool = shownTool(view, placement);
   return (
-    <section className="flex min-h-0 min-w-0 flex-1 flex-col" aria-label={`Workspace ${checkout.branch ?? checkout.label}`} data-workspace-screen={checkout.id} data-layout={view.mode}>
-      <WorkspaceToolbar checkout={checkout} mode={view.mode} explorer={explorer} changes={changes} singleRegion={narrow.singleRegion} actions={actions} />
-      <div ref={setBody} className="relative flex min-h-0 flex-1" data-workspace-body={narrow.toolsOverlay ? "narrow" : "wide"}>
-        <Areas checkout={checkout} mode={mode} share={view.agent_share} single={narrow.singleRegion} actions={actions} />
-        <Tools explorer={explorer} changes={changes} overlay={narrow.toolsOverlay} actions={actions} />
+    <section
+      ref={setBody}
+      className="relative min-h-0 min-w-0 flex-1 overflow-hidden"
+      aria-label={`Workspace ${checkout.branch ?? checkout.label}`}
+      data-workspace-screen={checkout.id}
+      data-panel={frame.shown}
+      data-panel-docked={frame.agentsRight > 0}
+      data-workspace-body={frame.narrow ? "narrow" : "wide"}
+    >
+      {/* Its own stacking context, so nothing the agents raise (a pane
+          divider) draws over the panel; and out of reach of the pointer and
+          the keyboard while an expanded panel covers it whole. */}
+      <div
+        className="absolute inset-y-0 left-0 isolate flex min-h-0 min-w-0 flex-col"
+        style={{ right: frame.agentsRight }}
+        inert={frame.shown === "expanded"}
+        data-agent-area="true"
+      >
+        <WorkspaceToolbar checkout={checkout} view={view} panelShown={shown} actions={actions} />
+        <AgentArea checkout={checkout} actions={actions} />
       </div>
+      {shown ? <SidePanel view={view} frame={frame} tool={tool} placement={placement} body={body} sizes={sizes} actions={actions} /> : null}
     </section>
   );
 }
@@ -98,31 +170,33 @@ function useWidth(element: HTMLElement | null): number {
   return width;
 }
 
-/** The path back (B4), the layout choice (B5), the tools (B10), and the working region of a narrow Together (S7 B13). */
-function WorkspaceToolbar({ checkout, mode, explorer, changes, singleRegion, actions }: { checkout: Checkout; mode: ViewMode; explorer: boolean; changes: boolean; singleRegion: boolean; actions: Actions }) {
+/**
+ * The path back (B4), over the agent column only, and the side panel's
+ * toggle at its right end while the panel is closed; an open panel carries
+ * the toggle in the same spot.
+ */
+function WorkspaceToolbar({ checkout, view, panelShown, actions }: { checkout: Checkout; view: WorkspaceView; panelShown: boolean; actions: Actions }) {
   const project = useShellStore((s) => catalogWorkspaces(s.rest).find((row) => row.checkouts.some((candidate) => candidate.id === checkout.id)) ?? null);
   const device = useShellStore((s) => focusedRemoteDevice(s.rest));
   const setScreen = useUiStore((s) => s.setScreen);
   const name = checkout.branch ?? checkout.label;
-  // What the toolbar acts on is this Workspace: its layout, its tools, its
-  // path and its Project (B18). Opening the menu changes none of them.
+  // What the toolbar acts on is this Workspace: its panel, its path and its
+  // Project (B18). Opening the menu changes none of them.
   const menuItems = (): MenuEntry<ToolbarMenuId>[] => [
-    ...LAYOUTS.map((layout) => ({ id: `layout:${layout.mode}` as const, label: `${layout.mode === mode ? "✓ " : ""}${layout.label}`, unavailable: null })),
-    { id: "explorer", label: explorer ? "Hide Explorer" : "Show Explorer", unavailable: null, separated: true },
-    { id: "changes", label: changes ? "Hide History" : "Show History", unavailable: null },
+    ...PANEL_STATES.map((state) => ({ id: `panel:${state.panel}` as const, label: `${state.panel === view.panel ? "✓ " : ""}${state.label}`, unavailable: null })),
+    { id: "pin", label: view.pinned ? "Unpin side panel" : "Pin side panel", unavailable: null },
     { id: "copy_path", label: "Copy Workspace path", unavailable: null, separated: true },
     { id: "overview", label: "Open Project Overview", unavailable: project ? null : "This Workspace's Project is not in the catalog" },
   ];
   const select = (id: ToolbarMenuId) => {
-    if (id.startsWith("layout:")) return actions.setLayout(id.slice("layout:".length) as ViewMode);
-    if (id === "explorer") return actions.setTool("explorer", !explorer);
-    if (id === "changes") return actions.setTool("changes", !changes);
+    if (id.startsWith("panel:")) return actions.setPanel(id.slice("panel:".length) as PanelState);
+    if (id === "pin") return actions.setPanelPinned(!view.pinned);
     if (id === "copy_path") return void navigator.clipboard?.writeText(checkout.path).catch(() => undefined);
     if (id === "overview" && project) setScreen({ kind: "overview", projectId: project.id });
   };
   return (
     <EntryContextMenu label={`Workspace ${name}`} items={menuItems} onSelect={select} className="shrink-0" data-workspace-menu="true">
-      <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border bg-sidebar px-sm text-caption" data-workspace-toolbar="true">
+      <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border bg-sidebar pl-sm pr-sm text-caption" data-workspace-toolbar="true">
         <nav aria-label="Location" className="flex min-w-0 flex-1 items-center gap-xs">
           <button type="button" className="shrink-0 rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setScreen({ kind: "main" })}>
             All projects
@@ -154,149 +228,84 @@ function WorkspaceToolbar({ checkout, mode, explorer, changes, singleRegion, act
             </Hint>
           ) : null}
         </nav>
-        {singleRegion ? <RegionSwitch /> : null}
-        <LayoutSwitch mode={mode} actions={actions} />
-        <div className="flex items-center gap-xxs" role="group" aria-label="Workspace tools">
-          <ToolToggle tool="explorer" label="Explorer" on={explorer} actions={actions} />
-          <ToolToggle tool="changes" label="History" on={changes} actions={actions} />
-        </div>
+        {panelShown ? null : <PanelToggle view={view} actions={actions} />}
       </div>
     </EntryContextMenu>
   );
 }
 
-type ToolbarMenuId = `layout:${ViewMode}` | "explorer" | "changes" | "copy_path" | "overview";
-
-/** The layout mode's own mark, standing in for the hand-drawn `LayoutIcon` (D-09). */
-function layoutMark(mode: ViewMode) {
-  if (mode === "agents") return <TerminalIcon />;
-  if (mode === "together") return <Columns2Icon />;
-  return <FileTextIcon />;
-}
-
-/** Three icons with the choice marked, and the same choices by name in a menu (D-03). */
-function LayoutSwitch({ mode, actions }: { mode: ViewMode; actions: Actions }) {
-  return (
-    <div className="relative flex items-center gap-xxs">
-      <ToggleGroup type="single" value={mode} onValueChange={(next) => next && actions.setLayout(next as ViewMode)} aria-label="Layout">
-        {LAYOUTS.map((layout) => (
-          <Hint key={layout.mode} label={layout.label}>
-            <ToggleGroupItem value={layout.mode} aria-label={layout.label} data-layout-choice={layout.mode}>
-              {layoutMark(layout.mode)}
-            </ToggleGroupItem>
-          </Hint>
-        ))}
-      </ToggleGroup>
-      <DropdownMenu>
-        <Hint label={`Layout menu: ${layoutLabel(mode)}`}>
-          <DropdownMenuTrigger
-            data-layout-menu="true"
-            className="rounded-xs px-xs text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent"
-          >
-            ▾
-          </DropdownMenuTrigger>
-        </Hint>
-        <DropdownMenuContent align="end">
-          {LAYOUTS.map((layout) => (
-            <DropdownMenuItem key={layout.mode} onSelect={() => actions.setLayout(layout.mode)}>
-              {layout.mode === mode ? "✓ " : ""}
-              {layout.label}
-            </DropdownMenuItem>
-          ))}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
-  );
-}
-
-const REGIONS: readonly { region: WorkingRegion; label: string }[] = [
-  { region: "agents", label: "Agents" },
-  { region: "views", label: "Views" },
-];
+type ToolbarMenuId = `panel:${PanelState}` | "pin" | "copy_path" | "overview";
 
 /**
- * The explicit way between the two working regions while a Together window
- * is too narrow to show both (S7 B13). It is this page's presentation only:
- * choosing a region sends nothing.
+ * The side panel's toggle (issue 170), at the Workspace's top right in either
+ * state: pressed while the panel shows, and while it is closed with views
+ * open, their count as a small badge, so the views it keeps are never out of
+ * mind. Neither direction resizes a terminal unless the panel is pinned.
  */
-function RegionSwitch() {
-  const region = useUiStore((s) => s.workingRegion);
+function PanelToggle({ view, actions }: { view: WorkspaceView; actions: Actions }) {
+  const on = view.panel !== "closed";
+  const count = on ? 0 : (view.layout?.display_count ?? 0);
+  const views = count > 0 ? `${count} ${count === 1 ? "view" : "views"} open` : undefined;
+  // One name for the control, its state in aria-pressed; the tooltip says what a press does.
   return (
-    <ToggleGroup
-      type="single"
-      value={region}
-      onValueChange={(next) => next && useUiStore.getState().setWorkingRegion(next as WorkingRegion)}
-      aria-label="Working region, one at a time in this narrow window"
-      data-region-switch={region}
-    >
-      {REGIONS.map((choice) => (
-        <ToggleGroupItem key={choice.region} value={choice.region} data-region-choice={choice.region}>
-          {choice.label}
-        </ToggleGroupItem>
-      ))}
-    </ToggleGroup>
-  );
-}
-
-// Explorer and History toggle on and off independently - both may show at
-// once - so this is not a single-choice ToggleGroup; each stays its own
-// icon button, and the pair keeps its `role="group"` wrapper (below).
-function ToolToggle({ tool, label, on, actions }: { tool: "explorer" | "changes"; label: string; on: boolean; actions: Actions }) {
-  return (
-    <Hint label={`${on ? "Hide" : "Show"} ${label}`}>
+    <Hint label={on ? "Hide side panel" : views ? `Show side panel, ${views}` : "Show side panel"} shortcut={displayCommand("toggle_right_panel", hostKind())}>
       <Button
         variant={on ? "secondary" : "ghost"}
         size="icon-sm"
+        className="relative"
         aria-pressed={on}
-        data-tool-toggle={tool}
-        onClick={() => actions.setTool(tool, !on)}
+        aria-label="Side panel"
+        aria-description={views}
+        data-panel-toggle={on ? "on" : "off"}
+        onClick={() => actions.setPanel(on ? "closed" : "open")}
       >
-        {tool === "explorer" ? <FolderIcon /> : <GitBranchIcon />}
+        <PanelRightIcon />
+        {count > 0 ? (
+          <span aria-hidden="true" className="absolute -right-xxs -top-xxs flex h-(--size-icon) min-w-(--size-icon) items-center justify-center rounded-full bg-primary px-xxs text-micro text-primary-foreground" data-panel-badge={count}>
+            {count}
+          </span>
+        ) : null}
       </Button>
     </Hint>
   );
 }
 
-/** The minimum width either area keeps while both show (B6), read from its token. */
-function areaMinimum(): number {
-  return tokenPx("--size-workspace-area-min");
-}
-
 /**
- * The areas the layout shows. While both show, a boundary between them moves
- * a guide line as it is dragged and sends one `workspace_view` share on
- * release, so a drag never resizes the terminals on every pointer event.
- * `single` is a Together window too narrow for both: it shows the working
- * region the operator was last in (S7 B13).
+ * The side panel (issue 170): a --card surface at the Workspace's full
+ * height, docked to its right edge, with a --spacing-sm gap on its left that
+ * is the resize grip. Its first row carries the View tabs above each top
+ * area and the panel's actions at its right end, over the tool column when
+ * that shows. Hovering the gap shows the grip, a hairline with a ⇆ pill; a
+ * drag moves the grip as a guide and sends the panel's one stored width on
+ * release (the tools-only panel keeps its own), so the panel itself does not
+ * move during a drag; a browser display's slot inside the panel reports its rect like any
+ * other, and closing the panel unmounts the slots, which hides their pages
+ * without closing them.
  */
-function Areas({ checkout, mode, share, single, actions }: { checkout: Checkout; mode: ViewMode; share: number; single: boolean; actions: Actions }) {
-  const region = useUiStore((s) => s.workingRegion);
-  const body = useRef<HTMLDivElement>(null);
-  const [width, setWidth] = useState(0);
+function SidePanel({ view, frame, tool, placement, body, sizes, actions }: { view: WorkspaceView; frame: PanelFrame; tool: Tool | null; placement: "column" | "open" | "closed"; body: HTMLElement | null; sizes: PanelSizes; actions: Actions }) {
   const [guide, setGuide] = useState<number | null>(null);
-  useLayoutEffect(() => {
-    const element = body.current;
-    if (!element) return undefined;
-    setWidth(element.clientWidth);
-    const observer = new ResizeObserver(() => setWidth(element.clientWidth));
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, []);
-  const minimum = useMemo(() => areaMinimum(), []);
-  const agents = mode !== "views" && (!single || region === "agents");
-  const views = mode !== "agents" && (!single || region === "views");
-  // The region the operator works in is the one a narrow Together keeps.
-  const workIn = (next: WorkingRegion) => () => useUiStore.getState().setWorkingRegion(next);
-  const agentPx = agents && views && width > 0 ? agentWidth(share, width, minimum) : null;
+  const resize = frame.resize;
+  const need = frame.need;
+  // The share the panel is drawn at, which a key steps from and assistive
+  // technology reads.
+  const share = body && body.clientWidth > 0 ? frame.width / body.clientWidth : view.views_over_share;
+  const land = (next: number) => {
+    if (resize && Math.abs(next - share) > 0.001) actions.setWorkspaceView({ [resize]: next });
+  };
+  const column = !frame.toolsOverlay && tool !== null;
+  // The column toggle reads pressed while the tools show: the column, or a
+  // narrow panel's overlay while it is open.
+  const toolsShown = frame.toolsOverlay ? view.tools && placement === "open" : view.tools;
+  const panelActions = <PanelActions view={view} frame={frame} toolsShown={toolsShown} actions={actions} />;
   const drag = (event: React.PointerEvent<HTMLDivElement>) => {
-    const element = body.current;
-    if (!element) return;
+    if (event.button !== 0 || !body) return;
     event.preventDefault();
-    const left = element.getBoundingClientRect().left;
-    const total = element.clientWidth;
+    const left = body.getBoundingClientRect().left;
+    const total = body.clientWidth;
     const target = event.currentTarget;
     target.setPointerCapture(event.pointerId);
-    const move = (next: PointerEvent) => setGuide(shareAt(next.clientX - left, total, minimum) * total);
+    const shareOf = (next: PointerEvent) => panelShareAt(next.clientX - left, total, need, sizes.areaMin);
+    const move = (next: PointerEvent) => setGuide(total - panelWidth(shareOf(next), total, need, sizes.areaMin));
     const end = () => {
       target.removeEventListener("pointermove", move);
       target.removeEventListener("pointerup", up);
@@ -306,8 +315,7 @@ function Areas({ checkout, mode, share, single, actions }: { checkout: Checkout;
     };
     const up = (next: PointerEvent) => {
       end();
-      const nextShare = shareAt(next.clientX - left, total, minimum);
-      if (Math.abs(nextShare - share) > 0.001) actions.setWorkspaceView({ agent_share: nextShare });
+      land(shareOf(next));
     };
     // A drag the system cancels lands nothing and leaves no guide behind.
     target.addEventListener("pointermove", move);
@@ -316,52 +324,146 @@ function Areas({ checkout, mode, share, single, actions }: { checkout: Checkout;
     target.addEventListener("lostpointercapture", end);
   };
   return (
-    // While both areas show they ask for two minimums, and the tools column
-    // gives way first, down to its own minimum (B6): its shrink weight is far
-    // above the areas'. Below that the areas split what is left evenly.
-    <div
-      ref={body}
-      className={`relative flex min-h-0 min-w-0 grow ${agents && views ? "shrink basis-[calc(2_*_var(--size-workspace-area-min)_+_var(--size-resize-handle))]" : "flex-1"}`}
-      data-areas={mode}
-    >
-      {agents ? (
-        <div
-          className={`flex min-h-0 min-w-0 flex-col ${agentPx === null ? "flex-1" : "shrink-0"}`}
-          style={agentPx === null ? undefined : { width: agentPx }}
-          data-agent-area="true"
-          onPointerDownCapture={workIn("agents")}
-          onFocusCapture={workIn("agents")}
-        >
-          <AgentArea checkout={checkout} actions={actions} />
+    <>
+      <aside
+        className="absolute inset-y-0 right-0 z-10 flex min-h-0 min-w-0 bg-background"
+        style={{ width: frame.width }}
+        aria-label="Side panel"
+        data-side-panel={frame.shown}
+        data-panel-content={frame.content}
+      >
+        {resize ? (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize the side panel"
+            aria-valuenow={Math.round(share * 100)}
+            aria-valuemin={20}
+            aria-valuemax={80}
+            tabIndex={0}
+            data-panel-edge="true"
+            className="group relative z-10 flex w-sm shrink-0 cursor-col-resize justify-center outline-none"
+            onPointerDown={drag}
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+              event.preventDefault();
+              const total = body?.clientWidth ?? 0;
+              if (total <= 0) return;
+              // Left widens the panel, as its edge moves left.
+              const step = event.key === "ArrowLeft" ? 0.05 : -0.05;
+              land(panelWidth(share + step, total, need, sizes.areaMin) / total);
+            }}
+          >
+            {/* While a drag moves the guide, the grip travels with it. */}
+            <PanelGrip className={guide === null ? "opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" : "opacity-0"} />
+          </div>
+        ) : (
+          <div aria-hidden="true" className="w-sm shrink-0" />
+        )}
+        <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden rounded-tl-lg border border-border bg-card" data-panel-card="true">
+          {frame.content === "views" ? (
+            <>
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-view-area="true">
+                <ViewAreas actions={actions} trailing={column ? null : panelActions} />
+              </div>
+              <Tools tool={tool} overlay={frame.toolsOverlay} header={column ? panelActions : null} actions={actions} />
+            </>
+          ) : frame.content === "tools" ? (
+            <Tools tool={view.tool} overlay={false} alone header={panelActions} actions={actions} />
+          ) : (
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+              <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center border-b border-border" data-panel-row="1">
+                <Hint label="New tab: open a file" shortcut={displayCommand("open_file", hostKind())}>
+                  <button
+                    type="button"
+                    aria-label="New tab: open a file"
+                    data-panel-new-tab="true"
+                    className="flex h-full min-w-[var(--size-tab-overflow-control)] shrink-0 items-center justify-center text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:bg-accent"
+                    onClick={() => actions.openFilePalette()}
+                  >
+                    <PlusIcon className="size-(--size-icon)" />
+                  </button>
+                </Hint>
+                <span className="min-w-0 flex-1" />
+                {panelActions}
+              </div>
+              <AreaEmpty state="no-view" text="No file or diff is open in this Workspace.">
+                <span className="text-caption text-muted-foreground" data-empty-open-file="true">
+                  {displayCommand("open_file", hostKind())} opens a file
+                </span>
+              </AreaEmpty>
+            </div>
+          )}
+        </div>
+      </aside>
+      {guide !== null ? (
+        <div className="pointer-events-none absolute inset-y-0 z-30 flex w-sm justify-center" style={{ left: guide }} data-panel-guide="true">
+          <PanelGrip />
         </div>
       ) : null}
-      {agents && views ? (
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize the Agent and View areas"
-          aria-valuenow={Math.round(share * 100)}
-          aria-valuemin={20}
-          aria-valuemax={80}
-          tabIndex={0}
-          data-area-divider="true"
-          className="relative z-10 w-[var(--size-resize-handle)] shrink-0 cursor-col-resize bg-border outline-none hover:bg-primary focus-visible:bg-primary"
-          onPointerDown={drag}
-          onKeyDown={(event) => {
-            if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
-            event.preventDefault();
-            const step = event.key === "ArrowLeft" ? -0.05 : 0.05;
-            const next = width > 0 ? shareAt((share + step) * width, width, minimum) : share;
-            if (next !== share) actions.setWorkspaceView({ agent_share: next });
-          }}
-        />
+    </>
+  );
+}
+
+/** The resize grip (issue 170; `Component / Side panel grip`): a hairline with a ⇆ pill at its middle, centred on the gap so the pill overlaps the card's edge, drawn on hover, keyboard focus and while dragging. */
+function PanelGrip({ className = "" }: { className?: string }) {
+  return (
+    <span aria-hidden="true" className={`relative h-full w-(--size-hairline) ${className}`} data-panel-grip="true">
+      <span className="absolute inset-0 bg-muted-foreground opacity-[var(--opacity-secondary)]" />
+      <span className="absolute left-1/2 top-1/2 flex size-(--size-icon-button-toolbar) -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-md border border-border bg-card text-muted-foreground">
+        <ArrowLeftRightIcon className="size-(--size-icon-sm)" />
+      </span>
+    </span>
+  );
+}
+
+/**
+ * The panel's actions at the right end of its first row: the tool column's
+ * toggle while a view or the empty state leaves room for it, Expand while a
+ * view is open, Pin, and the panel toggle. A narrow window has no Expand or
+ * Pin, since the panel already covers the Workspace there.
+ */
+function PanelActions({ view, frame, toolsShown, actions }: { view: WorkspaceView; frame: PanelFrame; toolsShown: boolean; actions: Actions }) {
+  const expanded = view.panel === "expanded";
+  const pinLabel = view.pinned ? "Unpin: float over the agents" : "Pin beside the agents";
+  return (
+    <div className="flex shrink-0 items-center gap-xxs pl-xs pr-sm" role="group" aria-label="Side panel actions" data-panel-actions="true">
+      {frame.content === "tools" ? null : (
+        <Hint label={toolsShown ? "Hide tools" : "Show tools"}>
+          <Button
+            variant={toolsShown ? "secondary" : "ghost"}
+            size="icon-sm"
+            aria-pressed={toolsShown}
+            aria-label="Tools"
+            data-tools-toggle={toolsShown ? "on" : "off"}
+            onClick={() => actions.setToolsShown(!toolsShown)}
+          >
+            <PanelRightDashedIcon />
+          </Button>
+        </Hint>
+      )}
+      {frame.content === "views" && !frame.narrow ? (
+        <Hint label={expanded ? "Restore panel width" : "Expand panel"}>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-pressed={expanded}
+            aria-label="Expand side panel"
+            data-panel-expand={expanded ? "on" : "off"}
+            onClick={() => actions.setPanel(expanded ? "open" : "expanded")}
+          >
+            {expanded ? <Minimize2Icon /> : <Maximize2Icon />}
+          </Button>
+        </Hint>
       ) : null}
-      {views ? (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-view-area="true" onPointerDownCapture={workIn("views")} onFocusCapture={workIn("views")}>
-          <ViewAreas actions={actions} />
-        </div>
-      ) : null}
-      {guide !== null ? <div className="pointer-events-none absolute inset-y-0 w-[var(--size-resize-handle)] bg-primary" style={{ left: guide }} data-area-guide="true" /> : null}
+      {frame.narrow ? null : (
+        <Hint label={pinLabel}>
+          <Button variant={view.pinned ? "secondary" : "ghost"} size="icon-sm" aria-pressed={view.pinned} aria-label="Pin side panel" data-panel-pin={view.pinned ? "on" : "off"} onClick={() => actions.setPanelPinned(!view.pinned)}>
+            {view.pinned ? <PinOffIcon /> : <PinIcon />}
+          </Button>
+        </Hint>
+      )}
+      <PanelToggle view={view} actions={actions} />
     </div>
   );
 }

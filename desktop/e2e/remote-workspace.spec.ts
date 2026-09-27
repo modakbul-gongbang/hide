@@ -4,7 +4,7 @@
 // HIDE_E2E_SSH_PID plus HIDE_E2E_SSH_CONFIG enable the stalled-handshake
 // check only for an identified, test-owned sshd listener.
 
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -22,6 +22,13 @@ const HOOK_CLI = path.join(path.dirname(HIDE_CLI), "hide-agent-hooks");
 
 test.describe.configure({ timeout: 300_000 });
 test.skip(!process.env.HIDE_E2E_SSH_PORT, "an isolated SSH server is required");
+
+/** Shows the Workspace in front's View areas, opening its side panel if a background open left it closed. */
+async function showViews(page: Page): Promise<void> {
+  const toggle = page.locator('[data-panel-toggle="off"]');
+  if (await toggle.count()) await toggle.click();
+  await expect(page.locator("[data-workspace-screen]")).not.toHaveAttribute("data-panel", "closed");
+}
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 
@@ -318,7 +325,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     }, state);
     await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen"), { timeout: 20_000 }).toContain("ssh-e2e");
     expect((await commandFromPane(remote, run, bridge, ["view", "select", tlsView.view_id], "remote-tls-select")).status).toBe(0);
-    await page.locator('[data-layout-choice="views"]').click();
+    await showViews(page);
     await expect.poll(async () => app!.evaluate(async ({ BrowserWindow }, routeUrl) => {
       const child = BrowserWindow.getAllWindows()[0]?.contentView.children.find((entry) =>
         (entry as { webContents?: Electron.WebContents }).webContents?.getURL() === routeUrl);
@@ -359,7 +366,7 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     }, state);
     await expect.poll(() => page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen")).not.toContain("ssh-e2e");
     expect((await commandFromPane(local, run, null, ["view", "select", (localBrowser.answer.result as { view_id: string }).view_id], "local-dev-select")).status).toBe(0);
-    await page.locator('[data-layout-choice="views"]').click();
+    await showViews(page);
     await expect.poll(async () => app!.evaluate(async ({ BrowserWindow }) => {
       const pages = BrowserWindow.getAllWindows()[0]?.contentView.children.filter((entry) =>
         (entry as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Remote dev") as unknown as { webContents: Electron.WebContents }[] | undefined;
