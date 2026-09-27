@@ -368,3 +368,32 @@ test("browser: waiting for a hidden page does not take the operator's keyboard t
   const revealed = await openFromCli(`${origin}/b.html`, ["--reveal", "--wait"]);
   expect(revealed).toMatchObject({ status: 0, ok: true, page: { state: "loaded" } });
 });
+
+test("new-tab: empty page creates no native renderer and address loads in the same display", async () => {
+  ({ app } = await launch(run.env, { switches: PAINT_WHILE_OCCLUDED }));
+  expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1024, 640));
+  const page = await app.firstWindow();
+  await enterWorkspace(page, "fixture");
+  expect(await openFromCli(`${origin}/a.html`, ["--reveal", "--wait"])).toMatchObject({ ok: true });
+  await viewOf(`${origin}/a.html`);
+  const count = (await views()).length;
+  await page.locator('[data-view-new-tab]').click();
+  await expect(page.locator('[data-new-tab-page]')).toBeVisible();
+  const address = page.getByRole("textbox", { name: "Page address" });
+  await expect(address).toBeFocused();
+  await expect(address).toHaveValue("");
+  expect((await views()).length).toBe(count);
+  const id = await page.locator('[data-browser-display]').getAttribute("data-browser-display");
+  await expect.poll(async () => (await views()).filter((view) => view.visible).length).toBe(0);
+  await screenshot(page, "new-tab-native-empty-shell");
+  // Let macOS present the shell frame before capturing this background window.
+  await page.waitForTimeout(500);
+  await windowShot("new-tab-native-empty");
+  await address.fill(`${origin}/b.html`);
+  await address.press("Enter");
+  await expect(tab(page, "Page B")).toHaveAttribute("data-display", id!);
+  await viewOf(`${origin}/b.html`);
+  await expectOnSlot(page, `${origin}/b.html`, id!);
+  await windowShot("new-tab-native-navigated");
+});

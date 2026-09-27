@@ -326,8 +326,7 @@ fn the_side_panel_closes_and_opens_without_closing_a_view() {
         "the file keeps the tools-only width"
     );
 
-    // Closing the last view leaves the panel where it is: it narrows to the
-    // Explorer, or says nothing is open.
+    // Closing the last view with tools on leaves the Explorer alone.
     layout(&mut runtime, serde_json::json!({"pinned": false}));
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
     let workspace = serde_json::json!({"device_id": view.device_id, "path": view.path});
@@ -372,10 +371,10 @@ fn a_tool_chosen_while_the_panel_is_closed_opens_the_panel_on_it() {
     layout(&mut runtime, serde_json::json!({"tool": "explorer"}));
     assert_eq!(tools(&runtime), (Tool::Explorer, true));
 
-    // Hiding the column keeps the tool that comes back, and the panel.
+    // Hiding the last content closes the panel and keeps the tool for reopening.
     layout(&mut runtime, serde_json::json!({"tools": false}));
     assert_eq!(tools(&runtime), (Tool::Explorer, false));
-    assert_eq!(panel(&runtime).0, PanelState::Open);
+    assert_eq!(panel(&runtime).0, PanelState::Closed);
     assert!(!runtime.snapshot.ui_state.right_panel_visible);
 
     layout(&mut runtime, serde_json::json!({"panel": "closed"}));
@@ -875,4 +874,56 @@ fn removing_a_device_forgets_its_workspace_views() {
     let views = &runtime.workspace_views.as_ref().unwrap().views;
     assert!(views.get("studio", "/srv/app").is_none());
     assert!(views.get("local", &directory.to_string_lossy()).is_some());
+}
+
+#[test]
+fn closing_the_last_view_keeps_tools_or_closes_the_panel_and_persists_it() {
+    for tools in [true, false] {
+        for browser in [true, false] {
+            let (runtime, checkout_id, directory) = strip_checkout("last-view-panel");
+            let state = views_path("last-view-panel");
+            let mut runtime = with_views(runtime, &state);
+            with_tabs(&mut runtime, &directory);
+            if browser {
+                runtime.dispatch_json(&explorer_event(
+                    "browser_open",
+                    serde_json::json!({"url": "about:blank"}),
+                ));
+            } else {
+                open(&mut runtime, &checkout_id, &directory.join("notes.md"));
+            }
+            layout(&mut runtime, serde_json::json!({"tools": tools}));
+            let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+            let workspace = serde_json::json!({"device_id": view.device_id, "path": view.path});
+            let display = match &view.layout.root {
+                crate::model::ViewNodeSnapshot::Area(area) => area.active.clone(),
+                _ => None,
+            }
+            .expect("one display");
+            runtime.dispatch_json(&explorer_event(
+                "view_layout",
+                serde_json::json!({"workspace": workspace, "action": "close", "display_id": display}),
+            ));
+            assert_eq!(runtime.snapshot.status.last_error, None);
+            let view = runtime.snapshot.workspace_view.as_ref().unwrap();
+            let expected = if tools {
+                PanelState::Open
+            } else {
+                PanelState::Closed
+            };
+            assert_eq!(
+                (view.layout.display_count, view.panel, view.tools),
+                (0, expected, tools)
+            );
+            let (saved, _) = crate::workspace_views::load(&state, 0);
+            assert_eq!(
+                saved.get(&view.device_id, &view.path).unwrap().panel,
+                expected
+            );
+            if tools {
+                layout(&mut runtime, serde_json::json!({"tools": false}));
+                assert_eq!(panel(&runtime).0, PanelState::Closed);
+            }
+        }
+    }
 }

@@ -509,7 +509,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
             onClick={() => useUiStore.getState().setScreen({ kind: "overview", projectId: workspace.id })}
           >
             <ProjectIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
-            <span className="min-w-0 flex-1 truncate text-title font-semibold text-foreground">{workspace.label}</span>
+            <span data-row-name="true" className="min-w-0 flex-1 truncate text-title font-semibold text-foreground">{workspace.label}</span>
             {/* The project's badge stays while its checkouts are open: it is the project's own summary. */}
             <StatusBadge counts={marks} data-project-status={workspace.id} />
           </button>
@@ -659,7 +659,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
           {/* The row button covers the whole row; a control drawn over it is positioned, so it stacks above. */}
           <span className="pointer-events-none flex min-w-0 items-center gap-sm">
             <KindIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />
-            <span aria-hidden="true" className={cn("min-w-0 truncate text-subhead text-foreground", focused ? "font-semibold" : "font-medium")}>
+            <span aria-hidden="true" data-row-name="true" className={cn("min-w-0 truncate text-subhead text-foreground", focused ? "font-semibold" : "font-medium")}>
               {name}
             </span>
             <CheckoutBadge checkout={checkout} />
@@ -744,7 +744,7 @@ const FolderRowView = memo(function FolderRowView({
           />
           <span className="pointer-events-none flex min-w-0 items-center gap-sm">
             <FolderIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />
-            <span aria-hidden="true" className="min-w-0 truncate text-title font-semibold text-foreground">
+            <span aria-hidden="true" data-row-name="true" className="min-w-0 truncate text-title font-semibold text-foreground">
               {workspace.label}
             </span>
             <CheckoutBadge checkout={checkout} />
