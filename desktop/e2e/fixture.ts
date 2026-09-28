@@ -74,11 +74,11 @@ function assertIsolated(env: Record<string, string>): void {
 
 /**
  * Every launch runs beside the operator's own work (issue 232): the host shows
- * its window without activating the app, so a run never takes the screen's
- * keyboard or the frontmost app, and an occluded window keeps painting, so a
- * capture by window id is current.
+ * its window behind the operator's without activating the app, so a run never
+ * takes the screen, the keyboard or the frontmost app, and the covered window
+ * keeps painting, so a capture by window id is current.
  */
-export const BACKGROUND_SWITCHES = [`--${SHOW_INACTIVE_SWITCH}`, "--disable-backgrounding-occluded-windows"];
+const BACKGROUND_SWITCHES = [`--${SHOW_INACTIVE_SWITCH}`, "--disable-backgrounding-occluded-windows"];
 
 /**
  * The tag of a test that needs the key window or native input (a page
@@ -89,48 +89,46 @@ export const BACKGROUND_SWITCHES = [`--${SHOW_INACTIVE_SWITCH}`, "--disable-back
 export const NEEDS_FOCUS = "@needs-focus";
 
 const FOCUS_GUARD = path.join(__dirname, "focus-guard.cjs");
-const FOCUS_REPORT = "hide-e2e-focus ";
 
-/** What the running test's apps reported through `focus-guard.cjs`; null outside a test from this module's `test`. */
-let focusReports: string[] | null = null;
+/** The running test's report folder and launch count; null outside a test from this module's `test`. */
+let focusReports: { dir: string; launches: number } | null = null;
 
 /**
  * The desktop e2e `test`: after each test not tagged `NEEDS_FOCUS`, any app
  * it launched that became active or gave a window the keyboard fails it, so
- * "a run leaves the operator's keyboard alone" is checked on every run, CI
- * included. A spec must take `test` from here; `launch` refuses otherwise.
+ * "an e2e app never comes to the front" is checked on every run, CI included.
+ * It sees only this app; other programs a spec could open (a browser, Finder)
+ * are stubbed by the specs that reach them. A spec must take `test` from
+ * here; `launch` refuses otherwise.
  */
 export const test = base.extend<{ focusGuard: void }>({
   focusGuard: [
     // eslint-disable-next-line no-empty-pattern -- Playwright requires the fixtures argument to be destructured.
     async ({}, use, testInfo) => {
-      focusReports = [];
-      await use();
-      const reports = focusReports;
-      focusReports = null;
-      if (!testInfo.tags.includes(NEEDS_FOCUS)) {
-        expect(reports, `the app came to the front in a test not tagged ${NEEDS_FOCUS}`).toEqual([]);
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-focus-"));
+      focusReports = { dir, launches: 0 };
+      try {
+        await use();
+        // Apps are closed by now; the guard appends synchronously, so every report is on disk.
+        const reports = fs.readdirSync(dir).flatMap((file) => fs.readFileSync(path.join(dir, file), "utf8").split("\n").filter(Boolean));
+        if (!testInfo.tags.includes(NEEDS_FOCUS)) {
+          expect(reports, `the app came to the front in a test not tagged ${NEEDS_FOCUS}`).toEqual([]);
+        }
+      } finally {
+        focusReports = null;
+        fs.rmSync(dir, { recursive: true, force: true });
       }
     },
     { auto: true },
   ],
 });
 
-/** Starts the app with the focus guard preloaded and its reports collected for the running test. */
+/** Starts the app with the focus guard preloaded, reporting into the running test's folder. */
 async function start(appDir: string, env: Record<string, string>): Promise<ElectronApplication> {
   assertIsolated(env);
-  const reports = focusReports;
-  if (!reports) throw new Error("launch the desktop app from a test imported from desktop/e2e/fixture.ts, so its focus guard runs");
-  const app = await electron.launch({ args: ["-r", FOCUS_GUARD, appDir, ...BACKGROUND_SWITCHES], cwd: appDir, env });
-  let pending = "";
-  app.process().stderr?.on("data", (chunk: Buffer) => {
-    const lines = (pending + chunk.toString("utf8")).split("\n");
-    pending = lines.pop()!;
-    for (const line of lines) {
-      if (line.startsWith(FOCUS_REPORT)) reports.push((JSON.parse(line.slice(FOCUS_REPORT.length)) as { event: string }).event);
-    }
-  });
-  return app;
+  if (!focusReports) throw new Error("launch the desktop app from a test imported from desktop/e2e/fixture.ts, so its focus guard runs");
+  const report = path.join(focusReports.dir, `launch-${++focusReports.launches}.jsonl`);
+  return electron.launch({ args: ["-r", FOCUS_GUARD, appDir, ...BACKGROUND_SWITCHES, `--hide-e2e-focus-report=${report}`], cwd: appDir, env });
 }
 
 /** `appDir` is the app folder to run, the desktop package unless a test copies it. */

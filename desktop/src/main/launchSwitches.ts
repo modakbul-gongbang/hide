@@ -5,8 +5,9 @@
 
 /**
  * Windows appear without activating the app (issue 232): each window is shown
- * with `showInactive()` behind every other window, and a second launch or a
- * Dock click shows it again the same way instead of focusing it, so a desktop
- * e2e run leaves the operator's screen, frontmost app and keyboard alone.
+ * with `showInactive()` and then sent behind every other window, and a second
+ * launch or a Dock click shows it again the same way instead of focusing it,
+ * so a desktop e2e run leaves the operator's screen, frontmost app and
+ * keyboard alone.
  */
 export const SHOW_INACTIVE_SWITCH = "hide-show-inactive";

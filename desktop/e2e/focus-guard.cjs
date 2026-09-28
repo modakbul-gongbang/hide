@@ -1,11 +1,15 @@
 // Preloaded into every e2e app's main process (`-r`, before the app's own
-// code), so it hears the app come forward even for the first window. Each
-// time the app becomes active or a window takes the keyboard, one line goes to
-// stderr; `fixture.ts` reads it and fails a test not tagged @needs-focus
-// (issue 232).
+// code), so it hears the app come forward even while it starts. Each time the
+// app becomes active or a window takes the keyboard, one JSON line is appended
+// to the file `--hide-e2e-focus-report` names; `fixture.ts` reads it after the
+// test and fails a test not tagged @needs-focus (issue 232). A file rather than
+// stderr, so a report from before Playwright attaches or just before quit is kept.
 
+const fs = require("node:fs");
 const { app } = require("electron");
 
-const report = (event) => process.stderr.write(`hide-e2e-focus ${JSON.stringify({ event })}\n`);
+const file = app.commandLine.getSwitchValue("hide-e2e-focus-report");
+if (!file) throw new Error("focus-guard.cjs needs --hide-e2e-focus-report=<file>");
+const report = (event) => fs.appendFileSync(file, `${JSON.stringify({ event, pid: process.pid, at: new Date().toISOString() })}\n`);
 app.on("did-become-active", () => report("did-become-active"));
 app.on("browser-window-focus", () => report("browser-window-focus"));
