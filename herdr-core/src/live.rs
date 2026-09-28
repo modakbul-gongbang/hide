@@ -714,10 +714,7 @@ fn ensure_owner(
                     "message": error.message(),
                 }));
             }
-            Ok((
-                opened.workspace_id,
-                Some((opened.tab_id, opened.pane_id)),
-            ))
+            Ok((opened.workspace_id, Some((opened.tab_id, opened.pane_id))))
         }
         OwnerOpen::Folder { path, label, mark } => {
             let _serialized = FOLDER_OWNER_OPEN
