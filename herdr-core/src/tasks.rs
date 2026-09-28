@@ -69,6 +69,54 @@ pub struct TaskSourceSnapshot {
     pub chosen: bool,
 }
 
+/// What an issue's panel reads when it opens, beyond the task itself (PRD
+/// overview-lenses-issues D-40): the body, and for a GitHub issue its labels,
+/// author, assignees and comments. A value the source does not have is empty
+/// or absent, never invented: a Local issue has no labels, author or comments.
+/// It rides only on the request's answer (`issue_work.detail`), never on the
+/// snapshot's task list.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct TaskDetail {
+    pub body: String,
+    pub labels: Vec<TaskLabel>,
+    pub author: Option<String>,
+    pub created_at_unix_ms: Option<u64>,
+    pub assignees: Vec<String>,
+    /// How many comments the issue has; absent for a source without comments.
+    pub comment_count: Option<u32>,
+    /// The latest `DETAIL_COMMENTS`, oldest first.
+    pub comments: Vec<TaskComment>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TaskLabel {
+    pub name: String,
+    /// The source's colour as six hex digits, absent when it gave none.
+    pub color: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TaskComment {
+    pub author: Option<String>,
+    pub created_at_unix_ms: Option<u64>,
+    /// At most `COMMENT_BODY_LIMIT` characters, ending in `…` when cut.
+    pub body: String,
+}
+
+/// Comments a panel shows; the rest are counted and read on the source.
+pub const DETAIL_COMMENTS: usize = 3;
+/// A shown comment's length; the whole comment is on the source.
+pub const COMMENT_BODY_LIMIT: usize = 4_000;
+
+/// `body` cut to `COMMENT_BODY_LIMIT` characters, marked when cut.
+pub fn capped_comment(body: &str) -> String {
+    let body = body.trim();
+    match body.char_indices().nth(COMMENT_BODY_LIMIT) {
+        Some((end, _)) => format!("{}…", &body[..end]),
+        None => body.to_owned(),
+    }
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ProjectTasksSnapshot {
     /// Absent only for a device's project, whose issues this Mac does not read.

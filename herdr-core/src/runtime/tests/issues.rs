@@ -562,3 +562,149 @@ fn a_task_prompt_is_handed_to_its_agent_start_and_kept_for_a_retry() {
     assert_eq!(operation.agent_phase.as_deref(), Some("started"));
     assert_eq!(operation.agent_message.as_deref(), Some("agent_blocked"));
 }
+
+/// A runtime whose project reads Local issues and holds one, `L-1`.
+fn local_issue_runtime() -> Runtime {
+    let mut runtime = issue_runtime();
+    assert!(runtime.dispatch_json(&event(
+        "issue_source_set",
+        serde_json::json!({"project_path": "/repo", "source": "local"}),
+    )));
+    assert!(runtime.dispatch_json(&event(
+        "issue_create",
+        serde_json::json!({"workspace_id": "w", "title": "로컬 이슈", "body": "처음 본문"}),
+    )));
+    runtime
+}
+
+/// A Local issue's panel reads its body and when it was made from the store,
+/// and has no labels, author or comments to show.
+#[test]
+fn a_local_issue_panel_reads_the_body_and_creation_time_with_no_github_fields() {
+    let mut runtime = local_issue_runtime();
+    assert!(runtime.dispatch_json(&event(
+        "issue_detail_request",
+        serde_json::json!({"workspace_id": "w", "task_key": "local:/repo#1"}),
+    )));
+    let detail = runtime.snapshot().issue_work.detail.clone().unwrap();
+    assert_eq!(detail.phase, "ready");
+    assert_eq!(detail.body.as_deref(), Some("처음 본문"));
+    assert!(detail.created_at_unix_ms.is_some());
+    assert!(detail.labels.is_empty() && detail.author.is_none() && detail.assignees.is_empty());
+    assert_eq!(detail.comment_count, None);
+}
+
+/// A GitHub issue's panel read runs on a worker; its answer fills the slot
+/// only while that issue is the one being read, so a late answer for an
+/// issue read before is dropped.
+#[test]
+fn a_github_issue_panel_read_settles_only_the_issue_it_asked_for() {
+    let mut runtime = issue_runtime();
+    runtime.apply_pull_requests();
+    assert!(runtime.dispatch_json(&event(
+        "issue_detail_request",
+        serde_json::json!({"workspace_id": "w", "task_key": "github:acme/project#2"}),
+    )));
+    let detail = runtime.snapshot().issue_work.detail.clone().unwrap();
+    assert_eq!(detail.phase, "failed", "a core without a worker says so");
+    assert!(detail.message.unwrap().contains("No worker"));
+
+    runtime.snapshot.issue_work.detail = Some(crate::model::IssueDetailSnapshot::reading(
+        "github:acme/project#2".into(),
+    ));
+    let answer = crate::tasks::TaskDetail {
+        body: "본문".into(),
+        author: Some("yansfil".into()),
+        comment_count: Some(0),
+        ..Default::default()
+    };
+    assert!(!runtime.ingest_issue_detail("github:acme/project#1", Ok(answer.clone())));
+    assert!(runtime.ingest_issue_detail("github:acme/project#2", Ok(answer)));
+    let detail = runtime.snapshot().issue_work.detail.clone().unwrap();
+    assert_eq!(
+        (
+            detail.phase.as_str(),
+            detail.body.as_deref(),
+            detail.author.as_deref()
+        ),
+        ("ready", Some("본문"), Some("yansfil"))
+    );
+    assert!(!runtime.ingest_issue_detail("github:acme/project#2", Err("late".into())));
+}
+
+/// A Local issue's title and body are edited in its panel: the task shows the
+/// new title, the next read the new body, and the answer names the request.
+#[test]
+fn a_local_issue_edit_changes_its_title_and_body_and_answers_the_request() {
+    let mut runtime = local_issue_runtime();
+    assert!(runtime.dispatch_json(&event(
+        "local_issue_update",
+        serde_json::json!({"request_id": "r1", "task_key": "local:/repo#1", "title": "  고친 제목 ", "body": "고친 본문"}),
+    )));
+    let update = runtime.snapshot().issue_work.update.clone().unwrap();
+    assert_eq!(
+        (
+            update.request_id.as_str(),
+            update.phase.as_str(),
+            update.message
+        ),
+        ("r1", "ready", None)
+    );
+    let task = &runtime.snapshot().navigator.workspaces[0].tasks.tasks[0];
+    assert_eq!(task.title, "고친 제목");
+    assert!(runtime.dispatch_json(&event(
+        "issue_detail_request",
+        serde_json::json!({"workspace_id": "w", "task_key": "local:/repo#1"}),
+    )));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .issue_work
+            .detail
+            .as_ref()
+            .unwrap()
+            .body
+            .as_deref(),
+        Some("고친 본문")
+    );
+}
+
+/// An edit the store refuses leaves the issue as it was and answers with the
+/// reason; a GitHub issue has no edit in Hide.
+#[test]
+fn a_refused_issue_edit_keeps_the_issue_and_says_why() {
+    let mut runtime = local_issue_runtime();
+    assert!(runtime.dispatch_json(&event(
+        "local_issue_update",
+        serde_json::json!({"request_id": "r2", "task_key": "local:/repo#1", "title": "  ", "body": "x"}),
+    )));
+    let update = runtime.snapshot().issue_work.update.clone().unwrap();
+    assert_eq!(
+        (update.request_id.as_str(), update.phase.as_str()),
+        ("r2", "failed")
+    );
+    assert!(update.message.unwrap().contains("제목"));
+    assert_eq!(
+        runtime.snapshot().navigator.workspaces[0].tasks.tasks[0].title,
+        "로컬 이슈"
+    );
+
+    assert!(runtime.dispatch_json(&event(
+        "local_issue_update",
+        serde_json::json!({"request_id": "r3", "task_key": "local:/repo#9", "title": "없음"}),
+    )));
+    assert_eq!(
+        runtime.snapshot().issue_work.update.as_ref().unwrap().phase,
+        "failed"
+    );
+
+    assert!(runtime.dispatch_json(&event(
+        "local_issue_update",
+        serde_json::json!({"request_id": "r4", "task_key": "github:acme/project#2", "title": "GitHub"}),
+    )));
+    let update = runtime.snapshot().issue_work.update.clone().unwrap();
+    assert_eq!(
+        (update.request_id.as_str(), update.phase.as_str()),
+        ("r4", "failed")
+    );
+}

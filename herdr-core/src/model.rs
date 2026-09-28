@@ -2216,6 +2216,7 @@ pub struct IssueWorkSnapshot {
     pub create: Option<IssueCreateSnapshot>,
     pub detail: Option<IssueDetailSnapshot>,
     pub name: Option<WorktreeNameSnapshot>,
+    pub update: Option<IssueUpdateSnapshot>,
 }
 
 /// A new issue on its way to the project's source.
@@ -2230,13 +2231,67 @@ pub struct IssueCreateSnapshot {
     pub message: Option<String>,
 }
 
-/// One issue's body, read for the Start dialog's first prompt.
+/// One issue as its panel and the Start dialog read it (PRD
+/// overview-lenses-issues D-40): the body and, for a GitHub issue, its labels,
+/// author, assignees and latest comments. The fields past `message` are
+/// empty until `ready`.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct IssueDetailSnapshot {
     pub task_key: String,
     /// `reading`, `ready` or `failed`.
     pub phase: String,
     pub body: Option<String>,
+    pub message: Option<String>,
+    pub labels: Vec<crate::tasks::TaskLabel>,
+    pub author: Option<String>,
+    pub created_at_unix_ms: Option<u64>,
+    pub assignees: Vec<String>,
+    pub comment_count: Option<u32>,
+    pub comments: Vec<crate::tasks::TaskComment>,
+}
+
+impl IssueDetailSnapshot {
+    pub fn reading(task_key: String) -> Self {
+        Self::settled(task_key, "reading", None)
+    }
+
+    /// The answer to a read: `ready` with what it read, or `failed` with why.
+    pub fn answered(task_key: String, answer: Result<crate::tasks::TaskDetail, String>) -> Self {
+        match answer {
+            Ok(detail) => Self::settled(task_key, "ready", Some(detail)),
+            Err(message) => Self {
+                message: Some(message),
+                ..Self::settled(task_key, "failed", None)
+            },
+        }
+    }
+
+    fn settled(task_key: String, phase: &str, detail: Option<crate::tasks::TaskDetail>) -> Self {
+        let read = detail.is_some();
+        let detail = detail.unwrap_or_default();
+        Self {
+            task_key,
+            phase: phase.into(),
+            body: read.then_some(detail.body),
+            message: None,
+            labels: detail.labels,
+            author: detail.author,
+            created_at_unix_ms: detail.created_at_unix_ms,
+            assignees: detail.assignees,
+            comment_count: detail.comment_count,
+            comments: detail.comments,
+        }
+    }
+}
+
+/// The answer to a Local issue's title and body edit (`local_issue_update`),
+/// matched by the web's own request id.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct IssueUpdateSnapshot {
+    pub request_id: String,
+    pub task_key: String,
+    /// `ready` or `failed`.
+    pub phase: String,
     pub message: Option<String>,
 }
 
