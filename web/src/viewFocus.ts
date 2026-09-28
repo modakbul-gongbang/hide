@@ -91,6 +91,27 @@ export function closeShortcutPolicy(input: {
     : { kind: "nothing", reason: "the focused pane is no longer visible" };
 }
 
+export type NewTabTarget =
+  | { kind: "view"; areaId: string }
+  | { kind: "agent"; areaId: string | null };
+
+/**
+ * Open the new tab where the keyboard is: its drawn View area, or the Agent
+ * area holding its pane; anything else keeps the Agent active area (null).
+ */
+export function newTabPolicy(input: {
+  owner: KeyboardOwner;
+  workspace: string | null;
+  viewAreaIds: readonly string[];
+  paneAreas: Readonly<Record<string, string>>;
+}): NewTabTarget {
+  const { owner, workspace, viewAreaIds, paneAreas } = input;
+  if (owner.kind === "none" || owner.workspace !== workspace) return { kind: "agent", areaId: null };
+  if (owner.kind === "view" && viewAreaIds.includes(owner.areaId)) return { kind: "view", areaId: owner.areaId };
+  if (owner.kind === "pane") return { kind: "agent", areaId: paneAreas[owner.paneId] ?? null };
+  return { kind: "agent", areaId: null };
+}
+
 /**
  * The View areas as they are drawn now: the frame they show (its Workspace
  * and layout, which every View action names and acts on, contract 4.1), and

@@ -156,7 +156,7 @@ export function installKeyboard(actions: Actions): () => void {
     }
     switch (id) {
       case "new_tab":
-        return actions.createTab();
+        return actions.newTabFocused();
       case "close_tab":
         return actions.closeFocused();
       case "reopen_closed_tab":

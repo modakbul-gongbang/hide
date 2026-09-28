@@ -47,7 +47,7 @@ import { fileUrl } from "./browserViews";
 import { useShellStore } from "./store";
 import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
-import { closeShortcutPolicy, drawnViews, keyboardOwner } from "./viewFocus";
+import { closeShortcutPolicy, drawnViews, keyboardOwner, newTabPolicy } from "./viewFocus";
 import {
   activeDisplay,
   adjacentInOrder,
@@ -1215,6 +1215,30 @@ export function createActions(dispatch: DispatchFn) {
       if (target.kind === "view") return closeView(target.id);
       if (target.kind === "pane") return this.closePane(target.id);
       diagnostic(`close_shortcut: ${target.reason}`);
+    },
+
+    /**
+     * The new tab chord (issue 239): the View strip's New tab in the View
+     * area that holds the keyboard, an agent tab at the end of the Agent area
+     * showing the keyboard's pane, else one in the Agent active area.
+     */
+    newTabFocused() {
+      const drawn = drawnViews();
+      const agents = areaFrame("agent");
+      const tabs = current()?.checkout.tabs ?? [];
+      const paneAreas: Record<string, string> = {};
+      for (const area of agents ? areasOf(agents.layout.root) : []) {
+        const shown = agents?.layout.canvases[area.id] ?? area.active;
+        for (const pane of tabs.find((tab) => tab.id === shown)?.panes ?? []) paneAreas[pane.id] = area.id;
+      }
+      const target = newTabPolicy({
+        owner: keyboardOwner(),
+        workspace: ui().screen?.kind === "workspace" ? frontCheckout(rest())?.id ?? null : null,
+        viewAreaIds: drawn ? areasOf(drawn.layout.root).map((area) => area.id) : [],
+        paneAreas,
+      });
+      if (target.kind === "view" && drawn) return this.openBrowser("", drawn.workspace, target.areaId);
+      createTab(target.areaId ?? undefined);
     },
 
     closeTab,
