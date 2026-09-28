@@ -364,7 +364,7 @@ impl Gate {
 
 struct Inner {
     target: String,
-    runtime: Arc<Runtime>,
+    runtime: Arc<RemoteRuntime>,
     session: Mutex<Option<Handle<KnownHostHandler>>>,
     writer: tokio::sync::Mutex<Pin<Box<dyn AsyncWrite + Send>>>,
     pending: Mutex<HashMap<u64, mpsc::Sender<Answered>>>,
