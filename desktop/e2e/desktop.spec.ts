@@ -2,14 +2,14 @@
 // panes, a private hided the app starts through `hide connect`, and the
 // real Electron build. Each test owns its state directory and so its daemon.
 
-import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { expect, type ElectronApplication, type Page } from "@playwright/test";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import "../../web/src/host";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
-import { detachedApp, DESKTOP_DIR, HIDE_CLI, hostLog, isolate, launch, relaunch, screenshot, type Isolated } from "./fixture";
+import { detachedApp, DESKTOP_DIR, HIDE_CLI, hostLog, isolate, launch, relaunch, screenshot, test, type Isolated } from "./fixture";
 
 let herdr: HerdrFixture;
 let run: Isolated;
@@ -116,14 +116,17 @@ test("links: external links open in the default browser and the window stays on 
   expect(await page.evaluate(() => [location.origin, !!document.querySelector("[data-main-screen], [data-workspace-screen]")])).toEqual([origin, true]);
 });
 
-test("lifetime: a second launch focuses the first, closing the window keeps the app, and quitting leaves hided for the next launch", async () => {
+test("lifetime: a second launch brings the first back, closing the window keeps the app, and quitting leaves hided for the next launch", async () => {
   ({ app } = await launch(run.env));
   let page = await app.firstWindow();
   await shellShown(page);
   const pid = run.daemonPid();
   expect(pid).not.toBeNull();
+  // Issue 232: the host heard the e2e switch; the fixture's focus guard fails the test if the app still came forward.
+  expect(hostLog(run.env).find((line) => line.event === "host.start")?.show_inactive).toBe(true);
 
-  // B6: a second launch on the same profile exits and the first comes forward.
+  // B6: a second launch on the same profile exits and the first comes forward
+  // (under e2e, shown again without taking the keyboard; the first instance's switch decides that).
   const electronBinary = fs.readFileSync(path.join(DESKTOP_DIR, "node_modules", "electron", "path.txt"), "utf8");
   const second = spawn(path.join(DESKTOP_DIR, "node_modules", "electron", "dist", electronBinary), [DESKTOP_DIR], { env: run.env, stdio: "ignore" });
   const code = await new Promise<number | null>((resolve) => second.once("exit", resolve));
