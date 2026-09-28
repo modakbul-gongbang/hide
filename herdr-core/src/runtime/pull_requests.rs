@@ -417,6 +417,7 @@ impl Runtime {
             request_id: payload.request_id,
             pr_number: payload.pr_number,
             phase: "reading".into(),
+            body: None,
             failed_checks: Vec::new(),
             change_requests: Vec::new(),
             message: None,
@@ -454,13 +455,7 @@ impl Runtime {
     pub(crate) fn ingest_pr_feedback(
         &mut self,
         request_id: &str,
-        answer: Result<
-            (
-                Vec<crate::model::PrFailedCheck>,
-                Vec<crate::model::PrChangeRequest>,
-            ),
-            String,
-        >,
+        answer: Result<crate::github::PrFeedback, String>,
     ) -> bool {
         let Some(slot) = self
             .snapshot
@@ -472,10 +467,11 @@ impl Runtime {
             return false;
         };
         match answer {
-            Ok((failed_checks, change_requests)) => {
+            Ok(feedback) => {
                 slot.phase = "ready".into();
-                slot.failed_checks = failed_checks;
-                slot.change_requests = change_requests;
+                slot.body = Some(feedback.body);
+                slot.failed_checks = feedback.failed_checks;
+                slot.change_requests = feedback.change_requests;
             }
             Err(message) => {
                 crate::diagnostic!(serde_json::json!({

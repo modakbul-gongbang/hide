@@ -684,21 +684,21 @@ fn parse_issue_detail(output: &str) -> Result<crate::tasks::TaskDetail, String> 
 
 /// The fields `pr_feedback` asks `gh pr view` for, and the only ones
 /// `run_gh` lets it ask for.
-const PR_FEEDBACK_FIELDS: &str = "statusCheckRollup,reviews";
+const PR_FEEDBACK_FIELDS: &str = "body,statusCheckRollup,reviews";
 
-/// A pull request's failed checks and the reviews still asking for changes,
-/// for the first prompt of the agent it is handed to (PRD overview-lenses-prs
-/// D-46), in one `gh pr view` on the caller's worker.
-pub(crate) fn pr_feedback(
-    root: &Path,
-    number: u32,
-) -> Result<
-    (
-        Vec<crate::model::PrFailedCheck>,
-        Vec<crate::model::PrChangeRequest>,
-    ),
-    String,
-> {
+/// What a pull request says for the work handed on from it (PRD
+/// overview-lenses-prs): its body, which a new issue made from it starts
+/// with (B12), and its failed checks and the reviews still asking for
+/// changes, which an agent it is handed to starts from (D-46).
+#[derive(Debug)]
+pub(crate) struct PrFeedback {
+    pub(crate) body: String,
+    pub(crate) failed_checks: Vec<crate::model::PrFailedCheck>,
+    pub(crate) change_requests: Vec<crate::model::PrChangeRequest>,
+}
+
+/// `PrFeedback`, in one `gh pr view` on the caller's worker.
+pub(crate) fn pr_feedback(root: &Path, number: u32) -> Result<PrFeedback, String> {
     let number = number.to_string();
     let output = gh(
         Some(root),
@@ -708,15 +708,7 @@ pub(crate) fn pr_feedback(
     parse_pr_feedback(&output)
 }
 
-fn parse_pr_feedback(
-    output: &str,
-) -> Result<
-    (
-        Vec<crate::model::PrFailedCheck>,
-        Vec<crate::model::PrChangeRequest>,
-    ),
-    String,
-> {
+fn parse_pr_feedback(output: &str) -> Result<PrFeedback, String> {
     #[derive(serde::Deserialize)]
     struct Person {
         login: String,
@@ -733,8 +725,9 @@ fn parse_pr_feedback(
     #[derive(serde::Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct Viewed {
-        // Both are what was asked for: an answer without them is no answer,
-        // never a pull request with nothing failing.
+        // All three are what was asked for: an answer without them is no
+        // answer, never a pull request with nothing failing.
+        body: String,
         status_check_rollup: Vec<GhCheck>,
         reviews: Vec<Review>,
     }
@@ -767,7 +760,11 @@ fn parse_pr_feedback(
             body: review.body.trim().to_owned(),
         })
         .collect();
-    Ok((failed, requests))
+    Ok(PrFeedback {
+        body: viewed.body,
+        failed_checks: failed,
+        change_requests: requests,
+    })
 }
 
 /// Writes `Closes #issue` at the end of pull request `number`'s body so
@@ -1624,6 +1621,7 @@ esac"#,
     #[test]
     fn feedback_names_the_failed_checks_and_the_change_requests_still_standing() {
         let output = r#"{
+            "body": "Reads the remote primary.",
             "statusCheckRollup": [
                 {"__typename":"CheckRun","name":"verify","status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/acme/app/actions/runs/1"},
                 {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
@@ -1637,9 +1635,10 @@ esac"#,
                 {"author":{"login":"bo"},"state":"APPROVED","body":""}
             ]
         }"#;
-        let (checks, requests) = parse_pr_feedback(output).unwrap();
+        let feedback = parse_pr_feedback(output).unwrap();
+        assert_eq!(feedback.body, "Reads the remote primary.");
         assert_eq!(
-            checks,
+            feedback.failed_checks,
             vec![
                 crate::model::PrFailedCheck {
                     name: "verify".into(),
@@ -1652,7 +1651,7 @@ esac"#,
             ]
         );
         assert_eq!(
-            requests,
+            feedback.change_requests,
             vec![crate::model::PrChangeRequest {
                 author: Some("ana".into()),
                 body: "Split the reader.".into(),

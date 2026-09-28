@@ -2348,14 +2348,17 @@ pub struct PrChangeRequest {
     pub body: String,
 }
 
-/// What a pull request's failed checks and change requests say, read for
-/// the first prompt of an agent it is handed to (D-46).
+/// What a pull request says for the work handed on from it: its body, for
+/// a new issue made from it (B12), and its failed checks and change
+/// requests, for the first prompt of an agent it is handed to (D-46).
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PrFeedbackSnapshot {
     pub request_id: String,
     pub pr_number: u32,
     /// `reading`, `ready` or `failed`.
     pub phase: String,
+    /// The body once read.
+    pub body: Option<String>,
     pub failed_checks: Vec<PrFailedCheck>,
     pub change_requests: Vec<PrChangeRequest>,
     pub message: Option<String>,
