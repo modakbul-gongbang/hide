@@ -242,7 +242,7 @@ Collapsing does not change the selected pane, tab, agent read state, running pro
 The web shell starts every checkout closed instead and keeps the ones the operator opened in `expanded_checkout_ids`; a `ui_state_update` without that set leaves it unchanged, and the legacy `collapsed_checkout_ids` field a client could send instead is kept in the schema but ignored by the web shell.
 Raised Needs You and Done rows remain available, while number shortcuts skip hidden tree rows.
 In the web shell the fold controls of a project, a checkout and a parent agent all sit on the right of their row in slots kept at rest; a folded control is always shown and an unfolded one appears under the pointer, with focus inside the row, while the row's menu is open, or on an input with no hover.
-The body of each row navigates (a project to its Overview, a checkout to its Workspace, an agent to its pane) and a fold never does: folding changes no screen, pane, tab, read state, group or process.
+The body of each row navigates (a project to its Overview, a checkout to its Workspace, an agent to its pane); a project or checkout row also unfolds its children, or folds them when its scope is already in front and unfolded, and a fold control never navigates: folding from a chevron changes no screen, pane, tab, read state, group or process.
 
 ### Verification ownership
 

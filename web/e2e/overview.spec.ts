@@ -164,12 +164,24 @@ test("a project's Overview board: entry, columns, cards, Agents view and its sta
     await expect(overview).toBeVisible();
     await expect(overview).toHaveAttribute("data-overview-state", "board");
     await expect(overview).toHaveAttribute("data-overview-view", "tasks");
-    // The Overview child marks this scope; the project header only navigates.
+    // The Overview child marks this scope; the project header never takes selection.
     const overviewRow = repoRow.locator("xpath=ancestor::li[@data-project]").locator("[data-project-overview]");
     await expect(overviewRow).toHaveAttribute("aria-current", "page");
     await expect(repoRow).not.toHaveAttribute("aria-current", "page");
     await expect(page.locator("[data-overview-destination]")).not.toHaveAttribute("aria-current", "page");
     await expect(page.locator('[data-project-list] [data-checkout][aria-current="true"]')).toHaveCount(0);
+    // The project row takes the checkout rule: on its own open, unfolded
+    // Overview a click folds the project and the Overview stays; the next
+    // click unfolds it again.
+    const repoToggle = repoRow.locator("xpath=ancestor::li[@data-project]").locator("[data-project-toggle]");
+    await expect(repoToggle).toHaveAttribute("aria-expanded", "true");
+    await repoRow.click();
+    await expect(repoToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(overviewRow).toHaveCount(0);
+    await expect(overview).toBeVisible();
+    await repoRow.click();
+    await expect(repoToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(overviewRow).toHaveAttribute("aria-current", "page");
 
     // Header facts (B2): four worktrees; no open PR, as GitHub answered; the
     // size the Overview asked the core to measure; the merged worktree,
