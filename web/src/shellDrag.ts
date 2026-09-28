@@ -15,11 +15,28 @@ export type ShellDragAttribute = (typeof SHELL_DRAG_ATTRIBUTES)[number];
  */
 export type ShellDrag = "move" | "forbidden" | "col-resize" | "row-resize" | "file";
 
-/** Marks the root for a shell drag; the returned release removes the mark. */
+/** The drags holding each attribute, latest last; the root shows the latest. */
+const holders = new Map<ShellDragAttribute, { drag: ShellDrag }[]>();
+
+/**
+ * Marks the root for a shell drag until the returned release runs. Drags that
+ * overlap (two pointers, or a tab drag's cursor changing) each hold their
+ * own mark, so one ending never clears another's.
+ */
 export function holdShellDrag(drag: ShellDrag, attribute: ShellDragAttribute = "data-view-drag"): () => void {
-  const root = document.documentElement;
-  root.setAttribute(attribute, drag);
-  return () => root.removeAttribute(attribute);
+  const held = holders.get(attribute) ?? [];
+  const holder = { drag };
+  held.push(holder);
+  holders.set(attribute, held);
+  document.documentElement.setAttribute(attribute, drag);
+  return () => {
+    const at = held.indexOf(holder);
+    if (at < 0) return;
+    held.splice(at, 1);
+    const latest = held.at(-1);
+    if (latest) document.documentElement.setAttribute(attribute, latest.drag);
+    else document.documentElement.removeAttribute(attribute);
+  };
 }
 
 /** Whether a shell drag is running now. */

@@ -457,7 +457,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
                     event.preventDefault();
                     setMenu({ path: row.path, isDirectory: row.isDirectory, x: event.clientX, y: event.clientY });
                   }}
-                  onDragStart={() => beginDrag(row.path)}
+                  onDragStart={(source) => beginDrag(row.path, source)}
                   onDrop={(from) => {
                     if (from && from !== row.path && !row.path.startsWith(`${from}/`)) actions.moveEntry(from, row.path);
                   }}
@@ -503,23 +503,14 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
 const dragPath = { current: null as string | null };
 
 /**
- * Starts carrying `path`. The drag marks the root while it runs, so a page it
- * crosses gives way to its still and never takes the drop. The mark goes at
- * the drag's end or drop, which reach the window from a row still drawn, or
- * at the first pointer move after it, which a row scrolled away still gets.
+ * Starts carrying `path` from its row. The drag marks the root while it runs,
+ * so a page it crosses gives way to its still and never takes the drop. The
+ * mark goes at the drag's end, heard on the row itself: a row the list drew
+ * away mid-drag still gets its `dragend`, which never reaches the window.
  */
-function beginDrag(path: string): void {
+function beginDrag(path: string, source: HTMLElement): void {
   dragPath.current = path;
-  const release = holdShellDrag("file");
-  const end = () => {
-    release();
-    window.removeEventListener("dragend", end, true);
-    window.removeEventListener("drop", end, true);
-    window.removeEventListener("pointermove", end, true);
-  };
-  window.addEventListener("dragend", end, true);
-  window.addEventListener("drop", end, true);
-  window.addEventListener("pointermove", end, true);
+  source.addEventListener("dragend", holdShellDrag("file"), { once: true });
 }
 
 function DraftRowView({
@@ -651,7 +642,7 @@ function ExplorerRowView({
   onOpen: (row: ExplorerRow, preview: boolean) => void;
   onRefresh: () => void;
   onContextMenu: (event: React.MouseEvent) => void;
-  onDragStart: () => void;
+  onDragStart: (source: HTMLElement) => void;
   onDrop: (from: string | null) => void;
 }) {
   const [over, setOver] = useState(false);
@@ -688,7 +679,7 @@ function ExplorerRowView({
         event.stopPropagation();
         event.dataTransfer.effectAllowed = "move";
         event.dataTransfer.setData("text/plain", row.path);
-        onDragStart();
+        onDragStart(event.currentTarget);
       }}
       onDragOver={(event) => {
         if (!row.isDirectory || !dragPath.current) return;
