@@ -97,7 +97,8 @@ The app's bundle id is `me.grab.hide.desktop`.
 ## First launch
 
 The app runs its own bundled `hide` CLI, which starts `hided` beside it.
-`hided` serves the web shell inside the app's window and passes the app's bundled Herdr binary to that CLI as `HERDR_BIN_PATH` unless the environment already sets that variable.
+`hided` serves the web shell inside the app's window.
+The app passes its bundled Herdr binary to that CLI as `HERDR_BIN_PATH` unless the environment names one as an explicit override, one that arrives without `HERDR_PANE_ID`; the value a Herdr pane exports is replaced, so opening the app from a pane behaves like opening it from the Dock.
 The CLI search order, and `HIDE_CLI_PATH`, are documented in [ARCHITECTURE.md](ARCHITECTURE.md), "The desktop host".
 
 A Herdr server must be running for panes to attach.
@@ -146,7 +147,7 @@ Read the host log at `<profile>/logs/desktop.log` (the profile is `~/Library/App
 If the app connects but no workspace, terminal, or agent can start, no `herdr server` is running on the socket hided uses.
 The daemon logs `herdr_bin.missing` when it cannot find a herdr binary at all: check `HERDR_BIN_PATH`, then PATH, then run the bundled `hide.app/Contents/Resources/herdr` once to start the default server.
 When `HERDR_BIN_PATH` names a file that no longer exists, `hide connect` and the daemon refuse to start and print that path: the Herdr server was started from an app bundle that has since been replaced, and every pane it opens still carries the old path.
-Launch the app from the Finder or the Dock rather than from inside a Herdr pane, or hand the server off to the new bundle's `herdr`.
+The packaged app replaces that pane value with its own bundled `herdr`, but the `hide` CLI run directly in such a pane, and an unpackaged development host, still inherit it; unset `HERDR_BIN_PATH` there, or hand the server off to the new bundle's `herdr`.
 
 <!-- herdr-provenance:start -->
 hide distributes the [upstream Herdr release v0.9.1](https://github.com/herdrdev/herdr/releases/tag/v0.9.1).
