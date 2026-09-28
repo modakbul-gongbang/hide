@@ -79,7 +79,9 @@ current_repo=$(jq -er '.repo | strings | select(test("^[A-Za-z0-9_.-]+/[A-Za-z0-
 current_tag=$(jq -er '.tag | strings | select(test("^[A-Za-z0-9][A-Za-z0-9._-]*$"))' "$manifest")
 current_version=$(jq -er '.version' "$manifest")
 current_sha256=$(jq -er '.sha256' "$manifest")
+current_linux_sha256=$(jq -er '.linux_x86_64.sha256' "$manifest")
 target_url="https://github.com/${target_repo}/releases/download/${target_tag}/herdr-macos-aarch64"
+target_linux_url="https://github.com/${target_repo}/releases/download/${target_tag}/herdr-linux-x86_64"
 
 temporary_root=$(mktemp -d "${TMPDIR:-/tmp}/herdr-bump.XXXXXX")
 cleanup() {
@@ -118,6 +120,15 @@ case "$target_tag" in
 esac
 target_sha256=$(/usr/bin/shasum -a 256 "$downloaded" | /usr/bin/awk '{print $1}')
 
+# The Linux asset is the same release for the Linux CI lanes. This machine
+# cannot run it, so its version is not asked; the tag and the digest pin it.
+downloaded_linux=$temporary_root/herdr-linux
+/usr/bin/curl --fail --location --silent --show-error "$target_linux_url" --output "$downloaded_linux" || {
+  print -u2 -- "error: release asset could not be downloaded: $target_linux_url"
+  exit 1
+}
+target_linux_sha256=$(/usr/bin/shasum -a 256 "$downloaded_linux" | /usr/bin/awk '{print $1}')
+
 # The contract is whatever this exact binary answers; nothing is fetched from
 # a second place that could disagree with the asset that ships.
 target_contract=$temporary_root/herdr-api.schema.json
@@ -129,9 +140,10 @@ contract_protocol=$(jq -er '.protocol' "$target_contract")
 
 outcome=""
 if [[ "$current_repo" == "$target_repo" && "$current_tag" == "$target_tag" ]]; then
-  if [[ "$current_sha256" != "$target_sha256" ]]; then
+  if [[ "$current_sha256" != "$target_sha256" || "$current_linux_sha256" != "$target_linux_sha256" ]]; then
     print -u2 -- "error: $target_tag is already pinned but its asset digest changed"
     print -u2 -- "pinned_sha256=$current_sha256 downloaded_sha256=$target_sha256"
+    print -u2 -- "pinned_linux_sha256=$current_linux_sha256 downloaded_linux_sha256=$target_linux_sha256"
     print -u2 -- "the upstream release was replaced; confirm the new asset before repinning"
     exit 1
   fi
@@ -224,7 +236,10 @@ if [[ "$outcome" == bumped ]]; then
      --arg version "$target_version" \
      --arg source_url "$target_url" \
      --arg sha256 "$target_sha256" \
-     '.repo = $repo | .tag = $tag | .version = $version | .source_url = $source_url | .sha256 = $sha256' \
+     --arg linux_url "$target_linux_url" \
+     --arg linux_sha256 "$target_linux_sha256" \
+     '.repo = $repo | .tag = $tag | .version = $version | .source_url = $source_url | .sha256 = $sha256
+      | .linux_x86_64 = {platform: "linux-x86_64", source_url: $linux_url, sha256: $linux_sha256}' \
      "$manifest" > "$manifest.next"
   mv "$manifest.next" "$manifest"
 fi
@@ -245,7 +260,11 @@ jq -n \
   --arg version "$target_version" \
   --arg sha256 "$target_sha256" \
   --arg source_url "$target_url" \
+  --arg linux_sha256 "$target_linux_sha256" \
+  --arg linux_url "$target_linux_url" \
   --argjson protocol "$contract_protocol" \
   --argjson documents "$(cat "$replacements_json")" \
   '{status: "pass", outcome: $outcome, from: $from, tag: $tag, version: $version,
-    sha256: $sha256, source_url: $source_url, protocol: $protocol, documents: $documents}'
+    sha256: $sha256, source_url: $source_url,
+    linux_x86_64: {sha256: $linux_sha256, source_url: $linux_url},
+    protocol: $protocol, documents: $documents}'

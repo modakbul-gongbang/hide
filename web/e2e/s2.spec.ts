@@ -107,7 +107,11 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     const nextLabel = (await page.getByRole("button", { name: /^New tab / }).getAttribute("aria-label"))!.replace("New tab ", "");
     await page.keyboard.press("Alt+KeyT");
     await expect(page.locator("[role=tab]")).toHaveCount(4);
-    await expect(page.locator("[role=tab][aria-selected=true]")).toContainText(nextLabel);
+    // The label is Herdr's: the strip shows an automatic label only until
+    // Herdr reports the pane's process, which then names the tab.
+    const labelled = () => (herdr.run(["api", "snapshot"]) as { result: { snapshot: { tabs: { tab_id: string; label?: string }[] } } }).result.snapshot.tabs.find((tab) => tab.label === nextLabel)?.tab_id;
+    await expect.poll(labelled).toBeTruthy();
+    await expect(page.locator("[role=tab][aria-selected=true]")).toHaveAttribute("data-tab", labelled()!);
     await expect.poll(() => sent.get("create_tab")).toBe(1);
 
     // ⌥` walks Recent Panels: the previous surface (the second tab) is the first candidate.

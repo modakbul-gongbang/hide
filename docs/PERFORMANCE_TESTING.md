@@ -13,10 +13,10 @@ This table describes the checked-in workflows, not a claim that a particular PR'
 | Layer | What it catches | Current execution |
 | --- | --- | --- |
 | Deterministic regression tests and structural checks | Blank repaint buffers, cache bounds, incorrect state transitions, blocking work in forbidden paths | The Rust workspace suite and repository invariant checks run on every PR and main push in `.github/workflows/pr.yml`; `design-contract.yml` adds static design checks |
-| Automated end-to-end | Real window launch, attach to a private Herdr server, IPC between the desktop host and `hided`, occluded-window rendering, packaging mistakes | Playwright drives the web shell in a browser and the desktop app through `desktop/e2e/fixture.ts`; both run in the `web` job of `pr.yml` and are required by `verify` |
+| Automated end-to-end | Real window launch, attach to a private Herdr server, IPC between the desktop host and `hided`, occluded-window rendering, packaging mistakes | Playwright drives the web shell in a browser and the desktop app through `desktop/e2e/fixture.ts`; they run in the three `web-e2e` shards and the `desktop-e2e` job of `pr.yml`, all on macOS, and are required by `verify` |
 | Controlled performance comparison | Warm/cold latency distributions, periodic stalls, CPU/lock contention, sustained RSS, and cost that grows with process uptime | Local matched baseline/candidate measurements (`scripts/web-shell-measure/run.sh`); no checked-in scheduled or required performance job |
 
-The repository-invariant Python tests run in the required `scripts` lane of `pr.yml`.
+The repository-invariant Python tests run in the required `checks` lane of `pr.yml`.
 Fixture/replay commands under `scripts/web-shell-measure/` do not become CI gates merely because this guide lists them.
 Check the workflow before claiming any of them runs automatically.
 

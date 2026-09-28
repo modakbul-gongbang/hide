@@ -10,12 +10,13 @@ Use [docs/README.md](docs/README.md) to find current guides and distinguish hist
 
 Run the same required lanes CI runs.
 These are the local equivalents; the remote `verify` result still depends on the actual CI run.
+CI runs the unit suites and the invariant checks on Linux (the Herdr schema comparison uses the pinned release's Linux asset), and keeps the Rust suite, the web end-to-end (three shards) and the Electron end-to-end on macOS, the platform hide ships on; `.github/workflows/pr.yml` says why, including what a Linux web end-to-end broke on.
 
 ```sh
 bash scripts/verify-cargo.sh lint                # cargo fmt --check, then clippy over every target
 bash scripts/verify-cargo.sh test                # herdr-core, hided, hide-ai, hide-agent-hooks and the context-label plugin
 bash scripts/verify-web.sh                       # hcoord typecheck/build/unit/e2e, then web and desktop typecheck, lint, test and build
-cargo build -p hided && pnpm --dir web e2e       # Playwright against a local hided: missing Herdr, and an isolated pinned Herdr (HIDE_E2E_HERDR_BIN, HERDR_BIN_PATH or PATH) for the S2 flows and the S3 Explorer, editor, viewers, attach, watch and reconnect flows (one worker, because each spec starts its own Herdr, hided and browser)
+cargo build -p hided && pnpm --dir web e2e       # Playwright against a local hided: missing Herdr, and an isolated pinned Herdr (HIDE_E2E_HERDR_BIN, HERDR_BIN_PATH or PATH) for the S2 flows and the S3 Explorer, editor, viewers, attach, watch and reconnect flows (one worker, because each spec starts its own Herdr, hided and browser; CI deals the same tests out to three macOS shards)
 pnpm --dir desktop e2e                           # Playwright `_electron` against a private hided and the pinned Herdr; windows never activate the app except in `@needs-focus` specs, which `--grep-invert @needs-focus` skips
 MEASURE_SCENARIO=multi HIDE_MEASURE_RUN_DIR=agents/runs/<slug>/measure/<attempt> bash scripts/web-shell-measure/run.sh   # echo and frame gates with four splits and five attached tabs; review-required evidence, not a CI check
 bash scripts/check-harness-ignore-anchor.sh

@@ -590,16 +590,12 @@ impl Runtime {
             (PaneControlAction::MoveToNewTab { pane_id, .. }, outcome) => {
                 match outcome {
                     Ok(_) => {
-                        // The stamp stays until the published layout shows
-                        // the move (`relocate_delegated_child_panes`): Herdr's
-                        // events for it arrive after this acknowledgement, and
-                        // a second request before they do moved the pane
-                        // again, closing the tab the first had made, so its
-                        // layout never landed and the moves went on.
+                        // The stamp stays until the layout shows the move
+                        // (`relocate_delegated_child_panes`).
                         self.push_diagnostic(
                             "lineage.relocated",
                             format!(
-                                "Delegated pane {pane_id} moved to its own tab in {elapsed_ms} ms"
+                                "Herdr acknowledged moving delegated pane {pane_id} to its own tab in {elapsed_ms} ms"
                             ),
                         );
                     }

@@ -96,7 +96,10 @@ test("⌘K groups agents, projects and checkouts, and the sidebar Search icon op
     expect(last.get("focus_pane")?.pane_id).toBe(two);
 
     // No match is one line, with no group and no selection.
+    // Opening the agent moved the page to its Workspace, and the palette can
+    // open after that screen does; typing before it holds focus loses keys.
     await page.keyboard.press("Meta+KeyK");
+    await expect(input).toBeFocused();
     await page.keyboard.type("zzzz-no-such-agent");
     await expect(page.locator('[data-palette-state="no-match"]')).toHaveText("No matching agents or workspaces");
     await expect(headings(page)).toHaveCount(0);

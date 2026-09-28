@@ -3,6 +3,18 @@
 # adding it to `verify`'s `needs`; the protection rule never changes.
 #
 # Each gate here has a local command in CONTRIBUTING.md under "CI gates".
+#
+# Runner placement is a capacity decision. This organization's plan runs five
+# macOS jobs at a time across every repository, and on 2026-09-28 one run held
+# all five for 26 minutes, so a second pull request waited up to 70 minutes
+# before its lanes started. The unit suites and the invariant checks run on
+# Linux. The Rust suite, the web end-to-end and the Electron end-to-end stay on
+# macOS, the platform hide ships on: a Linux web e2e was tried on 2026-09-29
+# and 22 of 87 tests failed on Linux-only behaviour (the daemon's terminal
+# control socket broke its pipe, headless Chromium read an empty clipboard,
+# and a visible scrollbar moved a menu by 20 px). The web end-to-end is split
+# into three shards, so no macOS job holds a slot for more than about ten
+# minutes.
 name: verify
 
 on:
@@ -26,6 +38,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+          # A cache per pull request ref pushed the repository past the 10 GB
+          # cache limit and evicted main's; main's is the one every run reads.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       # The macos-15 image ships rustfmt and Clippy with its Rust toolchain.
       # The workspace is the core, the hide-ai provider boundary and the
       # context-label plugin; every lane covers all three.
@@ -37,11 +52,22 @@ jobs:
         # hide-ai drives its codex backend against a python fake app server.
         run: cargo test --locked --workspace
 
-  scripts:
-    name: repository invariants
-    runs-on: macos-15
+  checks:
+    name: checks and unit suites
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install zsh
+        # The invariant scripts and the Herdr fetch are zsh; the image has bash.
+        run: sudo apt-get install -y --no-install-recommends zsh
       - name: Test performance measurement semantics
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
       - name: Structural checks
@@ -54,22 +80,97 @@ jobs:
           zsh scripts/check-herdr-pin-single-source.sh
       - name: Fetch the pinned Herdr runtime
         id: herdr
-        # The manifest is the pin; the download is verified against its digest
-        # before the binary answers anything.
-        run: |
-          manifest=contracts/herdr-bundle.json
-          url="$(jq -er .source_url "$manifest")"
-          expected="$(jq -er .sha256 "$manifest")"
-          curl -sSfL "$url" -o "$RUNNER_TEMP/herdr"
-          actual="$(shasum -a 256 "$RUNNER_TEMP/herdr" | awk '{print $1}')"
-          [[ "$actual" == "$expected" ]] || { echo "pinned Herdr digest mismatch: $actual" >&2; exit 1; }
-          chmod +x "$RUNNER_TEMP/herdr"
-          echo "bin=$RUNNER_TEMP/herdr" >> "$GITHUB_OUTPUT"
+        # The manifest is the pin; the script verifies the download against
+        # the manifest's digest before the binary answers anything. This lane
+        # is the one place the release's Linux asset is run.
+        run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64)" >> "$GITHUB_OUTPUT"
       - name: Compare the Herdr API schema with the contract
         run: zsh scripts/check-herdr-contract.sh --herdr-bin "${{ steps.herdr.outputs.bin }}" --schema-only
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: hcoord typecheck, build, unit test, and end-to-end test
+        run: |
+          pnpm --dir plugins/hcoord typecheck
+          pnpm --dir plugins/hcoord build
+          pnpm --dir plugins/hcoord test
+          pnpm --dir plugins/hcoord test:e2e
+      - name: Web shell typecheck, lint, unit test, and build
+        run: |
+          pnpm --dir web typecheck
+          pnpm --dir web lint
+          pnpm --dir web test
+          pnpm --dir web build
+      - name: Desktop app typecheck, lint, and unit test
+        # The menu is built from the web registry, so a registry change is
+        # typechecked and tested here too.
+        run: |
+          pnpm --dir desktop typecheck
+          pnpm --dir desktop lint
+          pnpm --dir desktop test
 
-  web:
-    name: web shell
+  web-e2e:
+    name: web e2e ${{ matrix.shard }}/3
+    runs-on: macos-15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+          shared-key: web-e2e
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build hided for Playwright
+        run: bash -lc 'source scripts/toolchain-env.sh && cargo build --locked -p hided'
+      - name: Install web dependencies
+        run: pnpm --dir web install --frozen-lockfile
+      - name: Build the web shell
+        run: pnpm --dir web build
+      - name: Install Playwright Chromium
+        run: pnpm --dir web exec playwright install chromium
+      - name: Fetch the pinned Herdr runtime
+        id: herdr
+        # The click-flow e2e attaches hided to an isolated real Herdr; the
+        # fixture refuses any binary whose version is not the pin.
+        run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh)" >> "$GITHUB_OUTPUT"
+      - name: End-to-end
+        # Each spec starts its own Herdr, hided and Chromium, so one worker per
+        # runner keeps timing assertions honest; the shards are the parallelism.
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
+          HIDE_E2E_TRACE: "1"
+        run: |
+          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
+          pnpm --dir web exec playwright test --shard=${{ matrix.shard }}/3
+      - name: Keep the e2e run's logs
+        # The daemon, Herdr server and PTY input logs behind a failed flow
+        # (with the screenshots the specs take, under the same directory),
+        # and Playwright's own test-results: with no screenshot or trace
+        # option set that is the error-context page snapshot. The wire trace
+        # is on the step's stdout. A screen assertion alone cannot say which
+        # side moved.
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hide-web-e2e-logs-${{ matrix.shard }}
+          path: |
+            ${{ runner.temp }}/hide-e2e
+            web/test-results
+          if-no-files-found: ignore
+
+  desktop-e2e:
+    name: desktop e2e
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v7
@@ -84,113 +185,43 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
-      - name: Build hided for Playwright
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build hide and hided for the desktop app
         run: bash -lc 'source scripts/toolchain-env.sh && cargo build --locked -p hided'
-      - name: Install web dependencies
-        run: pnpm --dir web install --frozen-lockfile
-      - name: Typecheck, lint, and unit test
-        run: |
-          pnpm --dir web typecheck
-          pnpm --dir web lint
-          pnpm --dir web test
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
       - name: Build the web shell
+        # The desktop app serves web/dist through the hided it starts.
         run: pnpm --dir web build
       - name: Install Playwright Chromium
-        run: pnpm --dir web exec playwright install --with-deps chromium
+        # The browser spec opens a page in Chromium beside the Electron app.
+        run: pnpm --dir desktop exec playwright install chromium
       - name: Fetch the pinned Herdr runtime
         id: herdr
-        # The click-flow e2e attaches hided to an isolated real Herdr; the
-        # fixture refuses any binary whose version is not the pin.
-        run: |
-          manifest=contracts/herdr-bundle.json
-          url="$(jq -er .source_url "$manifest")"
-          expected="$(jq -er .sha256 "$manifest")"
-          curl -sSfL "$url" -o "$RUNNER_TEMP/herdr"
-          actual="$(shasum -a 256 "$RUNNER_TEMP/herdr" | awk '{print $1}')"
-          [[ "$actual" == "$expected" ]] || { echo "pinned Herdr digest mismatch: $actual" >&2; exit 1; }
-          chmod +x "$RUNNER_TEMP/herdr"
-          echo "bin=$RUNNER_TEMP/herdr" >> "$GITHUB_OUTPUT"
-      - name: End-to-end
+        run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh)" >> "$GITHUB_OUTPUT"
+      - name: Desktop app end-to-end
+        # The desktop app against an isolated Herdr, starting its own hided
+        # through the hide CLI built above. Electron downloads its runtime on
+        # first launch.
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
           HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
-          HIDE_E2E_TRACE: "1"
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          pnpm --dir web exec playwright test
-      - name: Desktop app end-to-end
-        # The desktop app against the same isolated Herdr, starting its own
-        # hided through the hide CLI built above. Electron downloads its
-        # runtime on first launch.
-        env:
-          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
-        run: pnpm --dir desktop e2e
+          pnpm --dir desktop e2e
       - name: Keep the e2e run's logs
-        # The daemon, Herdr server and PTY input logs behind a failed flow
-        # (with the screenshots the specs take, under the same directory),
-        # and Playwright's own test-results: with no screenshot or trace
-        # option set that is the error-context page snapshot. The wire trace
-        # is on the step's stdout. A screen assertion alone cannot say which
-        # side moved.
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: hide-e2e-logs
+          name: hide-desktop-e2e-logs
           path: |
             ${{ runner.temp }}/hide-e2e
-            web/test-results
             desktop/test-results
           if-no-files-found: ignore
 
-  desktop:
-    name: desktop app
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 10
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-      - name: Install desktop dependencies
-        run: pnpm --dir desktop install --frozen-lockfile
-      - name: Typecheck, lint, and unit test
-        # The menu is built from the web registry, so a registry change is
-        # typechecked and tested here too.
-        run: |
-          pnpm --dir desktop typecheck
-          pnpm --dir desktop lint
-          pnpm --dir desktop test
-
-  hcoord:
-    name: hcoord plugin
-    runs-on: macos-15
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 10
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Typecheck, build, unit test, and end-to-end test
-        run: |
-          pnpm --dir plugins/hcoord typecheck
-          pnpm --dir plugins/hcoord build
-          pnpm --dir plugins/hcoord test
-          pnpm --dir plugins/hcoord test:e2e
-
   verify:
     name: verify
-    needs: [rust, scripts, web, desktop, hcoord]
+    needs: [rust, checks, web-e2e, desktop-e2e]
     if: always()
     runs-on: ubuntu-latest
     steps:

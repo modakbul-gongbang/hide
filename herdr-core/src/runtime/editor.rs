@@ -2137,13 +2137,24 @@ impl Runtime {
     }
 
     pub(super) fn reopen_closed(&mut self) -> bool {
-        if self.reopen_in_flight.is_some() {
+        if let Some(key) = self.reopen_in_flight.as_deref() {
+            crate::diagnostic!(serde_json::json!({
+                "component": "recent_closed",
+                "kind": "recent_closed.reopen_in_flight",
+                "key": key,
+            }));
             return false;
         }
         if self.reopen_device() == workspace::LOCAL_DEVICE_ID
             && let Some(key) = self.close_capture_order.back().cloned()
             && let Some(operation) = self.close_operations.get(&key)
         {
+            crate::diagnostic!(serde_json::json!({
+                "component": "recent_closed",
+                "kind": "recent_closed.reopen_waits_for_close",
+                "key": key,
+                "phase": operation.phase,
+            }));
             self.set_reopen_notices(vec![live::ReopenNotice {
                 pane_id: matches!(
                     &operation.request.target,
@@ -2161,6 +2172,11 @@ impl Runtime {
             return true;
         }
         let Some(item) = self.reopenable().cloned() else {
+            crate::diagnostic!(serde_json::json!({
+                "component": "recent_closed",
+                "kind": "recent_closed.nothing_to_reopen",
+                "device_id": self.reopen_device(),
+            }));
             return false;
         };
         if let ClosedItem::File {
