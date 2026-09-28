@@ -25,6 +25,7 @@ import {
   checkoutNameParts,
   checkoutPresentation,
   checkoutRowExpansion,
+  projectRowExpansion,
   overviewRowSelected,
   folderCheckout,
   inactiveCheckouts,
@@ -612,7 +613,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
             data-project-row={workspace.id}
             aria-label={[workspace.label, badgeWords(marks)].filter(Boolean).join(", ")}
             className="flex min-w-0 flex-1 self-stretch items-center gap-sm rounded-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-            onClick={() => useUiStore.getState().setScreen({ kind: "overview", projectId: workspace.id })}
+            onClick={() => actions.openProject(workspace, projectRowExpansion(workspace, context.overviewProjectId, disclosure))}
           >
             <ProjectIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
             <span data-row-name="true" className="min-w-0 flex-1 truncate text-subhead font-semibold text-foreground">{workspace.label}</span>

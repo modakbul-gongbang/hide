@@ -131,6 +131,13 @@ export function createActions(dispatch: DispatchFn) {
     dispatch({ schema_version: 2, kind: "ui_state_update", payload: { ...owned, ...patch } });
   };
 
+  const setProjectExpanded = (workspace: Workspace, expanded: boolean) => {
+    const collapsed = new Set(rest()?.ui_state?.collapsed_workspace_ids ?? []);
+    if (expanded) collapsed.delete(workspace.id);
+    else collapsed.add(workspace.id);
+    updateUiState({ collapsed_workspace_ids: [...collapsed].sort() });
+  };
+
   /**
    * The selected host, when a pane or tab command can go to it now. A device
    * that is not connected gets a notice and nothing is sent; the core would
@@ -1335,10 +1342,17 @@ export function createActions(dispatch: DispatchFn) {
 
     /** Folds or unfolds a project's checkouts in the Projects list; the core keeps the choice and says it back as `expanded`. */
     toggleProjectCheckouts(workspace: Workspace) {
-      const collapsed = new Set(rest()?.ui_state?.collapsed_workspace_ids ?? []);
-      if (workspace.expanded === false) collapsed.delete(workspace.id);
-      else collapsed.add(workspace.id);
-      updateUiState({ collapsed_workspace_ids: [...collapsed].sort() });
+      setProjectExpanded(workspace, workspace.expanded === false);
+    },
+
+    /**
+     * A project row: its Overview, a screen of this page alone, and the fold
+     * `projectRowExpansion` chose, the click's only core event and
+     * sent only when the fold changes.
+     */
+    openProject(workspace: Workspace, expanded: boolean | undefined) {
+      ui().setScreen({ kind: "overview", projectId: workspace.id });
+      if (expanded !== undefined && expanded !== (workspace.expanded !== false)) setProjectExpanded(workspace, expanded);
     },
 
     /** Opens or closes the agent rows under a checkout in the Projects list; they start closed and the core keeps the choice. */
