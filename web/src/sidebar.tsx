@@ -11,7 +11,7 @@ import { DevicePicker } from "./DevicePicker";
 import { badgeWords, unfoldedRows } from "./agentRow";
 import { Badge } from "./components/ui/badge";
 import { cn } from "./lib/utils";
-import { agentNumber, numberOf, numberedAgents } from "./numbering";
+import { agentNumber, listedAgentOrder, numberOf, numberedAgents, projectListNumbers } from "./numbering";
 import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow, type AgentRowMenu } from "./components/sidebar-agent-row";
 import { StatusBadge } from "./components/status-badge";
@@ -36,7 +36,7 @@ import {
   type ProjectRow,
 } from "./projects";
 import { hostBridge, hostKind } from "./host";
-import { displayCommand, hostRegistry } from "./shortcuts";
+import { displayCommand, hostRegistry, type Digit } from "./shortcuts";
 import { contextWorkspaces, deviceCatalogLine, remoteContext, remoteView } from "./remote";
 import { agentMenu, checkoutMenu, checkoutRemoving, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
 import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
@@ -378,14 +378,24 @@ function ProjectList({ actions }: { actions: Actions }) {
   const catalogState = useShellStore((s) => catalogLineOf(s.rest)?.state ?? null);
   const catalogText = useShellStore((s) => catalogLineOf(s.rest)?.text ?? null);
   const catalogLine = catalogState && catalogText ? { state: catalogState, text: catalogText } : null;
-  const rows = projectRows(workspaces, groups);
+  const rows = useMemo(() => projectRows(workspaces, groups, listedAgents), [workspaces, groups, listedAgents]);
   const agentRowMenu = useAgentRowMenu(actions);
   const presentations = useMemo(() => new Map(agents.map((agent) => [agent.pane_id, foldedLineage(agent, agents, lineageWorkspaces)])), [agents, lineageWorkspaces]);
+  const placeOf = useMemo(() => agentPlaces(localWorkspaces, remoteStatuses, devices), [localWorkspaces, remoteStatuses, devices]);
+  // An ⌥ hold shows each agent's number once, on its raised row or else its
+  // own checkout's row; ⌥n selects by the Agents list, so the number is that list's.
+  const numbered = useUiStore((s) => s.hint === "agents");
+  const numberOfPane = useMemo(
+    () => (numbered ? projectListNumbers(numberedAgents(listedAgentOrder(listedAgents)), rows, workspaces) : null),
+    [numbered, listedAgents, rows, workspaces],
+  );
   // The folds are this machine's choices, like the inactive groups, so a
   // selected SSH device's tree is drawn open with every checkout's line two.
   const context: ListContext = {
     agents,
     presentationOf: (agent) => presentations.get(agent.pane_id)!,
+    placeOf,
+    numberOf: numberOfPane,
     focusedCheckoutId,
     focusedPaneId,
     workspaceScreen: screenKind === "workspace",
@@ -426,6 +436,10 @@ const NO_IDS: string[] = [];
 type ListContext = {
   agents: AgentRow[];
   presentationOf: (agent: AgentRow) => FoldedLineage;
+  /** The Agents list's context line for a raised row, which no project row above names. */
+  placeOf: (device: string | null, paneId: string) => string | null;
+  /** The number an ⌥ hold shows on an agent's raised row (checkout null) or tree row, while one shows. */
+  numberOf: ((paneId: string, checkoutId: string | null) => Digit | null) | null;
   focusedCheckoutId: string | null;
   focusedPaneId: string | null;
   /** A Workspace is in front, so the focused checkout and agent are the scope shown. */
@@ -444,6 +458,8 @@ function rowKey(row: ProjectRow): string {
   switch (row.kind) {
     case "header":
       return `header:${row.title}`;
+    case "raised":
+      return `raised:${row.group}`;
     case "workspace":
       return `workspace:${row.workspace.id}`;
     case "inactive_projects":
@@ -459,6 +475,7 @@ const ProjectRowView = memo(function ProjectRowView({ row, context }: { row: Pro
       </li>
     );
   }
+  if (row.kind === "raised") return <RaisedSection row={row} context={context} />;
   if (row.kind === "inactive_projects") {
     return (
       <li>
@@ -475,6 +492,46 @@ const ProjectRowView = memo(function ProjectRowView({ row, context }: { row: Pro
   }
   return <WorkspaceRows workspace={row.workspace} level={row.level} context={context} />;
 });
+
+/**
+ * A raised Needs You or Done section above the project tree
+ * (docs/status-model.md): the Agents list's row for each agent, drawn
+ * whatever its project, checkout or parent has folded. A raised row never
+ * unfolds, so it always wears its descendant badge; opening it does what the
+ * same row does in Agents.
+ */
+function RaisedSection({ row, context }: { row: Extract<ProjectRow, { kind: "raised" }>; context: ListContext }) {
+  return (
+    <li data-raised-group={row.group}>
+      <div className="px-sm pt-sm pb-xxs text-micro font-medium text-muted-foreground" data-section={row.title} id={`raised-group-${row.group}`}>
+        {row.title} · {row.agents.length}
+      </div>
+      <ul aria-labelledby={`raised-group-${row.group}`}>
+        {row.agents.map(({ agent, device }) => {
+          const presentation = context.presentationOf(agent);
+          return (
+            <SidebarAgentRow
+              key={`${device ?? "local"}:${agent.id}`}
+              agent={agent}
+              device={device}
+              place={context.placeOf(device, agent.pane_id)}
+              depth={0}
+              descendants={presentation.badgeDescendants}
+              childRows={presentation.badgeChildren}
+              selected={context.workspaceScreen && agent.pane_id === context.focusedPaneId}
+              onOpen={context.actions.openAgent}
+              onToggleTree={null}
+              inset={PROJECT_COLUMN}
+              foldedLineage={presentation}
+              number={context.numberOf?.(agent.pane_id, null) ?? null}
+              menu={context.agentRowMenu}
+            />
+          );
+        })}
+      </ul>
+    </li>
+  );
+}
 
 // The Projects columns (PRD sidebar-readability D-2): a project's glyph at the
 // row's inset, a checkout's glyph one lineage step in, and an opened
@@ -1059,6 +1116,7 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
             inset={inset}
             branchShown={row.depth > 0}
             foldedLineage={presentation}
+            number={context.numberOf?.(row.agent.pane_id, checkoutId) ?? null}
             menu={context.agentRowMenu}
           />
         );

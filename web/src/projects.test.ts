@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { cardSingleValue, checkoutCard, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, overviewRowSelected, projectRowExpansion, checkoutPresentation, projectMarks, projectRows, pullRequestBadge, relativeActivity, shownPullRequest } from "./projects";
-import type { Checkout, GithubStatus, PullRequest, Workspace } from "./snapshot";
+import type { AgentRow, Checkout, GithubStatus, PullRequest, Workspace } from "./snapshot";
 
 function workspace(id: string, extra: Partial<Workspace> = {}): Workspace {
   return {
@@ -24,6 +24,7 @@ describe("projectRows", () => {
     const rows = projectRows(
       [workspace("a", { pinned: true }), workspace("b"), workspace("c"), workspace("d")],
       [{ device_id: "local", expanded: false, project_ids: ["c", "d"] }],
+      [],
     );
     expect(rows.map((row) => (row.kind === "workspace" ? `${row.kind}:${row.workspace.id}:${row.level}` : row.kind))).toEqual([
       "header",
@@ -35,13 +36,39 @@ describe("projectRows", () => {
     const expanded = projectRows(
       [workspace("b"), workspace("c")],
       [{ device_id: "local", expanded: true, project_ids: ["c"] }],
+      [],
     );
     expect(expanded.at(-1)).toMatchObject({ kind: "workspace", level: "child" });
   });
 
   it("omits the pinned header when nothing is pinned", () => {
-    const rows = projectRows([workspace("b")], []);
+    const rows = projectRows([workspace("b")], [], []);
     expect(rows[0]).toEqual({ kind: "header", title: "Projects · Recent activity", count: 1 });
+  });
+
+  it("raises Needs You and Done above Pinned, in the core's order, and keeps them in the tree", () => {
+    const withPanes = (id: string, panes: string[], extra: Partial<Workspace> = {}) =>
+      workspace(id, { checkouts: [{ id: `${id}-main`, tabs: [{ id: `${id}-t`, panes: panes.map((pane) => ({ id: pane })) }] } as unknown as Checkout], ...extra });
+    const agent = (pane: string, group: string, extra: Partial<AgentRow> = {}) => ({ agent: { pane_id: pane, id: pane, group, ...extra } as AgentRow, device: null });
+    const listed = [
+      agent("done-1", "done"),
+      agent("ask-2", "needs_you", { lineage_collapsed: false }),
+      agent("run", "working"),
+      agent("ask-1", "needs_you"),
+      // A pane no drawn project owns is not raised: it would have no tree to stay in.
+      agent("elsewhere", "needs_you"),
+    ];
+    const rows = projectRows([withPanes("a", ["done-1", "ask-1"], { pinned: true }), withPanes("b", ["ask-2", "run"])], [], listed);
+    const shape = rows.map((row) =>
+      row.kind === "raised" ? `${row.title}:${row.agents.map(({ agent }) => agent.pane_id).join(",")}` : row.kind === "header" ? row.title : `${row.kind}:${row.kind === "workspace" ? row.workspace.id : ""}`,
+    );
+    expect(shape).toEqual(["Needs You:ask-2,ask-1", "Done:done-1", "Pinned", "workspace:a", "Projects · Recent activity", "workspace:b"]);
+    // A raised row never unfolds, whatever the tree below has open.
+    const needsYou = rows[0] as Extract<(typeof rows)[number], { kind: "raised" }>;
+    expect(needsYou.agents.map(({ agent }) => agent.lineage_collapsed !== false)).toEqual([true, true]);
+    expect(listed[1]!.agent.lineage_collapsed).toBe(false);
+    // An empty group draws no section.
+    expect(projectRows([withPanes("b", ["run"])], [], listed).map((row) => row.kind)).toEqual(["header", "workspace"]);
   });
 });
 
