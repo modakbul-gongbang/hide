@@ -180,7 +180,8 @@ describe("settings rules", () => {
     const host = (patch: Partial<DeviceHost>): DeviceHost => ({
       consent: "granted",
       helper_root: "~/.local/share/hide/host-helper",
-      contract: 1,
+      cli_dir: "~/.local/bin",
+      contract: 2,
       bound_identity: null,
       granted_at_unix_ms: 1,
       state: "ready",
@@ -197,8 +198,10 @@ describe("settings rules", () => {
     expect(hostLine(host({ consent: "this_machine" })).tone).toBe("local");
   });
 
-  it("names the install root in the consent and refuses a relative device socket", () => {
-    expect(helperConsentTerms("/opt/hide")[0]).toContain("/opt/hide");
+  it("names the install root and command folder in the consent and refuses a relative device socket", () => {
+    const terms = helperConsentTerms("/opt/hide", "/opt/bin");
+    expect(terms[0]).toContain("/opt/hide");
+    expect(terms[1]).toContain("/opt/bin");
     expect(socketProblem("")).toBeNull();
     expect(socketProblem("/tmp/herdr.sock")).toBeNull();
     expect(socketProblem("herdr.sock")).not.toBeNull();

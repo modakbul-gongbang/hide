@@ -132,6 +132,7 @@ fn the_sleep_setting_survives_a_restart_and_a_ui_state_update() {
             app_state_path: path.to_string_lossy().into_owned(),
             host_helper_dir: None,
             host_helper_root: None,
+            host_cli_dir: None,
             workspace_views_path: None,
             shortcut_import_path: None,
         },

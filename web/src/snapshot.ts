@@ -573,6 +573,8 @@ export type DeviceTestStage = { stage: string; state: string; detail: string };
 export type DeviceHost = {
   consent: "this_machine" | "none" | "granted" | "outdated";
   helper_root: string | null;
+  /** The folder the device's `hide` command is linked in, named like `helper_root`. */
+  cli_dir: string | null;
   contract: number;
   bound_identity: string | null;
   granted_at_unix_ms: number | null;
