@@ -136,16 +136,15 @@ fn set_base_branch_from_checkout_row() {
     let project = repo.read(Some("feature"));
     assert_eq!(project.base_branch.as_deref(), Some("feature"));
     assert_eq!(project.base_source, "specified");
-    assert!(
-        project
-            .worktrees
-            .iter()
-            .find(|row| row.branch.as_deref() == Some("feature"))
-            .unwrap()
-            .deletion_gate
-            .blocked_reason
-            .is_some()
-    );
+    let gate = &project
+        .worktrees
+        .iter()
+        .find(|row| row.branch.as_deref() == Some("feature"))
+        .unwrap()
+        .deletion_gate;
+    assert!(gate.blocked_reason.is_none());
+    assert!(gate.warnings.contains(&"holds the base branch".to_owned()));
+    assert!(!gate.can_delete_branch);
 }
 impl Drop for Repository {
     fn drop(&mut self) {
@@ -176,7 +175,11 @@ fn ancestry_does_not_mistake_a_squash_merge_for_a_merged_tip() {
     assert_eq!(row("merged").merged, Some(true));
     assert_eq!(row("squash").merged, Some(false));
     assert!(row("squash").ahead > 0);
-    assert!(!row("squash").deletion_gate.can_delete_branch);
+    // A squash merge leaves the tip off the base, so its deletion says what
+    // `-D` loses rather than calling it merged.
+    assert!(row("squash").deletion_gate.can_delete_branch);
+    assert!(row("squash").deletion_gate.branch_warning.is_some());
+    assert!(row("merged").deletion_gate.branch_warning.is_none());
     assert!(row("merged").last_commit_unix_seconds.is_some());
     assert!(row("merged").measured_at_unix_ms.is_some());
 }
@@ -224,9 +227,9 @@ fn base_override_moves_protection_and_absent_override_reports_fallback() {
     let result = repo.read(Some("feature"));
     assert_eq!(result.base_branch.as_deref(), Some("feature"));
     assert_eq!(result.base_source, "specified");
-    assert!(result.worktrees[1].deletion_gate.blocked_reason.is_some());
+    assert!(!result.worktrees[1].deletion_gate.can_delete_branch);
     let result = repo.read(None);
-    assert!(result.worktrees[1].deletion_gate.blocked_reason.is_none());
+    assert!(result.worktrees[1].deletion_gate.can_delete_branch);
     let result = repo.read(Some("deleted"));
     assert_eq!(result.base_branch.as_deref(), Some("main"));
     assert!(
@@ -258,7 +261,12 @@ fn missing_detached_nested_and_dirty_rows_preserve_their_actual_state() {
         .find(|w| w.branch.as_deref() == Some("parent"))
         .unwrap();
     assert!(parent.nested && parent.dirty);
-    assert!(parent.deletion_gate.blocked_reason.is_some());
+    assert!(parent.deletion_gate.blocked_reason.is_none());
+    // The child's folder is untracked in the parent too, so it is counted.
+    assert_eq!(
+        parent.deletion_gate.discard_label.as_deref(),
+        Some("Discard 2 changed files and the worktree inside it")
+    );
     let detached = result
         .worktrees
         .iter()
@@ -274,47 +282,108 @@ fn missing_detached_nested_and_dirty_rows_preserve_their_actual_state() {
     assert!(!missing.deletion_gate.can_delete_branch);
 }
 
+/// Only the main worktree is refused; every other risk is a warning, and a
+/// loss the folder would take asks for the discard checkbox.
 #[test]
-fn deletion_gate_blocks_before_warning_and_reports_pane_consequence() {
+fn deletion_gate_warns_instead_of_blocking_and_reports_pane_consequence() {
     let row = WorktreeSnapshot {
         branch: Some("feature".into()),
+        base_branch: Some("main".into()),
         merged: Some(false),
         ahead: 2,
         upstream_state: "gone".into(),
         ..WorktreeSnapshot::default()
     };
-    let gate = deletion_gate(&row, false, 2, 1);
+    let gate = deletion_gate(&row, false, 2);
     assert_eq!(gate.button_label, "Close 2 panes and delete");
     assert_eq!(
-        deletion_gate(&row, false, 1, 0).button_label,
+        deletion_gate(&row, false, 1).button_label,
         "Close 1 pane and delete"
     );
+    assert_eq!(gate.warnings, ["ahead 2 unmerged", "not pushed"]);
+    assert!(gate.blocked_reason.is_none() && gate.discard_label.is_none());
+    assert!(gate.can_delete_branch);
     assert_eq!(
-        gate.warnings,
-        ["ahead 2 unmerged", "not pushed", "1 running agent"]
+        gate.branch_warning.as_deref(),
+        Some("2 commits not on main are lost with it")
     );
-    assert!(gate.blocked_reason.is_none());
-    assert!(deletion_gate(&row, true, 0, 0).blocked_reason.is_some());
-    for blocked in [
-        WorktreeSnapshot {
+
+    let base = deletion_gate(&row, true, 0);
+    assert!(base.blocked_reason.is_none() && !base.can_delete_branch);
+    assert!(base.branch_warning.is_none());
+    assert!(base.warnings.contains(&"holds the base branch".to_owned()));
+
+    let dirty = deletion_gate(
+        &WorktreeSnapshot {
             dirty: true,
+            changed_file_count: 3,
             ..row.clone()
         },
-        WorktreeSnapshot {
+        false,
+        0,
+    );
+    assert!(dirty.blocked_reason.is_none());
+    assert_eq!(dirty.warnings[0], "3 changed files not committed");
+    assert_eq!(
+        dirty.discard_label.as_deref(),
+        Some("Discard 3 changed files")
+    );
+
+    let nested = deletion_gate(
+        &WorktreeSnapshot {
             nested: true,
             ..row.clone()
         },
-        WorktreeSnapshot {
-            is_main: true,
+        false,
+        0,
+    );
+    assert_eq!(
+        nested.discard_label.as_deref(),
+        Some("Discard the worktree inside it")
+    );
+
+    let unknown = deletion_gate(
+        &WorktreeSnapshot {
+            unavailable_reason: Some("timed out".into()),
+            merged: None,
             ..row.clone()
         },
-    ] {
-        assert!(
-            deletion_gate(&blocked, false, 2, 1)
-                .blocked_reason
-                .is_some()
-        );
-    }
+        false,
+        0,
+    );
+    assert!(
+        unknown
+            .warnings
+            .contains(&"Git status unavailable".to_owned())
+    );
+    assert_eq!(
+        unknown.discard_label.as_deref(),
+        Some("Discard any uncommitted changes")
+    );
+    assert!(unknown.branch_warning.unwrap().contains("could not tell"));
+
+    let merged = deletion_gate(
+        &WorktreeSnapshot {
+            merged: Some(true),
+            ..row.clone()
+        },
+        false,
+        0,
+    );
+    assert!(merged.branch_warning.is_none());
+
+    assert!(
+        deletion_gate(
+            &WorktreeSnapshot {
+                is_main: true,
+                ..row.clone()
+            },
+            false,
+            0
+        )
+        .blocked_reason
+        .is_some()
+    );
 }
 
 #[test]

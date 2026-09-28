@@ -13,7 +13,7 @@ import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
-import { enterWorkspace } from "../../web/e2e/wire";
+import { countSent, enterWorkspace } from "../../web/e2e/wire";
 import { hostLog, isolate, launch, relaunch, screenshot, shellPage, type Isolated } from "./fixture";
 
 test.describe.configure({ timeout: 240_000 });
@@ -430,4 +430,98 @@ test("new-tab: empty page creates no native renderer and address loads in the sa
   await viewOf(`${origin}/b.html`);
   await expectOnSlot(page, `${origin}/b.html`, id!);
   await windowShot("new-tab-native-navigated");
+});
+
+type Zoomed = { factor: number; focused: boolean; pid: number };
+
+/** The zoom factor of the page showing `url`, whether it holds the keyboard, and its renderer. */
+function zoomOf(url: string): Promise<Zoomed> {
+  return app!.evaluate(({ BrowserWindow }, url) => {
+    const child = BrowserWindow.getAllWindows()[0]!.contentView.children.find((view) => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
+    return { factor: Math.round(child.webContents.getZoomFactor() * 100) / 100, focused: child.webContents.isFocused(), pid: child.webContents.getOSProcessId() };
+  }, url);
+}
+
+/** An app-menu click, which reaches the host the way an accelerator does. */
+function menuClick(id: string): Promise<void> {
+  return app!.evaluate(({ Menu }, id) => Menu.getApplicationMenu()!.getMenuItemById(id)!.click(), id);
+}
+
+/** A two-finger pinch at the middle of the page showing `url`, then the page's visual zoom. */
+function pinch(url: string): Promise<number> {
+  return app!.evaluate(async ({ BrowserWindow }, url) => {
+    const child = BrowserWindow.getAllWindows()[0]!.contentView.children.find((view) => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
+    const contents = child.webContents;
+    contents.debugger.attach();
+    try {
+      await contents.debugger.sendCommand("Input.synthesizePinchGesture", { x: 100, y: 100, scaleFactor: 2, gestureSourceType: "touch" });
+      return (await contents.executeJavaScript("window.visualViewport.scale")) as number;
+    } finally {
+      contents.debugger.detach();
+    }
+  }, url);
+}
+
+test("zoom: the text-size commands zoom a focused page in Chrome's steps and a pinch zooms it", async () => {
+  ({ app } = await launch(run.env, { switches: PAINT_WHILE_OCCLUDED }));
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1024, 640));
+  const page = await app.firstWindow();
+  const sent = countSent(page);
+  await enterWorkspace(page, "fixture");
+  const pageA = `${origin}/a.html`;
+  expect(await openFromCli(pageA, ["--reveal", "--wait"])).toMatchObject({ ok: true });
+  await expect.poll(async () => (await viewOf(pageA)).visible).toBe(true);
+  const textScales = () => (sent.get("pane_text_scale") ?? 0) + (sent.get("editor_text_scale") ?? 0);
+
+  // With the page holding the keyboard, each command zooms the page one of
+  // Chrome's steps, the page keeps the keyboard, and no text size moves. A
+  // page holds the keyboard only in the key window, so this test's window
+  // comes to the front.
+  await expect
+    .poll(() =>
+      app!.evaluate(({ app: electron, BrowserWindow }, url) => {
+        const window = BrowserWindow.getAllWindows()[0]!;
+        electron.focus({ steal: true });
+        window.focus();
+        const child = window.contentView.children.find((view) => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
+        child.webContents.focus();
+        return child.webContents.isFocused();
+      }, pageA),
+    )
+    .toBe(true);
+  const steps: [string, number][] = [["text_larger", 1.1], ["text_larger", 1.25], ["text_smaller", 1.1], ["text_smaller", 1], ["text_smaller", 0.9], ["text_reset", 1]];
+  for (const [command, factor] of steps) {
+    await menuClick(command);
+    expect(await zoomOf(pageA), command).toMatchObject({ factor, focused: true });
+  }
+
+  // ⌘+ (⌘⇧=) zooms in too, as in Chrome.
+  await app.evaluate(({ BrowserWindow }, url) => {
+    const child = BrowserWindow.getAllWindows()[0]!.contentView.children.find((view) => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
+    child.webContents.sendInputEvent({ type: "keyDown", keyCode: "=", modifiers: ["meta", "shift"] });
+  }, pageA);
+  await expect.poll(async () => (await zoomOf(pageA)).factor).toBe(1.1);
+  await page.waitForTimeout(300);
+  expect(textScales(), "a text size changed while the page held the keyboard").toBe(0);
+
+  // With the shell holding the keyboard, the same command sizes the terminal's text and leaves the page alone.
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.focus());
+  await page.locator("[data-pane-view] .xterm-helper-textarea").first().focus();
+  await expect.poll(async () => (await zoomOf(pageA)).focused).toBe(false);
+  await menuClick("text_larger");
+  await expect.poll(textScales).toBe(1);
+  expect((await zoomOf(pageA)).factor).toBe(1.1);
+  await menuClick("text_reset");
+  await expect.poll(textScales).toBe(2);
+
+  // A pinch zooms the page, also after it navigates into another renderer.
+  expect(await pinch(pageA)).toBeGreaterThan(1.2);
+  const before = (await zoomOf(pageA)).pid;
+  const moved = `${origin.replace("127.0.0.1", "localhost")}/b.html`;
+  await inPage(pageA, `location.href = ${JSON.stringify(moved)}`);
+  await viewOf(moved);
+  expect((await zoomOf(moved)).pid, "navigation did not swap the renderer").not.toBe(before);
+  await expect.poll(() => inPage<number>(moved, "window.visualViewport.scale")).toBe(1);
+  expect(await pinch(moved)).toBeGreaterThan(1.2);
+  await windowShot("browser-zoom-pinched");
 });

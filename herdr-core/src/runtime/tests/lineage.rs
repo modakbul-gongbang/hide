@@ -277,6 +277,7 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
         app_state_path: runtime.state_path.to_string_lossy().into_owned(),
         host_helper_dir: None,
         host_helper_root: None,
+        host_cli_dir: None,
         workspace_views_path: None,
         shortcut_import_path: None,
     };

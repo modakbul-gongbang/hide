@@ -178,9 +178,10 @@ export function hostLine(host: DeviceHost | undefined): { text: string; tone: "o
  * (PRD S5.5 B50): where it is installed, when it runs, what an update may do,
  * and what it never does. The same words back the add form and the row's Allow.
  */
-export function helperConsentTerms(helperRoot: string | null): string[] {
+export function helperConsentTerms(helperRoot: string | null, cliDir: string | null): string[] {
   return [
-    `Hide copies one helper program into ${helperRoot ?? "the helper folder in the device account's home"} on the device, and replaces it there when this version of Hide needs a newer one.`,
+    `Hide copies its helper and the hide command into ${helperRoot ?? "the helper folder in the device account's home"} on the device, and replaces them there when this version of Hide needs newer ones.`,
+    `It links hide in ${cliDir ?? "the account's command folder"} so the device's panes can open files, diffs and pages in this Hide; a hide already there that is not Hide's own link is left alone.`,
     "It runs only while Hide holds the SSH connection and serves file, Git and worktree work for projects registered on that device. Nothing stays resident and nothing starts at login.",
     "It changes no hook, AI or shell settings there, and every move to the Trash or worktree removal still asks you for its target each time.",
     "A wider permission or a different SSH identity asks again; revoking stops new work and deletes no draft or remote file.",

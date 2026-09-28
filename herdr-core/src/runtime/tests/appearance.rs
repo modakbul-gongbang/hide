@@ -12,6 +12,7 @@ fn runtime_at(path: &std::path::Path) -> Runtime {
             app_state_path: path.to_string_lossy().into_owned(),
             host_helper_dir: None,
             host_helper_root: None,
+            host_cli_dir: None,
             workspace_views_path: None,
             shortcut_import_path: None,
         },

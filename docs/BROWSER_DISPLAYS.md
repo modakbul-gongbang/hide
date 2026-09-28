@@ -93,6 +93,18 @@ The host checks every field of a sync before it places anything and drops a mess
 Native page reports carry the display's current load stamp, so a late report from a previous reload cannot mark the new request loaded.
 An evicted page reports its disappearance as disconnected until shown again.
 
+## Zoom
+
+While a page holds the keyboard, the text-size commands zoom the page instead of sizing text, the way ⌘= / ⌘- / ⌘0 do in Chrome.
+The desktop app routes them by command, not by key, so a rebound text-size chord zooms the page too: an app-menu command for Larger, Smaller or Reset text that arrives while a page holds the keyboard steps that page through Chrome's zoom levels (25% to 500%) or back to 100%, and the page keeps the keyboard (`BrowserViews.zoomFocused`).
+Chrome's second zoom-in chord, ⌘+ (⌘⇧= on a US keyboard), reaches no menu item, so the host zooms the focused page on that key before the page or the menu sees it, unless the operator bound that chord to a command.
+With the shell holding the keyboard the same commands size the focused terminal or document text as before.
+Chromium keeps one zoom level per host within a page's session partition, so pages of the same host in a Workspace zoom together.
+The shell's own zoom, which places every page on its slot, is a separate session and never moves with a page's zoom.
+
+A trackpad pinch magnifies the page up to 3x without reflowing it, as in Chrome.
+Electron turns pinch off by default, and the limit lives in the page's renderer, so the host sets it again on every committed navigation, including one that moves the page to a new renderer.
+
 ## Overlays
 
 A native view is drawn above the page's HTML, so the shell cannot draw over it.
@@ -118,7 +130,7 @@ pnpm --dir desktop e2e
 ```
 
 `desktop/e2e/browser.spec.ts` drives a desktop app it launched itself against a private hided and an isolated Herdr, never the operator's.
-It opens a page with `hide browser open`, checks the native view sits on its slot, types Hangul into the page, splits and resizes without a reload, freezes the pages under the palette, the Recent Panels list and a divider drag, navigates and goes back, shows a failed load, opens an HTML file from the Explorer, refuses a file outside the checkout, ends a closed page's renderer, restores the page after a relaunch, and shows the notice in a plain browser tab.
+It opens a page with `hide browser open`, checks the native view sits on its slot, zooms a focused page with the text-size commands and ⌘+ without moving any text size, pinches a page before and after it moves to another renderer, types Hangul into the page, splits and resizes without a reload, freezes the pages under the palette, the Recent Panels list and a divider drag, navigates and goes back, shows a failed load, opens an HTML file from the Explorer, refuses a file outside the checkout, ends a closed page's renderer, restores the page after a relaunch, and shows the notice in a plain browser tab.
 The test window sits behind the operator's windows, so it launches with `--disable-backgrounding-occluded-windows`, and captures of it are taken by window id.
 Keep screenshots and logs under local-only `agents/runs/`.
-`desktop/e2e/remote-workspace.spec.ts` additionally uses an isolated SSH server and two private Herdr servers to prove remote CLI origin, HTTP and WebSocket forwarding, absolute loopback subrequests, local and remote cookie separation, remote popup address ownership, relative HTML assets, refusal of undeclared files and external requests, explicit reveal, background View cleanup, and route cleanup on close and forced candidate exit.
+`desktop/e2e/remote-workspace.spec.ts` additionally uses an isolated SSH server and two private Herdr servers to prove remote CLI origin, HTTP and WebSocket forwarding, absolute loopback subrequests, local and remote cookie separation, remote popup address ownership, relative HTML assets, refusal of undeclared files and external requests, explicit reveal, background View cleanup, route cleanup on close and forced candidate exit, and a return route that comes back after the device's helper connection ends and reconnects, with every remote command run through the `hide` Hide installed and linked on the device.

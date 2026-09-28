@@ -135,6 +135,7 @@ fn runtime_with_home() -> Runtime {
             .into_owned(),
         host_helper_dir: None,
         host_helper_root: None,
+        host_cli_dir: None,
         workspace_views_path: None,
         shortcut_import_path: None,
     };
@@ -401,4 +402,47 @@ fn a_device_project_at_this_machines_path_does_not_hold_up_its_add_or_removal() 
         .insert("/work/same".to_owned());
     assert!(!runtime.workspace_creation_in_flight_for("remote:mac:workspace:1"));
     assert!(runtime.workspace_creation_in_flight_for("local:1"));
+}
+
+/// Contract 2 widened the helper consent to the `hide` command and its link,
+/// so a device allowed under contract 1 asks again instead of getting the
+/// command it was never asked about, and allowing it again names the folder.
+#[test]
+fn a_consent_from_before_the_hide_command_asks_again() {
+    let mut runtime = runtime();
+    register_device(&mut runtime, "studio", "studio");
+    runtime
+        .snapshot
+        .ui_state
+        .device_registrations
+        .iter_mut()
+        .find(|registration| registration.id == "studio")
+        .expect("registration")
+        .host_consent = Some(crate::model::HostConsent {
+        contract: 1,
+        helper_root: crate::remote::host::DEFAULT_HELPER_ROOT.to_owned(),
+        cli_dir: None,
+        granted_at_unix_ms: 1,
+        identity: None,
+    });
+    runtime.refresh_device_snapshots();
+    let host = &device(&runtime, "studio").host;
+    assert_eq!(
+        (host.consent.as_str(), host.state.as_str()),
+        ("outdated", "not_allowed")
+    );
+
+    let event = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "device_host_consent",
+        "payload": { "device_id": "studio", "allow": true }
+    }))
+    .expect("consent event");
+    runtime.dispatch_json(&event);
+    let host = &device(&runtime, "studio").host;
+    assert_eq!(host.consent, "granted");
+    assert_eq!(
+        host.cli_dir.as_deref(),
+        Some(crate::remote::host::DEFAULT_CLI_DIR)
+    );
 }

@@ -172,6 +172,8 @@ export class DesktopHost {
   /** An app-menu click, delivered to the shell only while it is loaded. */
   sendCommand(id: CommandId): void {
     if (!this.window || (this.state.kind !== "attached" && this.state.kind !== "lost")) return;
+    // Text size in a page is the page's zoom, and the page keeps the keyboard.
+    if (this.browsers?.zoomFocused(id)) return;
     // A chord the page of a browser display left unhandled reaches the menu;
     // the command's surface (the palette, a dialog) needs the keyboard.
     if (this.browsers?.hasFocus()) this.window.webContents.focus();

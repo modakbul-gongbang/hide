@@ -385,6 +385,7 @@ mod tests {
             app_state_path: "/tmp/hide-project-context-test-state.json".to_owned(),
             host_helper_dir: None,
             host_helper_root: None,
+            host_cli_dir: None,
             workspace_views_path: None,
             shortcut_import_path: None,
         })

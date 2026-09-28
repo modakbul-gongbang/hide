@@ -105,9 +105,11 @@ impl Runtime {
     }
 
     /// Whether a consent still covers what this build would do: the same
-    /// contract and the same install root.
+    /// contract, the same install root and the same command folder.
     fn consent_current(&self, consent: &HostConsent) -> bool {
-        consent.contract == HOST_CONSENT_CONTRACT && consent.helper_root == self.host_helper_root
+        consent.contract == HOST_CONSENT_CONTRACT
+            && consent.helper_root == self.host_helper_root
+            && consent.cli_dir.as_deref() == Some(self.host_cli_dir.as_str())
     }
 
     /// A fresh consent in this build's scope, unbound until the first
@@ -116,6 +118,7 @@ impl Runtime {
         HostConsent {
             contract: HOST_CONSENT_CONTRACT,
             helper_root: self.host_helper_root(),
+            cli_dir: Some(self.host_cli_dir.clone()),
             granted_at_unix_ms: now_unix_ms(),
             identity: None,
         }
@@ -330,6 +333,7 @@ impl Runtime {
                     "installed": established.installed,
                     "platform": format!("{} {}", established.hello.os, established.hello.arch),
                     "consent_bound": bound_now,
+                    "cli": established.cli.diagnostic(),
                 }));
                 self.set_host_phase(
                     device_id,
@@ -469,6 +473,12 @@ impl Runtime {
                     .map(|consent| consent.helper_root.clone())
                     .unwrap_or_else(|| self.host_helper_root()),
             ),
+            cli_dir: Some(
+                consent
+                    .filter(|_| current)
+                    .and_then(|consent| consent.cli_dir.clone())
+                    .unwrap_or_else(|| self.host_cli_dir.clone()),
+            ),
             contract: HOST_CONSENT_CONTRACT,
             bound_identity: consent
                 .and_then(|consent| consent.identity.as_ref())
@@ -512,14 +522,19 @@ impl Runtime {
     }
 
     /// Installs the helper packages this daemon carries; a daemon that
-    /// carries none passes none.
-    pub(super) fn helper_packages_from(options: &CoreOptions) -> (HelperPackages, String) {
+    /// carries none passes none. Also answers the install root and the
+    /// command folder a consent names.
+    pub(super) fn helper_packages_from(options: &CoreOptions) -> (HelperPackages, String, String) {
         (
             HelperPackages::new(options.host_helper_dir.as_ref().map(PathBuf::from)),
             options
                 .host_helper_root
                 .clone()
                 .unwrap_or_else(|| host::DEFAULT_HELPER_ROOT.to_owned()),
+            options
+                .host_cli_dir
+                .clone()
+                .unwrap_or_else(|| host::DEFAULT_CLI_DIR.to_owned()),
         )
     }
 }
