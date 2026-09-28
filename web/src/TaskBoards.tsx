@@ -37,6 +37,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover
 import { Switch } from "./components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
 import { Hint, Tooltip, TooltipContent, TooltipTrigger, useHintOpen } from "./components/ui/tooltip";
+import { typing } from "./IssueDialogs";
 import { previewRead, useCachedDetail } from "./issueDetails";
 import { markdownPlainText } from "./markdownPlain";
 import { cn } from "./lib/utils";
@@ -111,12 +112,12 @@ export type BoardHandlers = {
   showCheckouts: () => void;
 };
 
+/** What 시작 and 편집 say on a card and in the panel (B7). */
+export const START_HINT = "이 이슈로 워크트리와 에이전트를 만든다. 이름은 AI가 제안";
+export const EDIT_HINT = "Local 이슈만. 제목 · 본문을 그 자리에서 고친다";
+
 /** The board's page state its cards read: the open panel's issue, and the agent in front. */
 export type BoardPage = { panel: string | null; focusedPaneId: string | null };
-
-function typing(target: EventTarget | null): boolean {
-  return target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || (target instanceof HTMLElement && target.isContentEditable);
-}
 
 /** ⌘-click means GitHub wherever it lands (D-09). */
 function gitHubClick(event: MouseEvent, url: string | null | undefined, deviceId: string, handlers: BoardHandlers): boolean {
@@ -903,7 +904,7 @@ function CardActions({ card, actions, handlers }: { card: TaskCard; actions: Act
   return (
     <span className={cn("flex shrink-0 items-center gap-xxs", reveal)} data-card-actions="true" onClick={stop}>
       {card.first === "start" ? (
-        <Hint label="이 이슈로 워크트리와 에이전트를 만든다. 이름은 AI가 제안" shortcut={<Kbd>S</Kbd>}>
+        <Hint label={START_HINT} shortcut={<Kbd>S</Kbd>}>
           <Button variant="secondary" size="sm" onClick={() => handlers.startIssue(card)} data-card-start="true">
             <PlayIcon aria-hidden="true" />
             시작
@@ -927,7 +928,7 @@ function CardActions({ card, actions, handlers }: { card: TaskCard; actions: Act
         </Hint>
       ) : null}
       {card.editable ? (
-        <Hint label="Local 이슈만. 제목 · 본문을 그 자리에서 고친다">
+        <Hint label={EDIT_HINT}>
           <Button variant="ghost" size="icon-sm" onClick={() => handlers.editIssue(card)} data-card-edit="true">
             <PencilIcon aria-hidden="true" />
           </Button>
@@ -941,7 +942,6 @@ function CardActions({ card, actions, handlers }: { card: TaskCard; actions: Act
 /** `⋯` on a card or in its panel: 시작, Workspace, GitHub, 편집, and a Local issue's close or reopen. */
 export function IssueMenu({ card, actions, handlers, trigger }: { card: TaskCard; actions: Actions; handlers: BoardHandlers; trigger: ReactNode }) {
   const { task, checkout, owner } = card;
-  const local = task.source === "local";
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -959,7 +959,7 @@ export function IssueMenu({ card, actions, handlers, trigger }: { card: TaskCard
           </DropdownMenuItem>
         ) : null}
         {card.editable ? <DropdownMenuItem onSelect={() => handlers.editIssue(card)}>편집</DropdownMenuItem> : null}
-        {local && card.editable ? (
+        {card.editable ? (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => actions.setIssueOpen(task.key, !task.open)} data-card-issue-open={task.open ? "close" : "reopen"}>
@@ -1075,7 +1075,7 @@ function ListRow({ card, now, page, actions, handlers }: { card: TaskCard; now: 
           if (!gitHubClick(event, task.url, card.owner.device_id, handlers)) handlers.openPanel(card);
         }}
         onKeyDown={(event) => {
-          if (event.target !== event.currentTarget || typing(event.target)) return;
+          if (event.target !== event.currentTarget) return;
           if (event.key === "Enter") handlers.openPanel(card);
           else if (event.key.toLowerCase() === "s" && card.canStart) handlers.startIssue(card);
         }}

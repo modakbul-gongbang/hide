@@ -113,8 +113,6 @@ export type PullRequest = {
   is_draft: boolean;
   /** The CI rollup; unknown and absent checks never read as a pass (`PullRequestChecks`). */
   checks?: "unknown" | "none" | "pending" | "failed" | "passing";
-  /** The issues its body closes (`Closes #N`); the core resolves them to `closes_task_keys`. */
-  closing_issues?: IssueReference[];
   merged_at_unix_ms?: number | null;
 };
 

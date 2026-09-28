@@ -408,7 +408,7 @@ function AgentChoiceField({ agent, disabled, onChange }: { agent: AgentChoice; d
 }
 
 /** Whether a key press belongs to a field or a terminal rather than to the page. */
-function typing(target: EventTarget | null): boolean {
+export function typing(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   return target.isContentEditable || target.closest("input, textarea, select, [contenteditable='true'], .xterm, [role='dialog'], [role='menu'], [role='listbox']") !== null;
 }

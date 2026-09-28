@@ -16,7 +16,7 @@ const CACHE_LIMIT = 200;
 type DetailStore = {
   /** The last ready answer per issue. */
   ready: Map<string, IssueDetail>;
-  /** The issues the preview has asked for, so it asks once. */
+  /** The issues the preview has asked for and not yet had answered, so it asks once; a failed one may be asked again. */
   previewed: Set<string>;
 };
 
@@ -34,11 +34,19 @@ function remember(detail: IssueDetail) {
   useIssueDetails.setState({ ready });
 }
 
-// Each ready answer the core hands over is kept by its issue.
+// Each ready answer the core hands over is kept by its issue, and an
+// answered preview ask is settled: a ready one is in the cache, a failed one
+// may be asked again on the next rest.
 useShellStore.subscribe((state, previous) => {
   const detail = state.rest?.issue_work?.detail ?? null;
-  if (!detail || detail === previous.rest?.issue_work?.detail || detail.phase !== "ready") return;
-  remember(detail);
+  if (!detail || detail === previous.rest?.issue_work?.detail || detail.phase === "reading") return;
+  if (detail.phase === "ready") remember(detail);
+  const { previewed } = useIssueDetails.getState();
+  if (previewed.has(detail.task_key)) {
+    const rest = new Set(previewed);
+    rest.delete(detail.task_key);
+    useIssueDetails.setState({ previewed: rest });
+  }
 });
 
 /** The core's slot while it holds `taskKey`: reading, its answer, or why it failed. */
@@ -67,6 +75,12 @@ function reading(): boolean {
 export function previewRead(taskKey: string, request: () => void) {
   const { ready, previewed } = useIssueDetails.getState();
   if (ready.has(taskKey) || previewed.has(taskKey) || reading()) return;
-  useIssueDetails.setState({ previewed: new Set(previewed).add(taskKey) });
+  const asked = new Set(previewed).add(taskKey);
+  // An ask whose answer a later read replaced is never settled; the oldest goes past the cap.
+  for (const key of asked) {
+    if (asked.size <= CACHE_LIMIT) break;
+    asked.delete(key);
+  }
+  useIssueDetails.setState({ previewed: asked });
   request();
 }

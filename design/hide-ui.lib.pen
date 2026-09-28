@@ -35049,10 +35049,6 @@
       "type": "number",
       "value": 288
     },
-    "--home-halo-radius": {
-      "type": "number",
-      "value": 6
-    },
     "--size-editor-memory-min": {
       "type": "number",
       "value": 160

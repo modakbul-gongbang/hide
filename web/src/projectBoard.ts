@@ -115,10 +115,10 @@ export type TaskCard = {
 };
 
 /** A worktree with no issue, one of `이슈 없는 워크트리 N` under 진행 중 (B4). */
-export type LooseWorktree = { place: BoardPlace; owner: Workspace; checkout: Checkout; branch: string };
+export type LooseWorktree = { branch: string };
 
 /** An open pull request with no issue, one of `이슈 없는 PR N` under 리뷰 (B4). */
-export type LoosePullRequest = { place: BoardPlace; owner: Workspace; checkout: Checkout; number: number; title: string; url: string; tone: PrTone };
+export type LoosePullRequest = { place: BoardPlace; owner: Workspace; number: number; title: string; url: string; tone: PrTone };
 
 export type Blocker = { key: string; label: string };
 
@@ -337,8 +337,8 @@ export function buildTasks(projects: readonly BoardProject[], scope: BoardScope,
       }
       if (task || closes) continue;
       const pr = checkout.pull_request;
-      if (stage === "working") worktrees.push({ place: place(workspace), owner: workspace, checkout, branch: checkout.branch ?? checkout.label });
-      else if (stage === "review" && pr) pullRequests.push({ place: place(workspace), owner: workspace, checkout, number: pr.number, title: pr.title, url: pr.url, tone: prChip(pr).tone });
+      if (stage === "working") worktrees.push({ branch: checkout.branch ?? checkout.label });
+      else if (stage === "review" && pr) pullRequests.push({ place: place(workspace), owner: workspace, number: pr.number, title: pr.title, url: pr.url, tone: prChip(pr).tone });
     }
     for (const task of tasks.values()) {
       if (!task.open) continue;

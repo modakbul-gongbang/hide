@@ -12,8 +12,8 @@ import { PullRequestChip } from "./OverviewLenses";
 import { STAGES, issueDate, type TaskCard } from "./projectBoard";
 import type { IssueDetail } from "./snapshot";
 import { useShellStore } from "./store";
-import { CardAgentRow, IssueLabelView, IssueMenu, ReviewMarks, TaskGlyph, neighbourCard, type BoardHandlers } from "./TaskBoards";
-import { useUiStore } from "./ui";
+import { CardAgentRow, EDIT_HINT, IssueLabelView, IssueMenu, ReviewMarks, START_HINT, TaskGlyph, neighbourCard, type BoardHandlers } from "./TaskBoards";
+import { useEscapeLayer } from "./components/ui/layer";
 
 // The issue panel beside the Issues board (PRD overview-lenses-issues D-08,
 // B10-B19): one skeleton whatever the source, the head, the properties, what
@@ -36,17 +36,6 @@ function useRead(taskKey: string): Read {
   if (slot?.phase === "ready") return { detail: slot, reading: false, failure: null };
   if (slot?.phase === "failed") return { detail: cached, reading: false, failure: slot.message ?? "읽지 못함" };
   return { detail: cached, reading: slot?.phase === "reading", failure: null };
-}
-
-/** Registers `close` as the innermost Escape layer while mounted, the newest `close` each time. */
-function useEscapeLayer(close: (() => void) | null) {
-  const latest = useRef(close);
-  latest.current = close;
-  const active = close !== null;
-  useEffect(() => {
-    if (!active) return;
-    return useUiStore.getState().pushEscape(() => latest.current?.());
-  }, [active]);
 }
 
 export function IssuePanel({
@@ -78,7 +67,7 @@ export function IssuePanel({
     if (editRequest?.key === task.key && card.editable) setEditing(true);
   }, [editRequest, task.key, card.editable]);
   // Escape closes the panel first, then leaves the Overview (B10); an editor takes it before the panel.
-  useEscapeLayer(onClose);
+  useEscapeLayer(true, onClose);
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target as HTMLElement;
@@ -162,7 +151,7 @@ function PanelActions({ card, actions, handlers, onEdit }: { card: TaskCard; act
   return (
     <div className="flex items-center gap-xs" data-issue-panel-actions="true">
       {card.canStart ? (
-        <Hint label="이 이슈로 워크트리와 에이전트를 만든다. 이름은 AI가 제안" shortcut={<Kbd>S</Kbd>}>
+        <Hint label={START_HINT} shortcut={<Kbd>S</Kbd>}>
           <Button size="sm" onClick={() => handlers.startIssue(card)} data-issue-panel-start="true">
             <PlayIcon aria-hidden="true" />
             시작
@@ -185,7 +174,7 @@ function PanelActions({ card, actions, handlers, onEdit }: { card: TaskCard; act
         </Hint>
       ) : null}
       {card.editable ? (
-        <Hint label="Local 이슈만. 제목 · 본문을 그 자리에서 고친다">
+        <Hint label={EDIT_HINT}>
           <Button variant="ghost" size="icon-sm" onClick={onEdit} data-issue-panel-edit="true">
             <PencilIcon aria-hidden="true" />
           </Button>
@@ -390,7 +379,7 @@ function LocalEditor({ card, body, actions, onCancel, onSaved }: { card: TaskCar
     const update = s.rest?.issue_work?.update ?? null;
     return request !== null && update?.request_id === request ? update : null;
   });
-  useEscapeLayer(onCancel);
+  useEscapeLayer(true, onCancel);
   const saved = useRef(onSaved);
   saved.current = onSaved;
   const ready = answer?.phase === "ready";
