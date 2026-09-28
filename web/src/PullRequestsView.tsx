@@ -211,7 +211,7 @@ function PullRequestRowView({ row, project, open, onToggle, onUnfold, handlers, 
           ) : null}
         </span>
         <span className="relative flex w-(--size-pr-slot) shrink-0 items-center justify-end">
-          <span className="font-mono text-caption text-muted-foreground group-focus-within/pr-row:invisible group-hover/pr-row:invisible has-[~*_[data-state=open]]:invisible" data-pr-age={row.number}>
+          <span className="font-mono text-caption text-muted-foreground group-focus-within/pr-row:invisible group-hover/pr-row:invisible group-has-data-[state=open]/pr-row:invisible" data-pr-age={row.number}>
             {age}
           </span>
           <RowActions row={row} project={project} onLink={() => setPicking(true)} handlers={handlers} />
@@ -258,27 +258,41 @@ function IssueCell({ row, project, picking, onPicking, handlers, now }: { row: P
   }
   return (
     <IssuePicker row={row} project={project} open={picking} onOpenChange={onPicking}>
-      <Hint label={LINK_HINT}>
-        <button type="button" aria-label="이슈 잇기" className="relative inline-flex w-(--size-icon) shrink-0 justify-center rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={own(() => onPicking(true))} data-pr-issue="none" data-pr-link-open={row.number}>
-          <span className="group-hover/pr-row:hidden group-focus-within/pr-row:hidden">{empty}</span>
-          <Link2Icon aria-hidden="true" className="hidden size-(--size-icon-sm) text-foreground group-hover/pr-row:block group-focus-within/pr-row:block" />
-        </button>
-      </Hint>
+      <button type="button" aria-label="이슈 잇기" className="relative inline-flex w-(--size-icon) shrink-0 justify-center rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={own(() => onPicking(true))} data-pr-issue="none" data-pr-link-open={row.number}>
+        <span className="group-hover/pr-row:hidden group-focus-within/pr-row:hidden">{empty}</span>
+        <Link2Icon aria-hidden="true" className="hidden size-(--size-icon-sm) text-foreground group-hover/pr-row:block group-focus-within/pr-row:block" />
+      </button>
     </IssuePicker>
   );
 }
 
-/** The project's open issues and `새 이슈 만들기` (B9); choosing one opens its confirmation, or for a Local issue links it. */
+/** The project's open issues and `새 이슈 만들기` (B9) under the issue cell, `children`, which carries the 이슈 잇기 hint; choosing one opens its confirmation, or for a Local issue links it. */
 function IssuePicker({ row, project, open, onOpenChange, children }: { row: PrRow; project: Workspace; open: boolean; onOpenChange: (open: boolean) => void; children: ReactNode }) {
   const issues = (project.tasks?.tasks ?? []).filter((task) => task.open);
+  // A choice hands the keyboard to the dialog it opens, not back to the cell.
+  const chosen = useRef(false);
   const choose = (dialog: Parameters<ReturnType<typeof useUiStore.getState>["setWorkspaceDialog"]>[0]) => {
+    chosen.current = true;
     onOpenChange(false);
     useUiStore.getState().setWorkspaceDialog(dialog);
   };
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverAnchor asChild>{children}</PopoverAnchor>
-      <PopoverContent align="start" className="w-(--size-pr-popover) p-none" data-pr-link-picker={row.number} onClick={(event) => event.stopPropagation()}>
+      <Hint label={LINK_HINT}>
+        <PopoverAnchor asChild>{children}</PopoverAnchor>
+      </Hint>
+      <PopoverContent
+        align="start"
+        className="w-(--size-pr-popover) p-none"
+        data-pr-link-picker={row.number}
+        onClick={(event) => event.stopPropagation()}
+        onOpenAutoFocus={() => {
+          chosen.current = false;
+        }}
+        onCloseAutoFocus={(event) => {
+          if (chosen.current) event.preventDefault();
+        }}
+      >
         <Command>
           <CommandInput placeholder="이슈 검색" autoFocus />
           <CommandList>

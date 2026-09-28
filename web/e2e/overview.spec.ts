@@ -272,7 +272,8 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     // them the operator's turn, the bar by bucket; Issues two open, the bar
     // by stage; Sessions today's count once the history is read (B1-B5).
     const tile = (id: string) => overview.locator(`[data-lens-tile="${id}"]`);
-    await expect(overview.locator("[data-lens-tile]")).toHaveCount(3);
+    await expect(overview.locator("[data-lens-tile]")).toHaveCount(4);
+    expect(await overview.locator("[data-lens-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-lens-tile")))).toEqual(["agents", "issues", "prs", "sessions"]);
     await expect(overview.locator("[data-overview-tab], [data-inbox-group], [data-waiting-band]")).toHaveCount(0);
     await expect(tile("agents")).toHaveAttribute("data-selected", "true");
     await expect(tile("agents").locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "4", { timeout: 20_000 });
@@ -595,22 +596,23 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
 
     // A line of work with no issue (B4): the worktree line's popover says
     // where it goes and names them, its click is Agents › 체크아웃; the pull
-    // request line unfolds in place, a line of it opening GitHub.
+    // request line's is the PRs tab, where each has an issue cell to link
+    // (overview-lenses-prs B21).
     const looseWorktrees = column("working").locator("[data-loose-worktrees]");
     await looseWorktrees.hover();
     await expect(page.getByRole("tooltip")).toContainText("Agents › 체크아웃에서 보기");
     await expect(page.getByRole("tooltip")).toContainText("prd/asking");
-    await column("review").locator("[data-loose-prs]").click();
-    const loosePr = column("review").locator('[data-loose-pr="12"]');
-    await expect(loosePr).toContainText("이슈 없는 정리");
-    await page.context().route("https://github.com/**", (route) => route.fulfill({ body: "" }));
-    const popup = page.waitForEvent("popup");
-    await loosePr.click();
-    expect((await popup).url()).toBe("https://github.com/acme/repo/pull/12");
-    await (await popup).close();
     await looseWorktrees.click();
     await expect(overview).toHaveAttribute("data-overview-view", "agents");
     await expect(overview).toHaveAttribute("data-agents-mode", "checkouts");
+    await tile("issues").locator("[data-lens-tile-button]").click();
+    const loosePrs = column("review").locator("[data-loose-prs]");
+    await loosePrs.hover();
+    await expect(page.getByRole("tooltip")).toContainText("PRs 탭에서 보기");
+    await expect(page.getByRole("tooltip")).toContainText("#12");
+    await loosePrs.click();
+    await expect(overview).toHaveAttribute("data-overview-view", "prs");
+    await expect(overview.locator('[data-pr="12"] [data-pr-issue="none"]')).toBeVisible();
     await tile("issues").locator("[data-lens-tile-button]").click();
 
     // The filter at the facts line's right end, beside the mode control

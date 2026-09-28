@@ -98,7 +98,7 @@ export function PrLinkDialog({ actions, workspace, pr, task, onClose }: { action
   const number = issueNumber(task);
   return (
     <AlertDialog open onOpenChange={(next) => { if (!next) onClose(); }}>
-      <AlertDialogContent data-pr-link={pr.number} data-pr-link-issue={task.key}>
+      <AlertDialogContent initialFocus="cancel" data-pr-link={pr.number} data-pr-link-issue={task.key}>
         <AlertDialogHeader>
           <AlertDialogTitle className="break-words">PR #{pr.number}을 {task.id ?? task.title}에 잇기</AlertDialogTitle>
           <AlertDialogDescription className="break-words" data-pr-link-confirm="true">
