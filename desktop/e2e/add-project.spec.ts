@@ -7,6 +7,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
+import { sendEvent } from "../../web/e2e/wire";
 import { isolate, launch } from "./fixture";
 
 type Pick = { canceled: boolean; filePaths: string[] };
@@ -98,6 +99,29 @@ test("Add a project picks a folder with the native picker, and a cancel or a ref
     await expect(dialog).toBeVisible();
     await captureWindow(app, page, "add-project-dialog");
     await dialog.getByRole("button", { name: "Close" }).click();
+    await expect(dialog).toHaveCount(0);
+
+    // A device's folders are not this Mac's to browse: its Host gets a ~/ field,
+    // and what the device path answers (here: no connection) stays in the dialog.
+    const state = JSON.parse(fs.readFileSync(path.join(run.env.HIDE_STATE_DIR!, "hided.json"), "utf8")) as { token: string };
+    await sendEvent(page, { origin: new URL(page.url()).origin, token: state.token }, "register_device", {
+      id: "ssh-none", label: "Offline box", ssh_alias: "hide-e2e-no-such-host.invalid", host_consent: false,
+    });
+    await page.keyboard.press("Meta+Shift+KeyN");
+    await dialog.locator("[data-add-project-host]").click();
+    await page.locator('[data-host-option="ssh-none"]').click();
+    await expect(dialog).toHaveAttribute("data-add-project", "ssh-none");
+    await expect(browse).toHaveCount(0);
+    const field = dialog.getByLabel("Folder on Offline box");
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue("~/");
+    await field.fill("~/projects/app");
+    await field.press("Enter");
+    await expect(alert).toHaveAttribute("data-registration-reason", "core");
+    await expect(alert).toHaveAttribute("data-registration-path", "~/projects/app");
+    await expect(alert).toContainText("needs its connection");
+    await captureWindow(app, page, "add-project-device");
+    await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
   } finally {
     await app?.close();

@@ -30,8 +30,12 @@ export function AddProjectDialog({ actions }: { actions: Actions }) {
   return open ? <AddProject actions={actions} /> : null;
 }
 
-/** A folder sent as `create_workspace`, with how many projects its device had then. */
-type Sent = { device: string; path: string; at: number; count: number };
+/**
+ * A folder sent as `create_workspace`, with the ids of its device's projects
+ * then: a new id is the answer, whatever else was removed meanwhile, and
+ * whichever spelling (canonical, or a device's own) the registration keeps.
+ */
+type Sent = { device: string; path: string; at: number; known: ReadonlySet<string> };
 
 function AddProject({ actions }: { actions: Actions }) {
   const close = () => useUiStore.getState().closeOverlay("add_project");
@@ -48,7 +52,8 @@ function AddProject({ actions }: { actions: Actions }) {
   const coreError = useErrorSince(sent?.at ?? null, ["workspace.create", "workspace.remove_in_flight"]);
   const browseRef = useRef<HTMLButtonElement>(null);
   const fieldRef = useRef<HTMLInputElement>(null);
-  const count = registrations.filter((row) => row.device_id === sent?.device).length;
+  const hostChanged = useRef(false);
+  const added = sent !== null && registrations.some((row) => row.device_id === sent.device && !sent.known.has(row.id));
 
   const hidedReason = sent && pathRefusal?.kind === "create_workspace" && pathRefusal.path === sent.path ? pathRefusal.reason : null;
   const shown = shellRefusal
@@ -62,8 +67,8 @@ function AddProject({ actions }: { actions: Actions }) {
 
   // The project appearing is the answer; the dialog closes on it.
   useEffect(() => {
-    if (sent && count > sent.count) useUiStore.getState().closeOverlay("add_project");
-  }, [sent, count]);
+    if (added) useUiStore.getState().closeOverlay("add_project");
+  }, [added]);
 
   const add = (path: string) => {
     setShellRefusal(null);
@@ -73,7 +78,7 @@ function AddProject({ actions }: { actions: Actions }) {
       return;
     }
     useShellStore.getState().clearPathRefusal();
-    setSent({ device: host.id, path, at: Date.now(), count: registrations.filter((row) => row.device_id === host.id).length });
+    setSent({ device: host.id, path, at: Date.now(), known: new Set(registrations.filter((row) => row.device_id === host.id).map((row) => row.id)) });
     actions.createWorkspace(path, folderLabel(path), host.id);
   };
 
@@ -113,14 +118,21 @@ function AddProject({ actions }: { actions: Actions }) {
                 setChosen(next);
                 setSent(null);
                 setShellRefusal(null);
-                // The field a device gets takes the keyboard once it is drawn.
-                if (next !== "local") requestAnimationFrame(() => fieldRef.current?.focus());
+                hostChanged.current = true;
               }}
             >
               <SelectTrigger size="sm" className="w-auto" aria-label="Host" data-add-project-host="true">
                 <SelectValue />
               </SelectTrigger>
-              <SelectContent>
+              <SelectContent
+                onCloseAutoFocus={(event) => {
+                  // A new host hands the keyboard to its own primary control rather than back to the selector.
+                  if (!hostChanged.current) return;
+                  hostChanged.current = false;
+                  event.preventDefault();
+                  (browseRef.current ?? fieldRef.current)?.focus();
+                }}
+              >
                 {hosts.map((row) => (
                   <SelectItem key={row.id} value={row.id} data-host-option={row.id}>
                     {row.label}

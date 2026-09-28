@@ -160,15 +160,15 @@ It draws the sidebar's Search icon with its `Search ⌘K` hint, the ⌘K palette
 Its web files are `web/src/Palette.tsx`, `web/src/search.ts`, and `web/src/components/sidebar-header.tsx`.
 
 Dialogs and Sheets is `Screen / Dialogs and Sheets`.
-It draws every Dialog and AlertDialog surface the shell opens: New worktree, Delete worktree, Remove project, Purpose, Unsaved drafts, New workspace, and Keyboard shortcuts.
-Its web files are `web/src/WorkspaceDialogs.tsx`, `web/src/NewWorkspace.tsx`, `web/src/DraftRecovery.tsx`, and `web/src/ShortcutSheet.tsx`.
+It draws every Dialog and AlertDialog surface the shell opens: New worktree, Delete worktree, Remove project, Purpose, Unsaved drafts, Add a project, and Keyboard shortcuts; the committed sheet still draws the removed sidebar New workspace panel in Add a project's place until the screen is redrawn.
+Its web files are `web/src/WorkspaceDialogs.tsx`, `web/src/AddProjectDialog.tsx`, `web/src/DraftRecovery.tsx`, and `web/src/ShortcutSheet.tsx`.
 
 Menus and Overlays is `Screen / Menus and Overlays`.
 It draws the sidebar row menu, the Explorer context menu, the device picker, and the Explorer git-status notice, each anchored in its real screen context.
 Its web files are `web/src/entry-menu.tsx` and `web/src/DevicePicker.tsx`.
 
 Projects Sidebar is `Screen / Projects Sidebar`.
-It draws the sidebar's Projects tab as the scope picker: above it the fixed Overview row with the house glyph and the project count, then the `Projects | Agents` strip ending in New workspace and Search; in the list, pinned and activity-ordered projects with the row of the scope on screen selected, a Git project’s first Overview child as a checkout-row master instance with a layout-dashboard glyph and empty trailing slots, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds.
+It draws the sidebar's Projects tab as the scope picker: above it the fixed Overview row with the house glyph and the project count, then the `Projects | Agents` strip ending in Add project and Search; in the list, pinned and activity-ordered projects with the row of the scope on screen selected, a Git project’s first Overview child as a checkout-row master instance with a layout-dashboard glyph and empty trailing slots, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds.
 The Overview child owns selection on Overview; a checkout row opens and unfolds, then folds on activation while already selected and unfolded.
 Beside each theme's sidebar it draws a pull-request row under the pointer with its card (`Component / PR hover card`) opened to the right, the state the row's tooltip has become.
 Its web files are `web/src/sidebar.tsx`, `web/src/components/sidebar-header.tsx`, `web/src/projects.ts` and `web/src/components/pr-card.tsx`.
