@@ -682,15 +682,42 @@ fn ensure_owner(
     env: std::collections::BTreeMap<String, String>,
 ) -> Result<(String, Option<(String, String)>), ControlFailure> {
     match owner {
-        OwnerOpen::Worktree { path, label } => {
+        OwnerOpen::Worktree {
+            path,
+            repository_root,
+            label,
+        } => {
             let opened = wire::opened_worktree(mutation_request(
                 connector,
                 "worktree.open",
-                wire::worktree_open_params(path, label)?,
+                wire::worktree_open_params(path, repository_root)?,
             )?)
             .map_err(ControlFailure::Ambiguous)?;
-            let first_tab = (!opened.already_open).then_some((opened.tab_id, opened.pane_id));
-            Ok((opened.workspace_id, first_tab))
+            if opened.already_open {
+                return Ok((opened.workspace_id, None));
+            }
+            // Only a workspace Herdr opened for this request takes the
+            // checkout's name (D-14); the tab is real either way.
+            if !label.trim().is_empty()
+                && opened.label != *label
+                && let Err(error) = mutation_request(
+                    connector,
+                    "workspace.rename",
+                    wire::workspace_rename_params(&opened.workspace_id, label)?,
+                )
+            {
+                crate::diagnostic!(json!({
+                    "component": "checkout_owner",
+                    "kind": "owner.label_failed",
+                    "workspace_id": opened.workspace_id,
+                    "path": path,
+                    "message": error.message(),
+                }));
+            }
+            Ok((
+                opened.workspace_id,
+                Some((opened.tab_id, opened.pane_id)),
+            ))
         }
         OwnerOpen::Folder { path, label, mark } => {
             let _serialized = FOLDER_OWNER_OPEN
@@ -4432,6 +4459,7 @@ mod tests {
             &context,
             &OwnerOpen::Worktree {
                 path: "/tmp".into(),
+                repository_root: "/tmp".into(),
                 label: "Fixture".into(),
             },
             false,
@@ -4730,10 +4758,14 @@ mod tests {
             "worktree.open" => json!({
                 "type": "worktree_opened",
                 "already_open": false,
-                "workspace": {"workspace_id": "w9", "number": 9, "label": "hide", "focused": true, "pane_count": 1, "tab_count": 1, "active_tab_id": "w9:t1", "agent_status": "idle"},
-                "worktree": {"path": "/repo", "is_bare": false, "is_detached": false, "is_prunable": false, "is_linked_worktree": false, "label": "hide"},
+                "workspace": {"workspace_id": "w9", "number": 9, "label": "repo-feat", "focused": true, "pane_count": 1, "tab_count": 1, "active_tab_id": "w9:t1", "agent_status": "idle"},
+                "worktree": {"path": "/repo-feat", "is_bare": false, "is_detached": false, "is_prunable": false, "is_linked_worktree": true, "label": "repo-feat"},
                 "tab": {"tab_id": "w9:t1", "workspace_id": "w9", "number": 1, "label": "1", "focused": true, "pane_count": 1, "agent_status": "idle"},
                 "root_pane": {"pane_id": "w9:p1", "terminal_id": "fixture-terminal", "workspace_id": "w9", "tab_id": "w9:t1", "focused": true, "agent_status": "idle", "revision": 1}
+            }),
+            "workspace.rename" => json!({
+                "type": "workspace_info",
+                "workspace": {"workspace_id": "w9", "number": 9, "label": "feat", "focused": true, "pane_count": 1, "tab_count": 1, "active_tab_id": "w9:t1", "agent_status": "idle"}
             }),
             other => panic!("unexpected {other}"),
         });
@@ -4742,10 +4774,11 @@ mod tests {
             &herdr.connector(),
             &RemoteControlAction::OpenOwner {
                 owner: OwnerOpen::Worktree {
-                    path: "/repo".to_owned(),
-                    label: "hide".to_owned(),
+                    path: "/repo-feat".to_owned(),
+                    repository_root: "/repo".to_owned(),
+                    label: "feat".to_owned(),
                 },
-                cwd: "/repo".to_owned(),
+                cwd: "/repo-feat".to_owned(),
                 label: "Tab 2".to_owned(),
                 area_id: None,
                 admission_id: None,
@@ -4761,12 +4794,21 @@ mod tests {
                 created_pane_id: Some(ref pane_id),
             } if tab_id == "w9:t1" && pane_id == "w9:p1"
         ));
+        // Herdr opens a linked worktree only from its repository's main
+        // worktree, and a label on the open would rename a workspace that was
+        // already there, so the new one is named after it opens (D-14).
         assert_eq!(
             herdr.calls(),
-            [(
-                "worktree.open".to_owned(),
-                json!({"cwd": "/repo", "path": "/repo", "label": "hide", "focus": true})
-            )]
+            [
+                (
+                    "worktree.open".to_owned(),
+                    json!({"cwd": "/repo", "path": "/repo-feat", "focus": true})
+                ),
+                (
+                    "workspace.rename".to_owned(),
+                    json!({"workspace_id": "w9", "label": "feat"})
+                ),
+            ]
         );
     }
 
@@ -4793,6 +4835,7 @@ mod tests {
             &herdr.connector(),
             &OwnerOpen::Worktree {
                 path: "/repo".to_owned(),
+                repository_root: "/repo".to_owned(),
                 label: "hide".to_owned(),
             },
             "/repo",
@@ -4823,6 +4866,7 @@ mod tests {
             &herdr.connector(),
             &OwnerOpen::Worktree {
                 path: "/gone".to_owned(),
+                repository_root: "/gone".to_owned(),
                 label: "gone".to_owned(),
             },
             "/gone",

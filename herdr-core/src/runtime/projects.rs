@@ -2612,7 +2612,13 @@ pub(super) fn owner_open(
     } else {
         &project.label
     };
-    OwnerOpen::for_checkout(device_id, &checkout.path, project.is_git, label)
+    OwnerOpen::for_checkout(
+        device_id,
+        &checkout.path,
+        &project.path,
+        project.is_git,
+        label,
+    )
 }
 
 #[cfg(test)]

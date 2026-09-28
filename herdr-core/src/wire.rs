@@ -687,14 +687,16 @@ pub(crate) fn workspace_issue_params(
     workspace_metadata_params(workspace_id, "issue", issue)
 }
 
-/// `worktree.open` for one checkout path: Herdr answers with the workspace it
-/// already binds to that checkout, or opens one bound to it (`already_open`).
-pub(crate) fn worktree_open_params(path: &str, label: &str) -> Result<Value, String> {
+/// `worktree.open` for one checkout path, from its repository's main
+/// worktree: Herdr answers with the workspace it already binds to that
+/// checkout, or binds or opens one (`already_open`). It carries no label,
+/// because Herdr applies one to a workspace that was already open too.
+pub(crate) fn worktree_open_params(path: &str, repository_root: &str) -> Result<Value, String> {
     params(req::WorktreeOpenParams {
         branch: None,
-        cwd: Some(path.into()),
+        cwd: Some(repository_root.into()),
         focus: true,
-        label: Some(label.into()),
+        label: None,
         path: Some(path.into()),
         trust_repository: None,
         workspace_id: None,
@@ -706,6 +708,7 @@ pub(crate) fn worktree_open_params(path: &str, label: &str) -> Result<Value, Str
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct OpenedWorktree {
     pub(crate) workspace_id: String,
+    pub(crate) label: String,
     pub(crate) tab_id: String,
     pub(crate) pane_id: String,
     pub(crate) already_open: bool,
@@ -721,6 +724,7 @@ pub(crate) fn opened_worktree(value: Value) -> Result<OpenedWorktree, String> {
             already_open,
             ..
         } => Ok(OpenedWorktree {
+            label: workspace.label,
             workspace_id: nonempty_id(workspace.workspace_id, missing)?,
             tab_id: nonempty_id(tab.tab_id, missing)?,
             pane_id: nonempty_id(root_pane.pane_id, missing)?,
@@ -751,6 +755,13 @@ pub(crate) fn listed_workspace_tokens(
             .collect()),
         _ => Err(missing.into()),
     }
+}
+
+pub(crate) fn workspace_rename_params(workspace_id: &str, label: &str) -> Result<Value, String> {
+    params(req::WorkspaceRenameParams {
+        workspace_id: workspace_id.into(),
+        label: label.into(),
+    })
 }
 
 pub(crate) fn workspace_list_params() -> Result<Value, String> {

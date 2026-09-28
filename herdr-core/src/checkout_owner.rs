@@ -80,16 +80,23 @@ pub(crate) fn owner_of<'a>(
     if path.trim().is_empty() {
         return None;
     }
-    OwnerOpen::for_checkout(device_id, path, is_git, "").find_in(workspaces)
+    OwnerOpen::for_checkout(device_id, path, path, is_git, "").find_in(workspaces)
 }
 
 /// How a checkout with no open owner gets one.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OwnerOpen {
-    /// `worktree.open` on the checkout: Herdr answers with the workspace it
-    /// binds to that path, opening one when none is open, so a repeated or
-    /// racing request converges on one owner (`already_open`).
-    Worktree { path: String, label: String },
+    /// `worktree.open` on the checkout, from its repository's main worktree
+    /// (Herdr refuses a linked worktree opened from anywhere else): Herdr
+    /// answers with the workspace it binds to that path, binding an unbound
+    /// one already there or opening one, so a repeated or racing request
+    /// converges on one owner (`already_open`). `label` names only a
+    /// workspace Herdr newly opened; one already there keeps its name.
+    Worktree {
+        path: String,
+        repository_root: String,
+        label: String,
+    },
     /// A plain folder: reuse the live workspace carrying `mark`, else
     /// `workspace.create` at the folder and mark it.
     Folder {
@@ -101,10 +108,17 @@ pub enum OwnerOpen {
 
 impl OwnerOpen {
     /// The owner a checkout with no open owner gets.
-    pub(crate) fn for_checkout(device_id: &str, path: &str, is_git: bool, label: &str) -> Self {
+    pub(crate) fn for_checkout(
+        device_id: &str,
+        path: &str,
+        repository_root: &str,
+        is_git: bool,
+        label: &str,
+    ) -> Self {
         if is_git {
             Self::Worktree {
                 path: path.to_owned(),
+                repository_root: repository_root.to_owned(),
                 label: label.to_owned(),
             }
         } else {

@@ -2661,6 +2661,7 @@ fn a_new_tab_goes_to_the_workspace_herdr_binds_to_the_checkout_not_where_its_tab
         runtime.local_tab_host(&project, &checkout),
         Some(TabHost::Open(OwnerOpen::Worktree {
             path: path.clone(),
+            repository_root: path.clone(),
             label
         }))
     );
