@@ -140,3 +140,17 @@ export function toBounds(placed: BrowserRect, zoom: number): BrowserRect {
   const y = Math.round(placed.y * scale);
   return { x, y, width: Math.max(0, Math.round((placed.x + placed.width) * scale) - x), height: Math.max(0, Math.round((placed.y + placed.height) * scale) - y) };
 }
+
+/** Chrome's page zoom steps (`kPresetZoomFactors`), as zoom factors. */
+const PAGE_ZOOM_FACTORS = [0.25, 1 / 3, 0.5, 2 / 3, 0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2, 2.5, 3, 4, 5];
+/** How near two factors count as the same step, so a stored 0.333… is 1/3. */
+const ZOOM_EPSILON = 0.001;
+
+export type PageZoom = "in" | "out" | "reset";
+
+/** The zoom factor one step from `current`, as Chrome steps it; past either end it stays. */
+export function nextZoomFactor(current: number, zoom: PageZoom): number {
+  if (zoom === "reset") return 1;
+  if (zoom === "in") return PAGE_ZOOM_FACTORS.find((step) => step > current + ZOOM_EPSILON) ?? current;
+  return PAGE_ZOOM_FACTORS.findLast((step) => step < current - ZOOM_EPSILON) ?? current;
+}

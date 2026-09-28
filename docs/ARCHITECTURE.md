@@ -765,7 +765,7 @@ The e2e covers each path alone (a Playwright chord, a main-process menu click, o
 | Split right / down | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D | ⌘D / ⌘⇧D |
 | Zoom pane | ⌘⌥↩ | ⌘⌥↩ | ⌘⌥↩ |
 | Close pane | ⌘⇧W | ⌥⇧W (moved: Chrome reserves ⌘⇧W) | ⌘⇧W |
-| Larger / smaller / reset text | ⌘= / ⌘- / ⌘0 | same chords | same chords |
+| Larger / smaller / reset text | ⌘= / ⌘- / ⌘0 | same chords | same chords; while a browser display's page holds the keyboard they zoom that page in Chrome's steps and it keeps the keyboard, and ⌘+ (⌘⇧=) zooms it in too (`docs/BROWSER_DISPLAYS.md`) |
 | Move to Trash | ⌘⌫ (Explorer tree only) | not intercepted; a terminal gets ^U | same as the browser |
 | Settings | ⌘, | ⌥, (moved: Chrome keeps ⌘,) | ⌘, (in the app menu) |
 | Keyboard shortcuts | - | ⌘/ | ⌘/ |
