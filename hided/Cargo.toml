@@ -30,6 +30,11 @@ cap-std = "=4.0.3"
 percent-encoding = "=2.3.2"
 tokio-tungstenite = { version = "=0.26.2", default-features = false, features = ["connect"] }
 futures-util = "=0.3.34"
+# Web Push: VAPID signing and RFC 8291 encryption (ring), and the POST to the
+# push service (ureq over rustls). Both are already in the build through
+# hide-memory and herdr-core.
+ring = "=0.17.14"
+ureq = { version = "=3.4.2", default-features = false, features = ["rustls"] }
 
 [dev-dependencies]
 tempfile = "=3.27.0"

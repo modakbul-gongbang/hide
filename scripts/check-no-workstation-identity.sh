@@ -21,7 +21,10 @@ pattern='/Users/|hoyeonlee|grabs-mac-mini|tail56d7a2'
 allowed='/Users/example'
 
 # This script carries the pattern itself, so it is the one file excluded.
-hits="$(git grep -nE "$pattern" -- . ':!agents' ':!scripts/check-no-workstation-identity.sh' \
+# `--text` reads a file `.gitattributes` marks `-diff` as the text it is:
+# otherwise git grep prints only "Binary file ... matches", and the allowed
+# home directory in it can no longer be told from a real one.
+hits="$(git grep --text -nE "$pattern" -- . ':!agents' ':!scripts/check-no-workstation-identity.sh' \
     | grep -vF "$allowed" || true)"
 if [[ -n "$hits" ]]; then
     printf 'workstation identities are present in tracked files:\n%s\n' "$hits" >&2

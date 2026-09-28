@@ -272,6 +272,19 @@ impl Core {
         result
     }
 
+    /// The Herdr API connection the core holds for a connected SSH device;
+    /// `None` when the device is not connected. The daemon reads and writes
+    /// a device pane through it without joining the attach set.
+    pub fn remote_herdr_api(
+        &self,
+        device_id: &str,
+    ) -> Option<std::sync::Arc<dyn hide_herdr_client::ApiConnector>> {
+        if !check_owner_thread(self, "remote_herdr_api") {
+            return None;
+        }
+        lock_recover(&self.runtime).remote_herdr_api(device_id)
+    }
+
     /// Daemon-only read of consented, connected SSH routes. Opening a route
     /// happens after this call has released the runtime lock.
     pub fn workspace_remote_routes(&self) -> Vec<crate::WorkspaceRemoteRoute> {

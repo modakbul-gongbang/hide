@@ -229,11 +229,15 @@ export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions:
     if (read?.phase !== "ready" || promptEdited.current) return;
     setPrompt(delegatePrompt({ number: pr.number, title: pr.title, branch }, read));
   }, [read, pr.number, pr.title, branch]);
-  const [request, setRequest] = useState<{ afterId: number; at: number } | null>(null);
+  // Whether the start makes the branch's worktree is fixed when it is asked
+  // for: the worktree it makes joins the checkouts while its agent is still
+  // starting, and reading `checkout` then would wait for the wrong task.
+  const [request, setRequest] = useState<{ afterId: number; at: number; newWorktree: boolean } | null>(null);
+  const newWorktree = request ? request.newWorktree : checkout === null;
   const operation = useShellStore((s) => s.rest?.task_operation);
   const started = taskFor(
     operation,
-    request ? (checkout ? { kind: "agent_start", afterId: request.afterId, repositoryRoot: workspace.path } : { kind: "worktree_create", afterId: request.afterId, repositoryRoot: workspace.path, branch }) : null,
+    request ? (request.newWorktree ? { kind: "worktree_create", afterId: request.afterId, repositoryRoot: workspace.path, branch } : { kind: "agent_start", afterId: request.afterId, repositoryRoot: workspace.path }) : null,
   );
   const refused = useErrorSince(request?.at ?? null, ["pr_delegate.", "worktree.create", "task_operation.", "agent_start.", "overview.unknown_checkout"]);
   const working = request !== null && refused === null && (started === null || started.phase === "working");
@@ -246,7 +250,7 @@ export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions:
   }, [started, onClose]);
   const submit = () => {
     if (working || !branch || agent === "terminal") return;
-    setRequest({ afterId: actions.taskIdNow(), at: Date.now() });
+    setRequest({ afterId: actions.taskIdNow(), at: Date.now(), newWorktree: checkout === null });
     actions.delegatePullRequest(workspace.id, pr.number, agent, prompt);
   };
   return (
@@ -261,11 +265,11 @@ export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions:
             <Field label="워크트리 · 브랜치">
               <Input value={branch} mono disabled readOnly data-pr-delegate-branch="true" />
             </Field>
-            {checkout ? null : (
+            {newWorktree ? (
               <Note tone="muted" data-pr-delegate-new-worktree="true">
                 이 브랜치의 워크트리를 만들고 시작합니다
               </Note>
-            )}
+            ) : null}
             <AgentChoiceField agent={agent} disabled={working} onChange={setAgent} agents={["claude", "codex"]} />
             <Field label="첫 지시" aside={<span className="text-muted-foreground">{read?.phase === "reading" || !read ? "실패한 검사 · 리뷰 코멘트 읽는 중…" : "실패한 검사 · 리뷰 코멘트에서 채움 · 고칠 수 있음"}</span>}>
               <TextArea
@@ -290,7 +294,7 @@ export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions:
               </Note>
             ) : null}
             {failure ? <Note tone="error" data-pr-delegate-error="true">{failure}</Note> : null}
-            {working ? <Status tone="pending">{checkout ? "에이전트를 시작하는 중…" : "워크트리를 만드는 중…"}</Status> : null}
+            {working ? <Status tone="pending">{newWorktree ? "워크트리를 만드는 중…" : "에이전트를 시작하는 중…"}</Status> : null}
           </DialogBody>
           <DialogFooter>
             <Button variant="secondary" onClick={onClose}>{working ? "숨기기" : "취소"}</Button>

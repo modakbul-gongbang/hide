@@ -27,6 +27,7 @@ pub const HIDE_HOST_CLI_DIR: &str = "HIDE_HOST_CLI_DIR";
 pub const HERDR_PANE_ID: &str = "HERDR_PANE_ID";
 pub const HIDE_CAP_REF: &str = "HIDE_CAP_REF";
 pub const HIDE_WORKSPACE_BRIDGE_DIR: &str = "HIDE_WORKSPACE_BRIDGE_DIR";
+pub const HIDE_TAILSCALE_BIN: &str = "HIDE_TAILSCALE_BIN";
 
 pub const REGISTRY: &[EnvKey] = &[
     EnvKey {
@@ -120,6 +121,12 @@ pub const REGISTRY: &[EnvKey] = &[
         absent_behavior: "The remote helper and the hide command installed beside it use $HOME/.local/state/hide/workspace-bridges; isolated verification may set a separate directory on both ends",
     },
     EnvKey {
+        key: HIDE_TAILSCALE_BIN,
+        required: false,
+        format: "absolute path of the tailscale CLI Settings > Mobile runs; a path that does not exist reads as Tailscale not installed",
+        absent_behavior: "The macOS app bundle's CLI (/Applications/Tailscale.app/Contents/MacOS/Tailscale), then `tailscale` on PATH; isolated verification sets it so no test reaches the account's own Tailscale",
+    },
+    EnvKey {
         key: HOME,
         required: true,
         format: "absolute home-directory path",
@@ -153,6 +160,10 @@ pub struct Env {
     /// live membership and never trusts a caller-supplied Workspace.
     pub pane_id: Option<String>,
     pub workspace_bridge_dir: Option<PathBuf>,
+    /// The only tailscale CLI Mobile runs, when set (`HIDE_TAILSCALE_BIN`).
+    pub tailscale_bin: Option<PathBuf>,
+    /// PATH as the daemon received it, searched for `tailscale` at each check.
+    pub search_path: Option<String>,
 }
 
 #[derive(Debug)]
@@ -337,6 +348,20 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         Some(value) => Some(PathBuf::from(value)),
         None => None,
     };
+    let tailscale_bin = match read(HIDE_TAILSCALE_BIN) {
+        Some(value)
+            if !Path::new(&value).is_absolute() || value.bytes().any(|b| b.is_ascii_control()) =>
+        {
+            errors.push(EnvError {
+                key: HIDE_TAILSCALE_BIN,
+                kind: "invalid",
+            });
+            None
+        }
+        Some(value) => Some(PathBuf::from(value)),
+        None => None,
+    };
+    let search_path = read(PATH).filter(|value| !value.is_empty());
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -354,6 +379,8 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         host_cli_dir,
         pane_id,
         workspace_bridge_dir,
+        tailscale_bin,
+        search_path,
     })
 }
 
@@ -409,7 +436,7 @@ pub fn herdr_bin_error(env: &Env) -> Option<String> {
     })
 }
 
-fn first_on_path(path: &str, name: &str) -> Option<PathBuf> {
+pub(crate) fn first_on_path(path: &str, name: &str) -> Option<PathBuf> {
     path.split(':')
         .filter(|dir| !dir.is_empty())
         .map(|dir| Path::new(dir).join(name))

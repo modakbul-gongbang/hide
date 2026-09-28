@@ -1190,3 +1190,10 @@ fn close_capture_request(key: &str) -> live::CloseCaptureRequest {
         },
     }
 }
+
+#[test]
+fn a_device_that_is_not_connected_lends_no_herdr_api_to_a_phone() {
+    // The phone's detail reads this as "the device is not connected" (mobile-companion B28).
+    let runtime = runtime();
+    assert!(runtime.remote_herdr_api("ssh-mini").is_none());
+}

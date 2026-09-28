@@ -508,6 +508,11 @@ impl RemoteControlContext {
     pub(crate) fn target_id(&self) -> &str {
         &self.target_id
     }
+
+    /// The Herdr API connection this device's control requests use.
+    pub(crate) fn api_connector(&self) -> Arc<dyn ApiConnector> {
+        Arc::clone(&self.api_connector)
+    }
 }
 
 fn execute_remote_control(

@@ -1,0 +1,55 @@
+/*
+ * The phone app's own rules (PRD mobile-companion B23, B24, B38): the
+ * notch and home-indicator insets, and the scrollback's ANSI colours drawn
+ * from the terminal palette tokens, so the rows read like the desktop pane in
+ * either theme.
+ */
+
+html,
+body,
+#root {
+  overscroll-behavior-y: none;
+  -webkit-tap-highlight-color: transparent;
+  -webkit-text-size-adjust: 100%;
+}
+
+.phone-safe-top {
+  padding-top: env(safe-area-inset-top);
+}
+
+.phone-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.phone-ansi .ansi-black-fg { color: var(--terminal-black); }
+.phone-ansi .ansi-red-fg { color: var(--terminal-red); }
+.phone-ansi .ansi-green-fg { color: var(--terminal-green); }
+.phone-ansi .ansi-yellow-fg { color: var(--terminal-yellow); }
+.phone-ansi .ansi-blue-fg { color: var(--terminal-blue); }
+.phone-ansi .ansi-magenta-fg { color: var(--terminal-magenta); }
+.phone-ansi .ansi-cyan-fg { color: var(--terminal-cyan); }
+.phone-ansi .ansi-white-fg { color: var(--terminal-white); }
+.phone-ansi .ansi-bright-black-fg { color: var(--terminal-bright-black); }
+.phone-ansi .ansi-bright-red-fg { color: var(--terminal-bright-red); }
+.phone-ansi .ansi-bright-green-fg { color: var(--terminal-bright-green); }
+.phone-ansi .ansi-bright-yellow-fg { color: var(--terminal-bright-yellow); }
+.phone-ansi .ansi-bright-blue-fg { color: var(--terminal-bright-blue); }
+.phone-ansi .ansi-bright-magenta-fg { color: var(--terminal-bright-magenta); }
+.phone-ansi .ansi-bright-cyan-fg { color: var(--terminal-bright-cyan); }
+.phone-ansi .ansi-bright-white-fg { color: var(--terminal-bright-white); }
+.phone-ansi .ansi-black-bg { background-color: var(--terminal-black); }
+.phone-ansi .ansi-red-bg { background-color: var(--terminal-red); }
+.phone-ansi .ansi-green-bg { background-color: var(--terminal-green); }
+.phone-ansi .ansi-yellow-bg { background-color: var(--terminal-yellow); }
+.phone-ansi .ansi-blue-bg { background-color: var(--terminal-blue); }
+.phone-ansi .ansi-magenta-bg { background-color: var(--terminal-magenta); }
+.phone-ansi .ansi-cyan-bg { background-color: var(--terminal-cyan); }
+.phone-ansi .ansi-white-bg { background-color: var(--terminal-white); }
+.phone-ansi .ansi-bright-black-bg { background-color: var(--terminal-bright-black); }
+.phone-ansi .ansi-bright-red-bg { background-color: var(--terminal-bright-red); }
+.phone-ansi .ansi-bright-green-bg { background-color: var(--terminal-bright-green); }
+.phone-ansi .ansi-bright-yellow-bg { background-color: var(--terminal-bright-yellow); }
+.phone-ansi .ansi-bright-blue-bg { background-color: var(--terminal-bright-blue); }
+.phone-ansi .ansi-bright-magenta-bg { background-color: var(--terminal-bright-magenta); }
+.phone-ansi .ansi-bright-cyan-bg { background-color: var(--terminal-bright-cyan); }
+.phone-ansi .ansi-bright-white-bg { background-color: var(--terminal-bright-white); }

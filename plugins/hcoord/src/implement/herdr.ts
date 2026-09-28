@@ -149,7 +149,7 @@ const defaultClock: HerdrClock = {
 };
 
 /** The structured code herdr prints on stderr when it refuses a call, or null when it printed none. */
-function herdrErrorCode(stderr: string): string | null {
+export function herdrErrorCode(stderr: string): string | null {
   const parsed = parseJson(stderr) as { error?: { code?: unknown } } | null;
   return typeof parsed?.error?.code === "string" ? parsed.error.code : null;
 }

@@ -353,6 +353,57 @@ A `HERDR_BIN_PATH` that names nothing executable refuses the daemon before it bi
 The web shell holds no UI authority: it draws the snapshot, writes terminal chunks straight into xterm.js, and sends one event per operator action.
 With `probe=1` in the page URL it also installs `window.__hideProbe`, the only way to read the WebGL-drawn terminal from Playwright or a CDP driver; without the query the writer path is the plain `term.write`.
 
+### The mobile companion
+
+Everything a phone touches lives in `hided/src/mobile/`, and `herdr-core` does not know phones exist; its only addition is `Runtime::remote_herdr_api`, which lends the Herdr API connection it already holds for a connected SSH device.
+Mobile is off until the operator turns it on in Settings > Mobile, and it is kept in `mobile.json` beside the daemon's state (the switch, the push mode, the serve entry hided added, and the VAPID key), written through a temporary file at mode 0600.
+
+The transport is the operator's own Tailscale, and `mobile/tailscale.rs` is the only file that knows it, so a relay later replaces that one module.
+It finds the CLI at `HIDE_TAILSCALE_BIN`, then the macOS app bundle's `/Applications/Tailscale.app/Contents/MacOS/Tailscale`, then `tailscale` on PATH, and reads `tailscale status --json` for the backend state, `Self.DNSName`, `Self.HostName`, MagicDNS and `CertDomains`; every command runs with a fifteen-second bound.
+hided binds loopback as before and adds `tailscale serve --bg --yes --https=443 http://127.0.0.1:<port>`, then confirms the entry with `serve status --json` before a QR is shown.
+It records the entry before running the add, so an add that took effect and then failed or timed out is still recognised as its own on the next pass.
+It refuses to expose while `AllowFunnel` covers that HTTPS 443 name, in the saved config or a foreground session's, because Funnel would publish the address to the internet, and says so on screen; a Funnel turned on after exposure takes hide's entry down and closes every phone until it is off.
+Settings > Mobile rechecks every three seconds while it is open, and with no one watching hided reconciles once a minute while Mobile is on, and while a removal is still owed after it was switched off, so a Tailscale that starts late is picked up and a failing command is retried at that pace; an exposed Mobile keeps its exposure through one failed Tailscale read and drops it on the second in a row, and a pairing code is minted only while the tab is open.
+It owns only the entry it recorded (`{dns_name, port, added_at}`): an HTTPS 443 handler it did not record is shown as the foreign target and left alone, an entry for its old port is replaced, and switching off or a clean exit removes it with `serve --yes --https=443 --set-path=/ off`.
+Every start reconciles the record, so a crash's leftover entry is repaired or removed on the next start; `run_daemon` answers SIGTERM and SIGINT with the same shutdown, which removes the entry before the process exits.
+A failed command leaves Mobile unexposed with the step that failed on screen, and its command line and stderr go to a `mobile_transport` record; a removal that fails at switch-off stays on screen and is retried until it succeeds, and shutdown waits for a reconcile already running.
+While exposed, `https://<Self.DNSName>` joins the allowed WebSocket Origins, and only a phone handshake may use it; a desktop handshake from that Origin is closed with 4002.
+A request that arrives through `tailscale serve` (a forwarded-for or Tailscale identity header, or a Host that is not loopback) reaches only `/m`, `/m/*`, `/assets/*` and `/ws`, everything else answers 404, and its `/ws` takes only a phone handshake from the Mac's tailnet Origin while Mobile is exposed, whatever other Origin it claims, with a 64 KiB frame limit.
+Every handshake has ten seconds to send its first frame.
+
+The phone app is a static shell and a data channel, kept apart.
+`/m/` serves `mobile.html`, and `/m/manifest.webmanifest`, `/m/sw.js` and the icons come from `web/public/m/` through the same static route as the desktop shell's `/assets`; the page, the service worker and the manifest are served `no-cache`.
+The service worker caches only that shell, so the app opens without a network and shows its unreachable line.
+Pairing, the agent list, a pane's rows, replies, keys and the push subscription travel on `/ws` only; the phone calls no other HTTP path.
+The first frame decides the client: `{client_kind: "phone", token}` for a paired phone or `{client_kind: "phone", pair, name}` to pair; a phone counts toward `MAX_CLIENTS`, and a refusal sends `{type: "refused", reason}` (`code_expired`, `phone_limit`, `revoked`, `mobile_off`) and closes with 4001.
+Every frame to a phone goes through `mobile::phone::encode`, the one place a relay would wrap in end-to-end encryption.
+
+A pairing code is sixteen random bytes, is accepted only while Mobile is on and exposed, lives only in memory for five minutes, is spent by the first phone that uses it, and is replaced whenever Settings > Mobile opens, 새 코드 is pressed, or a phone pairs while the tab is open.
+The QR is `https://<DNSName>/m/#pair=<base64url {v:1, endpoint, code}>`, so the code never reaches a request line or a log.
+A paired phone gets a 32-byte credential; `phones.json` (mode 0600) keeps only its SHA-256, compared in constant time, with the name, the last connection, the notification answer and the push subscription.
+The phone keeps the credential in its storage and in its address fragment (`#k=`), because the manifest has no `start_url` and a Home Screen app starts from the address it was added from, whose storage iOS may keep apart from Safari's.
+At most four phones pair; the limit is checked before the code is spent.
+A phone keeps at most two connections, the oldest closed first, a connection that answers no ping for 45 seconds is closed and recorded as `phone.silent`, and one whose frame cannot leave within ten seconds is closed and recorded as `phone.stalled`.
+A phone away for seven days is revoked at start, by an hourly sweep and when it next connects, and a revoke, manual or automatic, drops the credential and the subscription in one write and closes that phone's connection.
+
+A phone's whole vocabulary is `open`, `more`, `close`, `input`, `push_subscription` and `push_permission`; anything else is answered `refused_request` and recorded as `scope.refused`, and a phone never receives a file, a path, a setting or the core snapshot.
+The list is a projection of the snapshot's `rest` section (`mobile/projection.rs`): the local navigator's agents and every connected device's, in the desktop's four groups, each keyed by device id and pane id with its lineage root.
+hided follows the core only while Mobile is on with a phone paired, reads the snapshot off the core lock with its own cursors once per notification burst, and republishes the list only when it changed.
+A detail reads its pane with `pane.read` (`source: recent`, `format: ansi`), 200 lines at first and 200 more per pull up to 1000, once a second and only while it is open; it sends rows only when their text or the asked count changed, because Herdr's read `revision` counts pane state rather than output, and offers older rows only when Herdr reports it cut some (`truncated`).
+A reply is `pane.send_input` with the text and then the `enter` key; the quick keys are `enter`, `esc`, `up`, `down` and `ctrl+c`.
+A reply is at most 2,000 characters with no control characters, and a request id the phone repeats after a lost answer is written once: a repeat answers `ok` after a confirmed write, `in_flight` while the first is still running, and `uncertain` when the first write may have reached the pane, so the phone asks the operator to check rather than typing it again.
+Neither path goes through the attach set or a core key event, so a phone never moves the desktop's visible tab, focus, terminal size or attach window; a device pane uses the core's existing API connection to that device, and a device that is not connected reads as `device_unreachable`.
+
+Push is Web Push that hided signs and encrypts itself with `ring`: a VAPID ES256 key made once and kept in `mobile.json`, RFC 8291 `aes128gcm` bodies, and a POST through `ureq` over rustls on a blocking thread, never under the core lock.
+Only the push services' own hosts are accepted as endpoints (Apple, FCM, Mozilla, Windows), parsed as an `https` URL with no userinfo and no port but 443 and posted without following redirects, plus a loopback endpoint in a debug build for the e2e.
+The first list only seeds the transitions; after it, a root agent entering Needs You or Done sends one notice per subscribed phone, a descendant's question, approval or error raises its root, and the notice's tag (`device|root pane`) replaces the one before it.
+An agent that leaves the list is remembered for ten minutes, so one that comes back in the same state is not announced again; the cost is that the notification of a root that left for good is cleared up to ten minutes later.
+The mode decides whether it is sent: never for 끔, only while no desktop renderer is connected for 앱이 닫혀 있을 때만, and always for 항상; a phone viewing that agent's detail is skipped in every mode.
+A root that turned Seen rides the next notice's `clear` list, and the app closes those notifications when it opens, because iOS drops a subscription that receives a push it does not show.
+A 404 or 410 answer drops that subscription, and the phone registers again on its next connection.
+While Mobile is on with a phone paired, hided skips the ten-minute idle exit.
+The records are `mobile_transport`, `mobile_pairing`, `mobile_phone`, `mobile_push` and `mobile_store` in `Logs/core.jsonl`, and none carries a code, a credential or a subscription key.
+
 ### Panes, tabs and the attach window in the web shell
 
 The center draws the visible tab's `pane_layouts` entry as nested CSS grids (`web/src/PaneGrid.tsx`): a split is a two-track grid sized by Herdr's ratio and every leaf is a pane with its own xterm instance (`web/src/terminals.ts`, keyed by pane id).
@@ -769,6 +820,8 @@ Signing with a real identity, notarization, auto-update, installers, a tray item
 `web/src/shortcuts.ts` is one table, command to chord per host, matched on `KeyboardEvent.code` at the window capture phase ahead of xterm and Chrome's defaults and never during IME composition (`web/src/keyboard.ts`).
 The `⌘/` sheet is generated from the table.
 The close chord uses the page's recorded keyboard owner: the focused View display first, otherwise the owned visible pane, with tools, absent or retired owners producing a diagnostic and no close.
+The new tab chord reads the same owner (`newTabPolicy`): a drawn View area gets its New tab, an owned pane's Agent area gets an agent tab, and anything else the Agent active area.
+The recorder ignores the focus the shell's last element regains when the host hands the keyboard back from a native page to deliver a menu command (`installKeyboardOwner`), so the command runs with the page's owner; once it has run, `noteCommandDelivered` gives the owner to the shell element that now holds the keyboard.
 It never closes a whole tab; tab controls and their menus name that intent explicitly.
 The explicit Close pane command still closes the core's focused pane through the same confirmation path.
 ⌘F follows where the operator works: inside a View area it opens the document's find, anywhere else the focused terminal pane's find bar, even with an editor open beside it; Escape and × end the pane search and give the keyboard back to that pane.

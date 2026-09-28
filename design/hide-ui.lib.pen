@@ -35762,6 +35762,54 @@
     "--size-pr-slot": {
       "type": "number",
       "value": 72
+    },
+    "--size-mobile-qr": {
+      "type": "number",
+      "value": 168
+    },
+    "--size-touch-target": {
+      "type": "number",
+      "value": 44
+    },
+    "--qr-background": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#FFFFFF"
+        },
+        {
+          "value": "#FFFFFF",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
+    },
+    "--qr-foreground": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#000000"
+        },
+        {
+          "value": "#000000",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
+    },
+    "--size-mobile-app-icon": {
+      "type": "number",
+      "value": 64
+    },
+    "--size-mobile-copy": {
+      "type": "number",
+      "value": 320
+    },
+    "--size-mobile-row-inset": {
+      "type": "number",
+      "value": 44
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4",

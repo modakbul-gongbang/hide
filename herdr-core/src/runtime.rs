@@ -1663,6 +1663,27 @@ impl Runtime {
             .insert(context.target_id().to_owned(), context);
     }
 
+    /// The Herdr API connection the core already holds for a connected SSH
+    /// device, for a daemon request that reads or writes one of its panes
+    /// outside the attach set. A device that is not connected has none.
+    pub fn remote_herdr_api(
+        &self,
+        target_id: &str,
+    ) -> Option<Arc<dyn hide_herdr_client::ApiConnector>> {
+        let connected = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .any(|status| status.target_id == target_id && status.state == "connected");
+        if !connected {
+            return None;
+        }
+        self.remote_controls
+            .get(target_id)
+            .map(RemoteControlContext::api_connector)
+    }
+
     pub fn install_remote_terminal(&mut self, context: RemoteTerminalContext) {
         self.remote_terminals
             .insert(context.target_id().to_owned(), context);
