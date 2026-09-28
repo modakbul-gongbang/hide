@@ -18,10 +18,11 @@ test("coordinator keeps a request identity, answer, cancellation, and watch cycl
   fs.writeFileSync(path.join(bin, "herdr"), `#!/usr/bin/env node
 const fs=require('node:fs'), path=require('node:path');
 const target=process.argv[4];
+fs.appendFileSync(path.join(process.env.HOME,'herdr-calls.log'),process.argv.slice(2).join(' ')+'\\n');
 if(process.argv[2]==='agent' && process.argv[3]==='get') {
-  const row=target==='parent-pane'?{name:'parent',session:'one',instance:'a'}:target==='child-pane'?{name:'child',session:'two',instance:'b'}:target?.endsWith('-pane') && fs.existsSync(path.join(process.env.HOME,target+'.started'))?{name:target.slice(0,-5),session:target+'-session',instance:target+'-instance'}:null;
+  const row=target==='parent-pane'?{name:'parent',session:'one',instance:'a'}:target==='child-pane'?{name:'child',session:'two',instance:'b'}:target?.endsWith('-pane') && fs.existsSync(path.join(process.env.HOME,target+'.started'))?{name:target.slice(0,-5),session:fs.existsSync(path.join(process.env.HOME,target+'.session'))?fs.readFileSync(path.join(process.env.HOME,target+'.session'),'utf8').trim():target+'-session',instance:target+'-instance'}:null;
   if(!row){process.stderr.write(JSON.stringify({error:{code:'agent_not_found'}}));process.exitCode=1;}
-  else {const statusFile=path.join(process.env.HOME,target+'.status');const status=fs.existsSync(statusFile)?fs.readFileSync(statusFile,'utf8').trim():'idle';const instanceFile=path.join(process.env.HOME,target+'.instance');const instance=fs.existsSync(instanceFile)?fs.readFileSync(instanceFile,'utf8').trim():row.instance;const initializing=target.endsWith('-pane')&&!['parent-pane','child-pane'].includes(target)&&!fs.existsSync(path.join(process.env.HOME,row.name+'.initialized'));process.stdout.write(JSON.stringify({result:{type:'agent_info',agent:{pane_id:target,name:process.env.HCOORD_FAKE_OBSERVER_REPLACED==='1'&&target==='parent-pane'?'replacement':row.name,agent:process.env.HCOORD_FAKE_WRONG_KIND==='1'&&target==='kind-check-pane'?'claude':'codex',agent_session:initializing?undefined:{value:process.env.HCOORD_FAKE_OBSERVER_REPLACED==='1'&&target==='parent-pane'?'replacement-session':row.session},terminal_id:instance,agent_status:status,interactive_ready:process.env.HCOORD_FAKE_NOT_READY!=='1'}}}));}
+  else {const statusFile=path.join(process.env.HOME,target+'.status');const status=fs.existsSync(statusFile)?fs.readFileSync(statusFile,'utf8').trim():'idle';const instanceFile=path.join(process.env.HOME,target+'.instance');const instance=fs.existsSync(instanceFile)?fs.readFileSync(instanceFile,'utf8').trim():row.instance;const initializing=target.endsWith('-pane')&&!['parent-pane','child-pane'].includes(target)&&!fs.existsSync(path.join(process.env.HOME,row.name+'.initialized'));const nameLost=process.env.HCOORD_FAKE_NAME_LOST==='1'&&!['parent-pane','child-pane'].includes(target)&&!fs.existsSync(path.join(process.env.HOME,target+'.renamed'));process.stdout.write(JSON.stringify({result:{type:'agent_info',agent:{pane_id:target,name:process.env.HCOORD_FAKE_OBSERVER_REPLACED==='1'&&target==='parent-pane'?'replacement':nameLost?null:row.name,agent:process.env.HCOORD_FAKE_WRONG_KIND==='1'&&target==='kind-check-pane'?'claude':'codex',agent_session:initializing?undefined:{value:process.env.HCOORD_FAKE_OBSERVER_REPLACED==='1'&&target==='parent-pane'?'replacement-session':row.session},terminal_id:instance,agent_status:status,interactive_ready:process.env.HCOORD_FAKE_NOT_READY!=='1'}}}));}
 } else if(process.argv[2]==='pane' && process.argv[3]==='get') {
   if(target?.endsWith('-pane') && !['parent-pane','child-pane'].includes(target) && !fs.existsSync(path.join(process.env.HOME,target.slice(0,-5)+'.tab'))){process.stderr.write('pane missing');process.exitCode=1;}
   else {const cwdFile=path.join(process.env.HOME,target==='parent-pane'?'parent.cwd':target.slice(0,-5)+'.cwd');const cwd=fs.existsSync(cwdFile)?fs.readFileSync(cwdFile,'utf8'):process.env.HOME;process.stdout.write(JSON.stringify({result:{type:'pane_info',pane:{pane_id:process.env.HCOORD_FAKE_PANE_ID_MISSING==='1'&&target==='partial-pane'?undefined:target,workspace_id:'test-workspace',cwd}}}));}
@@ -32,7 +33,12 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
 } else if(process.argv[2]==='agent' && process.argv[3]==='start') {
   const name=process.argv[4], pane=process.argv[process.argv.indexOf('--pane')+1];
   if(process.env.HCOORD_FAKE_START_FAIL==='1'){process.stderr.write('start outcome unknown');process.exitCode=8;}
+  else if(process.env.HCOORD_FAKE_START_UNCONFIRMED){fs.writeFileSync(path.join(process.env.HOME,pane+'.started'),'1');process.stderr.write(JSON.stringify({error:{code:process.env.HCOORD_FAKE_START_UNCONFIRMED,message:'agent start was not confirmed'}}));process.exitCode=1;}
   else {fs.writeFileSync(path.join(process.env.HOME,pane+'.started'),'1');if(name==='optioned')fs.writeFileSync(path.join(process.env.HOME,'optioned.start-args.json'),JSON.stringify(process.argv.slice(2)));process.stdout.write(JSON.stringify({result:{agent:{name,pane_id:pane}}}));}
+} else if(process.argv[2]==='agent' && process.argv[3]==='rename') {
+  if(process.env.HCOORD_FAKE_RENAME_FAIL==='1'){process.stderr.write(JSON.stringify({error:{code:'agent_rename_failed'}}));process.exit(1);}
+  fs.writeFileSync(path.join(process.env.HOME,process.argv[4]+'.renamed'),JSON.stringify(process.argv.slice(2)));
+  process.stdout.write(JSON.stringify({result:{type:'agent_renamed'}}));
 } else if(process.argv[2]==='agent' && process.argv[3]==='read') {
   process.stdout.write(process.env.HCOORD_FAKE_FIRST_TURN_SCREEN||'› Ask Codex to do anything');
 } else if(process.argv[2]==='agent' && process.argv[3]==='prompt') {
@@ -212,6 +218,24 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   await start();
   assert.equal(JSON.parse(command("agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "Bad Name", "--intent", "invalid-spawn").stdout).error.code, "invalid_argument");
   assert.equal(fs.existsSync(path.join(home, "Bad Name.tab")), false, "invalid spawn does not create a pane");
+  // #237: native arguments are refused before the parent registration, the letter, and any pane.
+  const refusedSpawn = (name, ...native) => spawnSync(process.execPath, [CLI, "agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", name, "--intent", name, "--json", "--", ...native], { env, encoding: "utf8" });
+  const claudeUnderCodex = refusedSpawn("wrong-kind", "claude", "--dangerously-skip-permissions");
+  assert.equal(claudeUnderCodex.status, 2);
+  assert.equal(JSON.parse(claudeUnderCodex.stdout).error.code, "invalid_argument");
+  assert.match(JSON.parse(claudeUnderCodex.stdout).error.message, /pass --kind claude/, "Claude arguments under the default kind name the missing --kind");
+  assert.equal(JSON.parse(refusedSpawn("misplaced-task", "Return blue", "-m", "gpt-6-sol").stdout).error.message, "Codex task must be the final native argument");
+  const worktreeRefused = spawnSync(process.execPath, [CLI, "agent", "spawn", "--parent", parent.id, "--session", "one", "--name", "wt-refused", "--intent", "wt-refused", "--repo", "/home/me/repo", "--branch", "wt-refused", "--path", "/home/me/wt-refused", "--json", "--", "claude", "--dangerously-skip-permissions"], { env, encoding: "utf8" });
+  assert.equal(JSON.parse(worktreeRefused.stdout).error.code, "invalid_argument");
+  assert.equal(fs.readFileSync(path.join(home, "herdr-calls.log"), "utf8").includes("worktree create"), false, "a refused worktree spawn never asks Herdr for a worktree");
+  for (const name of ["wrong-kind", "misplaced-task"]) assert.equal(fs.existsSync(path.join(home, `${name}.tab`)), false, `${name} creates no pane`);
+  assert.equal(Object.keys(JSON.parse(fs.readFileSync(path.join(home, ".hcoord", "ledger.json"), "utf8")).spawnIntents).some((key) => ["wrong-kind", "misplaced-task"].includes(key)), false, "a refused spawn reserves no intent");
+  const hereRefused = spawnSync(process.execPath, [CLI, "agent", "spawn", "--parent", "here", "--name", "here-refused", "--intent", "here-refused", "--json", "--", "claude", "--dangerously-skip-permissions"], { env: { ...env, HERDR_PANE_ID: "absent-pane" }, encoding: "utf8" });
+  assert.equal(JSON.parse(hereRefused.stdout).error.code, "invalid_argument", "--parent here validates before it inspects or registers the current pane");
+  const spawnHelp = spawnSync(process.execPath, [CLI, "agent", "spawn", "--help"], { env, encoding: "utf8" });
+  assert.equal(spawnHelp.status, 0);
+  assert.match(spawnHelp.stdout, /--kind\s+codex, claude/);
+  assert.match(spawnHelp.stdout, /claude: -- <claude flags> "<prompt>"/);
   const unobserved = ok("agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "solo", "--intent", "spawn-2", "--no-watch");
   assert.equal(unobserved.watch, null);
   assert.equal(ok("graph").creation.find((edge) => edge.child === unobserved.participant.id).parent, parent.id);
@@ -237,6 +261,69 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   assert.equal(ok(...kindArgs).intent.pane, "kind-check-pane", "a corrected observation binds the original pane");
   assert.equal(fs.readFileSync(path.join(home, "kind-check.tab"), "utf8"), "1");
   await stop();
+  // #236: Herdr reports the agent hcoord just started without its name.
+  env.HCOORD_FAKE_NAME_LOST = "1";
+  env.HCOORD_FAKE_PROMPT_UNKNOWN_ONCE = "1";
+  await start();
+  const nameless = ok("agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "nameless", "--intent", "nameless");
+  assert.equal(nameless.participant.name, "nameless", "one spawn names its own started agent and registers it");
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(home, "nameless-pane.renamed"), "utf8")), ["agent", "rename", "nameless-pane", "nameless"]);
+  // A prompt passed as a native argument keeps the agent working past readiness: the start is unconfirmed and the agent is unnamed.
+  for (const code of ["timeout", "agent_not_ready"]) {
+    env.HCOORD_FAKE_START_UNCONFIRMED = code;
+    await stop();
+    await start();
+    const name = `unconfirmed-${code.replaceAll("_", "-")}`;
+    assert.equal(ok("agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", name, "--intent", name).participant.name, name, `a start ending in ${code} still names and registers the agent it started`);
+    assert.equal(fs.existsSync(path.join(home, `${name}-pane.renamed`)), true);
+  }
+  delete env.HCOORD_FAKE_START_UNCONFIRMED;
+  await stop();
+  await start();
+  const lostArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "uncertain-lost", "--intent", "uncertain-lost"];
+  assert.equal(JSON.parse(command(...lostArgs).stdout).error.code, "spawn_uncertain");
+  // Codex reports no session at start, and the pane's terminal survives an agent restarted in it.
+  fs.rmSync(path.join(home, "uncertain-lost-pane.renamed"));
+  const lostOnRetry = JSON.parse(command(...lostArgs).stdout).error;
+  assert.equal(lostOnRetry.code, "identity_conflict", "without a recorded session a retry cannot tell the started agent from one restarted in the same terminal");
+  assert.match(lostOnRetry.message, /herdr agent rename uncertain-lost-pane uncertain-lost/);
+  assert.equal(fs.existsSync(path.join(home, "uncertain-lost-pane.renamed")), false, "a retry without a recorded session never renames");
+  fs.writeFileSync(path.join(home, "uncertain-lost-pane.renamed"), "operator");
+  assert.equal(ok(...lostArgs).participant.name, "uncertain-lost", "the agent a person names binds on the same intent");
+  env.HCOORD_FAKE_REPLACE_TERMINAL_ON_UNKNOWN = "1";
+  await stop();
+  await start();
+  const swappedArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "uncertain-swapped", "--intent", "uncertain-swapped"];
+  assert.equal(JSON.parse(command(...swappedArgs).stdout).error.code, "spawn_uncertain");
+  fs.rmSync(path.join(home, "uncertain-swapped-pane.renamed"));
+  const swapped = JSON.parse(command(...swappedArgs).stdout).error;
+  assert.equal(swapped.code, "identity_conflict", "an unnamed agent in another terminal is not the execution hcoord started");
+  assert.match(swapped.message, /another terminal or session/);
+  assert.equal(fs.existsSync(path.join(home, "uncertain-swapped-pane.renamed")), false, "a replacement is never renamed");
+  delete env.HCOORD_FAKE_REPLACE_TERMINAL_ON_UNKNOWN;
+  delete env.HCOORD_FAKE_PROMPT_UNKNOWN_ONCE;
+  env.HCOORD_FAKE_RENAME_FAIL = "1";
+  await stop();
+  await start();
+  // A session reported at start, as Claude Code's is, lets a retry tell the started agent from a replacement.
+  for (const name of ["rename-refused", "resumed-start"]) fs.writeFileSync(path.join(home, `${name}.initialized`), "1");
+  const resumedArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "resumed-start", "--intent", "resumed-start"];
+  assert.equal(JSON.parse(command(...resumedArgs).stdout).error.detail.unfinishedStep, "name_agent");
+  const renameArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "rename-refused", "--intent", "rename-refused"];
+  const renameRefused = JSON.parse(command(...renameArgs).stdout).error;
+  assert.deepEqual([renameRefused.code, renameRefused.detail.unfinishedStep], ["spawn_uncertain", "name_agent"], "a rename Herdr refuses leaves the intent to retry");
+  delete env.HCOORD_FAKE_RENAME_FAIL;
+  await stop();
+  await start();
+  assert.equal(ok(...renameArgs).participant.name, "rename-refused", "a retry names the recorded session again and binds it");
+  // The first agent exits; a deliberate --resume-start replaces the recorded start with the new session.
+  fs.rmSync(path.join(home, "resumed-start-pane.started"));
+  fs.writeFileSync(path.join(home, "resumed-start-pane.session"), "second-session");
+  assert.equal(JSON.parse(command(...resumedArgs).stdout).error.detail.unfinishedStep, "agent_start", "a gone agent is restarted only on --resume-start");
+  const restarted = ok(...resumedArgs, "--resume-start");
+  assert.deepEqual([restarted.participant.name, restarted.participant.session], ["resumed-start", "second-session"], "--resume-start is not held to the start it replaces");
+  await stop();
+  delete env.HCOORD_FAKE_NAME_LOST;
   env.HCOORD_FAKE_START_FAIL = "1";
   await start();
   const partialArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "partial", "--intent", "partial-start"];
@@ -369,7 +456,15 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   }
   assert.ok(watch.cycle);
   assert.match(watch.observation, /done\/connected/, "the cycle includes a fresh exact Herdr observation");
-  const cycleRequestId = ok("events").events.find((item) => item.type === "watch.cycle").detail.requestId;
+  const firstEvent = (type) => {
+    for (let cursor = 0; ;) {
+      const page = ok("events", "--cursor", String(cursor));
+      const found = page.events.find((item) => item.type === type);
+      if (found || !page.hasMore) return found;
+      cursor = page.cursor;
+    }
+  };
+  const cycleRequestId = firstEvent("watch.cycle").detail.requestId;
   let cycleRequest;
   for (let attempt = 0; attempt < 100; attempt += 1) {
     cycleRequest = ok("request", "show", cycleRequestId);

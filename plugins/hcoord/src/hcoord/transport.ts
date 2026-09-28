@@ -6,7 +6,7 @@ import { API_VERSION, HcoordError, LETTER_OPERATIONS, MAX_AGENTS, MAX_CONNECTION
 import { event } from "./model";
 import { execute, recordLetter, watchForRequest } from "./service";
 import { outboxCount, parseLetter, readOutbox, removeLetters, type Found, type RawLetter } from "./outbox";
-import { blockedSpawnError, confirmSpawnPane, createSpawnPane, createSpawnWorktree, observedPlacement, discoverAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, prepareSpawnInitialization, startSpawnedAgent, submitOfficial, submitSpawnInitialization, validateBinding, waitForSpawnInitialization } from "./herdr";
+import { blockedSpawnError, confirmSpawnPane, createSpawnPane, createSpawnWorktree, observedPlacement, discoverAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, nameSpawnedAgent, observeStartedAgent, parentPlacement, prepareSpawnInitialization, startSpawnedAgent, submitOfficial, submitSpawnInitialization, validateBinding, waitForSpawnInitialization } from "./herdr";
 import type { SpawnIntent } from "./model";
 import { dataDir, ledgerPath, loadLedger, saveLedger, socketPath, stopMarkerPath } from "./store";
 import { notifyHuman, notifyText } from "./platform";
@@ -226,20 +226,41 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
         createdNow = true;
       }
     }
+    const restoreName = (justStarted: boolean): void => {
+      if (nameSpawnedAgent(intent, justStarted)) process.stderr.write(`${JSON.stringify({ event: "hcoord.spawn_name_restored", at: new Date().toISOString(), intent: intent.key, pane: intent.pane, machine: intent.machine })}\n`);
+    };
+    // A retry repairs a name Herdr dropped from the execution this intent started.
+    if (!createdNow) restoreName(false);
     let identity = inspectSpawnedAgent(intent);
     if (identity.state === "absent") {
       if (!createdNow && args["resumeStart"] !== true) throw new HcoordError("spawn_uncertain", "saved pane has no confirmed agent; inspect it and retry this intent with --resume-start", { intent: intent.key, pane: intent.pane, unfinishedStep: "agent_start" });
       if (!createdNow) confirmSpawnPane(intent, intent.placement ?? parentPlacement(ledger.participants[intent.parent]!));
-      requireEventSlots(intent.kind === "codex" ? SPAWN_EVENT_SLOTS.beforeExternalStart : SPAWN_EVENT_SLOTS.beforeRegistration, "agent_start");
-      requireSpawnStorage(intent.kind === "codex" ? SPAWN_EVENT_SLOTS.beforeExternalStart : SPAWN_EVENT_SLOTS.beforeRegistration, "agent_start");
+      // A deliberate --resume-start replaces the start recorded for an agent that is gone.
+      const resetStart = !createdNow && intent.observedInstance != null;
+      const startSlots = (resetStart ? 1 : 0) + SPAWN_EVENT_SLOTS.started + (intent.kind === "codex" ? SPAWN_EVENT_SLOTS.beforeExternalStart : SPAWN_EVENT_SLOTS.beforeRegistration);
+      requireEventSlots(startSlots, "agent_start");
+      requireSpawnStorage(startSlots, "agent_start");
+      if (resetStart) intent = commit("agent.spawn.start_reset", { intent: intent.key }, new Date().toISOString()) as SpawnIntent;
+      // An unconfirmed start (a timeout, agent_not_ready, a lost reply) may
+      // still have started the agent; it continues exactly as a retry of
+      // this intent would. Only Herdr's busy refusal proves nothing started.
+      let unconfirmed: HcoordError | null = null;
       try { startSpawnedAgent(intent); }
       catch (error) {
-        const started = inspectSpawnedAgent(intent);
-        if (started.state === "initializing" && started.blocked) throw blockedSpawnError(intent);
-        throw error;
+        if (!(error instanceof HcoordError) || error.code !== "spawn_uncertain" || error.detail?.["herdrCode"] === "agent_pane_busy") throw error;
+        unconfirmed = error;
       }
+      const started = observeStartedAgent(intent);
+      if (started !== null) {
+        try { intent = commit("agent.spawn.started", { intent: intent.key, instance: started.instance, session: started.session }, new Date().toISOString()) as SpawnIntent; }
+        catch (error) {
+          if (error instanceof HcoordError && error.code === "identity_conflict") throw error;
+          throw new HcoordError("spawn_uncertain", "the agent was started but its execution could not be recorded; repair storage and retry this intent", { intent: intent.key, pane: intent.pane, unfinishedStep: "record_start", code: error instanceof HcoordError ? error.code : "storage_failed" });
+        }
+      }
+      restoreName(true);
       identity = inspectSpawnedAgent(intent);
-      if (identity.state === "absent") throw new HcoordError("spawn_uncertain", "agent start returned but its named execution is unavailable", { intent: intent.key, pane: intent.pane });
+      if (identity.state === "absent") throw unconfirmed ?? new HcoordError("spawn_uncertain", "agent start returned but its named execution is unavailable", { intent: intent.key, pane: intent.pane });
     }
     if (identity.state === "initializing") {
       if (intent.observedInstance != null && identity.instance !== intent.observedInstance) throw new HcoordError("identity_conflict", "spawn terminal was replaced after its first observation", { intent: intent.key, pane: intent.pane });
