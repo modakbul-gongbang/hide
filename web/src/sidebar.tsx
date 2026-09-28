@@ -1071,7 +1071,7 @@ function PurposeLine({ purpose, origin, age, raisedFrom }: { purpose: string | n
       <span className="flex min-w-0 flex-1 items-center gap-xs truncate text-muted-foreground" data-purpose={purpose === null ? undefined : origin}>
         {raisedFrom ? (
           <span className="inline-flex min-w-0 shrink items-center gap-xxs text-subtle-foreground" data-checkout-parent={raisedFrom}>
-            <CornerUpLeftIcon aria-hidden="true" className="size-(--size-icon-xs) shrink-0" />
+            <CornerUpLeftIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
             <span className="truncate">{raisedFrom}</span>
           </span>
         ) : null}

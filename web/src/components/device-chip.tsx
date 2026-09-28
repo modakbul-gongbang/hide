@@ -5,7 +5,7 @@ import { Badge } from "./ui/badge";
 export function DeviceChip({ label, className = "" }: { label: string; className?: string }) {
   return (
     <Badge variant="outline" className={`min-w-0 shrink gap-xxs ${className}`} data-device-chip={label}>
-      <ServerIcon aria-hidden="true" className="size-(--size-icon-xs) shrink-0" />
+      <ServerIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
       <span className="truncate">{label}</span>
     </Badge>
   );
