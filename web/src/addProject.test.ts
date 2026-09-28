@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addProjectHosts, alreadyRegistered, initialHost, trimFolder } from "./addProject";
+import { addProjectHosts, alreadyRegistered, defaultProjectParent, initialHost, projectNameProblem, projectPath, trimFolder } from "./addProject";
 import type { Device, WorkspaceRegistration } from "./snapshot";
 
 const device = (id: string, label: string, kind = "remote") => ({ id, label, kind }) as Device;
@@ -27,5 +27,25 @@ describe("Add a project", () => {
     expect(alreadyRegistered("/home/me/hide", "mini", rows)).toBe(false);
     expect(alreadyRegistered(trimFolder("/home/me/app//"), "mini", rows)).toBe(true);
     expect(alreadyRegistered("/home/me/other", "local", rows)).toBe(false);
+  });
+
+  it("puts a new project beside the most recently added one on this Mac, else in home", () => {
+    expect(defaultProjectParent([])).toBe("~");
+    expect(defaultProjectParent([registration("/Users/me/work/a"), registration("/Users/me/side/b/"), registration("/home/me/x", "mini")])).toBe("/Users/me/side");
+    expect(defaultProjectParent([registration("/Users/me/a", "mini")])).toBe("~");
+  });
+
+  it("takes one folder name, and says why another is not one", () => {
+    expect(projectNameProblem("my-project")).toBeNull();
+    expect(projectNameProblem("")).toBeNull();
+    expect(projectNameProblem(".hidden")).toBeNull();
+    expect(projectNameProblem("a/b")).toContain("/");
+    expect(projectNameProblem(".")).not.toBeNull();
+    expect(projectNameProblem("..")).not.toBeNull();
+  });
+
+  it("previews the full path as the name is typed", () => {
+    expect(projectPath("/Users/me/work", "")).toBe("/Users/me/work/project-name");
+    expect(projectPath("/Users/me/work", "app")).toBe("/Users/me/work/app");
   });
 });

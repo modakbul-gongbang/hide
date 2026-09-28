@@ -49,7 +49,34 @@ export function refusalText(reason: string): string {
       return "This folder does not exist.";
     case "not_a_directory":
       return "This is a file, not a folder.";
+    case "already_exists":
+      return "Something by this name is already there.";
     default:
       return `The folder was refused (${reason}).`;
   }
+}
+
+/**
+ * Where Create new project puts its folder at first: beside the most recently
+ * added project on this Mac (registrations are kept in the order they were
+ * added), else the home folder.
+ */
+export function defaultProjectParent(registrations: readonly WorkspaceRegistration[]): string {
+  const last = registrations.filter((row) => row.device_id === "local").at(-1);
+  if (!last) return "~";
+  const path = trimFolder(last.path);
+  const cut = path.lastIndexOf("/");
+  return cut > 0 ? path.slice(0, cut) : "~";
+}
+
+/** Why a typed `name` cannot be a new project's folder name, or null; an empty name has nothing to say yet. */
+export function projectNameProblem(name: string): string | null {
+  if (name.includes("/")) return "A name is one folder, without `/`.";
+  if (name === "." || name === "..") return "`.` and `..` are not folder names.";
+  return null;
+}
+
+/** The folder a new project takes: its parent and the name, with a placeholder until one is typed. */
+export function projectPath(parent: string, name: string): string {
+  return `${parent === "/" ? "" : parent}/${name || "project-name"}`;
 }

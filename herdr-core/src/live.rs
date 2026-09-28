@@ -140,6 +140,7 @@ pub fn spawn_workspace_creation(
     path: String,
     label: String,
     initialize_git: bool,
+    new_folder: bool,
     base_registrations: Vec<WorkspaceRegistration>,
 ) -> Result<(), String> {
     thread::Builder::new()
@@ -163,6 +164,9 @@ pub fn spawn_workspace_creation(
             let result = workspace::registration(&path, &label, workspace::LOCAL_DEVICE_ID)
                 .and_then(|registration| {
                     let root = Path::new(&registration.path);
+                    if new_folder {
+                        workspace::create_project_folder(root)?;
+                    }
                     if !root.exists() {
                         return Err(format!(
                             "Workspace path does not exist: {}",

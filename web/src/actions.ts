@@ -1497,6 +1497,16 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "create_workspace", payload: { ...deviceField(deviceId), path, label, initialize_git: false } });
     },
 
+    /** Asks hided where Create new project would make `name` in `parent`; answered as a `project_target` frame. */
+    probeProjectTarget(parent: string, name: string) {
+      dispatch({ schema_version: 2, kind: "project_target", payload: { parent, name } });
+    },
+
+    /** Makes `path` as a new folder with its own Git repository, then registers it; this Mac only. */
+    createProject(path: string, label: string) {
+      dispatch({ schema_version: 2, kind: "create_workspace", payload: { path, label, initialize_git: true, new_folder: true } });
+    },
+
     /** Removes a registration after its panes close (D-10); the folder is never touched. */
     removeWorkspace(workspaceId: string) {
       dispatch({ schema_version: 2, kind: "remove_workspace", payload: { workspace_id: workspaceId } });

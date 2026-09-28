@@ -77,12 +77,12 @@
       }
     },
     "serverFrame": {
-      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `create_workspace`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move`, `path_trash` and `file_bytes` (see directoryList and pathRefused). A `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move` or `path_trash` that names an SSH device in `device_id` never meets this machine's checkout roots: the core accepts it only for the checkout in front on that device and the device's helper confines every path to that checkout's opened root. file_bytes_error answers a `file_bytes` read the daemon could not serve as bytes (see fileBytes). directory_unavailable answers a `file_list` for a checkout on an SSH device that its helper could not list (see directoryUnavailable). directory_changed announces that a watched folder changed, so the client re-reads that one folder (see directoryChanged). attachment_refused answers an `attachment_stage` or `attachment_commit` that could not be staged (see attachments). file_index_result answers a `file_index` query with the ranked checkout paths (see fileIndex). daemon is the first frame after a valid handshake and describes the daemon itself (see daemonInfo). A `file_bytes` read that succeeds is answered with one or more binary frames on the same socket, not a text frame (see fileBytes).",
+      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `create_workspace`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move`, `path_trash` and `file_bytes` (see directoryList and pathRefused). A `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move` or `path_trash` that names an SSH device in `device_id` never meets this machine's checkout roots: the core accepts it only for the checkout in front on that device and the device's helper confines every path to that checkout's opened root. file_bytes_error answers a `file_bytes` read the daemon could not serve as bytes (see fileBytes). directory_unavailable answers a `file_list` for a checkout on an SSH device that its helper could not list (see directoryUnavailable). directory_changed announces that a watched folder changed, so the client re-reads that one folder (see directoryChanged). attachment_refused answers an `attachment_stage` or `attachment_commit` that could not be staged (see attachments). file_index_result answers a `file_index` query with the ranked checkout paths (see fileIndex). project_target answers a `project_target` probe (see projectTarget and projectTargetResult). daemon is the first frame after a valid handshake and describes the daemon itself (see daemonInfo). A `file_bytes` read that succeeds is answered with one or more binary frames on the same socket, not a text frame (see fileBytes).",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "payload"],
       "properties": {
-        "type": { "type": "string", "enum": ["daemon", "snapshot", "delta", "error", "directory_list", "directory_unavailable", "path_refused", "file_bytes_error", "directory_changed", "file_index_result", "attachment_refused", "open_external_result"] },
+        "type": { "type": "string", "enum": ["daemon", "snapshot", "delta", "error", "directory_list", "directory_unavailable", "path_refused", "project_target", "file_bytes_error", "directory_changed", "file_index_result", "attachment_refused", "open_external_result"] },
         "payload": { "type": "object" },
         "message": { "type": "string" }
       }
@@ -188,9 +188,9 @@
       "enum": [4001, 4002, 4003, 4004]
     },
     "pathRefusalReason": {
-      "description": "outside_home: the real path is not under $HOME (a symlink target counts). home_root: $HOME itself cannot be a workspace. outside_checkout: the path is not under any registered checkout root, which is the reason an explorer event gets for a path under $HOME that no checkout covers. not_found: nothing exists there. not_a_directory: a file where a directory was needed. not_a_file: a directory where a file's bytes were needed. invalid_path: empty, relative, contains `..` or NUL, or an item name that is empty, `.`, `..`, or holds a `/`.",
+      "description": "outside_home: the real path is not under $HOME (a symlink target counts). home_root: $HOME itself cannot be a workspace. outside_checkout: the path is not under any registered checkout root, which is the reason an explorer event gets for a path under $HOME that no checkout covers. not_found: nothing exists there. not_a_directory: a file where a directory was needed. not_a_file: a directory where a file's bytes were needed. invalid_path: empty, relative, contains `..` or NUL, or an item name that is empty, `.`, `..`, or holds a `/`. already_exists: a `create_workspace` with `new_folder` names a folder where something other than an empty folder (or one holding only `.git`) already stands.",
       "type": "string",
-      "enum": ["outside_home", "home_root", "outside_checkout", "not_found", "not_a_directory", "not_a_file", "invalid_path"]
+      "enum": ["outside_home", "home_root", "outside_checkout", "not_found", "not_a_directory", "not_a_file", "invalid_path", "already_exists"]
     },
     "directoryList": {
       "description": "Payload of a directory_list frame. kind names the event that asked: a `file_list` lists the children of a folder under a registered checkout root - files and directories, hidden names included, `.git` and a symlink that leaves the root absent, directories first and then the natural name order the macOS Explorer uses. root_path is the real path that was listed. is_directory is what the Explorer draws and opens by. truncated is true past the listing cap. device_id names the machine the listing came from: absent for this daemon's own machine, and an SSH device's id for a `file_list` that named that device, whose paths are that device's and are never read here.",
@@ -301,6 +301,30 @@
       "properties": {
         "request_id": { "type": "string" },
         "reason": { "type": "string" }
+      }
+    },
+    "projectTarget": {
+      "description": "A client `project_target` event asks where Add a project's Create new project would make a folder: {parent, name}. hided answers it on the $HOME line with a project_target frame and never forwards it; it reads the parent and the one name under it and changes nothing on disk. The create itself is a `create_workspace` with `new_folder: true` and `initialize_git: true` whose `path` is the parent and the name joined by `/`: hided checks the parent on the $HOME line (home itself is allowed, since the new folder is under it) and the name as one folder name, refuses anything already standing at the target except an empty folder or one holding only `.git` (what an earlier attempt that failed after making its folder leaves, so a retry continues into it) as already_exists, and forwards the canonical target; the core makes the folder, runs `git init` in it, and registers it. A `new_folder` create that names an SSH device is refused by the core.",
+      "type": "object",
+      "required": ["parent", "name"],
+      "properties": {
+        "parent": { "type": "string" },
+        "name": { "type": "string" }
+      }
+    },
+    "projectTargetResult": {
+      "description": "Payload of a project_target frame: the parent and name as sent; the canonical parent and its `~` spelling when the parent resolved; the canonical target when the name was checked too; whether an empty leftover folder is already there and will be used; and the path refusal reason the create would get, or null. An empty name checks the parent alone.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["parent", "name", "parent_path", "parent_label", "path", "leftover", "reason"],
+      "properties": {
+        "parent": { "type": "string" },
+        "name": { "type": "string" },
+        "parent_path": { "type": ["string", "null"] },
+        "parent_label": { "type": ["string", "null"] },
+        "path": { "type": ["string", "null"] },
+        "leftover": { "type": "boolean" },
+        "reason": { "oneOf": [{ "$ref": "#/$defs/pathRefusalReason" }, { "type": "null" }] }
       }
     },
     "fileIndex": {
