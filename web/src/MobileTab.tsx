@@ -29,12 +29,15 @@ import { useShellStore } from "./store";
 
 export function MobileTab({ actions }: { actions: Actions }) {
   const mobile = useShellStore((s) => s.mobile);
+  const live = useShellStore((s) => s.connection === "live");
   // hided rechecks the checklist while this tab is open and shows a new code
-  // each time it opens (B3, B10).
+  // each time it opens (B3, B10). A restarted daemon has forgotten the tab,
+  // so every live connection says so again.
   useEffect(() => {
+    if (!live) return;
     actions.observeMobile(true);
     return () => actions.observeMobile(false);
-  }, [actions]);
+  }, [actions, live]);
   if (!mobile) return <Note tone="pending">hide에 연결하는 중…</Note>;
   return (
     <div data-mobile-tab="true" data-mobile-exposure={mobile.exposure}>

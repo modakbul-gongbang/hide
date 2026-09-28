@@ -81,8 +81,9 @@ impl Drop for Detail {
     }
 }
 
-/// Reads the open pane once a second and sends its rows when Herdr's
-/// revision or the asked line count moved.
+/// Reads the open pane once a second and sends its rows when their text or
+/// the asked line count changed. Herdr's read `revision` counts pane state,
+/// not output, so it cannot say that new rows arrived.
 fn spawn_detail(
     mobile: Arc<Mobile>,
     key: AgentKey,
@@ -90,7 +91,7 @@ fn spawn_detail(
     mut lines: tokio::sync::watch::Receiver<u32>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let mut last: Option<(u64, u32)> = None;
+        let mut last: Option<(String, u32)> = None;
         let mut last_error: Option<&'static str> = None;
         loop {
             let asked = *lines.borrow_and_update();
@@ -104,15 +105,20 @@ fn spawn_detail(
             let frame = match read {
                 Ok(rows) => {
                     last_error = None;
-                    if last == Some((rows.revision, asked)) {
+                    if last
+                        .as_ref()
+                        .is_some_and(|(text, lines)| *lines == asked && *text == rows.text)
+                    {
                         None
                     } else {
-                        last = Some((rows.revision, asked));
-                        Some(json!({
+                        let frame = json!({
                             "type": "rows", "device_id": key.device_id, "pane_id": key.pane_id,
                             "state": "ok", "text": rows.text, "lines": asked,
-                            "more": asked < pane::MAX_LINES,
-                        }))
+                            // Herdr says whether it cut older rows off this read.
+                            "more": asked < pane::MAX_LINES && rows.truncated,
+                        });
+                        last = Some((rows.text, asked));
+                        Some(frame)
                     }
                 }
                 Err(error) => {

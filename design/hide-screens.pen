@@ -1528,6 +1528,18 @@
       "type": "number",
       "value": 168
     },
+    "--size-mobile-app-icon": {
+      "type": "number",
+      "value": 64
+    },
+    "--size-mobile-copy": {
+      "type": "number",
+      "value": 320
+    },
+    "--size-mobile-row-inset": {
+      "type": "number",
+      "value": 44
+    },
     "--size-icon": {
       "type": "number",
       "value": 14

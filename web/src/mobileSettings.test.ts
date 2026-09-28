@@ -32,10 +32,10 @@ describe("checklistRows", () => {
 
   it("links the download page when Tailscale is missing and the admin console when HTTPS is off", () => {
     const missing = checklistRows(state({ checklist: { installed: "failed", logged_in: "waiting", https: "waiting", host_name: null } }));
-    expect(missing[0].link?.href).toBe("https://tailscale.com/download");
+    expect(missing[0]?.link?.href).toBe("https://tailscale.com/download");
     const https = checklistRows(state({ checklist: { installed: "ok", logged_in: "ok", https: "failed", host_name: "mac" } }));
-    expect(https[1].title).toContain("mac");
-    expect(https[2].link?.href).toBe("https://login.tailscale.com/admin/dns");
+    expect(https[1]?.title).toContain("mac");
+    expect(https[2]?.link?.href).toBe("https://login.tailscale.com/admin/dns");
   });
 
   it("marks the phone step done once the QR shows", () => {

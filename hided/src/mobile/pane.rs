@@ -55,7 +55,6 @@ fn classify(error: ApiError) -> PaneError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Rows {
     pub text: String,
-    pub revision: u64,
     pub truncated: bool,
 }
 
@@ -78,7 +77,6 @@ pub fn read(
     match serde_json::from_value::<ResponseResult>(value) {
         Ok(ResponseResult::PaneRead { read }) => Ok(Rows {
             text: read.text,
-            revision: read.revision,
             truncated: read.truncated,
         }),
         Ok(_) => Err(PaneError::Unavailable(

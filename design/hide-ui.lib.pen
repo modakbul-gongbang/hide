@@ -35758,6 +35758,18 @@
           }
         }
       ]
+    },
+    "--size-mobile-app-icon": {
+      "type": "number",
+      "value": 64
+    },
+    "--size-mobile-copy": {
+      "type": "number",
+      "value": 320
+    },
+    "--size-mobile-row-inset": {
+      "type": "number",
+      "value": 44
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4",

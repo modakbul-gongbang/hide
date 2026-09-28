@@ -805,7 +805,19 @@ impl Mobile {
     /// Pairs a phone with the live code (the phone's `pair` handshake). A
     /// code exists only while Mobile is exposed.
     pub fn pair(&self, code: &str, user_agent: &str) -> Result<(PhoneRecord, String), PairRefusal> {
-        let result = self.lock().phones.pair(code, user_agent, now_ms());
+        let result = {
+            let mut inner = self.lock();
+            let result = inner.phones.pair(code, user_agent, now_ms());
+            // The code is spent; Settings > Mobile, while open, shows the next
+            // one at once for the next phone instead of an empty QR place.
+            if result.is_ok()
+                && !inner.observers.is_empty()
+                && matches!(inner.exposure, Exposure::Exposed { .. })
+            {
+                inner.phones.new_code(now_ms());
+            }
+            result
+        };
         match &result {
             Ok((phone, _)) => herdr_core::diagnostic!(json!({
                 "component": "mobile_pairing", "kind": "phone.paired", "phone_id": phone.id, "name": phone.name,
