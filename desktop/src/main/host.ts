@@ -34,6 +34,7 @@ import {
 import type { DesktopEnv } from "./env";
 import { readJsonFile, writeJsonFile } from "./jsonFile";
 import { bundledHcoord, hcoordEnvironment, installHcoordShim, parseHcoordEnsure } from "./hcoord";
+import { chooseHerdr, type HerdrChoice } from "./herdr";
 import { loadFailureFields, type HostLog } from "./log";
 import { ChildRunner, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
@@ -96,6 +97,8 @@ export class DesktopHost {
   constructor(
     private readonly env: DesktopEnv,
     private readonly log: HostLog,
+    /** `SHOW_INACTIVE_SWITCH` was passed: no window ever activates the app. */
+    private readonly showInactive: boolean,
   ) {}
 
   // --- lifecycle ------------------------------------------------------------
@@ -120,8 +123,7 @@ export class DesktopHost {
     if (!this.window) this.openWindow();
     else {
       if (this.window.isMinimized()) this.window.restore();
-      this.window.show();
-      this.window.focus();
+      this.present(this.window, true);
     }
     if (this.state.kind === "failed" || this.state.kind === "lost") void this.discover(trigger);
   }
@@ -214,7 +216,8 @@ export class DesktopHost {
     const attempt = ++this.attempts;
     this.stopWatch();
     this.setState({ kind: "connecting" });
-    this.log.event("discovery.start", { attempt, trigger, herdr: this.bundledHerdr() ? "bundled" : "inherited" });
+    const herdr = this.herdr();
+    this.log.event("discovery.start", { attempt, trigger, herdr: herdr.source, replaced_pane_herdr: herdr.replacedPaneValue ?? undefined });
     const cli = await this.findCli(attempt);
     if (!cli) return this.fail(attempt, "cli_missing", "no executable hide CLI");
     const answer = parseConnect(await this.runCli(cli.path, ["connect"], CONNECT_TIMEOUT_MS));
@@ -283,18 +286,13 @@ export class DesktopHost {
     return app.isPackaged ? process.resourcesPath : null;
   }
 
-  /**
-   * The Herdr a daemon started from here attaches pane terminals with: the
-   * bundled binary, unless the environment already names one (an isolated
-   * e2e, a development server), which is passed through unchanged (D-07).
-   */
-  private bundledHerdr(): string | null {
-    const dir = this.bundledDir();
-    return dir && this.env.herdrBinPath === null ? path.join(dir, "herdr") : null;
+  /** The Herdr a daemon started from here attaches pane terminals with; `herdr.ts` owns the rule. */
+  private herdr(): HerdrChoice {
+    return chooseHerdr({ bundledDir: this.bundledDir(), herdrBinPath: this.env.herdrBinPath, herdrPaneId: this.env.herdrPaneId });
   }
 
   private childEnvironment(): Record<string, string | undefined> {
-    const herdr = this.bundledHerdr();
+    const herdr = this.herdr().path;
     // Finder supplies only launchd's system PATH. The CLI and any daemon it
     // starts need the same standard user install dirs we search for `hide`.
     const inheritedPath = this.env.path || "/usr/bin:/bin:/usr/sbin:/sbin";
@@ -446,6 +444,24 @@ export class DesktopHost {
     });
   }
 
+  /**
+   * Shows the window, and with `focus` gives it the keyboard. `show()` and
+   * `focus()` activate the app, which takes the screen and the keyboard from
+   * whatever the operator is using. Under `SHOW_INACTIVE_SWITCH` the window
+   * is ordered in without activating the app (`showInactive()` alone would
+   * still put it above every other window), then sent behind the operator's
+   * windows (`blur()` orders it to the back on macOS).
+   */
+  private present(window: BrowserWindow, focus: boolean): void {
+    if (this.showInactive) {
+      window.showInactive();
+      window.blur();
+      return;
+    }
+    window.show();
+    if (focus) window.focus();
+  }
+
   private openWindow(): void {
     const file = windowStatePath(app.getPath("userData"));
     const displays = screen.getAllDisplays().map((display) => display.workArea);
@@ -469,7 +485,7 @@ export class DesktopHost {
     });
     this.window = window;
     this.browsers?.attach(window);
-    window.once("ready-to-show", () => window.show());
+    window.once("ready-to-show", () => this.present(window, false));
     window.on("close", () => {
       try {
         writeWindowState(file, window.getNormalBounds());

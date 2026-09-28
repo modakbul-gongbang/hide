@@ -23,6 +23,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Value, json};
 
+use crate::codex_home::{self, CodexHome};
 use crate::log::AiLogEvent;
 use crate::process::{self, ProcessMeasurement};
 use crate::{
@@ -111,82 +112,6 @@ enum Line {
     Eof,
 }
 
-/// A private `CODEX_HOME` for one app-server: an owner-only directory holding
-/// nothing but a symlink to the user's `auth.json`. It carries no
-/// `config.toml`, so the app-server starts none of the MCP servers the user's
-/// real config declares, and it is removed when the session ends. The
-/// credential file itself is only referenced, never read.
-struct CodexHome {
-    path: PathBuf,
-}
-
-impl CodexHome {
-    fn create() -> Result<Self, AiError> {
-        let dir = std::env::temp_dir().join(format!(
-            "hide-ai-codex-home-{}-{}",
-            std::process::id(),
-            unique_suffix()
-        ));
-        create_private_dir(&dir).map_err(|kind| home_unavailable("mkdir", kind))?;
-        let home = Self { path: dir };
-        link_auth_json(&home.path).map_err(|kind| home_unavailable("symlink", kind))?;
-        Ok(home)
-    }
-}
-
-impl Drop for CodexHome {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
-    }
-}
-
-fn home_unavailable(stage: &str, kind: std::io::ErrorKind) -> AiError {
-    AiError::ProviderUnavailable(format!("codex_home_unavailable:{stage}:{kind}"))
-}
-
-/// The directory the user's real `auth.json` lives in: an explicit
-/// `CODEX_HOME`, or `~/.codex`.
-fn source_codex_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("CODEX_HOME") {
-        return PathBuf::from(dir);
-    }
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    home.unwrap_or_default().join(".codex")
-}
-
-fn unique_suffix() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0)
-}
-
-#[cfg(unix)]
-fn create_private_dir(dir: &Path) -> Result<(), std::io::ErrorKind> {
-    use std::os::unix::fs::DirBuilderExt;
-    std::fs::DirBuilder::new()
-        .recursive(false)
-        .mode(0o700)
-        .create(dir)
-        .map_err(|error| error.kind())
-}
-
-#[cfg(not(unix))]
-fn create_private_dir(_dir: &Path) -> Result<(), std::io::ErrorKind> {
-    Err(std::io::ErrorKind::Unsupported)
-}
-
-#[cfg(unix)]
-fn link_auth_json(home: &Path) -> Result<(), std::io::ErrorKind> {
-    let source = source_codex_dir().join("auth.json");
-    std::os::unix::fs::symlink(source, home.join("auth.json")).map_err(|error| error.kind())
-}
-
-#[cfg(not(unix))]
-fn link_auth_json(_home: &Path) -> Result<(), std::io::ErrorKind> {
-    Err(std::io::ErrorKind::Unsupported)
-}
-
 struct Session {
     child: Child,
     /// Held in an `Option` so shutdown can close the pipe (its EOF is the
@@ -215,7 +140,10 @@ pub struct CodexAppServerBackend {
 }
 
 impl CodexAppServerBackend {
+    /// Also sweeps, off this thread, the private homes earlier owners were
+    /// killed before removing.
     pub fn new(config: CodexConfig, sink: Arc<dyn AiLogSink>) -> Self {
+        codex_home::spawn_sweep(Arc::clone(&sink));
         let session: Arc<Mutex<Option<Session>>> = Arc::new(Mutex::new(None));
         let reaper_stop = Arc::new(AtomicBool::new(false));
         let reaper = spawn_idle_reaper(Arc::clone(&session), sink, Arc::clone(&reaper_stop));

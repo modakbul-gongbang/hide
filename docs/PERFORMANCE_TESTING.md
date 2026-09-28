@@ -107,7 +107,7 @@ Record operator agent count separately from private pane/agent and attached-chil
 ## 4. Reproduce with real interactions
 
 `desktop/e2e/*.spec.ts` and `web/e2e/*.spec.ts` are the primary reproduction path: Playwright drives the real window against an isolated `hided` and a private, pinned Herdr server, and both run in CI.
-Read the closest existing spec before writing a new one; `desktop/e2e/browser.spec.ts` covers the occluded-window case and launches with `--disable-backgrounding-occluded-windows` (see [BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md)) so an occluded window keeps painting for capture.
+Read the closest existing spec before writing a new one; `desktop/e2e/browser.spec.ts` covers the occluded-window case; the fixture launches every desktop app with `--disable-backgrounding-occluded-windows` and without activating it (see [BUILD.md](BUILD.md#the-desktop-app)), so an occluded window keeps painting for capture.
 
 For manual QA on a packaged or dev build that a spec cannot yet reach, use the installed Peekaboo CLI directly, not an MCP server.
 Missing Screen Recording or Accessibility permission blocks automation.

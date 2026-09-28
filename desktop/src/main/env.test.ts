@@ -28,8 +28,9 @@ describe("the environment registry", () => {
       "desktop environment is not usable: HIDE_CLI_PATH: not an absolute path; HIDE_DESKTOP_USER_DATA_DIR: not an absolute path",
     );
     const source = { PATH: "/bin", HOME: "/h", HIDE_STATE_DIR: "/s" };
-    expect(loadEnv(source)).toEqual({ cliPath: null, userDataDir: null, herdrBinPath: null, shell: "/bin/zsh", home: "/h", path: "/bin", inherited: source });
+    expect(loadEnv(source)).toEqual({ cliPath: null, userDataDir: null, herdrBinPath: null, herdrPaneId: null, shell: "/bin/zsh", home: "/h", path: "/bin", inherited: source });
     expect(loadEnv({ ...source, HERDR_BIN_PATH: "/opt/herdr" }).herdrBinPath).toBe("/opt/herdr");
+    expect(loadEnv({ ...source, HERDR_PANE_ID: "w1:p1" }).herdrPaneId).toBe("w1:p1");
     expect(() => loadEnv({ ...source, HERDR_BIN_PATH: "herdr" })).toThrow("HERDR_BIN_PATH: not an absolute path");
   });
 });

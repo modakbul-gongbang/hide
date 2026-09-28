@@ -7,6 +7,7 @@
 
 mod claude;
 mod codex;
+mod codex_home;
 mod log;
 mod process;
 mod router;

@@ -3,13 +3,13 @@
 // cycles, whose commit waits for the modifier's release. A private Herdr
 // server for this file, a private hided and Electron app per test.
 
-import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { expect, type ElectronApplication, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import "../../web/src/host";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
-import { hostLog, isolate, launch, screenshot, type Isolated } from "./fixture";
+import { hostLog, isolate, launch, screenshot, test, type Isolated } from "./fixture";
 
 let herdr: HerdrFixture;
 let run: Isolated;
