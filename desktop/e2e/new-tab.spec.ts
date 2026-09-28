@@ -1,9 +1,9 @@
-import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { expect, type ElectronApplication, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace, showExplorer } from "../../web/e2e/wire";
-import { isolate, launch } from "./fixture";
+import { isolate, launch, NEEDS_FOCUS, test } from "./fixture";
 
 const TITLE = "New tab page";
 
@@ -65,13 +65,13 @@ function focusPageTakingAppFocus(app: ElectronApplication): Promise<boolean> {
 const menuClick = (app: ElectronApplication, id: string) =>
   app.evaluate(({ Menu }, command) => Menu.getApplicationMenu()!.getMenuItemById(command)!.click(), id);
 
-test("Command T and Command W from a native page act on its View area, and after any other command on the terminal that has the keyboard", async () => {
+test("Command T and Command W from a native page act on its View area, and after any other command on the terminal that has the keyboard", { tag: NEEDS_FOCUS }, async () => {
   const herdr = await startHerdr({ agents: false });
   const run = isolate(herdr, "new-tab");
   let app: ElectronApplication | null = null;
   try {
     fs.writeFileSync(path.join(herdr.root, "fixture", "page.html"), `<!doctype html><meta charset="utf-8"><title>${TITLE}</title><h1>Browser keyboard owner</h1>`);
-    const launched = await launch(run.env, { switches: ["--disable-backgrounding-occluded-windows"] });
+    const launched = await launch(run.env);
     app = launched.app;
     const page = launched.page;
     // A CI runner's screen is 1024 points wide. At that width the side panel
