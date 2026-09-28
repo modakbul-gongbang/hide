@@ -408,6 +408,9 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect(phone.locator('[data-phone-input-error="true"]')).toContainText("2,000자까지");
     await expect(phone.locator('[data-phone-send="true"]')).toBeDisabled();
     await phone.locator('[data-phone-reply="true"]').fill("");
+    await scrollback.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
     await screenshot(phone, "mobile-phone-detail");
 
     // B30: with push on, the list offers 알림 켜기; allowing it registers the subscription.
