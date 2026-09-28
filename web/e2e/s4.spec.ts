@@ -76,7 +76,7 @@ test("History opens a scoped patch, then updates after editing the original file
     await fileRow.click();
     const content = page.locator('[data-editor-codemirror] .cm-content');
     await content.click();
-    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.press("ControlOrMeta+KeyA");
     await page.keyboard.type("first\nthird\n");
     await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("first\nthird\n");
     await showTool(page, "changes");
