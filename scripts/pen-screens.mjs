@@ -1277,13 +1277,19 @@ function buildDialogs(tokens) {
 
 function buildMenus() {
   function build(suffix) {
-    // workspaceManage.ts projectMenu(): Pin/Unpin, New worktree…, Remove project…
-    // (no Rename/Duplicate - those belong to no menu this shell has today, and
-    // Remove project carries no destructive style in the real menu either).
-    const rowMenu = screenMenuContent(`mn-row-${suffix}`, 200, [
-      screenMenuItem(`mn-row0-${suffix}`, 'Pin'),
+    // workspaceManage.ts projectMenu() in a browser tab, which has no Finder
+    // (PRD sidebar-context-menus D-02, D-07); Remove project carries no
+    // destructive style in the real menu either. The desktop app's menu, with
+    // Reveal in Finder, is on Screen / Projects Sidebar.
+    const rowMenu = screenMenuContent(`mn-row-${suffix}`, 220, [
+      screenMenuItem(`mn-row0-${suffix}`, 'Open Overview'),
       screenMenuItem(`mn-row1-${suffix}`, 'New worktree…'),
-      screenMenuItem(`mn-row2-${suffix}`, 'Remove project…'),
+      screenMenuItem(`mn-row2-${suffix}`, 'New tab in main', {shortcut: '⌥T'}),
+      screenMenuSeparator(`mn-rowsep1-${suffix}`),
+      screenMenuItem(`mn-row3-${suffix}`, 'Copy path'),
+      screenMenuSeparator(`mn-rowsep2-${suffix}`),
+      screenMenuItem(`mn-row4-${suffix}`, 'Pin'),
+      screenMenuItem(`mn-row5-${suffix}`, 'Remove project…'),
     ]);
     // ExplorerTree.tsx's row-context branch (a file row, not the empty-area
     // branch that offers New File/New Folder instead): Open to the side (with
@@ -1519,7 +1525,62 @@ function buildProjectsSidebar(tokens) {
         icon(`psb-devc-${s}`, 'chevrons-up-down', {size: 12, fill: '$--muted-foreground'}),
       ]),
     ]);
-    return [frame(`psb-sidebar-${s}`, 'Sidebar', {width, layout: 'vertical', fill: '$--sidebar', clip: true}, [header, list, footer]), hoverState(s)];
+    return [frame(`psb-sidebar-${s}`, 'Sidebar', {width, layout: 'vertical', fill: '$--sidebar', clip: true}, [header, list, footer]), hoverState(s), menuStates(s)];
+  }
+
+  // A row's right-click menu, one per row kind (PRD sidebar-context-menus
+  // D-02..D-04, D-10): a cut of the list around the row on the hover wash,
+  // and the menu (Component / Menu parts) opened under the pointer. The items,
+  // their order and separators are workspaceManage.ts's projectMenu,
+  // checkoutMenu and agentMenu as the desktop app draws them.
+  function menuStates(s) {
+    const I = (id, label, options) => screenMenuItem(`${id}-${s}`, label, options);
+    const S = id => screenMenuSeparator(`${id}-${s}`);
+    const cut = (id, rows) => frame(`psb-m-${id}-list-${s}`, 'Projects list, cut', {width, layout: 'vertical', padding: [xs, xs], fill: '$--sidebar', cornerRadius: '$--radius-sm', clip: true}, rows);
+    const opened = (id, title, rows, menuWidth, items) => frame(`psb-m-${id}-${s}`, title, {layout: 'vertical', gap: 0}, [
+      cut(id, rows),
+      frame(`psb-m-${id}-at-${s}`, 'Menu under the pointer', {layout: 'horizontal', padding: [0, 0, 0, 3 * num(tokens, '--spacing-lg')]}, [screenMenuContent(`psb-m-${id}-menu-${s}`, menuWidth, items)]),
+    ]);
+    return frame(`psb-menus-${s}`, 'Row menus', {layout: 'vertical', gap: '$--spacing-lg'}, [
+      opened('proj', 'Project row menu', [
+        projectRow(`psb-m-proj-row-${s}`, {name: 'herdr-ide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
+      ], 220, [
+        I('psb-m-proj-0', 'Open Overview'),
+        I('psb-m-proj-1', 'New worktree…'),
+        I('psb-m-proj-2', 'New tab in main', {shortcut: '⌘T'}),
+        S('psb-m-proj-s1'),
+        I('psb-m-proj-3', 'Reveal in Finder'),
+        I('psb-m-proj-4', 'Copy path'),
+        S('psb-m-proj-s2'),
+        I('psb-m-proj-5', 'Pin'),
+        I('psb-m-proj-6', 'Remove project…'),
+      ]),
+      opened('co', 'Checkout row menu', [
+        checkoutRow(`psb-m-co-row-${s}`, {name: 'electron-shortcut-bindings', kind: 'open', age: '2h', marks: {working: 1}, purpose: 'Electron desktop host for the we…', hovered: true}),
+      ], 240, [
+        I('psb-m-co-0', 'Open'),
+        I('psb-m-co-1', 'New tab here', {shortcut: '⌘T'}),
+        I('psb-m-co-2', 'Open pull request #149'),
+        S('psb-m-co-s1'),
+        I('psb-m-co-3', 'Set purpose…'),
+        I('psb-m-co-4', 'Set as default checkout'),
+        I('psb-m-co-5', 'Copy branch name'),
+        I('psb-m-co-6', 'Copy path'),
+        I('psb-m-co-7', 'Reveal in Finder'),
+        S('psb-m-co-s2'),
+        I('psb-m-co-8', 'Delete worktree…', {state: 'destructive'}),
+      ]),
+      opened('ag', 'Agent row menu', [
+        agentRow(`psb-m-ag-row-${s}`, {title: '배포 전 확인', status: 'asking', age: '30s', line: '프로덕션 배포 전에 변경 내용을 확인해…', bright: true}),
+      ], 220, [
+        I('psb-m-ag-0', 'Show', {shortcut: '⌥3'}),
+        S('psb-m-ag-s1'),
+        I('psb-m-ag-1', 'Copy title'),
+        I('psb-m-ag-2', 'Copy session id'),
+        S('psb-m-ag-s2'),
+        I('psb-m-ag-3', 'Close tab…'),
+      ]),
+    ]);
   }
 
   // The pull-request row under the pointer with its card beside it (PRD
@@ -1560,7 +1621,7 @@ function buildProjectsSidebar(tokens) {
     });
     return frame(`psb-hover-${s}`, 'Checkout row under the pointer, with its card', {width: width + gap + cardW, height: listH}, [{...list, x: 0, y: 0}, card]);
   }
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, sidebar-header.tsx, projects.ts: the Projects tab, the scope picker. Above it, fixed, the global destinations: one Overview row with the house glyph and the project count, which opens the every-project Overview and carries the selected fill only while that screen is in front; under it the Projects | Agents tab strip, Projects first, ending in New workspace (Projects only) and Search, the icon that opens ⌘K. The list starts at the first project; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent; a checkout without either is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. A folded parent keeps its own-checkout descendants in the badge and draws one C-style line per other checkout, with the R1 server-glyph device chip. A checkout raised by an external root prefixes line two with the parent checkout. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.', build, build);
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, sidebar-header.tsx, projects.ts: the Projects tab, the scope picker. Above it, fixed, the global destinations: one Overview row with the house glyph and the project count, which opens the every-project Overview and carries the selected fill only while that screen is in front; under it the Projects | Agents tab strip, Projects first, ending in New workspace (Projects only) and Search, the icon that opens ⌘K. The list starts at the first project; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it; beside the sidebar each row kind is drawn with its menu open (Project: Open Overview, New worktree…, New tab in main, Reveal in Finder, Copy path, Pin, Remove project…; Checkout: Open, New tab here, Open pull request, Set purpose…, Set as default checkout, Copy branch name, Copy path, Reveal in Finder, Delete worktree…; Agent: Show, Copy title, Copy session id, Close tab…). A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent; a checkout without either is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. A folded parent keeps its own-checkout descendants in the badge and draws one C-style line per other checkout, with the R1 server-glyph device chip. A checkout raised by an external root prefixes line two with the parent checkout. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.', build, build);
 }
 
 // -- assembly ---------------------------------------------------------------------

@@ -1052,10 +1052,26 @@ impl Runtime {
         true
     }
 
-    /// Pins or unpins a registered project (D-07, D-08). The row moves at
-    /// once and the registration is persisted on the existing off-lock save;
-    /// the same value again changes nothing and writes nothing.
+    /// Pins or unpins a project (D-07, D-08). The row moves at once and the
+    /// registration is persisted on the existing off-lock save; the same
+    /// value again changes nothing and writes nothing. A row Herdr shows
+    /// without a registration is registered by its pin (PRD
+    /// sidebar-context-menus D-14), so pinning it stays one event.
     pub(super) fn set_workspace_pinned(&mut self, payload: WorkspacePinSetPayload) -> bool {
+        if !self
+            .snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .any(|registration| registration.id == payload.workspace_id)
+            && let Some(registration) = self.unregistered_row_registration(&payload.workspace_id)
+        {
+            if !payload.pinned {
+                // Nothing is pinned without a registration: already the target state.
+                return false;
+            }
+            return self.register_pinned(registration);
+        }
         let Some(registration) = self
             .snapshot
             .ui_state
@@ -1110,24 +1126,139 @@ impl Runtime {
         true
     }
 
+    /// The registration a row Herdr shows without one would take: the id,
+    /// label, root and device the row already carries, so nothing is read
+    /// from disk under the lock and the next catalog rebuild adopts it under
+    /// the same id. A device's row qualifies only once its helper grouped it
+    /// under its root (`device_catalog::project_id`); before that its id
+    /// names one Herdr workspace, which no registration can keep.
+    fn unregistered_row_registration(
+        &self,
+        workspace_id: &str,
+    ) -> Option<Result<crate::model::WorkspaceRegistration, String>> {
+        let row_registration = |row: &crate::model::WorkspaceSnapshot, device_id: &str| {
+            crate::model::WorkspaceRegistration {
+                primary_checkout_id: None,
+                id: row.id.clone(),
+                label: row.label.clone(),
+                path: row.path.clone(),
+                device_id: device_id.to_owned(),
+                pinned: true,
+            }
+        };
+        if let Some(row) =
+            self.snapshot.navigator.workspaces.iter().find(|row| {
+                row.id == workspace_id && !row.registered && row.remote_target_id.is_none()
+            })
+        {
+            return Some(Ok(row_registration(row, workspace::LOCAL_DEVICE_ID)));
+        }
+        self.snapshot.status.remote.iter().find_map(|status| {
+            let row = status
+                .session
+                .as_ref()?
+                .workspaces
+                .iter()
+                .find(|row| row.id == workspace_id && !row.registered)?;
+            let grouped =
+                crate::device_catalog::project_id(&status.target_id, Path::new(&row.path));
+            Some(if grouped == row.id {
+                Ok(row_registration(row, &status.target_id))
+            } else {
+                Err(status.target_id.clone())
+            })
+        })
+    }
+
+    /// Registers a row Herdr shows without a registration and pins it, in
+    /// the event that asked for the pin. A device's row its helper has not
+    /// grouped yet stays as it is, with the reason in the log: the operator
+    /// can pin it again once the device's catalog is ready.
+    fn register_pinned(
+        &mut self,
+        registration: Result<crate::model::WorkspaceRegistration, String>,
+    ) -> bool {
+        let registration = match registration {
+            Ok(registration) => registration,
+            Err(device) => {
+                self.push_diagnostic(
+                    "workspace.pin_ungrouped",
+                    format!("A project row on {device} is not grouped by its helper yet, so it was not registered"),
+                );
+                return true;
+            }
+        };
+        // A removal still closing this row's panes would retire the row
+        // this registration keeps; the two requests contradict each other.
+        if self.workspace_removals_in_flight.contains(&registration.id) {
+            self.push_diagnostic(
+                "workspace.pin_during_removal",
+                format!(
+                    "Project {} is being removed, so it was not pinned",
+                    registration.id
+                ),
+            );
+            return true;
+        }
+        let id = registration.id.clone();
+        let device = registration.device_id.clone();
+        self.snapshot
+            .ui_state
+            .workspace_registrations
+            .push(registration);
+        if device != workspace::LOCAL_DEVICE_ID {
+            self.refresh_device_catalog(&device);
+        }
+        for row in self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter_mut()
+            .chain(self.last_accepted_catalog.iter_mut().flatten())
+            .filter(|row| row.id == id)
+        {
+            row.registered = true;
+            row.temporary = false;
+            row.pinned = true;
+            for checkout in &mut row.checkouts {
+                checkout.temporary = false;
+            }
+        }
+        let agents = self.snapshot.navigator.agents.clone();
+        crate::project_context::sort_projects(&mut self.snapshot.navigator.workspaces, &agents);
+        self.refresh_inactive_groups();
+        self.persist_ui_state();
+        crate::diagnostic!(serde_json::json!({
+            "component": "registration", "kind": "workspace.registered_by_pin",
+            "workspace_id": id, "target": device,
+        }));
+        self.push_diagnostic("workspace.pinned", format!("Project {id}"));
+        true
+    }
+
     /// `Remove project…` (D-09, D-11). A project with no pane loses its
     /// registration at once, as before. One with panes has them closed on a
     /// worker thread that waits for Herdr to confirm; only that confirmation
     /// removes the registration, so a timeout leaves the project registered
     /// with the reason in the error banner and a retry starts from whatever
-    /// panes remain.
+    /// panes remain. A row Herdr shows without a registration (PRD
+    /// sidebar-context-menus D-14) has only its panes to close; the row then
+    /// leaves with Herdr's workspace.
     pub(super) fn remove_workspace(&mut self, payload: RemoveWorkspacePayload) -> bool {
-        if !self
+        let registered = self
             .snapshot
             .ui_state
             .workspace_registrations
             .iter()
-            .any(|registration| registration.id == payload.workspace_id)
-        {
+            .find(|registration| registration.id == payload.workspace_id)
+            .map(|registration| registration.device_id.clone());
+        let Some(owner) =
+            registered.or_else(|| self.unregistered_row_device(&payload.workspace_id))
+        else {
             // Already gone: the target state is reached, and a repeat of a
             // completed removal stays quiet (docs/UI_BEHAVIOR.md, registration removal).
             return false;
-        }
+        };
         if self
             .workspace_removals_in_flight
             .contains(&payload.workspace_id)
@@ -1144,14 +1275,7 @@ impl Runtime {
             );
             return true;
         }
-        let device = self
-            .snapshot
-            .ui_state
-            .workspace_registrations
-            .iter()
-            .find(|registration| registration.id == payload.workspace_id)
-            .map(|registration| registration.device_id.clone())
-            .filter(|device| device != workspace::LOCAL_DEVICE_ID);
+        let device = Some(owner).filter(|device| device != workspace::LOCAL_DEVICE_ID);
         // A device's project lists its panes in that device's session, by
         // scoped ids; Herdr there closes them by its own.
         let rows = match device.as_deref() {
@@ -1221,6 +1345,29 @@ impl Runtime {
         true
     }
 
+    /// The device of a row Herdr shows without a registration, when one has
+    /// this id: this machine's navigator first, then each device's session.
+    fn unregistered_row_device(&self, workspace_id: &str) -> Option<String> {
+        if self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .any(|row| row.id == workspace_id && !row.registered && row.remote_target_id.is_none())
+        {
+            return Some(workspace::LOCAL_DEVICE_ID.to_owned());
+        }
+        self.snapshot.status.remote.iter().find_map(|status| {
+            status
+                .session
+                .as_ref()?
+                .workspaces
+                .iter()
+                .any(|row| row.id == workspace_id && !row.registered)
+                .then(|| status.target_id.clone())
+        })
+    }
+
     /// The worker's answer to `remove_workspace`: Herdr confirmed every pane
     /// gone, or it did not in time. Only the first removes the registration.
     pub fn ingest_workspace_close_result(
@@ -1238,9 +1385,19 @@ impl Runtime {
                     "component": "registration", "kind": "remove.close_failed",
                     "workspace_id": workspace_id, "error": message,
                 }));
+                let registered = self
+                    .snapshot
+                    .ui_state
+                    .workspace_registrations
+                    .iter()
+                    .any(|registration| registration.id == workspace_id);
                 self.set_error(
                     "workspace.remove_failed",
-                    format!("{message}. The project stays registered; remove it again to close the panes that remain."),
+                    if registered {
+                        format!("{message}. The project stays registered; remove it again to close the panes that remain.")
+                    } else {
+                        format!("{message}. Remove the project again to close the panes that remain.")
+                    },
                     true,
                 );
                 true

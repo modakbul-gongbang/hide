@@ -29659,7 +29659,7 @@
                           "id": "mn-row0-l",
                           "type": "ref",
                           "ref": "hideui:mnu-item-m",
-                          "name": "Pin",
+                          "name": "Open Overview",
                           "descendants": {
                             "hideui:mnu-item-icon": {
                               "fill": "$--muted-foreground",
@@ -29667,7 +29667,7 @@
                             },
                             "hideui:mnu-item-label": {
                               "fill": "$--foreground",
-                              "content": "Pin"
+                              "content": "Open Overview"
                             },
                             "hideui:mnu-item-reason": {
                               "fill": "$--muted-foreground",
@@ -29707,6 +29707,101 @@
                           "id": "mn-row2-l",
                           "type": "ref",
                           "ref": "hideui:mnu-item-m",
+                          "name": "New tab in main",
+                          "descendants": {
+                            "hideui:mnu-item-icon": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:mnu-item-label": {
+                              "fill": "$--foreground",
+                              "content": "New tab in main"
+                            },
+                            "hideui:mnu-item-reason": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:mnu-item-shortcut": {
+                              "fill": "$--muted-foreground",
+                              "content": "⌥T",
+                              "enabled": true
+                            }
+                          }
+                        },
+                        {
+                          "id": "mn-rowsep1-l",
+                          "type": "ref",
+                          "ref": "hideui:mnu-sep-m",
+                          "name": "Separator",
+                          "descendants": {
+                            "hideui:mnu-sep-line": {
+                              "stroke": "$--border"
+                            }
+                          }
+                        },
+                        {
+                          "id": "mn-row3-l",
+                          "type": "ref",
+                          "ref": "hideui:mnu-item-m",
+                          "name": "Copy path",
+                          "descendants": {
+                            "hideui:mnu-item-icon": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:mnu-item-label": {
+                              "fill": "$--foreground",
+                              "content": "Copy path"
+                            },
+                            "hideui:mnu-item-reason": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:mnu-item-shortcut": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            }
+                          }
+                        },
+                        {
+                          "id": "mn-rowsep2-l",
+                          "type": "ref",
+                          "ref": "hideui:mnu-sep-m",
+                          "name": "Separator",
+                          "descendants": {
+                            "hideui:mnu-sep-line": {
+                              "stroke": "$--border"
+                            }
+                          }
+                        },
+                        {
+                          "id": "mn-row4-l",
+                          "type": "ref",
+                          "ref": "hideui:mnu-item-m",
+                          "name": "Pin",
+                          "descendants": {
+                            "hideui:mnu-item-icon": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:mnu-item-label": {
+                              "fill": "$--foreground",
+                              "content": "Pin"
+                            },
+                            "hideui:mnu-item-reason": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:mnu-item-shortcut": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            }
+                          }
+                        },
+                        {
+                          "id": "mn-row5-l",
+                          "type": "ref",
+                          "ref": "hideui:mnu-item-m",
                           "name": "Remove project…",
                           "descendants": {
                             "hideui:mnu-item-icon": {
@@ -29731,7 +29826,7 @@
                       "layout": "vertical",
                       "gap": 0,
                       "padding": "$--spacing-xxs",
-                      "width": 200,
+                      "width": 220,
                       "cornerRadius": "$--radius-sm",
                       "fill": "$--popover",
                       "stroke": "$--border",
@@ -30023,7 +30118,7 @@
                           "id": "mn-row0-d",
                           "type": "ref",
                           "ref": "hideui:mnu-item-m",
-                          "name": "Pin",
+                          "name": "Open Overview",
                           "descendants": {
                             "hideui:mnu-item-icon": {
                               "fill": "$--muted-foreground",
@@ -30031,7 +30126,7 @@
                             },
                             "hideui:mnu-item-label": {
                               "fill": "$--foreground",
-                              "content": "Pin"
+                              "content": "Open Overview"
                             },
                             "hideui:mnu-item-reason": {
                               "fill": "$--muted-foreground",
@@ -30071,6 +30166,101 @@
                           "id": "mn-row2-d",
                           "type": "ref",
                           "ref": "hideui:mnu-item-m",
+                          "name": "New tab in main",
+                          "descendants": {
+                            "hideui:mnu-item-icon": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:mnu-item-label": {
+                              "fill": "$--foreground",
+                              "content": "New tab in main"
+                            },
+                            "hideui:mnu-item-reason": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:mnu-item-shortcut": {
+                              "fill": "$--muted-foreground",
+                              "content": "⌥T",
+                              "enabled": true
+                            }
+                          }
+                        },
+                        {
+                          "id": "mn-rowsep1-d",
+                          "type": "ref",
+                          "ref": "hideui:mnu-sep-m",
+                          "name": "Separator",
+                          "descendants": {
+                            "hideui:mnu-sep-line": {
+                              "stroke": "$--border"
+                            }
+                          }
+                        },
+                        {
+                          "id": "mn-row3-d",
+                          "type": "ref",
+                          "ref": "hideui:mnu-item-m",
+                          "name": "Copy path",
+                          "descendants": {
+                            "hideui:mnu-item-icon": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:mnu-item-label": {
+                              "fill": "$--foreground",
+                              "content": "Copy path"
+                            },
+                            "hideui:mnu-item-reason": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:mnu-item-shortcut": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            }
+                          }
+                        },
+                        {
+                          "id": "mn-rowsep2-d",
+                          "type": "ref",
+                          "ref": "hideui:mnu-sep-m",
+                          "name": "Separator",
+                          "descendants": {
+                            "hideui:mnu-sep-line": {
+                              "stroke": "$--border"
+                            }
+                          }
+                        },
+                        {
+                          "id": "mn-row4-d",
+                          "type": "ref",
+                          "ref": "hideui:mnu-item-m",
+                          "name": "Pin",
+                          "descendants": {
+                            "hideui:mnu-item-icon": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:mnu-item-label": {
+                              "fill": "$--foreground",
+                              "content": "Pin"
+                            },
+                            "hideui:mnu-item-reason": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:mnu-item-shortcut": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            }
+                          }
+                        },
+                        {
+                          "id": "mn-row5-d",
+                          "type": "ref",
+                          "ref": "hideui:mnu-item-m",
                           "name": "Remove project…",
                           "descendants": {
                             "hideui:mnu-item-icon": {
@@ -30095,7 +30285,7 @@
                       "layout": "vertical",
                       "gap": 0,
                       "padding": "$--spacing-xxs",
-                      "width": 200,
+                      "width": 220,
                       "cornerRadius": "$--radius-sm",
                       "fill": "$--popover",
                       "stroke": "$--border",
@@ -30391,7 +30581,7 @@
           "type": "text",
           "id": "screen-projects-sidebar-spec",
           "name": "sidebar.tsx, sidebar-header.",
-          "content": "sidebar.tsx, sidebar-header.tsx, projects.ts: the Projects tab, the scope picker. Above it, fixed, the global destinations: one Overview row with the house glyph and the project count, which opens the every-project Overview and carries the selected fill only while that screen is in front; under it the Projects | Agents tab strip, Projects first, ending in New workspace (Projects only) and Search, the icon that opens ⌘K. The list starts at the first project; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent; a checkout without either is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. A folded parent keeps its own-checkout descendants in the badge and draws one C-style line per other checkout, with the R1 server-glyph device chip. A checkout raised by an external root prefixes line two with the parent checkout. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.",
+          "content": "sidebar.tsx, sidebar-header.tsx, projects.ts: the Projects tab, the scope picker. Above it, fixed, the global destinations: one Overview row with the house glyph and the project count, which opens the every-project Overview and carries the selected fill only while that screen is in front; under it the Projects | Agents tab strip, Projects first, ending in New workspace (Projects only) and Search, the icon that opens ⌘K. The list starts at the first project; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it; beside the sidebar each row kind is drawn with its menu open (Project: Open Overview, New worktree…, New tab in main, Reveal in Finder, Copy path, Pin, Remove project…; Checkout: Open, New tab here, Open pull request, Set purpose…, Set as default checkout, Copy branch name, Copy path, Reveal in Finder, Delete worktree…; Agent: Show, Copy title, Copy session id, Close tab…). A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent; a checkout without either is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. A folded parent keeps its own-checkout descendants in the badge and draws one C-style line per other checkout, with the R1 server-glyph device chip. A checkout raised by an external root prefixes line two with the parent checkout. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -33339,6 +33529,1026 @@
               ],
               "width": 660,
               "height": 268
+            },
+            {
+              "type": "frame",
+              "id": "psb-menus-l",
+              "name": "Row menus",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "psb-m-proj-l",
+                  "name": "Project row menu",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "psb-m-proj-list-l",
+                      "name": "Projects list, cut",
+                      "children": [
+                        {
+                          "id": "psb-m-proj-row-l",
+                          "type": "ref",
+                          "ref": "hideui:qdhY0",
+                          "name": "herdr-ide",
+                          "width": 284,
+                          "height": 36,
+                          "descendants": {
+                            "hideui:mIzlX": {
+                              "fill": "$--subtle-foreground",
+                              "icon": "folder-git-2"
+                            },
+                            "hideui:JkPyX": {
+                              "fill": "$--foreground",
+                              "content": "herdr-ide"
+                            },
+                            "hideui:project-status": {
+                              "fill": "$--secondary",
+                              "enabled": true
+                            },
+                            "hideui:project-error-glyph": {
+                              "fill": "$--destructive"
+                            },
+                            "hideui:project-error-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:project-approval-glyph": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:project-approval-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:project-question-glyph": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:project-question-count": {
+                              "fill": "$--subtle-foreground",
+                              "content": "3"
+                            },
+                            "hideui:project-working-dot": {
+                              "fill": "$--agent-working"
+                            },
+                            "hideui:project-working-count": {
+                              "fill": "$--subtle-foreground",
+                              "content": "5"
+                            },
+                            "hideui:project-done-glyph": {
+                              "fill": "$--success"
+                            },
+                            "hideui:project-done-count": {
+                              "fill": "$--subtle-foreground",
+                              "content": "1"
+                            },
+                            "hideui:project-idle-ring": {
+                              "stroke": "$--subtle-foreground"
+                            },
+                            "hideui:project-idle-count": {
+                              "fill": "$--subtle-foreground",
+                              "content": "1"
+                            },
+                            "hideui:nZkan": {
+                              "fill": "$--muted-foreground"
+                            },
+                            "hideui:iBYjj": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-down"
+                            },
+                            "hideui:wgtfo": {
+                              "opacity": 0
+                            },
+                            "hideui:project-error": {
+                              "enabled": false
+                            },
+                            "hideui:project-approval": {
+                              "enabled": false
+                            },
+                            "hideui:project-question": {
+                              "enabled": true
+                            },
+                            "hideui:project-working": {
+                              "enabled": true
+                            },
+                            "hideui:project-done": {
+                              "enabled": true
+                            },
+                            "hideui:project-idle": {
+                              "enabled": true
+                            }
+                          }
+                        }
+                      ],
+                      "width": 292,
+                      "layout": "vertical",
+                      "padding": [
+                        4,
+                        4
+                      ],
+                      "fill": "$--sidebar",
+                      "cornerRadius": "$--radius-sm",
+                      "clip": true
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-m-proj-at-l",
+                      "name": "Menu under the pointer",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "psb-m-proj-menu-l",
+                          "name": "Content",
+                          "children": [
+                            {
+                              "id": "psb-m-proj-0-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Open Overview",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Open Overview"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-proj-1-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "New worktree…",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "New worktree…"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-proj-2-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "New tab in main",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "New tab in main"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "content": "⌘T",
+                                  "enabled": true
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-proj-s1-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-sep-m",
+                              "name": "Separator",
+                              "descendants": {
+                                "hideui:mnu-sep-line": {
+                                  "stroke": "$--border"
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-proj-3-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Reveal in Finder",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Reveal in Finder"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-proj-4-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Copy path",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Copy path"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-proj-s2-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-sep-m",
+                              "name": "Separator",
+                              "descendants": {
+                                "hideui:mnu-sep-line": {
+                                  "stroke": "$--border"
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-proj-5-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Pin",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Pin"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-proj-6-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Remove project…",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Remove project…"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": 0,
+                          "padding": "$--spacing-xxs",
+                          "width": 220,
+                          "cornerRadius": "$--radius-sm",
+                          "fill": "$--popover",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline",
+                          "strokeAlignment": "inner"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "padding": [
+                        0,
+                        0,
+                        0,
+                        48
+                      ]
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": 0
+                },
+                {
+                  "type": "frame",
+                  "id": "psb-m-co-l",
+                  "name": "Checkout row menu",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "psb-m-co-list-l",
+                      "name": "Projects list, cut",
+                      "children": [
+                        {
+                          "id": "psb-m-co-row-l",
+                          "type": "ref",
+                          "ref": "hideui:DLP27",
+                          "name": "electron-shortcut-bindings",
+                          "width": 284,
+                          "height": 48,
+                          "padding": [
+                            0,
+                            4,
+                            0,
+                            6
+                          ],
+                          "fill": "$--accent",
+                          "descendants": {
+                            "hideui:VtSRn": {
+                              "fill": "$--pr-open",
+                              "icon": "git-pull-request"
+                            },
+                            "hideui:checkout-name-prefix": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:q91d7": {
+                              "fill": "$--foreground",
+                              "content": "electron-shortcut-bindings",
+                              "fontWeight": "normal"
+                            },
+                            "hideui:checkout-status": {
+                              "fill": "$--secondary",
+                              "enabled": true
+                            },
+                            "hideui:checkout-error-glyph": {
+                              "fill": "$--destructive"
+                            },
+                            "hideui:checkout-error-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-approval-glyph": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:checkout-approval-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-question-glyph": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:checkout-question-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-working-dot": {
+                              "fill": "$--agent-working"
+                            },
+                            "hideui:checkout-working-count": {
+                              "fill": "$--subtle-foreground",
+                              "content": "1"
+                            },
+                            "hideui:checkout-done-glyph": {
+                              "fill": "$--success"
+                            },
+                            "hideui:checkout-done-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-idle-ring": {
+                              "stroke": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-idle-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:TuosT": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:CgZj3": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-right"
+                            },
+                            "hideui:D37Vr": {
+                              "fill": "$--muted-foreground",
+                              "content": "Electron desktop host for the we…",
+                              "enabled": true
+                            },
+                            "hideui:line2-age": {
+                              "fill": "$--muted-foreground",
+                              "content": "2h",
+                              "enabled": true
+                            },
+                            "hideui:QetL0": {
+                              "width": 274
+                            },
+                            "hideui:TS5x9": {
+                              "enabled": false
+                            },
+                            "hideui:checkout-error": {
+                              "enabled": false
+                            },
+                            "hideui:checkout-approval": {
+                              "enabled": false
+                            },
+                            "hideui:checkout-question": {
+                              "enabled": false
+                            },
+                            "hideui:checkout-working": {
+                              "enabled": true
+                            },
+                            "hideui:checkout-done": {
+                              "enabled": false
+                            },
+                            "hideui:checkout-idle": {
+                              "enabled": false
+                            },
+                            "hideui:IXwZI": {
+                              "opacity": 1
+                            },
+                            "hideui:o6XLUj": {
+                              "enabled": true,
+                              "width": 274
+                            },
+                            "hideui:yfur4": {
+                              "width": 20
+                            }
+                          }
+                        }
+                      ],
+                      "width": 292,
+                      "layout": "vertical",
+                      "padding": [
+                        4,
+                        4
+                      ],
+                      "fill": "$--sidebar",
+                      "cornerRadius": "$--radius-sm",
+                      "clip": true
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-m-co-at-l",
+                      "name": "Menu under the pointer",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "psb-m-co-menu-l",
+                          "name": "Content",
+                          "children": [
+                            {
+                              "id": "psb-m-co-0-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Open",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Open"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-1-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "New tab here",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "New tab here"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "content": "⌘T",
+                                  "enabled": true
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-2-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Open pull request #149",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Open pull request #149"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-s1-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-sep-m",
+                              "name": "Separator",
+                              "descendants": {
+                                "hideui:mnu-sep-line": {
+                                  "stroke": "$--border"
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-3-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Set purpose…",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Set purpose…"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-4-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Set as default checkout",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Set as default checkout"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-5-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Copy branch name",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Copy branch name"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-6-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Copy path",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Copy path"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-7-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Reveal in Finder",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Reveal in Finder"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-s2-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-sep-m",
+                              "name": "Separator",
+                              "descendants": {
+                                "hideui:mnu-sep-line": {
+                                  "stroke": "$--border"
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-8-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Delete worktree…",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--destructive",
+                                  "content": "Delete worktree…"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": 0,
+                          "padding": "$--spacing-xxs",
+                          "width": 240,
+                          "cornerRadius": "$--radius-sm",
+                          "fill": "$--popover",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline",
+                          "strokeAlignment": "inner"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "padding": [
+                        0,
+                        0,
+                        0,
+                        48
+                      ]
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": 0
+                },
+                {
+                  "type": "frame",
+                  "id": "psb-m-ag-l",
+                  "name": "Agent row menu",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "psb-m-ag-list-l",
+                      "name": "Projects list, cut",
+                      "children": [
+                        {
+                          "id": "psb-m-ag-row-l",
+                          "type": "ref",
+                          "ref": "hideui:sidebar-agent-row",
+                          "name": "배포 전 확인",
+                          "width": 284,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            48
+                          ],
+                          "descendants": {
+                            "hideui:sar-dot": {
+                              "fill": "$--agent-working",
+                              "enabled": false
+                            },
+                            "hideui:sar-ring": {
+                              "stroke": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-glyph": {
+                              "fill": "$--warning",
+                              "enabled": true,
+                              "content": "?"
+                            },
+                            "hideui:sar-title": {
+                              "fill": "$--foreground",
+                              "content": "배포 전 확인"
+                            },
+                            "hideui:sar-branch": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-branch-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-device": {
+                              "stroke": "$--border",
+                              "enabled": false
+                            },
+                            "hideui:sar-device-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-badge": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-badge-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-elapsed": {
+                              "fill": "$--muted-foreground",
+                              "content": "30s"
+                            },
+                            "hideui:sar-chevron": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-right"
+                            },
+                            "hideui:sar-line": {
+                              "fill": "$--warning",
+                              "enabled": true,
+                              "content": "프로덕션 배포 전에 변경 내용을 확인해…"
+                            },
+                            "hideui:sar-place": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-provider": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "hideui:sar-fold": {
+                              "opacity": 0
+                            }
+                          }
+                        }
+                      ],
+                      "width": 292,
+                      "layout": "vertical",
+                      "padding": [
+                        4,
+                        4
+                      ],
+                      "fill": "$--sidebar",
+                      "cornerRadius": "$--radius-sm",
+                      "clip": true
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-m-ag-at-l",
+                      "name": "Menu under the pointer",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "psb-m-ag-menu-l",
+                          "name": "Content",
+                          "children": [
+                            {
+                              "id": "psb-m-ag-0-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Show",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Show"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "content": "⌥3",
+                                  "enabled": true
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-ag-s1-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-sep-m",
+                              "name": "Separator",
+                              "descendants": {
+                                "hideui:mnu-sep-line": {
+                                  "stroke": "$--border"
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-ag-1-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Copy title",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Copy title"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-ag-2-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Copy session id",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Copy session id"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-ag-s2-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-sep-m",
+                              "name": "Separator",
+                              "descendants": {
+                                "hideui:mnu-sep-line": {
+                                  "stroke": "$--border"
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-ag-3-l",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Close tab…",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Close tab…"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": 0,
+                          "padding": "$--spacing-xxs",
+                          "width": 220,
+                          "cornerRadius": "$--radius-sm",
+                          "fill": "$--popover",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline",
+                          "strokeAlignment": "inner"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "padding": [
+                        0,
+                        0,
+                        0,
+                        48
+                      ]
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": 0
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-lg"
             }
           ],
           "theme": {
@@ -36292,6 +37502,1026 @@
               ],
               "width": 660,
               "height": 268
+            },
+            {
+              "type": "frame",
+              "id": "psb-menus-d",
+              "name": "Row menus",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "psb-m-proj-d",
+                  "name": "Project row menu",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "psb-m-proj-list-d",
+                      "name": "Projects list, cut",
+                      "children": [
+                        {
+                          "id": "psb-m-proj-row-d",
+                          "type": "ref",
+                          "ref": "hideui:qdhY0",
+                          "name": "herdr-ide",
+                          "width": 284,
+                          "height": 36,
+                          "descendants": {
+                            "hideui:mIzlX": {
+                              "fill": "$--subtle-foreground",
+                              "icon": "folder-git-2"
+                            },
+                            "hideui:JkPyX": {
+                              "fill": "$--foreground",
+                              "content": "herdr-ide"
+                            },
+                            "hideui:project-status": {
+                              "fill": "$--secondary",
+                              "enabled": true
+                            },
+                            "hideui:project-error-glyph": {
+                              "fill": "$--destructive"
+                            },
+                            "hideui:project-error-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:project-approval-glyph": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:project-approval-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:project-question-glyph": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:project-question-count": {
+                              "fill": "$--subtle-foreground",
+                              "content": "3"
+                            },
+                            "hideui:project-working-dot": {
+                              "fill": "$--agent-working"
+                            },
+                            "hideui:project-working-count": {
+                              "fill": "$--subtle-foreground",
+                              "content": "5"
+                            },
+                            "hideui:project-done-glyph": {
+                              "fill": "$--success"
+                            },
+                            "hideui:project-done-count": {
+                              "fill": "$--subtle-foreground",
+                              "content": "1"
+                            },
+                            "hideui:project-idle-ring": {
+                              "stroke": "$--subtle-foreground"
+                            },
+                            "hideui:project-idle-count": {
+                              "fill": "$--subtle-foreground",
+                              "content": "1"
+                            },
+                            "hideui:nZkan": {
+                              "fill": "$--muted-foreground"
+                            },
+                            "hideui:iBYjj": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-down"
+                            },
+                            "hideui:wgtfo": {
+                              "opacity": 0
+                            },
+                            "hideui:project-error": {
+                              "enabled": false
+                            },
+                            "hideui:project-approval": {
+                              "enabled": false
+                            },
+                            "hideui:project-question": {
+                              "enabled": true
+                            },
+                            "hideui:project-working": {
+                              "enabled": true
+                            },
+                            "hideui:project-done": {
+                              "enabled": true
+                            },
+                            "hideui:project-idle": {
+                              "enabled": true
+                            }
+                          }
+                        }
+                      ],
+                      "width": 292,
+                      "layout": "vertical",
+                      "padding": [
+                        4,
+                        4
+                      ],
+                      "fill": "$--sidebar",
+                      "cornerRadius": "$--radius-sm",
+                      "clip": true
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-m-proj-at-d",
+                      "name": "Menu under the pointer",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "psb-m-proj-menu-d",
+                          "name": "Content",
+                          "children": [
+                            {
+                              "id": "psb-m-proj-0-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Open Overview",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Open Overview"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-proj-1-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "New worktree…",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "New worktree…"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-proj-2-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "New tab in main",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "New tab in main"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "content": "⌘T",
+                                  "enabled": true
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-proj-s1-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-sep-m",
+                              "name": "Separator",
+                              "descendants": {
+                                "hideui:mnu-sep-line": {
+                                  "stroke": "$--border"
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-proj-3-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Reveal in Finder",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Reveal in Finder"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-proj-4-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Copy path",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Copy path"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-proj-s2-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-sep-m",
+                              "name": "Separator",
+                              "descendants": {
+                                "hideui:mnu-sep-line": {
+                                  "stroke": "$--border"
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-proj-5-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Pin",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Pin"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-proj-6-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Remove project…",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Remove project…"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": 0,
+                          "padding": "$--spacing-xxs",
+                          "width": 220,
+                          "cornerRadius": "$--radius-sm",
+                          "fill": "$--popover",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline",
+                          "strokeAlignment": "inner"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "padding": [
+                        0,
+                        0,
+                        0,
+                        48
+                      ]
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": 0
+                },
+                {
+                  "type": "frame",
+                  "id": "psb-m-co-d",
+                  "name": "Checkout row menu",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "psb-m-co-list-d",
+                      "name": "Projects list, cut",
+                      "children": [
+                        {
+                          "id": "psb-m-co-row-d",
+                          "type": "ref",
+                          "ref": "hideui:DLP27",
+                          "name": "electron-shortcut-bindings",
+                          "width": 284,
+                          "height": 48,
+                          "padding": [
+                            0,
+                            4,
+                            0,
+                            6
+                          ],
+                          "fill": "$--accent",
+                          "descendants": {
+                            "hideui:VtSRn": {
+                              "fill": "$--pr-open",
+                              "icon": "git-pull-request"
+                            },
+                            "hideui:checkout-name-prefix": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:q91d7": {
+                              "fill": "$--foreground",
+                              "content": "electron-shortcut-bindings",
+                              "fontWeight": "normal"
+                            },
+                            "hideui:checkout-status": {
+                              "fill": "$--secondary",
+                              "enabled": true
+                            },
+                            "hideui:checkout-error-glyph": {
+                              "fill": "$--destructive"
+                            },
+                            "hideui:checkout-error-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-approval-glyph": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:checkout-approval-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-question-glyph": {
+                              "fill": "$--warning"
+                            },
+                            "hideui:checkout-question-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-working-dot": {
+                              "fill": "$--agent-working"
+                            },
+                            "hideui:checkout-working-count": {
+                              "fill": "$--subtle-foreground",
+                              "content": "1"
+                            },
+                            "hideui:checkout-done-glyph": {
+                              "fill": "$--success"
+                            },
+                            "hideui:checkout-done-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-idle-ring": {
+                              "stroke": "$--subtle-foreground"
+                            },
+                            "hideui:checkout-idle-count": {
+                              "fill": "$--subtle-foreground"
+                            },
+                            "hideui:TuosT": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:CgZj3": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-right"
+                            },
+                            "hideui:D37Vr": {
+                              "fill": "$--muted-foreground",
+                              "content": "Electron desktop host for the we…",
+                              "enabled": true
+                            },
+                            "hideui:line2-age": {
+                              "fill": "$--muted-foreground",
+                              "content": "2h",
+                              "enabled": true
+                            },
+                            "hideui:QetL0": {
+                              "width": 274
+                            },
+                            "hideui:TS5x9": {
+                              "enabled": false
+                            },
+                            "hideui:checkout-error": {
+                              "enabled": false
+                            },
+                            "hideui:checkout-approval": {
+                              "enabled": false
+                            },
+                            "hideui:checkout-question": {
+                              "enabled": false
+                            },
+                            "hideui:checkout-working": {
+                              "enabled": true
+                            },
+                            "hideui:checkout-done": {
+                              "enabled": false
+                            },
+                            "hideui:checkout-idle": {
+                              "enabled": false
+                            },
+                            "hideui:IXwZI": {
+                              "opacity": 1
+                            },
+                            "hideui:o6XLUj": {
+                              "enabled": true,
+                              "width": 274
+                            },
+                            "hideui:yfur4": {
+                              "width": 20
+                            }
+                          }
+                        }
+                      ],
+                      "width": 292,
+                      "layout": "vertical",
+                      "padding": [
+                        4,
+                        4
+                      ],
+                      "fill": "$--sidebar",
+                      "cornerRadius": "$--radius-sm",
+                      "clip": true
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-m-co-at-d",
+                      "name": "Menu under the pointer",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "psb-m-co-menu-d",
+                          "name": "Content",
+                          "children": [
+                            {
+                              "id": "psb-m-co-0-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Open",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Open"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-1-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "New tab here",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "New tab here"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "content": "⌘T",
+                                  "enabled": true
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-2-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Open pull request #149",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Open pull request #149"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-s1-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-sep-m",
+                              "name": "Separator",
+                              "descendants": {
+                                "hideui:mnu-sep-line": {
+                                  "stroke": "$--border"
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-3-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Set purpose…",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Set purpose…"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-4-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Set as default checkout",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Set as default checkout"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-5-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Copy branch name",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Copy branch name"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-6-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Copy path",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Copy path"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-7-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Reveal in Finder",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Reveal in Finder"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-s2-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-sep-m",
+                              "name": "Separator",
+                              "descendants": {
+                                "hideui:mnu-sep-line": {
+                                  "stroke": "$--border"
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-co-8-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Delete worktree…",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--destructive",
+                                  "content": "Delete worktree…"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": 0,
+                          "padding": "$--spacing-xxs",
+                          "width": 240,
+                          "cornerRadius": "$--radius-sm",
+                          "fill": "$--popover",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline",
+                          "strokeAlignment": "inner"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "padding": [
+                        0,
+                        0,
+                        0,
+                        48
+                      ]
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": 0
+                },
+                {
+                  "type": "frame",
+                  "id": "psb-m-ag-d",
+                  "name": "Agent row menu",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "psb-m-ag-list-d",
+                      "name": "Projects list, cut",
+                      "children": [
+                        {
+                          "id": "psb-m-ag-row-d",
+                          "type": "ref",
+                          "ref": "hideui:sidebar-agent-row",
+                          "name": "배포 전 확인",
+                          "width": 284,
+                          "padding": [
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            "$--spacing-xs",
+                            48
+                          ],
+                          "descendants": {
+                            "hideui:sar-dot": {
+                              "fill": "$--agent-working",
+                              "enabled": false
+                            },
+                            "hideui:sar-ring": {
+                              "stroke": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-glyph": {
+                              "fill": "$--warning",
+                              "enabled": true,
+                              "content": "?"
+                            },
+                            "hideui:sar-title": {
+                              "fill": "$--foreground",
+                              "content": "배포 전 확인"
+                            },
+                            "hideui:sar-branch": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-branch-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-device": {
+                              "stroke": "$--border",
+                              "enabled": false
+                            },
+                            "hideui:sar-device-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-badge": {
+                              "fill": "$--secondary",
+                              "enabled": false
+                            },
+                            "hideui:sar-badge-label": {
+                              "fill": "$--subtle-foreground",
+                              "content": ""
+                            },
+                            "hideui:sar-elapsed": {
+                              "fill": "$--muted-foreground",
+                              "content": "30s"
+                            },
+                            "hideui:sar-chevron": {
+                              "fill": "$--muted-foreground",
+                              "icon": "chevron-right"
+                            },
+                            "hideui:sar-line": {
+                              "fill": "$--warning",
+                              "enabled": true,
+                              "content": "프로덕션 배포 전에 변경 내용을 확인해…"
+                            },
+                            "hideui:sar-place": {
+                              "fill": "$--muted-foreground",
+                              "enabled": false
+                            },
+                            "hideui:sar-provider": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-claude.png",
+                                "mode": "fit"
+                              }
+                            },
+                            "hideui:sar-fold": {
+                              "opacity": 0
+                            }
+                          }
+                        }
+                      ],
+                      "width": 292,
+                      "layout": "vertical",
+                      "padding": [
+                        4,
+                        4
+                      ],
+                      "fill": "$--sidebar",
+                      "cornerRadius": "$--radius-sm",
+                      "clip": true
+                    },
+                    {
+                      "type": "frame",
+                      "id": "psb-m-ag-at-d",
+                      "name": "Menu under the pointer",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "psb-m-ag-menu-d",
+                          "name": "Content",
+                          "children": [
+                            {
+                              "id": "psb-m-ag-0-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Show",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Show"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "content": "⌥3",
+                                  "enabled": true
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-ag-s1-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-sep-m",
+                              "name": "Separator",
+                              "descendants": {
+                                "hideui:mnu-sep-line": {
+                                  "stroke": "$--border"
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-ag-1-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Copy title",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Copy title"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-ag-2-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Copy session id",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Copy session id"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-ag-s2-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-sep-m",
+                              "name": "Separator",
+                              "descendants": {
+                                "hideui:mnu-sep-line": {
+                                  "stroke": "$--border"
+                                }
+                              }
+                            },
+                            {
+                              "id": "psb-m-ag-3-d",
+                              "type": "ref",
+                              "ref": "hideui:mnu-item-m",
+                              "name": "Close tab…",
+                              "descendants": {
+                                "hideui:mnu-item-icon": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-label": {
+                                  "fill": "$--foreground",
+                                  "content": "Close tab…"
+                                },
+                                "hideui:mnu-item-reason": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                },
+                                "hideui:mnu-item-shortcut": {
+                                  "fill": "$--muted-foreground",
+                                  "enabled": false
+                                }
+                              }
+                            }
+                          ],
+                          "layout": "vertical",
+                          "gap": 0,
+                          "padding": "$--spacing-xxs",
+                          "width": 220,
+                          "cornerRadius": "$--radius-sm",
+                          "fill": "$--popover",
+                          "stroke": "$--border",
+                          "strokeWidth": "$--size-hairline",
+                          "strokeAlignment": "inner"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "padding": [
+                        0,
+                        0,
+                        0,
+                        48
+                      ]
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": 0
+                }
+              ],
+              "layout": "vertical",
+              "gap": "$--spacing-lg"
             }
           ],
           "theme": {

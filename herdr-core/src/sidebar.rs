@@ -462,10 +462,13 @@ pub fn sync_checkout_agent_summaries(
     // The removal confirmation's counts ride the same pass, so the dialog
     // names the panes the close will send and the agents still working in
     // them as of the same projection (D-10). "Running" is the deletion
-    // gate's definition: the agent's activity axis says working. Only a
-    // local registration offers `Remove project…`, so only one carries the
-    // gate: a remote tree arrives freshly projected on every sync, and a
-    // count written into it would read as a change on every tick.
+    // gate's definition: the agent's activity axis says working. Every local
+    // row offers `Remove project…`, a row Herdr shows without a registration
+    // too (PRD sidebar-context-menus D-14), so every local row carries the
+    // gate; a device's rows get theirs where its session is derived
+    // (`device_catalog::apply_registrations`), because a remote tree arrives
+    // freshly projected on every sync and a count written into it here
+    // would read as a change on every tick.
     let running = agents
         .iter()
         .filter(|agent| agent.activity == AgentActivity::Working.name())
@@ -473,7 +476,7 @@ pub fn sync_checkout_agent_summaries(
         .collect::<std::collections::HashSet<_>>();
     for workspace in workspaces
         .iter_mut()
-        .filter(|workspace| workspace.registered && workspace.remote_target_id.is_none())
+        .filter(|workspace| workspace.remote_target_id.is_none())
     {
         let panes = workspace
             .checkouts
@@ -2695,6 +2698,30 @@ mod tests {
             records.is_empty(),
             "a pane the authoritative topology dropped leaves no record"
         );
+    }
+
+    /// PRD sidebar-context-menus D-06: an agent row carries the session id
+    /// Herdr recorded, which Copy session id reads, and none when it recorded
+    /// none or recorded a path.
+    #[test]
+    fn an_agent_row_carries_the_session_id_herdr_recorded() {
+        let agent = |pane: &str, session: Value| {
+            let mut agent = finished(pane, 1);
+            agent["agent_session"] = session;
+            agent
+        };
+        let rows = projected(json!([
+            agent("a", json!({"kind":"id","value":"session-a"})),
+            agent("b", Value::Null),
+            agent("c", json!({"kind":"path","value":"/tmp/session.jsonl"})),
+        ]));
+        assert_eq!(rows.len(), 3);
+        let wire = |pane: &str| {
+            serde_json::to_value(rows.iter().find(|row| row.pane_id == pane).unwrap()).unwrap()
+        };
+        assert_eq!(wire("a")["session_id"], "session-a");
+        assert!(wire("b").get("session_id").is_none());
+        assert!(wire("c").get("session_id").is_none());
     }
 
     #[test]

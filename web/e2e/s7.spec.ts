@@ -869,8 +869,9 @@ type MenuRow = { id: string; label: string; reason: string | null; disabled: boo
 async function menuRows(page: Page): Promise<MenuRow[]> {
   return page.locator('[role="menu"] [data-menu-item]').evaluateAll((items) =>
     items.map((button) => {
-      const lines = [...button.querySelectorAll("span")].map((span) => span.textContent ?? "");
-      return { id: button.getAttribute("data-menu-item") ?? "", label: lines[0] ?? "", reason: lines[1] ?? null, disabled: button.getAttribute("aria-disabled") === "true" };
+      const label = button.querySelector("[data-menu-label]")?.textContent ?? "";
+      const reason = button.querySelector("[data-menu-reason]")?.textContent ?? null;
+      return { id: button.getAttribute("data-menu-item") ?? "", label, reason, disabled: button.getAttribute("aria-disabled") === "true" };
     }),
   );
 }

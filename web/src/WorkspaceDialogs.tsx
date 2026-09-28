@@ -84,7 +84,7 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
     );
   }
   if (dialog.kind === "new_worktree") return <NewWorktreeDialog actions={actions} workspace={target.workspace} onClose={close} />;
-  if (dialog.kind === "remove_project") return <RemoveProjectDialog actions={actions} workspace={target.workspace} onClose={close} />;
+  if (dialog.kind === "remove_project") return <RemoveProjectDialog actions={actions} workspace={target.workspace} listed={found !== null} onClose={close} />;
   if (dialog.kind === "purpose" && target.checkout) return <PurposeDialog actions={actions} checkout={target.checkout} deviceLabel={deviceLabel(target.workspace)} onClose={close} />;
   if (dialog.kind === "delete_worktree" && target.checkout) return <DeleteWorktreeDialog actions={actions} deviceId={target.workspace.device_id} checkout={target.checkout} onClose={close} />;
   return null;
@@ -93,13 +93,15 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
 /**
  * `Remove project…` on any device: the panes the core counted close first,
  * then only the registration goes. The row leaving the registrations is the
- * answer; a refusal or a close that failed is the core's error.
+ * answer; a refusal or a close that failed is the core's error. A row Herdr
+ * shows without a registration has only its panes to close, so its answer is
+ * the row leaving the list with Herdr's workspace (PRD sidebar-context-menus D-14).
  */
-function RemoveProjectDialog({ actions, workspace, onClose }: { actions: Actions; workspace: Workspace; onClose: () => void }) {
+function RemoveProjectDialog({ actions, workspace, listed, onClose }: { actions: Actions; workspace: Workspace; listed: boolean; onClose: () => void }) {
   const [at, setAt] = useState<number | null>(null);
   const registered = useShellStore((s) => s.rest?.ui_state?.workspace_registrations?.some((row) => row.id === workspace.id) ?? false);
   const refused = useErrorSince(at, ["workspace.remove", "workspace.create_in_flight"]);
-  const removed = at !== null && !registered;
+  const removed = at !== null && (workspace.registered ? !registered : !listed);
   const working = at !== null && !removed && refused === null;
   const panes = workspace.removal?.pane_count ?? 0;
   return (
@@ -140,7 +142,7 @@ function RemoveProjectDialog({ actions, workspace, onClose }: { actions: Actions
           {/* A refusal is retried from the same button (S5.5 B45). Plain
               Button, not AlertDialogAction: Radix closes on an Action's
               click, but this one has to stay open through the async removal. */}
-          {at === null || (refused !== null && registered) ? (
+          {at === null || (refused !== null && !removed) ? (
             <Button
               variant="destructive"
               onClick={() => {
