@@ -44,11 +44,12 @@ const SPAWN_USAGE = `usage: hcoord agent spawn --parent <participant|here> --nam
 Starts a Herdr agent as a child of --parent and records its lineage.
 
   --parent here    the agent in this Herdr pane, registered first when needed; its session is the default --session
-  --name           the child's Herdr agent name: lowercase letters, digits, _ or -, up to 32 characters
+  --session        the parent's session; required unless --parent here supplies it
+  --name           the child's Herdr agent name: a lowercase letter, then lowercase letters, digits, _ or -, up to 32 characters
   --intent         a key for this spawn; rerunning the same command with it resumes this spawn and never starts a second agent
   --kind           ${SPAWN_KINDS.join(", ")} (default ${DEFAULT_SPAWN_KIND})
   --repo --branch  create a new worktree and Herdr workspace for the child; --path places the worktree
-  --machine        a saved Herdr machine to start the child on; it needs --repo and --branch there
+  --machine        a saved Herdr machine to start the child on; another machine than the parent's needs --repo and --branch there
 
 Arguments after -- go to the --kind executable itself; do not repeat its name.
   claude: -- <claude flags> "<prompt>"   the prompt is Claude's first message

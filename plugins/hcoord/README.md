@@ -77,6 +77,7 @@ The arguments are checked before anything is created, so a refused spawn leaves 
 Without `HERDR_PANE_ID`, or when Herdr reports no session-bearing agent in that pane, the command explains the refusal and creates nothing.
 Right after starting the child, hcoord names it again when Herdr reports it without its name, so one spawn writes the lineage.
 Retry a failed lineage write with the same intent so hcoord repairs the existing child instead of starting another one.
+A retry that finds the child without its name refuses, because a lost name cannot be told apart from a replaced agent; if the pane still holds the child, name it with `herdr agent rename <pane> <name>` and retry.
 
 Remote registration, worktree spawn, and outbox collection use the machine names saved by Herdr.
 The remote machine must have `~/.hcoord/bin/hcoord`, the source repository, and a testable Herdr server; hcoord stores no SSH credentials and the HQ always initiates the connection.

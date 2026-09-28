@@ -139,7 +139,7 @@ export function codexArgs(nativeArgs: string[]): { startArgs: string[]; task: st
  * any external effect so a refused spawn creates nothing (#237).
  */
 export function validateSpawnSpec(name: string, kind: string, nativeArgs: string[]): void {
-  if (!/^[a-z][a-z0-9_-]{0,31}$/.test(name)) throw new HcoordError("invalid_argument", "Herdr agent name must use lowercase letters, digits, _ or -, up to 32 characters");
+  if (!/^[a-z][a-z0-9_-]{0,31}$/.test(name)) throw new HcoordError("invalid_argument", "Herdr agent name must start with a lowercase letter and use lowercase letters, digits, _ or -, up to 32 characters");
   if (!(SPAWN_KINDS as readonly string[]).includes(kind)) throw new HcoordError("unsupported_runtime", "this Herdr agent kind has not been verified for coordinator spawn");
   const executable = nativeArgs[0];
   if (executable !== undefined && (SPAWN_KINDS as readonly string[]).includes(executable)) {
