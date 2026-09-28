@@ -40,8 +40,14 @@ use tailscale::{Checklist, CliSource, CommandFailure, Ownership, StepState};
 const OBSERVE_INTERVAL: Duration = Duration::from_secs(3);
 /// How often the seven-day sweep runs.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60);
+/// How often an unexposed Mobile, or a serve entry left after switching
+/// off, is tried again with no one watching Settings > Mobile (Tailscale may
+/// start after hided, or a removal may have failed).
+const BACKGROUND_INTERVAL: Duration = Duration::from_secs(60);
 /// How many input request ids per phone are remembered to refuse a repeat.
 const REMEMBERED_INPUTS: usize = 64;
+/// Live connections one phone may hold; a newer one closes the oldest.
+const CONNECTIONS_PER_PHONE: usize = 2;
 
 pub fn now_ms() -> u64 {
     SystemTime::now()
@@ -80,8 +86,29 @@ struct Inner {
     observers: HashSet<u64>,
     /// Tags of agents made Seen since each phone's last push (PRD D-21).
     pending_clear: HashMap<String, BTreeSet<AgentKey>>,
-    /// Input request ids each phone already had written.
-    inputs: HashMap<String, VecDeque<String>>,
+    /// Input request ids each phone sent, and how each ended (PRD B27).
+    inputs: HashMap<String, VecDeque<(String, InputState)>>,
+}
+
+/// Where one input request id stands.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum InputState {
+    /// Being written now; a repeat must not write it again.
+    InFlight,
+    /// Herdr took it.
+    Written,
+    /// Herdr did not answer in time: it may or may not have landed, so a
+    /// repeat of this id is never written again.
+    Uncertain,
+}
+
+/// What a phone's input request id allows.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Reservation {
+    /// A new id: write it now.
+    Write,
+    /// Seen before, in this state: answer from it without writing.
+    Seen(InputState),
 }
 
 /// A phone on a live connection.
@@ -89,6 +116,8 @@ struct LivePhone {
     phone_id: String,
     viewing: Option<AgentKey>,
     close: Arc<Notify>,
+    /// When it registered, so a phone's newest connection wins.
+    since: u64,
 }
 
 /// What every phone loop is told besides the agent list.
@@ -272,13 +301,12 @@ impl Mobile {
     }
 
     /// Rebuilds the renderer frame and the phones' meta from current state.
+    /// Both are sent under the lock, so two publishes racing each other
+    /// never leave the older state as the last one sent.
     fn publish(&self) {
-        let frame = {
-            let inner = self.lock();
-            self.frame_value(&inner)
-        };
-        self.frame.send_replace(Arc::new(frame));
-        let push_mode = self.lock().settings.push_mode;
+        let inner = self.lock();
+        self.frame.send_replace(Arc::new(self.frame_value(&inner)));
+        let push_mode = inner.settings.push_mode;
         let live_phones = {
             let live = self.live();
             live.values()
@@ -392,6 +420,10 @@ impl Mobile {
     /// for this port; off, hide's recorded entry is gone. Runs one at a time.
     pub async fn reconcile(&self) {
         let _running = self.reconcile_lock.lock().await;
+        // Once the daemon is stopping, shutdown owns the serve entry.
+        if *self.stopping.borrow() {
+            return;
+        }
         let (enabled, record) = {
             let inner = self.lock();
             (inner.settings.enabled, inner.settings.serve.clone())
@@ -400,12 +432,22 @@ impl Mobile {
         if !enabled {
             self.set_origin(None);
             self.close_phones("mobile_off");
-            if let (Some(record), Some(program)) = (record, program.as_deref()) {
-                self.remove_recorded(program, &record).await;
-            }
+            let removal = match (record, program.as_deref()) {
+                (Some(record), Some(program)) => self.remove_recorded(program, &record).await,
+                (Some(_), None) => Err((
+                    "remove",
+                    "the tailscale CLI is gone; hide's serve entry may remain".to_owned(),
+                )),
+                (None, _) => Ok(()),
+            };
             let mut inner = self.lock();
             if !inner.settings.enabled {
-                inner.exposure = Exposure::Off;
+                // A removal that failed stays on screen while the switch is
+                // off, and the background pass tries it again (PRD B6).
+                inner.exposure = match removal {
+                    Ok(()) => Exposure::Off,
+                    Err((step, message)) => Exposure::Failed { step, message },
+                };
                 inner.phones.clear_code();
             }
             drop(inner);
@@ -483,12 +525,17 @@ impl Mobile {
         self.save_settings(&inner);
     }
 
-    async fn remove_recorded(&self, program: &std::path::Path, record: &ServeRecord) {
+    /// Removes hide's recorded entry; the error names the step and why.
+    async fn remove_recorded(
+        &self,
+        program: &std::path::Path,
+        record: &ServeRecord,
+    ) -> Result<(), (&'static str, String)> {
         let serve = match tailscale::serve_status(program).await {
             Ok(serve) => serve,
             Err(failure) => {
                 record_transport_failure(&failure, "check");
-                return;
+                return Err(("check", failure.message()));
             }
         };
         match tailscale::ownership(&serve, &record.dns_name, Some(record)) {
@@ -500,15 +547,25 @@ impl Mobile {
                             "dns_name": record.dns_name, "port": record.port,
                         }));
                         self.set_record(None);
+                        Ok(())
                     }
-                    Err(failure) => record_transport_failure(&failure, "remove"),
+                    Err(failure) => {
+                        record_transport_failure(&failure, "remove");
+                        Err(("remove", failure.message()))
+                    }
                 }
             }
             // Gone already, or someone else's now: nothing of hide's is left.
-            Ok(_) => self.set_record(None),
-            Err(message) => herdr_core::diagnostic!(json!({
-                "component": "mobile_transport", "kind": "serve.unreadable", "message": message,
-            })),
+            Ok(_) => {
+                self.set_record(None);
+                Ok(())
+            }
+            Err(message) => {
+                herdr_core::diagnostic!(json!({
+                    "component": "mobile_transport", "kind": "serve.unreadable", "message": message,
+                }));
+                Err(("check", message))
+            }
         }
     }
 
@@ -528,9 +585,24 @@ impl Mobile {
                 message: failure.message(),
             }
         };
+        let funnel = |serve: &Value| {
+            let on = tailscale::funnel_on(serve, dns_name);
+            if on {
+                herdr_core::diagnostic!(json!({
+                    "component": "mobile_transport", "kind": "serve.funnel_on", "dns_name": dns_name,
+                }));
+            }
+            on
+        };
         let serve = tailscale::serve_status(program)
             .await
             .map_err(|failure| failed("check", &failure))?;
+        if funnel(&serve) {
+            return Err(Exposure::Failed {
+                step: "funnel",
+                message: tailscale::FUNNEL_MESSAGE.to_owned(),
+            });
+        }
         let owned =
             tailscale::ownership(&serve, dns_name, record).map_err(|message| Exposure::Failed {
                 step: "check",
@@ -573,6 +645,12 @@ impl Mobile {
         let confirmed = tailscale::serve_status(program)
             .await
             .map_err(|failure| failed("check", &failure))?;
+        if funnel(&confirmed) {
+            return Err(Exposure::Failed {
+                step: "funnel",
+                message: tailscale::FUNNEL_MESSAGE.to_owned(),
+            });
+        }
         match tailscale::ownership(&confirmed, dns_name, Some(&record)) {
             Ok(Ownership::Ours { port: current }) if current == port => Ok(()),
             Ok(other) => {
@@ -596,14 +674,29 @@ impl Mobile {
         dns_name: &str,
         port: u16,
     ) -> Result<(), CommandFailure> {
-        tailscale::serve_add(program, port).await?;
-        herdr_core::diagnostic!(json!({
-            "component": "mobile_transport", "kind": "serve.added", "dns_name": dns_name, "port": port,
-        }));
-        self.set_record(Some(ServeRecord {
+        // Recorded before the command runs: a `serve --bg` that applies the
+        // entry and then times out or fails must still leave hide owning it,
+        // or the next pass would read hide's own entry as someone else's.
+        let record = ServeRecord {
             dns_name: dns_name.to_owned(),
             port,
             added_at: now_ms() / 1000,
+        };
+        self.set_record(Some(record.clone()));
+        if let Err(failure) = tailscale::serve_add(program, port).await {
+            let applied = tailscale::serve_status(program).await.is_ok_and(|serve| {
+                matches!(
+                    tailscale::ownership(&serve, dns_name, Some(&record)),
+                    Ok(Ownership::Ours { port: current }) if current == port
+                )
+            });
+            if !applied {
+                self.set_record(None);
+            }
+            return Err(failure);
+        }
+        herdr_core::diagnostic!(json!({
+            "component": "mobile_transport", "kind": "serve.added", "dns_name": dns_name, "port": port,
         }));
         Ok(())
     }
@@ -612,26 +705,55 @@ impl Mobile {
     /// a crash leaves it to the next start's reconcile.
     pub async fn shutdown(&self) {
         self.stopping.send_replace(true);
+        self.touch_live();
+        // After any reconcile in flight: an add it finishes is recorded, so
+        // the record read here is the entry actually there.
+        let _running = self.reconcile_lock.lock().await;
         let record = self.lock().settings.serve.clone();
         let (Some(record), Some(program)) = (record, self.config.cli.resolve()) else {
             return;
         };
-        let _running = self.reconcile_lock.lock().await;
-        self.remove_recorded(&program, &record).await;
+        let _ = self.remove_recorded(&program, &record).await;
     }
 
+    /// A phone on a live connection is being seen now: its last-seen time
+    /// moves, so a phone connected for a week is not revoked at the next start.
+    fn touch_live(&self) {
+        let live: HashSet<String> = self
+            .live()
+            .values()
+            .map(|phone| phone.phone_id.clone())
+            .collect();
+        let mut inner = self.lock();
+        for phone_id in &live {
+            inner.phones.touch(phone_id, now_ms());
+        }
+    }
+
+    /// Rechecks every three seconds while Settings > Mobile is open, and
+    /// once a minute otherwise when Mobile is on but not exposed (Tailscale
+    /// may come up after hided) or a removal is still owed after switching off.
     async fn observe_loop(self: Arc<Self>) {
         let mut stopping = self.stopping.subscribe();
+        let mut since_background = Duration::ZERO;
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(OBSERVE_INTERVAL) => {}
                 _ = stopping.changed() => return,
             }
-            let observed = {
+            since_background += OBSERVE_INTERVAL;
+            let (observed, owed) = {
                 let inner = self.lock();
-                inner.settings.enabled && !inner.observers.is_empty()
+                let observed = inner.settings.enabled && !inner.observers.is_empty();
+                let owed = if inner.settings.enabled {
+                    !matches!(inner.exposure, Exposure::Exposed { .. })
+                } else {
+                    inner.settings.serve.is_some()
+                };
+                (observed, owed)
             };
-            if observed {
+            if observed || (owed && since_background >= BACKGROUND_INTERVAL) {
+                since_background = Duration::ZERO;
                 self.reconcile().await;
             }
         }
@@ -650,6 +772,7 @@ impl Mobile {
 
     /// Revokes every phone unseen for seven days (PRD D-04).
     fn sweep(&self) {
+        self.touch_live();
         let connected: Vec<String> = self
             .live()
             .values()
@@ -679,6 +802,11 @@ impl Mobile {
                     .ok_or("mobile_enable.enabled must be a boolean")?;
                 {
                     let mut inner = self.lock();
+                    if !enabled {
+                        // No phone may pair from here on, before the serve
+                        // entry is even gone.
+                        inner.phones.clear_code();
+                    }
                     if inner.settings.enabled != enabled {
                         inner.settings.enabled = enabled;
                         inner.exposure = if enabled {
@@ -807,7 +935,13 @@ impl Mobile {
     pub fn pair(&self, code: &str, user_agent: &str) -> Result<(PhoneRecord, String), PairRefusal> {
         let result = {
             let mut inner = self.lock();
-            let result = inner.phones.pair(code, user_agent, now_ms());
+            let admitted =
+                inner.settings.enabled && matches!(inner.exposure, Exposure::Exposed { .. });
+            let result = if admitted {
+                inner.phones.pair(code, user_agent, now_ms())
+            } else {
+                Err(PairRefusal::CodeExpired)
+            };
             // The code is spent; Settings > Mobile, while open, shows the next
             // one at once for the next phone instead of an empty QR place.
             if result.is_ok()
@@ -841,11 +975,31 @@ impl Mobile {
             .authenticate(credential)
             .cloned()
             .ok_or("revoked")?;
+        // The seven-day rule holds at the door too, not only at the hourly
+        // sweep, whose timer does not run while the Mac sleeps.
+        if now_ms().saturating_sub(phone.last_seen_ms) >= phones::INACTIVE_REVOKE_MS {
+            drop(inner);
+            self.revoke(&phone.id, "inactive_7_days");
+            return Err("revoked");
+        }
         if !inner.settings.enabled {
             return Err("mobile_off");
         }
         inner.phones.touch(&phone.id, now_ms());
         Ok(phone)
+    }
+
+    /// Why a registered connection must close at once: the phone was revoked
+    /// or Mobile switched off between its handshake and its registration.
+    pub fn still_admitted(&self, phone_id: &str) -> Result<(), &'static str> {
+        let inner = self.lock();
+        if inner.phones.get(phone_id).is_none() {
+            Err("revoked")
+        } else if !inner.settings.enabled {
+            Err("mobile_off")
+        } else {
+            Ok(())
+        }
     }
 
     pub fn phone(&self, id: &str) -> Option<PhoneRecord> {
@@ -854,14 +1008,33 @@ impl Mobile {
 
     pub fn register(&self, connection: u64, phone_id: &str) -> Arc<Notify> {
         let close = Arc::new(Notify::new());
-        self.live().insert(
-            connection,
-            LivePhone {
-                phone_id: phone_id.to_owned(),
-                viewing: None,
-                close: Arc::clone(&close),
-            },
-        );
+        {
+            let mut live = self.live();
+            // One phone holds at most two sockets: a phone that reconnects
+            // while its old socket is still half-open closes the oldest, so
+            // flapping never crowds the desktop out of MAX_CLIENTS.
+            let mut own: Vec<(u64, u64)> = live
+                .iter()
+                .filter(|(_, phone)| phone.phone_id == phone_id)
+                .map(|(connection, phone)| (phone.since, *connection))
+                .collect();
+            own.sort_unstable();
+            while own.len() >= CONNECTIONS_PER_PHONE {
+                let (_, oldest) = own.remove(0);
+                if let Some(phone) = live.get(&oldest) {
+                    phone.close.notify_one();
+                }
+            }
+            live.insert(
+                connection,
+                LivePhone {
+                    phone_id: phone_id.to_owned(),
+                    viewing: None,
+                    close: Arc::clone(&close),
+                    since: now_ms(),
+                },
+            );
+        }
         herdr_core::diagnostic!(json!({
             "component": "mobile_phone", "kind": "phone.connected", "phone_id": phone_id,
         }));
@@ -900,25 +1073,36 @@ impl Mobile {
             })
     }
 
-    /// Records an input request id as written; false when it already was.
-    pub fn remember_input(&self, phone_id: &str, request_id: &str) -> bool {
+    /// Claims an input request id before it is written, in one step, so a
+    /// repeat on this or another socket of the phone never writes it twice.
+    pub fn reserve_input(&self, phone_id: &str, request_id: &str) -> Reservation {
         let mut inner = self.lock();
         let seen = inner.inputs.entry(phone_id.to_owned()).or_default();
-        if seen.iter().any(|id| id == request_id) {
-            return false;
+        if let Some((_, state)) = seen.iter().find(|(id, _)| id == request_id) {
+            return Reservation::Seen(*state);
         }
         if seen.len() >= REMEMBERED_INPUTS {
             seen.pop_front();
         }
-        seen.push_back(request_id.to_owned());
-        true
+        seen.push_back((request_id.to_owned(), InputState::InFlight));
+        Reservation::Write
     }
 
-    pub fn input_written(&self, phone_id: &str, request_id: &str) -> bool {
-        self.lock()
-            .inputs
-            .get(phone_id)
-            .is_some_and(|seen| seen.iter().any(|id| id == request_id))
+    /// Settles a reserved id; `None` forgets it (nothing was written, so the
+    /// phone may send it again).
+    pub fn settle_input(&self, phone_id: &str, request_id: &str, state: Option<InputState>) {
+        let mut inner = self.lock();
+        let Some(seen) = inner.inputs.get_mut(phone_id) else {
+            return;
+        };
+        match state {
+            Some(state) => {
+                if let Some(entry) = seen.iter_mut().find(|(id, _)| id == request_id) {
+                    entry.1 = state;
+                }
+            }
+            None => seen.retain(|(id, _)| id != request_id),
+        }
     }
 
     pub fn set_subscription(&self, phone_id: &str, push: PushSubscription) -> bool {

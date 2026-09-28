@@ -33,7 +33,7 @@ describe("replyProblem", () => {
   });
 });
 
-function agent(group: AgentGroup["group"], pane: string, root = pane): PhoneAgent {
+function agent(group: AgentGroup["group"], pane: string, root = pane, demand = ""): PhoneAgent {
   return {
     device_id: "local",
     pane_id: pane,
@@ -48,7 +48,7 @@ function agent(group: AgentGroup["group"], pane: string, root = pane): PhoneAgen
     elapsed: "1m",
     line: null,
     status_label: "",
-    demand: "",
+    demand,
   };
 }
 
@@ -59,6 +59,15 @@ describe("staleTags", () => {
       { group: "seen", agents: [agent("seen", "other")] },
     ];
     expect(staleTags(["local|root", "local|other", "local|gone"], groups)).toEqual(["local|other", "local|gone"]);
+  });
+
+  it("keeps a root's notification while a delegated child, only ever Working, still asks", () => {
+    const groups: AgentGroup[] = [
+      { group: "working", agents: [agent("working", "child", "root", "question")] },
+      { group: "seen", agents: [agent("seen", "root")] },
+    ];
+    expect(staleTags(["local|root"], groups)).toEqual([]);
+    expect(staleTags(["local|root"], [{ group: "seen", agents: [agent("seen", "root")] }])).toEqual(["local|root"]);
   });
 });
 

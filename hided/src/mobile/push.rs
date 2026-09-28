@@ -50,18 +50,27 @@ pub fn endpoint_allowed(endpoint: &str) -> bool {
     if endpoint.len() > 2048 || endpoint.bytes().any(|b| b.is_ascii_control()) {
         return false;
     }
-    if let Some(rest) = endpoint.strip_prefix("https://") {
-        let host = rest.split(['/', '?', '#']).next().unwrap_or("");
-        let host = host.split(':').next().unwrap_or("");
-        return !host.contains('@') && host_allowed(host);
+    // Parsed as the HTTP client will read it; any userinfo is refused
+    // outright, because a client splits `host:port@other` differently from a
+    // naive check and would connect to `other`.
+    let Ok(uri) = endpoint.parse::<axum::http::Uri>() else {
+        return false;
+    };
+    let Some(authority) = uri.authority() else {
+        return false;
+    };
+    if authority.as_str().contains('@') {
+        return false;
     }
-    if cfg!(debug_assertions)
-        && let Some(rest) = endpoint.strip_prefix("http://127.0.0.1:")
-    {
-        let port = rest.split('/').next().unwrap_or("");
-        return !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit());
+    match uri.scheme_str() {
+        Some("https") => {
+            matches!(authority.port_u16(), None | Some(443)) && host_allowed(authority.host())
+        }
+        Some("http") if cfg!(debug_assertions) => {
+            authority.host() == "127.0.0.1" && authority.port_u16().is_some()
+        }
+        _ => false,
     }
-    false
 }
 
 /// A subscription the phone sent, checked for shape before it is stored.
@@ -243,6 +252,9 @@ pub fn send(
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(HTTP_TIMEOUT))
         .http_status_as_error(false)
+        // The allowlisted service answers itself; a redirect could send the
+        // signed request anywhere.
+        .max_redirects(0)
         .build()
         .into();
     let topic = URL_SAFE_NO_PAD.encode(
@@ -365,14 +377,30 @@ fn body(state: Effective, place: &str) -> String {
 #[derive(Default)]
 pub struct Transitions {
     last: Option<BTreeMap<AgentKey, Effective>>,
+    /// Agents that left the list, with their state and when: a device that
+    /// reconnects, or a list that was briefly empty, brings them back in the
+    /// state they had, which is no transition (and no second notice).
+    vanished: BTreeMap<AgentKey, (Effective, std::time::Instant)>,
 }
+
+/// How long a vanished agent's state is kept for its return.
+const VANISHED_TTL: Duration = Duration::from_secs(10 * 60);
 
 impl Transitions {
     pub fn reset(&mut self) {
         self.last = None;
+        self.vanished.clear();
     }
 
     pub fn observe(&mut self, projection: &Projection) -> (Vec<Notice>, BTreeSet<AgentKey>) {
+        self.observe_at(projection, std::time::Instant::now())
+    }
+
+    fn observe_at(
+        &mut self,
+        projection: &Projection,
+        at: std::time::Instant,
+    ) -> (Vec<Notice>, BTreeSet<AgentKey>) {
         let now = effective(projection);
         let states: BTreeMap<AgentKey, Effective> = now
             .iter()
@@ -384,7 +412,11 @@ impl Transitions {
         let mut notices = Vec::new();
         let mut seen = BTreeSet::new();
         for (key, (state, title, place)) in &now {
-            let before = last.get(key).copied().unwrap_or(Effective::Other);
+            let before = last
+                .get(key)
+                .copied()
+                .or_else(|| self.vanished.remove(key).map(|(state, _)| state))
+                .unwrap_or(Effective::Other);
             if before == *state {
                 continue;
             }
@@ -401,10 +433,18 @@ impl Transitions {
             }
         }
         for (key, before) in &last {
-            if !now.contains_key(key) && matches!(before, Effective::NeedsYou | Effective::Done) {
-                seen.insert(key.clone());
+            if !now.contains_key(key) {
+                self.vanished.insert(key.clone(), (*before, at));
             }
         }
+        // An agent gone for good: its notification is closed on the next push.
+        self.vanished.retain(|key, (before, since)| {
+            let expired = at.duration_since(*since) >= VANISHED_TTL;
+            if expired && matches!(before, Effective::NeedsYou | Effective::Done) {
+                seen.insert(key.clone());
+            }
+            !expired
+        });
         (notices, seen)
     }
 }
@@ -557,6 +597,10 @@ mod tests {
         assert!(!endpoint_allowed("https://example.com/push"));
         assert!(!endpoint_allowed("https://push.apple.com.evil.test/x"));
         assert!(!endpoint_allowed("https://user@web.push.apple.com/x"));
+        assert!(!endpoint_allowed(
+            "https://web.push.apple.com:1@evil.test/x"
+        ));
+        assert!(!endpoint_allowed("https://fcm.googleapis.com:8443/x"));
         assert!(!endpoint_allowed("http://web.push.apple.com/x"));
         assert!(!endpoint_allowed("http://10.0.0.1:80/x"));
         // The e2e fake service, in this debug test build only.
@@ -627,6 +671,34 @@ mod tests {
         assert_eq!(notices.len(), 1);
         assert_eq!(notices[0].key.pane_id, "w1:p1");
         assert_eq!(notices[0].title, "task w1:p1");
+    }
+
+    #[test]
+    fn an_agent_that_comes_back_in_the_same_state_is_not_announced_again() {
+        let mut transitions = Transitions::default();
+        let start = std::time::Instant::now();
+        let asking = project(&rest(json!([row("w1:p1", "needs_you", "question", None)])));
+        let empty = project(&rest(json!([])));
+        transitions.observe_at(&asking, start);
+        assert_eq!(
+            transitions.observe_at(&empty, start),
+            (Vec::new(), BTreeSet::new()),
+            "a brief absence closes nothing"
+        );
+        assert!(
+            transitions.observe_at(&asking, start).0.is_empty(),
+            "the same request after a reconnect is no new notice"
+        );
+        transitions.observe_at(&empty, start);
+        let (_, cleared) = transitions.observe_at(&empty, start + VANISHED_TTL);
+        assert_eq!(
+            cleared
+                .into_iter()
+                .map(|key| key.pane_id)
+                .collect::<Vec<_>>(),
+            ["w1:p1"],
+            "gone for good, its notification closes"
+        );
     }
 
     #[test]

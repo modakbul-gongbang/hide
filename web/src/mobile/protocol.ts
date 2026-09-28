@@ -94,6 +94,10 @@ export function replyProblem(text: string): string | null {
 /** The line under the reply bar for a refused or failed input. */
 export function inputFailure(reason: string | null): string {
   switch (reason) {
+    case "uncertain":
+      return "보냈는지 확인하지 못했어요. 터미널을 확인하고 필요하면 내용을 바꿔 다시 보내세요.";
+    case "in_flight":
+      return "같은 답장을 아직 보내는 중이에요. 잠시 뒤 다시 확인하세요.";
     case "empty":
       return "빈 답장은 보낼 수 없어요.";
     case "too_long":
@@ -228,11 +232,18 @@ export function headerLine(macName: string, otherPhones: number): string {
 }
 
 /** Tags whose notifications the open app closes (D-21): agents no longer waiting or done. */
+/** The demands that raise a push for their root (hided/src/mobile/push.rs). */
+const HOLDING_DEMANDS: ReadonlySet<string> = new Set(["question", "approval", "error"]);
+
 export function staleTags(tags: readonly string[], groups: readonly AgentGroup[]): string[] {
   const live = new Set<string>();
   for (const group of groups) {
-    if (group.group !== "needs_you" && group.group !== "done") continue;
-    for (const agent of group.agents) live.add(keyTag({ device_id: agent.device_id, pane_id: agent.root_pane_id }));
+    for (const agent of group.agents) {
+      // A delegated child is only ever Working or Seen, yet its demand is
+      // what raised its root's notification (D-21): that keeps it too.
+      const holds = group.group === "needs_you" || group.group === "done" || HOLDING_DEMANDS.has(agent.demand);
+      if (holds) live.add(keyTag({ device_id: agent.device_id, pane_id: agent.root_pane_id }));
+    }
   }
   return tags.filter((tag) => !live.has(tag));
 }

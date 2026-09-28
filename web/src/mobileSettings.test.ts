@@ -50,6 +50,7 @@ describe("exposureLine", () => {
     const failed = exposureLine(state({ exposure: "failed", failure: { step: "add", message: "serve config denied" } }));
     expect(failed?.tone).toBe("error");
     expect(failed?.text).toContain("serve config denied");
+    expect(exposureLine(state({ exposure: "failed", failure: { step: "funnel", message: "Funnel을 끄면 이어집니다." } }))?.text).toContain("Funnel이 켜져 있어요");
   });
 
   it("is empty while the QR shows", () => {

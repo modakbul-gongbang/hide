@@ -20,7 +20,7 @@ use tokio::sync::mpsc;
 use super::pane::{self, Input, PaneError};
 use super::projection::{AgentKey, Projection};
 use super::store::{Notifications, PushSubscription};
-use super::{Mobile, PhoneMeta};
+use super::{InputState, Mobile, PhoneMeta, Reservation};
 
 /// How often an open detail reads its pane again.
 const DETAIL_INTERVAL: Duration = Duration::from_secs(1);
@@ -28,6 +28,12 @@ const DETAIL_INTERVAL: Duration = Duration::from_secs(1);
 const MAX_FRAME: usize = 16 * 1024;
 /// The close code for a refused phone: the PWA shows why from the frame before it.
 const CLOSE_REFUSED: u16 = 4001;
+/// How often a live phone is pinged; the browser answers on its own.
+const PING_INTERVAL: Duration = Duration::from_secs(20);
+/// A phone that sent nothing, not even a pong, for this long is gone: its
+/// socket through tailscaled can stay half-open for minutes, holding a
+/// client slot and a "viewing" that would hold back its push (B33).
+const SILENT_LIMIT: Duration = Duration::from_secs(45);
 
 /// The one function every frame to a phone passes through.
 pub fn encode(frame: &Value) -> Message {
@@ -95,10 +101,15 @@ fn spawn_detail(
         let mut last_error: Option<&'static str> = None;
         loop {
             let asked = *lines.borrow_and_update();
-            let connector = mobile.herdr_api(&key.device_id);
             let pane_id = key.herdr_pane_id().to_owned();
+            let device_id = key.device_id.clone();
+            let reader = Arc::clone(&mobile);
+            // Resolving a device's connection waits on the core owner thread,
+            // so it runs on the blocking pool with the read itself.
             let read = tokio::task::spawn_blocking(move || {
-                connector.and_then(|connector| pane::read(&connector, &pane_id, asked))
+                reader
+                    .herdr_api(&device_id)
+                    .and_then(|connector| pane::read(&connector, &pane_id, asked))
             })
             .await
             .unwrap_or_else(|error| Err(PaneError::Unavailable(error.to_string())));
@@ -183,7 +194,7 @@ pub async fn serve(
     connection: u64,
     user_agent: String,
 ) {
-    let phone = if let Some(code) = first.get("pair").and_then(Value::as_str) {
+    let (phone, paired) = if let Some(code) = first.get("pair").and_then(Value::as_str) {
         let hint = first
             .get("name")
             .and_then(Value::as_str)
@@ -195,10 +206,7 @@ pub async fn serve(
                 let paired = json!({
                     "type": "paired", "credential": credential, "phone_id": phone.id, "name": phone.name,
                 });
-                if socket.send(encode(&paired)).await.is_err() {
-                    return;
-                }
-                phone
+                (phone, Some(paired))
             }
             Err(refusal) => {
                 refuse(&mut socket, refusal.reason()).await;
@@ -207,7 +215,7 @@ pub async fn serve(
         }
     } else if let Some(token) = first.get("token").and_then(Value::as_str) {
         match mobile.authenticate(token) {
-            Ok(phone) => phone,
+            Ok(phone) => (phone, None),
             Err(reason) => {
                 refusal_logged("phone.refused", None, reason);
                 refuse(&mut socket, reason).await;
@@ -219,7 +227,20 @@ pub async fn serve(
         refuse(&mut socket, "revoked").await;
         return;
     };
+    // Registered before anything is sent, then checked again: a revoke or a
+    // switch-off that lands in between closes this socket like any other.
     let close = mobile.register(connection, &phone.id);
+    if let Err(reason) = mobile.still_admitted(&phone.id) {
+        refuse(&mut socket, reason).await;
+        mobile.unregister(connection);
+        return;
+    }
+    if let Some(paired) = paired
+        && socket.send(encode(&paired)).await.is_err()
+    {
+        mobile.unregister(connection);
+        return;
+    }
     run(&mut socket, &mobile, connection, &phone.id, close).await;
     mobile.unregister(connection);
 }
@@ -235,6 +256,9 @@ async fn run(
     let mut meta = mobile.subscribe_meta();
     let (frames_tx, mut frames) = mpsc::channel::<Value>(8);
     let mut detail: Option<Detail> = None;
+    let mut ping = tokio::time::interval(PING_INTERVAL);
+    ping.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut heard = tokio::time::Instant::now();
     let record = mobile.phone(phone_id);
     let hello = json!({
         "type": "hello",
@@ -278,10 +302,21 @@ async fn run(
             Some(frame) = frames.recv() => {
                 if socket.send(encode(&frame)).await.is_err() { return; }
             }
+            _ = ping.tick() => {
+                if heard.elapsed() >= SILENT_LIMIT {
+                    herdr_core::diagnostic!(json!({
+                        "component": "mobile_phone", "kind": "phone.silent", "phone_id": phone_id,
+                    }));
+                    return;
+                }
+                if socket.send(Message::Ping(Default::default())).await.is_err() { return; }
+            }
             incoming = socket.recv() => {
+                heard = tokio::time::Instant::now();
                 let text = match incoming {
                     Some(Ok(Message::Text(text))) => text,
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => return,
+                    Some(Ok(Message::Pong(_) | Message::Ping(_))) => continue,
                     Some(Ok(_)) => {
                         refusal_logged("scope.refused", Some(phone_id), "binary");
                         continue;
@@ -407,10 +442,6 @@ async fn input(
         refusal_logged("scope.refused", Some(phone_id), "input_not_an_agent");
         return answer(false, Some("gone"));
     };
-    if mobile.input_written(phone_id, request_id) {
-        // The phone retried an input that was written; it lands once (B27).
-        return answer(true, None);
-    }
     let text = message.get("text").and_then(Value::as_str);
     let herdr_key = message.get("key").and_then(Value::as_str);
     let problem = match (text, herdr_key) {
@@ -421,26 +452,47 @@ async fn input(
     if let Some(problem) = problem {
         return answer(false, Some(problem));
     }
-    let connector = match mobile.herdr_api(&key.device_id) {
-        Ok(connector) => connector,
-        Err(error) => return answer(false, Some(error.reason())),
-    };
+    // One claim per request id, taken before writing: a repeat that arrives
+    // while the first is still being written, or after Herdr's answer was
+    // lost, is answered from the claim and never written again (B27).
+    match mobile.reserve_input(phone_id, request_id) {
+        Reservation::Write => {}
+        Reservation::Seen(InputState::Written) => return answer(true, None),
+        Reservation::Seen(InputState::InFlight) => return answer(false, Some("in_flight")),
+        Reservation::Seen(InputState::Uncertain) => return answer(false, Some("uncertain")),
+    }
     let pane_id = key.herdr_pane_id().to_owned();
+    let device_id = key.device_id.clone();
+    let writer = Arc::clone(mobile);
     let text = text.map(str::to_owned);
     let herdr_key = herdr_key.and_then(pane::herdr_key);
-    let result = tokio::task::spawn_blocking(move || {
+    // `attempted` is whether the write reached Herdr at all.
+    let (attempted, result) = tokio::task::spawn_blocking(move || {
+        let connector = match writer.herdr_api(&device_id) {
+            Ok(connector) => connector,
+            Err(error) => return (false, Err(error)),
+        };
         let input = match (&text, herdr_key) {
             (Some(text), _) => Input::Reply(text),
             (None, Some(key)) => Input::Key(key),
             (None, None) => unreachable!("validated above"),
         };
-        pane::send(&connector, &pane_id, input)
+        (true, pane::send(&connector, &pane_id, input))
     })
     .await
-    .unwrap_or_else(|error| Err(PaneError::Unavailable(error.to_string())));
+    .unwrap_or_else(|error| (true, Err(PaneError::Unavailable(error.to_string()))));
+    // Nothing reached Herdr, or Herdr says the pane is gone: nothing was
+    // written and the id may be sent again. Any other failure may have landed.
+    let certain =
+        !attempted || matches!(result, Err(PaneError::Gone | PaneError::DeviceUnreachable));
+    let settled = match &result {
+        Ok(()) => Some(InputState::Written),
+        Err(_) if certain => None,
+        Err(_) => Some(InputState::Uncertain),
+    };
+    mobile.settle_input(phone_id, request_id, settled);
     match result {
         Ok(()) => {
-            mobile.remember_input(phone_id, request_id);
             herdr_core::diagnostic!(json!({
                 "component": "mobile_phone", "kind": "input.sent", "phone_id": phone_id,
                 "device_id": key.device_id, "kind_of_input": if message.get("key").is_some() { "key" } else { "reply" },
@@ -453,7 +505,8 @@ async fn input(
                 "reason": error.reason(),
                 "message": match &error { PaneError::Unavailable(message) => Some(message.clone()), _ => None },
             }));
-            answer(false, Some(error.reason()))
+            let reason = if certain { error.reason() } else { "uncertain" };
+            answer(false, Some(reason))
         }
     }
 }

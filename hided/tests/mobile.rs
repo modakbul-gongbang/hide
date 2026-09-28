@@ -19,8 +19,10 @@ type Socket =
 const DNS: &str = "mac.tailnet-name.ts.net";
 
 /// A `tailscale` that answers from files under `state`: `status.json`,
-/// `serve.json`; `fail-serve` makes every serve change fail; every call is
-/// appended to `calls.log`.
+/// `serve.json`; `fail-serve` makes every serve change fail, `fail-remove`
+/// only removals, and `apply-then-fail` applies an add and then fails it
+/// (a `serve --bg` that timed out after it took); every call is appended to
+/// `calls.log`.
 struct FakeTailscale {
     state: PathBuf,
     bin: PathBuf,
@@ -42,8 +44,10 @@ case "$1" in
     if [ "$1" = status ]; then cat "$S/serve.json" 2>/dev/null || echo '{{}}'; exit 0; fi
     if [ -e "$S/fail-serve" ]; then echo "serve config denied: access denied" >&2; exit 1; fi
     last=""; for a in "$@"; do last="$a"; done
+    if [ "$last" = off ] && [ -e "$S/fail-remove" ]; then echo "remove denied" >&2; exit 1; fi
     if [ "$last" = off ]; then echo '{{}}' > "$S/serve.json"; exit 0; fi
     printf '{{"TCP":{{"443":{{"HTTPS":true}}}},"Web":{{"{dns}:443":{{"Handlers":{{"/":{{"Proxy":"%s"}}}}}}}}}}' "$last" > "$S/serve.json"
+    if [ -e "$S/apply-then-fail" ]; then echo "timed out" >&2; exit 1; fi
     ;;
   *) exit 2 ;;
 esac
@@ -97,6 +101,18 @@ esac
             .pointer(&format!("/Web/{DNS}:443/Handlers/~1/Proxy"))
             .and_then(Value::as_str)
             .map(str::to_owned)
+    }
+
+    /// Switch-off shows `off` at once and removes the entry right after it.
+    async fn wait_until_removed(&self) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while self.proxy().is_some() {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "hide's serve entry was never removed"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
     }
 }
 
@@ -351,8 +367,7 @@ async fn the_checklist_advances_and_the_qr_follows_a_confirmed_serve_entry() {
     // Turning it off removes only hide's entry and forgets the origin (B7).
     event(&mut shell, "mobile_enable", json!({"enabled": false})).await;
     mobile_frame(&mut shell, |frame| frame["exposure"] == "off").await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(fake.proxy().is_none());
+    fake.wait_until_removed().await;
     let mut refused = connect(port, &format!("https://{DNS}")).await;
     refused
         .send(Message::Text(
@@ -680,5 +695,109 @@ async fn the_phone_app_is_served_under_m_and_nothing_else_leaks() {
     assert_eq!(status("/m").await, "308");
     assert_eq!(status("/m/../hided.json").await, "404");
     assert_eq!(status("/m/missing.js").await, "404");
+    running.stop();
+}
+
+async fn http_status(port: u16, path: &str, host: Option<&str>) -> String {
+    let url = format!("http://127.0.0.1:{port}{path}");
+    let mut args = vec!["-s", "-o", "/dev/null", "-w", "%{http_code}"];
+    let header;
+    if let Some(host) = host {
+        header = format!("Host: {host}");
+        args.extend(["-H", header.as_str()]);
+    }
+    args.push(&url);
+    let output = tokio::process::Command::new("/usr/bin/curl")
+        .args(&args)
+        .output()
+        .await
+        .unwrap();
+    String::from_utf8(output.stdout).unwrap()
+}
+
+#[tokio::test]
+async fn the_tailnet_reaches_only_the_phone_app_and_transport_trouble_stays_visible() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTailscale::new(dir.path());
+    fake.ready();
+    // Funnel publishes the address to the internet: hide stays unexposed.
+    fake.set_serve(json!({"AllowFunnel": {format!("{DNS}:443"): true}}));
+    let running = hided::start_daemon(env(dir.path(), &fake.bin))
+        .await
+        .unwrap();
+    let port = running.port;
+    let mut shell = renderer(&running).await;
+    event(&mut shell, "mobile_enable", json!({"enabled": true})).await;
+    let funnel = mobile_frame(&mut shell, |frame| frame["exposure"] == "failed").await;
+    assert_eq!(funnel["failure"]["step"], "funnel");
+    assert!(funnel["qr"].is_null());
+    assert!(
+        !fake.calls().contains("--bg"),
+        "nothing is added under a Funnel"
+    );
+
+    // An add that took but then failed is still hide's own on the next pass.
+    fake.set_serve(json!({}));
+    std::fs::write(fake.state.join("apply-then-fail"), "").unwrap();
+    event(&mut shell, "mobile_enable", json!({"enabled": false})).await;
+    mobile_frame(&mut shell, |frame| frame["exposure"] == "off").await;
+    event(&mut shell, "mobile_enable", json!({"enabled": true})).await;
+    let failed = mobile_frame(&mut shell, |frame| frame["exposure"] == "failed").await;
+    assert_eq!(failed["failure"]["step"], "add");
+    std::fs::remove_file(fake.state.join("apply-then-fail")).unwrap();
+    event(&mut shell, "mobile_observe", json!({"observing": true})).await;
+    let exposed = mobile_frame(&mut shell, |frame| frame["exposure"] == "exposed").await;
+    assert_eq!(
+        fake.calls().matches("--bg").count(),
+        1,
+        "the entry it had added is recognised, not added again or called foreign"
+    );
+
+    // Through `tailscale serve` only the phone app and /ws answer, and /ws
+    // takes only a phone, whatever Origin the caller claims.
+    assert_eq!(http_status(port, "/health", Some(DNS)).await, "404");
+    assert_eq!(http_status(port, "/", Some(DNS)).await, "404");
+    assert_eq!(http_status(port, "/health", None).await, "200");
+    let mut request = format!("ws://127.0.0.1:{port}/ws")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(ORIGIN, loopback(port).parse().unwrap());
+    request.headers_mut().insert("host", DNS.parse().unwrap());
+    let mut forged = tokio_tungstenite::connect_async(request)
+        .await
+        .expect("ws connect")
+        .0;
+    forged
+        .send(Message::Text(
+            json!({"token": running.token, "schema_version": 2})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        close_code(&mut forged).await,
+        Some(4002),
+        "the shell token is refused through serve even with a loopback Origin"
+    );
+    let code = pair_code(exposed["qr"].as_str().unwrap());
+    let (_paired, answer) = pair(port, &format!("https://{DNS}"), &code).await;
+    assert_eq!(answer["type"], "paired");
+
+    // A removal that fails at switch-off stays on screen, and the next pass
+    // finishes it.
+    std::fs::write(fake.state.join("fail-remove"), "").unwrap();
+    event(&mut shell, "mobile_enable", json!({"enabled": false})).await;
+    let stuck = mobile_frame(&mut shell, |frame| {
+        frame["exposure"] == "failed" && frame["enabled"] == false
+    })
+    .await;
+    assert_eq!(stuck["failure"]["step"], "remove");
+    assert!(fake.proxy().is_some());
+    std::fs::remove_file(fake.state.join("fail-remove")).unwrap();
+    event(&mut shell, "mobile_enable", json!({"enabled": false})).await;
+    fake.wait_until_removed().await;
     running.stop();
 }

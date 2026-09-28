@@ -19,7 +19,7 @@ function useAnsi() {
     const ansi = new AnsiUp();
     ansi.use_classes = true;
     // Read-only rows: an OSC 8 link stays text, nothing on the page navigates away.
-    ansi.url_allowlist = {};
+    ansi.url_allowlist = Object.create(null) as Record<string, number>;
     return ansi;
   }, []);
 }

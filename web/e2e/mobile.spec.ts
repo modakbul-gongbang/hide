@@ -551,7 +551,8 @@ test("an empty list, the unreachable line, the phone limit and the seven-day rev
     });
     await expect(phone.locator('[data-phone-connected="true"]')).toBeVisible({ timeout: 30_000 });
     await expect(phone.locator('[data-phone-unreachable="true"]')).toHaveCount(0);
-    expect(tailscale.proxy()).toBe(daemon.origin);
+    const restarted = daemon.origin;
+    await expect.poll(() => tailscale.proxy(), { timeout: 20_000 }).toBe(restarted);
 
     // B23: opened with no network, the cached shell shows the same line instead of a blank page.
     await phone.reload();

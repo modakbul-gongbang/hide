@@ -149,7 +149,43 @@ pub fn router(state: AppState) -> Router {
         .route("/m/", get(mobile_asset))
         .route("/m/{*path}", get(mobile_asset))
         .fallback(|| async { StatusCode::NOT_FOUND })
+        .layer(axum::middleware::from_fn(tailnet_gate))
         .with_state(state)
+}
+
+/// Whether a request came through `tailscale serve` rather than from this
+/// Mac. serve forwards the tailnet Host and adds X-Forwarded-For, while every
+/// request, proxied or not, reaches hided from 127.0.0.1; a tailnet caller
+/// that is not a browser may also send any Origin it likes (PRD D-16).
+pub fn via_tailnet(headers: &HeaderMap) -> bool {
+    if headers.contains_key("x-forwarded-for") || headers.contains_key("tailscale-user-login") {
+        return true;
+    }
+    let host = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    let name = match host.rsplit_once(':') {
+        Some((name, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => name,
+        _ => host,
+    };
+    !matches!(name, "127.0.0.1" | "localhost" | "[::1]")
+}
+
+/// A request from the tailnet reaches only the phone app's static shell,
+/// its hashed assets and `/ws`, where only a phone handshake is accepted.
+async fn tailnet_gate(request: axum::extract::Request, next: axum::middleware::Next) -> Response {
+    if via_tailnet(request.headers()) {
+        let path = request.uri().path();
+        let allowed = path == "/ws"
+            || path == "/m"
+            || path.starts_with("/m/")
+            || path.starts_with("/assets/");
+        if !allowed {
+            return StatusCode::NOT_FOUND.into_response();
+        }
+    }
+    next.run(request).await
 }
 
 #[derive(Deserialize)]
@@ -393,8 +429,21 @@ async fn ws_upgrade(
         .chars()
         .take(512)
         .collect::<String>();
-    ws.on_upgrade(move |socket| client_loop(socket, state, origin, user_agent))
+    let proxied = via_tailnet(&headers);
+    // A phone's frames are small; a tailnet caller may not buffer more.
+    let ws = if proxied {
+        ws.max_message_size(TAILNET_MAX_MESSAGE)
+            .max_frame_size(TAILNET_MAX_MESSAGE)
+    } else {
+        ws
+    };
+    ws.on_upgrade(move |socket| client_loop(socket, state, origin, user_agent, proxied))
 }
+
+/// The largest message a WebSocket that came through `tailscale serve` may send.
+const TAILNET_MAX_MESSAGE: usize = 64 * 1024;
+/// How long a new WebSocket may wait before its first frame.
+const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(10);
 
 fn check_origin(origin: Option<&str>, allowed: &HashSet<String>) -> Result<(), CloseReason> {
     let Some(origin) = origin else {
@@ -412,10 +461,11 @@ async fn client_loop(
     state: AppState,
     origin: Option<String>,
     user_agent: String,
+    proxied: bool,
 ) {
     // This Mac's tailnet address is an allowed Origin only while Mobile is
     // exposed, and only for a phone: the shell token is never accepted from
-    // it (PRD D-16).
+    // it, nor from anything that came through `tailscale serve` (PRD D-16).
     let loopback = check_origin(origin.as_deref(), &state.allowed_origins).is_ok();
     let tailnet = !loopback && state.mobile.origin_allowed(origin.as_deref());
     if !loopback && !tailnet {
@@ -423,8 +473,8 @@ async fn client_loop(
         return;
     }
     let connection = state.connections.fetch_add(1, Ordering::SeqCst);
-    let first = match socket.recv().await {
-        Some(Ok(Message::Text(text))) => text,
+    let first = match tokio::time::timeout(FIRST_FRAME_TIMEOUT, socket.recv()).await {
+        Ok(Some(Ok(Message::Text(text)))) => text,
         _ => {
             refuse(&mut socket, CloseReason::InvalidToken, None).await;
             return;
@@ -449,7 +499,7 @@ async fn client_loop(
         client_gone(&state, connection, false, false);
         return;
     }
-    if !loopback {
+    if !loopback || proxied {
         refuse(&mut socket, CloseReason::OriginNotAllowed, None).await;
         return;
     }

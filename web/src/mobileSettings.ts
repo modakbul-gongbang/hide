@@ -129,6 +129,8 @@ function failureStep(step: string | undefined): string {
       return "tailscale serve를 켜지 못했어요";
     case "remove":
       return "tailscale serve 항목을 지우지 못했어요";
+    case "funnel":
+      return "Funnel이 켜져 있어요";
     default:
       return "tailscale serve 상태를 확인하지 못했어요";
   }

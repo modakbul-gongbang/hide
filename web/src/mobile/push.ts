@@ -38,9 +38,11 @@ async function subscribe(): Promise<boolean> {
   const worker = await registration();
   if (!key || !worker) return false;
   try {
-    const subscription =
-      (await worker.pushManager.getSubscription()) ??
-      (await worker.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: applicationServerKey(key) }));
+    // hided holds no subscription whenever this runs, so the one the browser
+    // kept is either unknown to hided or one the push service already
+    // refused (hided drops a subscription on 404 or 410): start a fresh one.
+    await (await worker.pushManager.getSubscription())?.unsubscribe();
+    const subscription = await worker.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: applicationServerKey(key) });
     const json = subscription.toJSON();
     if (!json.endpoint || !json.keys?.p256dh || !json.keys.auth) return false;
     return send({ type: "push_subscription", subscription: { endpoint: json.endpoint, keys: { p256dh: json.keys.p256dh, auth: json.keys.auth } } });

@@ -53,7 +53,8 @@ export function MobileTab({ actions }: { actions: Actions }) {
           <Switch checked={mobile.enabled} onCheckedChange={(next) => actions.setMobileEnabled(next)} aria-label={SWITCH_LABEL} data-mobile-switch="true" />
         </Row>
         {mobile.enabled ? checklistRows(mobile).map((row) => <ChecklistItem key={row.id} row={row} />) : null}
-        {mobile.enabled ? <Pairing state={mobile} actions={actions} /> : null}
+        {/* A removal that failed at switch-off stays on screen until it is finished (B7). */}
+        {mobile.enabled || mobile.exposure === "failed" ? <Pairing state={mobile} actions={actions} /> : null}
       </Group>
       {mobile.phones.length > 0 ? <Phones state={mobile} actions={actions} /> : null}
       <Group title="푸시 알림">
@@ -207,7 +208,7 @@ function Phones({ state, actions }: { state: MobileState; actions: Actions }) {
             </span>
           }
         >
-          <Button variant="destructive" size="sm" onClick={() => actions.revokePhone(phone.id)} data-mobile-revoke={phone.id}>
+          <Button variant="secondary" size="sm" className="text-destructive" onClick={() => actions.revokePhone(phone.id)} data-mobile-revoke={phone.id}>
             해지
           </Button>
         </Row>

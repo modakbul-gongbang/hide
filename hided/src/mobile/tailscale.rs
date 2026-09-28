@@ -244,6 +244,20 @@ pub fn proxy_target(port: u16) -> String {
     format!("http://127.0.0.1:{port}")
 }
 
+/// Whether Tailscale Funnel publishes `dns_name`'s port 443 to the whole
+/// internet. hide's entry is for the tailnet only (PRD D-01), so a Funnel
+/// there keeps Mobile unexposed.
+pub fn funnel_on(serve: &Value, dns_name: &str) -> bool {
+    serve
+        .get("AllowFunnel")
+        .and_then(|funnel| funnel.get(format!("{dns_name}:443")))
+        .and_then(Value::as_bool)
+        == Some(true)
+}
+
+/// The line Settings > Mobile shows while Funnel is on for this address.
+pub const FUNNEL_MESSAGE: &str = "Tailscale Funnel이 이 주소를 인터넷에 공개하고 있어요. hide는 tailnet 안에서만 열리므로 Funnel을 끄면 이어집니다.";
+
 /// Reads `serve status --json` for port 443 of `dns_name`: hide's entry is
 /// the `/` handler proxying to the recorded port; anything else there, and a
 /// raw TCP forward on 443, belongs to someone else.
@@ -450,5 +464,16 @@ mod tests {
             .resolve(),
             Some(script)
         );
+    }
+
+    #[test]
+    fn a_funnel_on_the_address_is_seen_and_another_address_is_not() {
+        let serve = serde_json::json!({"AllowFunnel": {"mac.tailnet-name.ts.net:443": true, "other.ts.net:443": false}});
+        assert!(funnel_on(&serve, "mac.tailnet-name.ts.net"));
+        assert!(!funnel_on(&serve, "other.ts.net"));
+        assert!(!funnel_on(
+            &serde_json::json!({}),
+            "mac.tailnet-name.ts.net"
+        ));
     }
 }

@@ -83,6 +83,8 @@ function retryNow(): void {
 function connect(): void {
   if (stopped) return;
   if (socket && socket.readyState <= WebSocket.OPEN) return;
+  // Nothing to present: the unpaired screen stays, no socket is opened.
+  if (!pairCode && !credential) return;
   const first = pairCode ? { client_kind: "phone", pair: pairCode } : { client_kind: "phone", token: credential };
   let refused = false;
   const ws = new WebSocket(socketUrl());
