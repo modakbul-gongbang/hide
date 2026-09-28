@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addProjectHosts, alreadyRegistered, defaultCloneParent, initialHost, parseCloneUrl, trimFolder } from "./addProject";
+import { addProjectHosts, alreadyRegistered, defaultProjectParent, initialHost, parseCloneUrl, projectNameProblem, projectPath, trimFolder } from "./addProject";
 import type { Device, WorkspaceRegistration } from "./snapshot";
 
 const device = (id: string, label: string, kind = "remote") => ({ id, label, kind }) as Device;
@@ -48,8 +48,23 @@ describe("Add a project", () => {
     }
   });
 
-  it("clones beside the most recently added project on this Mac, else into home", () => {
-    expect(defaultCloneParent([])).toBe("~");
-    expect(defaultCloneParent([registration("/home/me/code/a"), registration("/home/me/work/b/"), registration("/srv/c", "mini")])).toBe("/home/me/work");
+  it("puts a new project beside the most recently added one on this Mac, else in home", () => {
+    expect(defaultProjectParent([])).toBe("~");
+    expect(defaultProjectParent([registration("/home/me/work/a"), registration("/home/me/side/b/"), registration("/home/me/x", "mini")])).toBe("/home/me/side");
+    expect(defaultProjectParent([registration("/home/me/a", "mini")])).toBe("~");
+  });
+
+  it("takes one folder name, and says why another is not one", () => {
+    expect(projectNameProblem("my-project")).toBeNull();
+    expect(projectNameProblem("")).toBeNull();
+    expect(projectNameProblem(".hidden")).toBeNull();
+    expect(projectNameProblem("a/b")).toContain("/");
+    expect(projectNameProblem(".")).not.toBeNull();
+    expect(projectNameProblem("..")).not.toBeNull();
+  });
+
+  it("previews the full path as the name is typed", () => {
+    expect(projectPath("/home/me/work", "")).toBe("/home/me/work/project-name");
+    expect(projectPath("/home/me/work", "app")).toBe("/home/me/work/app");
   });
 });

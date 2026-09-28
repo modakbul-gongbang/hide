@@ -117,6 +117,12 @@ pub(super) struct CreateWorkspacePayload {
     pub(super) path: String,
     pub(super) label: String,
     pub(super) initialize_git: bool,
+    /// Add a project's Create new project: the folder is made and a Git
+    /// repository started in it before it is registered. hided has checked
+    /// the path on its `$HOME` line; the worker judges what stands there
+    /// again, because the check and the make are not one step.
+    #[serde(default)]
+    pub(super) new_folder: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1400,6 +1406,14 @@ impl Runtime {
                     .clone()
                     .filter(|device| device != workspace::LOCAL_DEVICE_ID)
                 {
+                    if payload.new_folder {
+                        self.set_error(
+                            "workspace.create_refused",
+                            "A new project can be created on this Mac only",
+                            false,
+                        );
+                        return true;
+                    }
                     return self.create_device_registration(&device, payload.path, payload.label);
                 }
                 if let Some(context) = self.live.as_ref().cloned() {
@@ -1440,6 +1454,7 @@ impl Runtime {
                         payload.path,
                         payload.label,
                         payload.initialize_git,
+                        payload.new_folder,
                         self.snapshot.ui_state.workspace_registrations.clone(),
                     );
                     if let Err(message) = result {

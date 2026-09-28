@@ -192,6 +192,8 @@ impl Runtime {
             path,
             label,
             initialize_git: false,
+            // The clone made the folder; the registration only adds it.
+            new_folder: false,
         }));
         true
     }

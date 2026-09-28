@@ -256,6 +256,26 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   await expectOnSlot(page, `${origin}/a.html`, a);
   await windowShot("browser-two-areas");
 
+  // A divider drag marks the root: both pages give way to their stills, so
+  // the guide draws over them, and come back live at release.
+  const divider = (await page.locator("[data-view-divider]").boundingBox())!;
+  const slotA = (await page.locator(`[data-browser-slot="${a}"]`).boundingBox())!;
+  await page.mouse.move(divider.x + divider.width / 2, divider.y + divider.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(slotA.x + slotA.width * 0.6, divider.y + divider.height / 2, { steps: 4 });
+  await expect(page.locator("html")).toHaveAttribute("data-view-drag", "col-resize");
+  await expect(page.locator("[data-view-resize-guide]")).toBeVisible();
+  await expect.poll(async () => (await views()).filter((view) => view.visible).length).toBe(0);
+  await expect(page.locator("[data-browser-still]")).toHaveCount(2);
+  await windowShot("browser-divider-drag-frozen");
+  await page.mouse.up();
+  await expect(page.locator("html")).not.toHaveAttribute("data-view-drag", /.*/);
+  await expect.poll(async () => (await views()).filter((view) => view.visible).length).toBe(2);
+  await expect(page.locator("[data-browser-still]")).toHaveCount(0);
+  await expectOnSlot(page, `${origin}/a.html`, a);
+  await expectOnSlot(page, `${origin}/b.html`, b);
+  expect((await viewOf(`${origin}/a.html`)).pid).toBe(pageA.pid);
+
   // The palette cannot draw over a native view: a page it meets hides and
   // its still stands in its place until the palette closes.
   await page.keyboard.press("Meta+KeyK");

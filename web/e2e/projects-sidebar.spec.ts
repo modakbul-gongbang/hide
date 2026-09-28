@@ -508,3 +508,79 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await herdr.stop();
   }
 });
+
+/** Sets and clears the status tokens one pane reports, the way the label plugin does. */
+function reportStatus(herdr: HerdrFixture, pane: string, set: Record<string, string>, clear: string[] = []): void {
+  const args = ["pane", "report-metadata", pane, "--source", "e2e-status"];
+  for (const [name, value] of Object.entries(set)) args.push("--token", `${name}=${value}`);
+  for (const name of clear) args.push("--clear-token", name);
+  execFileSync(herdr.bin, args, { env: herdr.env, timeout: 30_000 });
+}
+
+test("Needs You and Done are raised above Pinned and stay in their tree, whatever is folded", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    const repo = path.join(herdr.root, "raised");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    git(repo, ["commit", "--allow-empty", "-m", "initial"]);
+    const asking = await workspaceAt(herdr, repo, "배포 전 확인 요청");
+    const [finished] = herdr.panes;
+    daemon = await startHided(herdr, "projects-raised");
+    const sent = countSent(page);
+    await open(page, daemon);
+
+    const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]", { hasText: /^raised/ }) });
+    await project.locator("[data-project-row]").click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Pin", exact: true }).click();
+    const pinned = page.locator('[data-section="Pinned"]');
+    await expect(pinned).toBeVisible();
+    // Nothing needs the operator yet: no raised section is drawn.
+    await expect(page.locator("[data-raised-group]")).toHaveCount(0);
+
+    reportStatus(herdr, asking, { status_question_new: "?", expected_reply: "배포해도 될까요?" });
+    reportStatus(herdr, finished, { status_done: "✓", progress: "정리 끝" });
+    const needsYou = page.locator('[data-raised-group="needs_you"]');
+    const done = page.locator('[data-raised-group="done"]');
+    await expect(needsYou.locator(`[data-pane="${asking}"]`)).toBeVisible({ timeout: 20_000 });
+    await expect(done.locator(`[data-pane="${finished}"]`)).toBeVisible();
+    await expect(needsYou.locator('[data-section="Needs You"]')).toHaveText("Needs You · 1");
+    await expect(done.locator('[data-section="Done"]')).toHaveText("Done · 1");
+    // Needs You, then Done, then Pinned, at the top of the list.
+    const top = async (locator: Locator) => (await locator.boundingBox())!.y;
+    expect(await top(needsYou)).toBeLessThan(await top(done));
+    expect(await top(done)).toBeLessThan(await top(pinned));
+    await expect(page.locator("[data-project-list] > li").first()).toHaveAttribute("data-raised-group", "needs_you");
+    // The raised row names where the agent runs, as the Agents list does.
+    await expect(needsYou.locator(`[data-pane="${asking}"] [data-agent-place]`)).toHaveText("raised › main");
+
+    // The agent stays in its checkout tree too.
+    const checkoutToggle = project.locator("[data-checkout-toggle]");
+    await checkoutToggle.click();
+    await expect(project.locator(`[data-checkout-agents-open] [data-pane="${asking}"]`)).toBeVisible();
+    await screenshot(page, "projects-raised-open");
+
+    // Folding the checkout and the project hides the tree rows, not the raised ones.
+    await checkoutToggle.click();
+    await project.locator("[data-project-toggle]").click();
+    await expect(project.locator("[data-project-toggle]")).toHaveAttribute("aria-expanded", "false");
+    await expect(project.locator(`[data-pane="${asking}"]`)).toHaveCount(0);
+    await expect(needsYou.locator(`[data-pane="${asking}"]`)).toBeVisible();
+    await screenshot(page, "projects-raised-folded");
+
+    // A raised row opens its agent as the Agents row does: one focus_pane.
+    const before = sent.get("focus_pane") ?? 0;
+    await needsYou.locator(`[data-pane="${asking}"] [data-agent-open]`).click();
+    await expect.poll(() => sent.get("focus_pane") ?? 0).toBe(before + 1);
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
+
+    // Answered, the agent leaves Needs You and its empty section goes.
+    reportStatus(herdr, asking, {}, ["status_question_new", "expected_reply"]);
+    await expect(needsYou).toHaveCount(0, { timeout: 20_000 });
+  } finally {
+    await daemon?.stop();
+    await herdr.stop();
+  }
+});

@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef,
 import { EntryContextMenu, EntryDropdown, type MenuEntry } from "./components/entry-menu";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
+import { holdShellDrag } from "./shellDrag";
 import { useUiStore } from "./ui";
 import { IDLE, movePointer, pressTab, relayout, releasePointer, type DragSession } from "./areaDrag";
 import { focusFromKeyboard, installFocusModality } from "./areaFocus";
@@ -221,14 +222,7 @@ function AreaTree({ layout, adapter, trailing = null, children }: { layout: Area
 
   // The pointer says whether the place under it would land (B8).
   const cursor = session.phase === "dragging" ? (session.target.kind === "none" && session.target.reason !== null ? "forbidden" : "move") : null;
-  useEffect(() => {
-    if (!cursor) return undefined;
-    const root = document.documentElement;
-    root.setAttribute(`data-${column}-drag`, cursor);
-    return () => {
-      root.removeAttribute(`data-${column}-drag`);
-    };
-  }, [cursor]);
+  useEffect(() => (cursor ? holdShellDrag(cursor, `data-${column}-drag`) : undefined), [cursor]);
 
   // A divider drag moves a guide line and lands one resize on release (B9);
   // the line is its own component, so a pointer move redraws nothing else.
@@ -242,7 +236,10 @@ function AreaTree({ layout, adapter, trailing = null, children }: { layout: Area
     const row = box.axis === "row";
     const ratioAt = (next: PointerEvent) => ratioAtOffset(box, row ? next.clientX - origin.left - box.span.x : next.clientY - origin.top - box.span.y);
     const move = (next: PointerEvent) => guide.current?.(guideAt(box, ratioAt(next)));
+    // The drag marks the root, so a page the guide crosses gives way to its still.
+    const release = holdShellDrag(row ? "col-resize" : "row-resize", `data-${column}-drag`);
     const end = () => {
+      release();
       target.removeEventListener("pointermove", move);
       target.removeEventListener("pointerup", up);
       target.removeEventListener("pointercancel", end);

@@ -7,9 +7,10 @@
 import { areasOf } from "./areaLayout";
 import type { AgentLayout } from "./agentLayout";
 import type { TreeRow } from "./agentRow";
-import { agentListRows, agentTree, allAgents } from "./navigation";
+import { agentListRows, agentTree, allAgents, type ListedAgent } from "./navigation";
+import type { ProjectRow } from "./projects";
 import { DIGITS, type Digit } from "./shortcuts";
-import type { AgentRow, Checkout, SnapshotRest } from "./snapshot";
+import type { AgentRow, Checkout, SnapshotRest, Workspace } from "./snapshot";
 import { agentEntries } from "./workspace";
 
 /** Local area tree order, then each bar left to right; devices retain their strip order. */
@@ -38,7 +39,36 @@ export function numberOf(numbered: Map<Digit, string>, id: string): Digit | null
 
 /** The Agents list's rows in draw order, the list ⌥n numbers whichever list is on screen (B2). */
 export function agentListOrder(state: { rest: SnapshotRest | null; agents: AgentRow[] }): TreeRow[] {
-  return agentListRows(agentTree(allAgents(state.rest?.status?.remote, state.rest?.navigator?.devices, state.agents)));
+  return listedAgentOrder(allAgents(state.rest?.status?.remote, state.rest?.navigator?.devices, state.agents));
+}
+
+/** The Agents list's rows in draw order, from the agents it lists. */
+export function listedAgentOrder(listed: ListedAgent[]): TreeRow[] {
+  return agentListRows(agentTree(listed));
+}
+
+/**
+ * Where the Projects list shows each agent's ⌥n number (docs/status-model.md:
+ * both appearances share one shortcut, on the first one drawn). ⌥n selects by
+ * the Agents list whichever list is on screen, so the number is that one; the
+ * Projects list only chooses its one place: the agent's raised row, else its
+ * row under the checkout that owns its pane, never a row drawn under a parent
+ * in another checkout.
+ */
+export function projectListNumbers(
+  numbered: Map<Digit, string>,
+  rows: readonly ProjectRow[],
+  workspaces: readonly Workspace[],
+): (paneId: string, checkoutId: string | null) => Digit | null {
+  const raised = new Set(rows.flatMap((row) => (row.kind === "raised" ? row.agents.map(({ agent }) => agent.pane_id) : [])));
+  const owners = new Map<string, string>();
+  for (const workspace of workspaces) {
+    for (const checkout of workspace.checkouts) for (const tab of checkout.tabs) for (const pane of tab.panes) if (!owners.has(pane.id)) owners.set(pane.id, checkout.id);
+  }
+  return (paneId, checkoutId) => {
+    const shown = checkoutId === null ? raised.has(paneId) : !raised.has(paneId) && owners.get(paneId) === checkoutId;
+    return shown ? numberOf(numbered, paneId) : null;
+  };
 }
 
 /** The number ⌥n selects an agent by now, or null past the ninth row. */

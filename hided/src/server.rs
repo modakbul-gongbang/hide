@@ -867,6 +867,16 @@ fn handle_client_text(
         return Ok(ClientAction::Replies(handle_file_index(state, &event)));
     }
     match event.get("kind").and_then(Value::as_str) {
+        Some("project_target") => {
+            return Ok(ClientAction::Replies(vec![Message::Text(
+                project_target(&state.boundary, &event).to_string().into(),
+            )]));
+        }
+        Some("clone_target") => {
+            return Ok(ClientAction::Replies(vec![Message::Text(
+                clone_target(&state.boundary, &event).to_string().into(),
+            )]));
+        }
         Some("attachment_stage") => {
             return Ok(ClientAction::Replies(handle_attachment_stage(
                 state, &event, connection,
@@ -1874,9 +1884,11 @@ async fn send_file_bytes(
 fn apply_boundary(boundary: &Boundary, event: &mut Value) -> Option<Value> {
     let kind = event.get("kind").and_then(Value::as_str)?.to_owned();
     match kind.as_str() {
+        "create_workspace" if event.pointer("/payload/new_folder") == Some(&Value::Bool(true)) => {
+            new_project(boundary, event, &kind)
+        }
         "create_workspace" => rewrite(event, &kind, "path", |raw| boundary.resolve_workspace(raw)),
         "clone_repository" => clone_admit(boundary, event, &kind),
-        "clone_target" => Some(clone_target(boundary, event)),
         "file_list" => explorer_listing(boundary, event, &kind),
         "file_open" | "reveal_path" => explorer_open(boundary, event, &kind),
         "file_save" => explorer_save(boundary, event, &kind),
@@ -2055,6 +2067,53 @@ fn clone_target(boundary: &Boundary, event: &Value) -> Value {
             "reason": answer.err().map(Refusal::code),
         },
     })
+}
+
+/// A `create_workspace` for Create new project names a folder that does not
+/// exist yet, so its path is judged as a parent on the `$HOME` line and one
+/// folder name, and forwarded as the canonical path the folder will take.
+fn new_project(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Value> {
+    rewrite(event, kind, "path", |raw| {
+        let (parent, name) = raw.rsplit_once('/').ok_or(Refusal::InvalidPath)?;
+        let parent = if parent.is_empty() { "/" } else { parent };
+        boundary
+            .resolve_new_project(parent, name)
+            .map(|project| project.path)
+    })
+}
+
+/// A `project_target` asks where Create new project would make `name` in
+/// `parent`, before anything is sent: the dialog shows the folder and the
+/// full path as the operator types, and whatever the create itself would be
+/// refused for. It is answered on the same line the create is checked on,
+/// never forwarded, and changes nothing on disk. An empty name asks about
+/// the parent alone.
+fn project_target(boundary: &Boundary, event: &Value) -> Value {
+    let parent = payload_str(event, "parent");
+    let name = payload_str(event, "name");
+    let mut payload = json!({
+        "parent": parent, "name": name,
+        "parent_path": null, "parent_label": null, "path": null, "leftover": false, "reason": null,
+    });
+    let real_parent = match boundary.resolve_dir(&parent) {
+        Ok(real) => real,
+        Err(refusal) => {
+            payload["reason"] = Value::String(refusal.code().to_owned());
+            return json!({"type": "project_target", "payload": payload});
+        }
+    };
+    payload["parent_path"] = Value::String(real_parent.display().to_string());
+    payload["parent_label"] = Value::String(boundary.home_label(&real_parent));
+    if !name.is_empty() {
+        match boundary.resolve_new_project(&parent, &name) {
+            Ok(project) => {
+                payload["path"] = Value::String(project.path.display().to_string());
+                payload["leftover"] = Value::Bool(project.leftover);
+            }
+            Err(refusal) => payload["reason"] = Value::String(refusal.code().to_owned()),
+        }
+    }
+    json!({"type": "project_target", "payload": payload})
 }
 
 /// A `file_list` names the checkout root and the folder under it, and is
@@ -2748,7 +2807,7 @@ mod tests {
     }
 
     /// A clone's folder is checked on the `$HOME` line before the core sees
-    /// the event, and a `clone_target` question is answered here alone.
+    /// the event, and a `clone_target` question is answered on the same line.
     #[test]
     fn clone_events_meet_the_home_line() {
         let home = tempfile::tempdir().unwrap();
@@ -2771,10 +2830,12 @@ mod tests {
         assert_eq!(answer["type"], "path_refused", "{answer}");
         assert_eq!(answer["payload"]["kind"], "clone_repository");
         assert_eq!(answer["payload"]["path"], "~/projects/taken");
-        assert_eq!(answer["payload"]["reason"], "target_exists");
+        assert_eq!(answer["payload"]["reason"], "already_exists");
 
-        let mut event = json!({"schema_version": 2, "kind": "clone_target", "payload": {"parent": "~/projects", "name": "fresh"}});
-        let answer = apply_boundary(&boundary, &mut event).expect("answered here");
+        let answer = clone_target(
+            &boundary,
+            &json!({"schema_version": 2, "kind": "clone_target", "payload": {"parent": "~/projects", "name": "fresh"}}),
+        );
         assert_eq!(answer["type"], "clone_target");
         assert_eq!(
             answer["payload"]["path"],
@@ -2783,15 +2844,96 @@ mod tests {
         assert_eq!(answer["payload"]["reason"], Value::Null);
 
         for (parent, name, reason) in [
-            ("~/projects", "taken", "target_exists"),
+            ("~/projects", "taken", "already_exists"),
             ("/", "fresh", "outside_home"),
             ("~/missing", "fresh", "not_found"),
             ("~/projects", "../fresh", "invalid_path"),
         ] {
-            let mut event = json!({"schema_version": 2, "kind": "clone_target", "payload": {"parent": parent, "name": name}});
-            let answer = apply_boundary(&boundary, &mut event).expect("answered here");
+            let answer = clone_target(
+                &boundary,
+                &json!({"schema_version": 2, "kind": "clone_target", "payload": {"parent": parent, "name": name}}),
+            );
             assert_eq!(answer["payload"]["reason"], reason, "{answer}");
             assert_eq!(answer["payload"]["path"], Value::Null, "{answer}");
         }
+    }
+
+    /// Create new project is judged on the `$HOME` line before anything is
+    /// made: the probe answers the parent, the full path, and what the create
+    /// would be refused for, and the create itself is forwarded as the
+    /// canonical path only when the folder is free or a leftover of its own.
+    #[test]
+    fn a_new_project_is_checked_on_the_home_line_before_its_folder_is_made() {
+        let home = tempfile::tempdir().unwrap();
+        let projects = home.path().join("projects");
+        std::fs::create_dir_all(projects.join("taken")).unwrap();
+        std::fs::write(projects.join("taken/notes.md"), "mine\n").unwrap();
+        std::fs::create_dir_all(projects.join("leftover/.git")).unwrap();
+        let boundary = Boundary::new(home.path()).unwrap();
+        let real = boundary.home().join("projects");
+        let probe = |parent: &str, name: &str| {
+            project_target(
+                &boundary,
+                &json!({"schema_version": 2, "kind": "project_target", "payload": {"parent": parent, "name": name}}),
+            )["payload"]
+                .clone()
+        };
+
+        let answer = probe("~", "");
+        assert_eq!(answer["parent_label"], "~", "{answer}");
+        assert_eq!(answer["parent_path"], boundary.home().display().to_string());
+        assert_eq!(answer["path"], Value::Null);
+        assert_eq!(answer["reason"], Value::Null);
+
+        let answer = probe(&real.display().to_string(), "fresh");
+        assert_eq!(answer["parent_label"], "~/projects", "{answer}");
+        assert_eq!(answer["path"], real.join("fresh").display().to_string());
+        assert_eq!(
+            (answer["reason"].clone(), answer["leftover"].clone()),
+            (Value::Null, Value::Bool(false))
+        );
+        assert_eq!(probe("~/projects", "leftover")["leftover"], true);
+        for (parent, name, reason) in [
+            ("~/projects", "taken", "already_exists"),
+            ("~/projects", "a/b", "invalid_path"),
+            ("~/projects", "..", "invalid_path"),
+            ("~/projects/missing", "x", "not_found"),
+            ("/", "x", "outside_home"),
+        ] {
+            assert_eq!(probe(parent, name)["reason"], reason, "{parent} {name}");
+        }
+        assert!(!real.join("fresh").exists(), "a probe makes nothing");
+
+        let create = |path: &str| {
+            json!({"schema_version": 2, "kind": "create_workspace",
+                "payload": {"path": path, "label": "x", "initialize_git": true, "new_folder": true}})
+        };
+        let mut event = create("~/projects/fresh");
+        assert_eq!(apply_boundary(&boundary, &mut event), None);
+        assert_eq!(
+            event["payload"]["path"],
+            real.join("fresh").display().to_string()
+        );
+        let mut event = create("~/projects/leftover");
+        assert_eq!(
+            apply_boundary(&boundary, &mut event),
+            None,
+            "a retry continues into its leftover"
+        );
+        for (path, reason) in [
+            ("~/projects/taken", "already_exists"),
+            ("/tmp/elsewhere", "outside_home"),
+            ("~/projects/", "invalid_path"),
+        ] {
+            let mut event = create(path);
+            let answer = apply_boundary(&boundary, &mut event).expect("refused");
+            assert_eq!(answer["type"], "path_refused", "{answer}");
+            assert_eq!(answer["payload"]["reason"], reason, "{path}");
+            assert_eq!(answer["payload"]["path"], path);
+        }
+        assert_eq!(
+            std::fs::read_to_string(projects.join("taken/notes.md")).unwrap(),
+            "mine\n"
+        );
     }
 }

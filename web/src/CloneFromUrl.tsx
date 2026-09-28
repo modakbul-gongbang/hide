@@ -3,24 +3,25 @@
 // hided is asked whether it is free under that parent (`clone_target`), so
 // Clone is offered only for a clone that can start. The clone itself is the
 // core's (`repository_clone`): its progress, its cancel and its end are read
-// from the snapshot, and a finished clone is registered like a picked folder,
-// so the dialog closes when that project appears. Closing the dialog leaves a
-// running clone running; opening it again shows it here.
+// from the snapshot. A finished clone is registered with the same
+// `create_workspace` a picked folder sends, and its answer is read the same
+// way (`useRegistration`): the dialog closes when that project appears.
+// Closing the dialog leaves a running clone running; opening it again shows
+// it here.
 
 import { ArrowLeftIcon, FolderOpenIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
-import { defaultCloneParent, folderLabel, parseCloneUrl, refusalText, trimFolder } from "./addProject";
+import { defaultProjectParent, folderLabel, parseCloneUrl, refusalText, trimFolder } from "./addProject";
 import { Note, Status } from "./components/settings-rows";
 import { Button } from "./components/ui/button";
 import { DialogBody, DialogDescription, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
+import { RegistrationStatus, useRegistration } from "./registration";
 import type { RepositoryClone, WorkspaceRegistration } from "./snapshot";
 import { useShellStore } from "./store";
-import { useUiStore } from "./ui";
 import { useErrorSince } from "./WorkspaceDialogs";
 
-const NO_REGISTRATIONS: WorkspaceRegistration[] = [];
 /** How long typing settles before hided is asked about the folder. */
 const TARGET_CHECK_DELAY_MS = 150;
 
@@ -35,13 +36,12 @@ export function cloneRunning(clone: RepositoryClone | null | undefined): boolean
  */
 type Following = { id: number } | { after: number; at: number; path: string };
 
-export function CloneFromUrl({ actions, onBack }: { actions: Actions; onBack: () => void }) {
-  const registrations = useShellStore((s) => s.rest?.ui_state?.workspace_registrations ?? NO_REGISTRATIONS);
+export function CloneFromUrl({ actions, registrations, onBack }: { actions: Actions; registrations: readonly WorkspaceRegistration[]; onBack: () => void }) {
   const slot = useShellStore((s) => s.rest?.repository_clone ?? null);
   const target = useShellStore((s) => s.cloneTarget);
   const pathRefusal = useShellStore((s) => s.pathRefusal);
   const [url, setUrl] = useState("");
-  const [parent, setParent] = useState(() => defaultCloneParent(useShellStore.getState().rest?.ui_state?.workspace_registrations ?? []));
+  const [parent, setParent] = useState(() => defaultProjectParent(registrations));
   const [following, setFollowing] = useState<Following | null>(() => {
     const running = useShellStore.getState().rest?.repository_clone;
     return running && cloneRunning(running) ? { id: running.id } : null;
@@ -54,20 +54,24 @@ export function CloneFromUrl({ actions, onBack }: { actions: Actions; onBack: ()
   const clone = slot && following && ("id" in following ? slot.id === following.id : slot.id > following.after) ? slot : null;
   const running = cloneRunning(clone);
   const sentAt = following && "at" in following ? following.at : null;
-  const coreError = useErrorSince(sentAt, ["repository.clone", "workspace.create", "workspace.remove_in_flight", "workspace.control_unavailable"]);
+  // The registration a finished clone makes; its refusal and its closing the dialog are `useRegistration`'s.
+  const registration = useRegistration(registrations);
+  const cloneError = useErrorSince(sentAt, ["repository.clone", "workspace.control_unavailable"]);
   const hidedRefusal =
     following && "path" in following && pathRefusal?.kind === "clone_repository" && pathRefusal.path === following.path ? pathRefusal.reason : null;
-  // A refusal ends what Clone started, before the clone (hided's, or the core
-  // refusing the clone) or after it (the folder could not be registered).
-  const refused = (clone === null && hidedRefusal !== null) || (coreError !== null && !cloneRunning(clone));
+  // A refusal of the clone itself (hided's, or the core's), or the core
+  // unable to register the finished folder; a running clone has neither.
+  const refusal = hidedRefusal ? refusalText(hidedRefusal) : cloneError && !running ? cloneError : null;
+  const ended = clone?.phase === "failed" || clone?.phase === "cancelled" || refusal !== null;
   const answer = target && name && target.parent === parentPath && target.name === name ? target : null;
-  const added = clone?.phase === "finished" && registrations.some((row) => row.device_id === "local" && trimFolder(row.path) === clone.path);
-  const waiting = following !== null && !refused && (clone === null || running || (clone.phase === "finished" && !added));
+  const waiting = following !== null && !ended && registration.shown === null;
   const canClone = parsed.ok && answer !== null && answer.reason === null && !waiting;
 
+  // A clone that ended without a folder leaves no registration to wait for.
+  const { reset } = registration;
   useEffect(() => {
-    if (added) useUiStore.getState().closeOverlay("add_project");
-  }, [added]);
+    if (ended) reset();
+  }, [ended, reset]);
 
   useEffect(() => {
     if (!name || !parentPath) return;
@@ -78,9 +82,9 @@ export function CloneFromUrl({ actions, onBack }: { actions: Actions; onBack: ()
 
   const start = () => {
     if (!canClone || !name) return;
-    useShellStore.getState().clearPathRefusal();
-    setFollowing({ after: slot?.id ?? 0, at: Date.now(), path: `${parentPath.replace(/\/+$/, "")}/${name}` });
-    actions.cloneRepository(url.trim(), parentPath, name);
+    const path = `${parentPath.replace(/\/+$/, "")}/${name}`;
+    setFollowing({ after: slot?.id ?? 0, at: Date.now(), path });
+    registration.send("local", path, () => actions.cloneRepository(url.trim(), parentPath, name));
   };
 
   const browse = async () => {
@@ -91,16 +95,10 @@ export function CloneFromUrl({ actions, onBack }: { actions: Actions; onBack: ()
   return (
     <>
       <DialogHeader>
-        <button
-          type="button"
-          disabled={running}
-          onClick={onBack}
-          data-add-project-back="true"
-          className="-ml-xxs flex w-fit items-center gap-xs rounded-sm px-xxs text-body text-subtle-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-(--opacity-disabled) [&_svg]:size-(--size-icon)"
-        >
-          <ArrowLeftIcon aria-hidden="true" />
+        <Button type="button" variant="ghost" size="sm" className="-ml-sm mb-xs self-start" disabled={running} onClick={onBack} data-add-project-back="true">
+          <ArrowLeftIcon />
           Back
-        </button>
+        </Button>
         <DialogTitle>Clone from URL</DialogTitle>
         <DialogDescription>Enter the Git URL and choose where to clone it.</DialogDescription>
       </DialogHeader>
@@ -160,16 +158,16 @@ export function CloneFromUrl({ actions, onBack }: { actions: Actions; onBack: ()
             </p>
           ) : null}
         </div>
-        <CloneProgress clone={clone} following={following !== null} added={added || refused} />
-        {refused ? (
+        <CloneProgress clone={clone} following={following !== null} />
+        {refusal ? (
           <div role="alert" className="flex min-w-0 flex-col gap-xxs" data-clone-refused={hidedRefusal ?? "core"}>
-            <Status tone="error">{hidedRefusal ? refusalText(hidedRefusal) : coreError}</Status>
-            {clone?.phase === "finished" ? (
-              <span className="break-all text-caption text-muted-foreground" data-clone-kept={clone.path}>
-                The repository is at <span className="font-mono">{clone.path}</span>; add it with Browse folder.
-              </span>
-            ) : null}
+            <Status tone="error">{refusal}</Status>
           </div>
+        ) : clone?.phase === "finished" ? (
+          <RegistrationStatus registration={registration} />
+        ) : null}
+        {clone?.phase === "finished" && (refusal || registration.shown) ? (
+          <Note data-clone-kept={clone.path}>The repository was cloned there; add it with Browse folder.</Note>
         ) : null}
         {running && clone ? (
           <Button variant="secondary" size="lg" disabled={clone.phase === "cancelling"} onClick={() => actions.cancelRepositoryClone(clone.id)} data-clone-cancel="true">
@@ -186,7 +184,7 @@ export function CloneFromUrl({ actions, onBack }: { actions: Actions; onBack: ()
 }
 
 /** What the followed clone is doing, in the smallest form each state needs. */
-function CloneProgress({ clone, following, added }: { clone: RepositoryClone | null; following: boolean; added: boolean }) {
+function CloneProgress({ clone, following }: { clone: RepositoryClone | null; following: boolean }) {
   if (!following) return null;
   if (clone === null) {
     return (
@@ -232,9 +230,6 @@ function CloneProgress({ clone, following, added }: { clone: RepositoryClone | n
       </Note>
     );
   }
-  return added ? null : (
-    <Status tone="pending" data-clone-phase="finished">
-      Adding {name}…
-    </Status>
-  );
+  // Finished: the registration it hands over says `Adding <folder>…` itself.
+  return null;
 }

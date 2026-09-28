@@ -7,12 +7,15 @@
 // Everything that moves a page goes through one sync: the front Workspace's
 // browser displays, each with the rect its slot occupies now or null. A
 // shell overlay (the palette, a menu, a dialog, a popover, the Recent Panels
-// or Recent Projects list, a tab drag) that meets a page's rect cannot draw over a native view, so the page is
-// captured, its still is drawn in its place, and the page is hidden until
-// the overlay is gone.
+// or Recent Projects list) that meets a page's rect cannot draw over a
+// native view, so the page is captured, its still is drawn in its place, and
+// the page is hidden until the overlay is gone. A shell drag (`shellDrag.ts`)
+// does the same to every page while it runs, so its guide or preview draws
+// over them and its drop lands in the shell, never in a page.
 
 import { create } from "zustand";
 import { browserBridge, type BrowserBridge, type BrowserHostEvent, type BrowserPageState, type BrowserPlacement, type BrowserRect, type BrowserSync } from "./host";
+import { SHELL_DRAG_ATTRIBUTES, shellDragging } from "./shellDrag";
 import type { ViewLayoutSnapshot } from "./snapshot";
 import { areasOf, workspaceKey, type ViewWorkspace } from "./viewLayout";
 
@@ -128,8 +131,6 @@ const OVERLAY_SELECTOR = [
   '[role="dialog"]',
   '[role="alertdialog"]',
   '[data-slot$="-overlay"]',
-  "[data-area-drop]",
-  "[data-area-drag-tab]",
 ].join(",");
 
 function overlayRects(): BrowserRect[] {
@@ -196,10 +197,10 @@ class BrowserSyncLoop {
   private watch(): void {
     if (this.watching) return;
     this.watching = true;
-    // Radix layers and the Recent cycle mount as children of the body; a tab
-    // drag marks the root.
+    // Radix layers and the Recent cycle mount as children of the body; a
+    // shell drag marks the root.
     new MutationObserver(() => this.schedule()).observe(document.body, { childList: true });
-    new MutationObserver(() => this.schedule()).observe(document.documentElement, { attributes: true, attributeFilter: ["data-view-drag", "data-agent-drag"] });
+    new MutationObserver(() => this.schedule()).observe(document.documentElement, { attributes: true, attributeFilter: [...SHELL_DRAG_ATTRIBUTES] });
     window.addEventListener("resize", () => this.schedule());
   }
 
@@ -207,6 +208,7 @@ class BrowserSyncLoop {
     const front = this.front;
     const pages = useBrowserStore.getState().pages;
     const overlays = this.slots.size > 0 ? overlayRects() : [];
+    const dragging = this.slots.size > 0 && shellDragging();
     const rects = new Map<string, BrowserRect>();
     const hidden = new Set<string>();
     for (const row of front?.rows ?? []) {
@@ -217,7 +219,7 @@ class BrowserSyncLoop {
       const rect = { x: box.left, y: box.top, width: box.width, height: box.height };
       rects.set(row.id, rect);
       if (front && pages[hostKey(front.workspace, row.id)]?.failure) hidden.add(row.id);
-      const covered = overlays.some((overlay) => intersects(overlay, rect));
+      const covered = dragging || overlays.some((overlay) => intersects(overlay, rect));
       this.follow(row.id, covered, hidden.has(row.id));
       if (this.freezes.get(row.id) === "frozen") hidden.add(row.id);
     }

@@ -6,6 +6,7 @@ import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { RemotePaneCanvas } from "./PaneGrid";
 import { remoteView } from "./remote";
+import { holdShellDrag } from "./shellDrag";
 import { canRetryDevice, deviceLine } from "./settings";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, type Checkout } from "./snapshot";
 import { useShellStore } from "./store";
@@ -312,7 +313,10 @@ function SidePanel({ view, frame, tool, placement, body, sizes, actions }: { vie
     target.setPointerCapture(event.pointerId);
     const shareOf = (next: PointerEvent) => panelShareAt(next.clientX - left, total, need, sizes.areaMin);
     const move = (next: PointerEvent) => setGuide(total - panelWidth(shareOf(next), total, need, sizes.areaMin));
+    // The drag marks the root, so a page the guide crosses gives way to its still.
+    const release = holdShellDrag("col-resize");
     const end = () => {
+      release();
       target.removeEventListener("pointermove", move);
       target.removeEventListener("pointerup", up);
       target.removeEventListener("pointercancel", end);
