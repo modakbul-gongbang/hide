@@ -22,21 +22,7 @@ async function enterPage(app: ElectronApplication, page: Page) {
     });
     return counted.pageFocus ?? 0;
   });
-  await expect.poll(() => app.evaluate(({ app: electron, BrowserWindow }, title) => {
-    const window = BrowserWindow.getAllWindows()[0]!;
-    const view = window.contentView.children.find((child) =>
-      (child as { webContents?: Electron.WebContents }).webContents?.getTitle() === title);
-    if (!view) return false;
-    // A page holds the keyboard only in the key window; where the machine
-    // grants it, the menu command below also takes the host's hand-back path.
-    // A click in the shell DOM does not move the contents' focus, so the shell
-    // takes it first and the page reports entering again.
-    electron.focus({ steal: true });
-    window.focus();
-    window.webContents.focus();
-    (view as unknown as { webContents: Electron.WebContents }).webContents.focus();
-    return true;
-  }, TITLE)).toBe(true);
+  await expect.poll(() => focusPageTakingAppFocus(app)).toBe(true);
   await expect.poll(() => page.evaluate(() => (window as unknown as Counted).pageFocus ?? 0), { message: "the shell hears the page take the keyboard" }).toBeGreaterThan(before);
 }
 
@@ -55,6 +41,27 @@ async function handBack(page: Page) {
   expect(inPane).toBe(true);
 }
 
+/**
+ * TAKES THE APP'S FOCUS: a page holds the keyboard only in the key window, so
+ * this steals it for the app where the machine grants that, and the menu
+ * command then takes the host's real hand-back path. A click in the shell DOM
+ * does not move the contents' focus, so the shell takes it first and the page
+ * reports entering again. False until the page has loaded.
+ */
+function focusPageTakingAppFocus(app: ElectronApplication): Promise<boolean> {
+  return app.evaluate(({ app: electron, BrowserWindow }, title) => {
+    const window = BrowserWindow.getAllWindows()[0]!;
+    const view = window.contentView.children.find((child) =>
+      (child as { webContents?: Electron.WebContents }).webContents?.getTitle() === title);
+    if (!view) return false;
+    electron.focus({ steal: true });
+    window.focus();
+    window.webContents.focus();
+    (view as unknown as { webContents: Electron.WebContents }).webContents.focus();
+    return true;
+  }, TITLE);
+}
+
 const menuClick = (app: ElectronApplication, id: string) =>
   app.evaluate(({ Menu }, command) => Menu.getApplicationMenu()!.getMenuItemById(command)!.click(), id);
 
@@ -67,20 +74,34 @@ test("Command T and Command W from a native page act on its View area, and after
     const launched = await launch(run.env, { switches: ["--disable-backgrounding-occluded-windows"] });
     app = launched.app;
     const page = launched.page;
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1600, 1000));
+    // A CI runner's screen is 1024 points wide. At that width the side panel
+    // covers the agents while the sidebar shows, so the sidebar goes and the
+    // panel floats over the agents' right part, leaving each terminal's left
+    // edge to click.
+    const size = { width: 1024, height: 700 };
+    const bounds = await app.evaluate(({ BrowserWindow, screen }, wanted) => {
+      const area = screen.getPrimaryDisplay().workArea;
+      const window = BrowserWindow.getAllWindows()[0]!;
+      window.setBounds({ x: area.x, y: area.y, ...wanted });
+      return window.getBounds();
+    }, size);
+    expect(bounds, "the screen cannot hold the window this run needs").toMatchObject(size);
     await enterWorkspace(page);
+    await menuClick(app, "toggle_left_sidebar");
+    await expect(page.locator("[data-sidebar]")).toHaveCount(0);
     const agentTabs = page.locator('[data-agent-tab-bar] [role="tab"]');
     const viewTabs = page.locator('[data-view-tab-bar] [role="tab"]');
     const panes = page.locator("[data-pane-view]");
-    const terminal = page.locator(`[data-terminal-host="${herdr.panes[0]}"]`);
+    const terminal = (pane: string) => page.locator(`[data-terminal-host="${pane}"]`).click({ position: { x: 20, y: 20 } });
     await expect(agentTabs).toHaveCount(1);
     await showExplorer(page);
     await page.locator('[data-explorer-row$="/page.html"]').click({ button: "right" });
     await page.locator('[data-explorer-menu] [data-menu-item="open-browser"]').click();
     await expect(page.locator("[data-browser-slot]")).toBeVisible();
+    await expect(page.locator("[data-workspace-body]")).toHaveAttribute("data-workspace-body", "wide");
 
     // Command T: the page's area gets the View strip's New tab.
-    await terminal.click();
+    await terminal(herdr.panes[0]);
     await enterPage(app, page);
     await handBack(page);
     await menuClick(app, "new_tab");
@@ -92,7 +113,7 @@ test("Command T and Command W from a native page act on its View area, and after
     // Command W: the page's display closes and every pane stays.
     await viewTabs.filter({ hasText: TITLE }).click();
     await expect(page.locator("[data-browser-slot]")).toBeVisible();
-    await terminal.click();
+    await terminal(herdr.panes[0]);
     await enterPage(app, page);
     await handBack(page);
     await menuClick(app, "close_tab");
@@ -100,27 +121,23 @@ test("Command T and Command W from a native page act on its View area, and after
     await expect(viewTabs.filter({ hasText: TITLE })).toHaveCount(0);
     await expect(panes).toHaveCount(2);
 
-    // Any other command from the page hands the keyboard to the terminal for
+    // Any other command from the page (Command E here) hands the keyboard to the terminal for
     // good once it has run, so the next Command W closes that pane, not the page.
     await page.locator('[data-explorer-row$="/page.html"]').click({ button: "right" });
     await page.locator('[data-explorer-menu] [data-menu-item="open-browser"]').click();
     await expect(viewTabs.filter({ hasText: TITLE })).toHaveCount(1);
-    await terminal.click();
+    await terminal(herdr.panes[0]);
     await enterPage(app, page);
     await handBack(page);
-    const sidebar = await page.locator("[data-sidebar]").count();
-    await menuClick(app, "toggle_left_sidebar");
-    await expect(page.locator("[data-sidebar]")).toHaveCount(sidebar === 0 ? 1 : 0);
+    await menuClick(app, "toggle_explorer");
+    await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     await menuClick(app, "close_tab");
-    const confirm = page.getByRole("button", { name: "Stop work and close" });
-    await expect(page.locator(`[data-pane-view="${herdr.panes[0]}"]`).or(confirm).first()).toBeVisible();
-    if (await confirm.isVisible()) await confirm.click();
     await expect(page.locator(`[data-pane-view="${herdr.panes[0]}"]`)).toHaveCount(0, { timeout: 15_000 });
     await expect(panes).toHaveCount(1);
     await expect(viewTabs.filter({ hasText: TITLE })).toHaveCount(1);
 
     // A click back into a terminal is the operator's move: Command T is an agent tab again.
-    await page.locator(`[data-terminal-host="${herdr.panes[1]}"]`).click({ position: { x: 20, y: 20 } });
+    await terminal(herdr.panes[1]);
     await menuClick(app, "new_tab");
     await expect(agentTabs).toHaveCount(2);
   } finally {
