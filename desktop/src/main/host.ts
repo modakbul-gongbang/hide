@@ -34,6 +34,7 @@ import {
 import type { DesktopEnv } from "./env";
 import { readJsonFile, writeJsonFile } from "./jsonFile";
 import { bundledHcoord, hcoordEnvironment, installHcoordShim, parseHcoordEnsure } from "./hcoord";
+import { chooseHerdr, type HerdrChoice } from "./herdr";
 import { loadFailureFields, type HostLog } from "./log";
 import { ChildRunner, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
@@ -214,7 +215,8 @@ export class DesktopHost {
     const attempt = ++this.attempts;
     this.stopWatch();
     this.setState({ kind: "connecting" });
-    this.log.event("discovery.start", { attempt, trigger, herdr: this.bundledHerdr() ? "bundled" : "inherited" });
+    const herdr = this.herdr();
+    this.log.event("discovery.start", { attempt, trigger, herdr: herdr.source, replaced_pane_herdr: herdr.replacedPaneValue ?? undefined });
     const cli = await this.findCli(attempt);
     if (!cli) return this.fail(attempt, "cli_missing", "no executable hide CLI");
     const answer = parseConnect(await this.runCli(cli.path, ["connect"], CONNECT_TIMEOUT_MS));
@@ -283,18 +285,13 @@ export class DesktopHost {
     return app.isPackaged ? process.resourcesPath : null;
   }
 
-  /**
-   * The Herdr a daemon started from here attaches pane terminals with: the
-   * bundled binary, unless the environment already names one (an isolated
-   * e2e, a development server), which is passed through unchanged (D-07).
-   */
-  private bundledHerdr(): string | null {
-    const dir = this.bundledDir();
-    return dir && this.env.herdrBinPath === null ? path.join(dir, "herdr") : null;
+  /** The Herdr a daemon started from here attaches pane terminals with; `herdr.ts` owns the rule. */
+  private herdr(): HerdrChoice {
+    return chooseHerdr({ bundledDir: this.bundledDir(), herdrBinPath: this.env.herdrBinPath, herdrPaneId: this.env.herdrPaneId });
   }
 
   private childEnvironment(): Record<string, string | undefined> {
-    const herdr = this.bundledHerdr();
+    const herdr = this.herdr().path;
     // Finder supplies only launchd's system PATH. The CLI and any daemon it
     // starts need the same standard user install dirs we search for `hide`.
     const inheritedPath = this.env.path || "/usr/bin:/bin:/usr/sbin:/sbin";
