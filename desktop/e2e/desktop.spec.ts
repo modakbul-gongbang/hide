@@ -9,7 +9,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import "../../web/src/host";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
-import { BACKGROUND_SWITCHES, detachedApp, DESKTOP_DIR, HIDE_CLI, hostLog, isolate, launch, relaunch, screenshot, type Isolated } from "./fixture";
+import { detachedApp, DESKTOP_DIR, HIDE_CLI, hostLog, isolate, launch, relaunch, screenshot, type Isolated } from "./fixture";
 
 let herdr: HerdrFixture;
 let run: Isolated;
@@ -116,7 +116,7 @@ test("links: external links open in the default browser and the window stays on 
   expect(await page.evaluate(() => [location.origin, !!document.querySelector("[data-main-screen], [data-workspace-screen]")])).toEqual([origin, true]);
 });
 
-test("lifetime: a second launch focuses the first, closing the window keeps the app, and quitting leaves hided for the next launch", async () => {
+test("lifetime: a second launch brings the first back, closing the window keeps the app, and quitting leaves hided for the next launch", async () => {
   ({ app } = await launch(run.env));
   let page = await app.firstWindow();
   await shellShown(page);
@@ -128,9 +128,9 @@ test("lifetime: a second launch focuses the first, closing the window keeps the 
   expect(await keyWindow()).toBe(false);
 
   // B6: a second launch on the same profile exits and the first comes forward
-  // (under e2e, shown again without taking the keyboard).
+  // (under e2e, shown again without taking the keyboard; the first instance's switch decides that).
   const electronBinary = fs.readFileSync(path.join(DESKTOP_DIR, "node_modules", "electron", "path.txt"), "utf8");
-  const second = spawn(path.join(DESKTOP_DIR, "node_modules", "electron", "dist", electronBinary), [DESKTOP_DIR, ...BACKGROUND_SWITCHES], { env: run.env, stdio: "ignore" });
+  const second = spawn(path.join(DESKTOP_DIR, "node_modules", "electron", "dist", electronBinary), [DESKTOP_DIR], { env: run.env, stdio: "ignore" });
   const code = await new Promise<number | null>((resolve) => second.once("exit", resolve));
   expect(code).toBe(0);
   await expect.poll(() => hostLog(run.env).some((line) => line.event === "host.reopen" && line.trigger === "second-instance")).toBe(true);

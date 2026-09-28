@@ -4,9 +4,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace, showExplorer } from "../../web/e2e/wire";
-import { isolate, launch } from "./fixture";
+import { isolate, launch, NEEDS_FOCUS } from "./fixture";
 
-test("Command W closes the keyboard's display or pane, never its tab", async () => {
+test("Command W closes the keyboard's display or pane, never its tab", { tag: NEEDS_FOCUS }, async () => {
   const herdr = await startHerdr();
   const run = isolate(herdr, "close-policy");
   let app: ElectronApplication | null = null;
@@ -48,12 +48,17 @@ test("Command W closes the keyboard's display or pane, never its tab", async () 
     await page.locator('[data-explorer-row$="/page.html"]').click({ button: "right" });
     await page.locator('[data-explorer-menu] [data-menu-item="open-browser"]').click();
     await expect(page.locator("[data-browser-slot]")).toBeVisible();
-    await expect.poll(() => app!.evaluate(({ BrowserWindow }) => {
-      const view = BrowserWindow.getAllWindows()[0]!.contentView.children.find((child) =>
+    // A page holds the keyboard only in the key window, so this test's window comes to the front.
+    await expect.poll(() => app!.evaluate(({ app: electron, BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0]!;
+      const view = window.contentView.children.find((child) =>
         (child as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Close page");
       if (!view) return false;
-      (view as unknown as { webContents: Electron.WebContents }).webContents.focus();
-      return true;
+      electron.focus({ steal: true });
+      window.focus();
+      const contents = (view as unknown as { webContents: Electron.WebContents }).webContents;
+      contents.focus();
+      return contents.isFocused();
     })).toBe(true);
     // The native application menu uses the same Command W command while a
     // child page owns focus; it must not close the agents behind that page.
