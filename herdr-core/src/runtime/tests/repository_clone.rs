@@ -8,7 +8,13 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 fn git(dir: &Path, args: &[&str]) {
+    // `git commit` starts a detached `git maintenance run --auto`, which can
+    // pack and prune the fixture's loose objects while the next `git clone
+    // --bare` is still copying them ("failed to copy file to ...").
+    // `maintenance.auto=false` stops that run; `gc.auto=0` does the same for a
+    // Git older than 2.29, whose commit ran `gc --auto` itself.
     let status = Command::new("git")
+        .args(["-c", "maintenance.auto=false", "-c", "gc.auto=0"])
         .args(args)
         .current_dir(dir)
         .env("GIT_AUTHOR_NAME", "t")
