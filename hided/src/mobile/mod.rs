@@ -1,0 +1,1162 @@
+//! Mobile: this daemon on the operator's phone (PRD mobile-companion).
+//!
+//! The daemon keeps listening on loopback only; the transport module
+//! (`tailscale.rs`) publishes that port inside the operator's tailnet while
+//! Settings > Mobile is on. A phone pairs with a five-minute code from the QR,
+//! holds a credential of its own, and talks only over `/ws` (`phone.rs`): it
+//! sees the agent list (`projection.rs`), reads and answers one pane
+//! (`pane.rs`), and receives Web Push (`push.rs`). The core knows nothing of
+//! phones; this module reads its snapshot like any other client.
+//!
+//! What the renderer sees is one `mobile` frame, republished on every
+//! change; what it asks is one of the `mobile_*` events.
+
+pub mod pane;
+pub mod phone;
+pub mod phones;
+pub mod projection;
+pub mod push;
+pub mod store;
+pub mod tailscale;
+
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use serde_json::{Value, json};
+use tokio::sync::{Notify, watch};
+
+use crate::core::CoreHandle;
+use phones::{PairRefusal, Phones};
+use projection::{AgentKey, Projection};
+use store::{MobileSettings, Notifications, PhoneRecord, PushMode, PushSubscription, ServeRecord};
+use tailscale::{Checklist, CliSource, CommandFailure, Ownership, StepState};
+
+/// How often the checklist is read again while Settings > Mobile is open.
+const OBSERVE_INTERVAL: Duration = Duration::from_secs(3);
+/// How often the seven-day sweep runs.
+const SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60);
+/// How many input request ids per phone are remembered to refuse a repeat.
+const REMEMBERED_INPUTS: usize = 64;
+
+pub fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// Where the Mac stands with the phone.
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum Exposure {
+    Off,
+    Checking,
+    /// A checklist step fails; the checklist says which.
+    Blocked,
+    /// Someone else serves port 443; hide leaves it alone.
+    Foreign {
+        target: String,
+    },
+    /// A serve command failed.
+    Failed {
+        step: &'static str,
+        message: String,
+    },
+    Exposed {
+        dns_name: String,
+    },
+}
+
+struct Inner {
+    settings: MobileSettings,
+    phones: Phones,
+    exposure: Exposure,
+    checklist: Option<Checklist>,
+    /// Renderer connections with Settings > Mobile open.
+    observers: HashSet<u64>,
+    /// Tags of agents made Seen since each phone's last push (PRD D-21).
+    pending_clear: HashMap<String, BTreeSet<AgentKey>>,
+    /// Input request ids each phone already had written.
+    inputs: HashMap<String, VecDeque<String>>,
+}
+
+/// A phone on a live connection.
+struct LivePhone {
+    phone_id: String,
+    viewing: Option<AgentKey>,
+    close: Arc<Notify>,
+}
+
+/// What every phone loop is told besides the agent list.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct PhoneMeta {
+    pub push_mode: PushMode,
+    pub live_phones: usize,
+}
+
+pub struct Config {
+    pub state_dir: PathBuf,
+    pub port: u16,
+    pub cli: CliSource,
+    pub host_name: Option<String>,
+    pub core: Arc<CoreHandle>,
+    pub herdr_socket: Option<PathBuf>,
+    /// Shell windows (desktop and web) on this daemon: "the app is open".
+    pub renderers: Arc<AtomicUsize>,
+}
+
+pub struct Mobile {
+    config: Config,
+    inner: Mutex<Inner>,
+    /// One reconcile at a time, so a double toggle or two startup passes
+    /// converge on one serve entry.
+    reconcile_lock: tokio::sync::Mutex<()>,
+    origin: RwLock<Option<String>>,
+    frame: watch::Sender<Arc<Value>>,
+    projection: watch::Sender<Arc<Projection>>,
+    meta: watch::Sender<PhoneMeta>,
+    live: Mutex<HashMap<u64, LivePhone>>,
+    vapid: Option<push::Vapid>,
+    wake: Notify,
+    stopping: watch::Sender<bool>,
+}
+
+fn record_transport_failure(failure: &CommandFailure, step: &str) {
+    herdr_core::diagnostic!(json!({
+        "component": "mobile_transport",
+        "kind": "serve.failed",
+        "step": step,
+        "command": failure.command,
+        "exit_code": failure.exit_code,
+        "stderr": failure.stderr.chars().take(2000).collect::<String>(),
+    }));
+}
+
+impl Mobile {
+    pub fn start(config: Config) -> Arc<Self> {
+        let mut settings: MobileSettings = store::read(&store::settings_path(&config.state_dir));
+        let vapid = match settings
+            .vapid_pkcs8
+            .as_deref()
+            .and_then(|stored| URL_SAFE_NO_PAD.decode(stored).ok())
+            .map(|bytes| push::Vapid::from_pkcs8(&bytes))
+        {
+            Some(Ok(vapid)) => Some(vapid),
+            _ => match push::Vapid::generate() {
+                Ok((vapid, pkcs8)) => {
+                    settings.vapid_pkcs8 = Some(URL_SAFE_NO_PAD.encode(pkcs8));
+                    store::write_logged(&store::settings_path(&config.state_dir), &settings);
+                    Some(vapid)
+                }
+                Err(message) => {
+                    herdr_core::diagnostic!(json!({
+                        "component": "mobile_push", "kind": "vapid.unavailable", "message": message,
+                    }));
+                    None
+                }
+            },
+        };
+        let phones = Phones::load(store::phones_path(&config.state_dir));
+        let exposure = if settings.enabled {
+            Exposure::Checking
+        } else {
+            Exposure::Off
+        };
+        let push_mode = settings.push_mode;
+        let mobile = Arc::new(Self {
+            inner: Mutex::new(Inner {
+                settings,
+                phones,
+                exposure,
+                checklist: None,
+                observers: HashSet::new(),
+                pending_clear: HashMap::new(),
+                inputs: HashMap::new(),
+            }),
+            config,
+            reconcile_lock: tokio::sync::Mutex::new(()),
+            origin: RwLock::new(None),
+            frame: watch::channel(Arc::new(Value::Null)).0,
+            projection: watch::channel(Arc::new(Projection::default())).0,
+            meta: watch::channel(PhoneMeta {
+                push_mode,
+                live_phones: 0,
+            })
+            .0,
+            live: Mutex::new(HashMap::new()),
+            vapid,
+            wake: Notify::new(),
+            stopping: watch::channel(false).0,
+        });
+        mobile.sweep();
+        mobile.publish();
+        let startup = Arc::clone(&mobile);
+        tokio::spawn(async move { startup.reconcile().await });
+        tokio::spawn(Arc::clone(&mobile).observe_loop());
+        tokio::spawn(Arc::clone(&mobile).sweep_loop());
+        tokio::spawn(Arc::clone(&mobile).follow());
+        mobile
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn live(&self) -> std::sync::MutexGuard<'_, HashMap<u64, LivePhone>> {
+        self.live
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    fn save_settings(&self, inner: &Inner) {
+        store::write_logged(
+            &store::settings_path(&self.config.state_dir),
+            &inner.settings,
+        );
+    }
+
+    /// The mac's name on the phone: its tailnet name, else the system's.
+    pub fn mac_name(&self) -> String {
+        let inner = self.lock();
+        inner
+            .checklist
+            .as_ref()
+            .and_then(|checklist| checklist.host_name.clone())
+            .or_else(|| self.config.host_name.clone())
+            .unwrap_or_else(|| "Mac".to_owned())
+    }
+
+    /// Whether a WebSocket Origin is this Mac's tailnet address while it is
+    /// exposed. Only phone handshakes are accepted from it.
+    pub fn origin_allowed(&self, origin: Option<&str>) -> bool {
+        let Some(origin) = origin else {
+            return false;
+        };
+        self.origin
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_deref()
+            == Some(origin)
+    }
+
+    /// Mobile on with a phone paired keeps the daemon from its idle exit (D-10).
+    pub fn keep_alive(&self) -> bool {
+        let inner = self.lock();
+        inner.settings.enabled && !inner.phones.is_empty()
+    }
+
+    fn follower_active(&self) -> bool {
+        self.keep_alive()
+    }
+
+    pub fn subscribe_frame(&self) -> watch::Receiver<Arc<Value>> {
+        self.frame.subscribe()
+    }
+
+    pub fn subscribe_projection(&self) -> watch::Receiver<Arc<Projection>> {
+        self.projection.subscribe()
+    }
+
+    pub fn subscribe_meta(&self) -> watch::Receiver<PhoneMeta> {
+        self.meta.subscribe()
+    }
+
+    pub fn vapid_public_key(&self) -> Option<String> {
+        self.vapid.as_ref().map(push::Vapid::public_key)
+    }
+
+    /// Rebuilds the renderer frame and the phones' meta from current state.
+    fn publish(&self) {
+        let frame = {
+            let inner = self.lock();
+            self.frame_value(&inner)
+        };
+        self.frame.send_replace(Arc::new(frame));
+        let push_mode = self.lock().settings.push_mode;
+        let live_phones = {
+            let live = self.live();
+            live.values()
+                .map(|phone| phone.phone_id.clone())
+                .collect::<HashSet<_>>()
+                .len()
+        };
+        self.meta.send_if_modified(|meta| {
+            let next = PhoneMeta {
+                push_mode,
+                live_phones,
+            };
+            if *meta == next {
+                false
+            } else {
+                *meta = next;
+                true
+            }
+        });
+    }
+
+    fn frame_value(&self, inner: &Inner) -> Value {
+        let step = |state: StepState| match state {
+            StepState::Ok => "ok",
+            StepState::Failed => "failed",
+            StepState::Waiting => "waiting",
+        };
+        let checklist = inner.checklist.as_ref().map(|checklist| {
+            json!({
+                "installed": step(checklist.installed),
+                "logged_in": step(checklist.logged_in),
+                "https": step(checklist.https),
+                "host_name": checklist.host_name,
+            })
+        });
+        let (exposure, foreign, failure, dns) = match &inner.exposure {
+            Exposure::Off => ("off", None, None, None),
+            Exposure::Checking => ("checking", None, None, None),
+            Exposure::Blocked => ("blocked", None, None, None),
+            Exposure::Foreign { target } => ("foreign", Some(target.clone()), None, None),
+            Exposure::Failed { step, message } => (
+                "failed",
+                None,
+                Some(json!({"step": step, "message": message})),
+                None,
+            ),
+            Exposure::Exposed { dns_name } => ("exposed", None, None, Some(dns_name.clone())),
+        };
+        let code = dns.as_ref().and(inner.phones.code());
+        let qr = match (&dns, code) {
+            (Some(dns), Some((code, _))) => {
+                let endpoint = format!("https://{dns}");
+                let pair = URL_SAFE_NO_PAD
+                    .encode(json!({"v": 1, "endpoint": endpoint, "code": code}).to_string());
+                Some(format!("{endpoint}/m/#pair={pair}"))
+            }
+            _ => None,
+        };
+        let live: HashSet<String> = self
+            .live()
+            .values()
+            .map(|phone| phone.phone_id.clone())
+            .collect();
+        let phones: Vec<Value> = inner
+            .phones
+            .list()
+            .iter()
+            .map(|phone| {
+                json!({
+                    "id": phone.id,
+                    "name": phone.name,
+                    "last_seen_ms": phone.last_seen_ms,
+                    "connected": live.contains(&phone.id),
+                    "notifications": match (phone.notifications, phone.push.is_some()) {
+                        (_, true) => "on",
+                        (Notifications::Off, false) => "off",
+                        _ => "unasked",
+                    },
+                    "revoke_at_ms": phone.last_seen_ms + phones::INACTIVE_REVOKE_MS,
+                })
+            })
+            .collect();
+        json!({
+            "enabled": inner.settings.enabled,
+            "exposure": exposure,
+            "checklist": checklist,
+            "download_url": tailscale::DOWNLOAD_URL,
+            "admin_url": tailscale::ADMIN_DNS_URL,
+            "foreign_target": foreign,
+            "failure": failure,
+            "url": dns.as_ref().map(|dns| format!("https://{dns}")),
+            "qr": qr,
+            "code_expires_at_ms": code.map(|(_, expires)| expires),
+            "phones": phones,
+            "max_phones": phones::MAX_PHONES,
+            "push_mode": inner.settings.push_mode.as_str(),
+            "now_ms": now_ms(),
+        })
+    }
+
+    fn set_origin(&self, dns_name: Option<&str>) {
+        *self
+            .origin
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            dns_name.map(|dns| format!("https://{dns}"));
+    }
+
+    /// Brings the serve entry in line with the switch (PRD D-06, D-07):
+    /// on, the Mac's three checks pass and port 443 holds hide's own entry
+    /// for this port; off, hide's recorded entry is gone. Runs one at a time.
+    pub async fn reconcile(&self) {
+        let _running = self.reconcile_lock.lock().await;
+        let (enabled, record) = {
+            let inner = self.lock();
+            (inner.settings.enabled, inner.settings.serve.clone())
+        };
+        let program = self.config.cli.resolve();
+        if !enabled {
+            self.set_origin(None);
+            self.close_phones("mobile_off");
+            if let (Some(record), Some(program)) = (record, program.as_deref()) {
+                self.remove_recorded(program, &record).await;
+            }
+            let mut inner = self.lock();
+            if !inner.settings.enabled {
+                inner.exposure = Exposure::Off;
+                inner.phones.clear_code();
+            }
+            drop(inner);
+            self.publish();
+            return;
+        }
+        let Some(program) = program else {
+            self.settle(Exposure::Blocked, Some(Checklist::not_installed()));
+            return;
+        };
+        let status = match tailscale::status(&program).await {
+            Ok(status) => status,
+            Err(failure) => {
+                record_transport_failure(&failure, "status");
+                // A CLI that cannot answer reads as not logged in: the
+                // Tailscale app is not running or not signed in.
+                self.settle(
+                    Exposure::Blocked,
+                    Some(Checklist::from_status(&tailscale::Status::default())),
+                );
+                return;
+            }
+        };
+        let checklist = Checklist::from_status(&status);
+        let Some(dns_name) = checklist.dns_name.clone().filter(|_| checklist.passed()) else {
+            self.set_origin(None);
+            self.settle(Exposure::Blocked, Some(checklist));
+            return;
+        };
+        let port = self.config.port;
+        let exposure = match self
+            .expose(&program, &dns_name, record.as_ref(), port)
+            .await
+        {
+            Ok(()) => Exposure::Exposed {
+                dns_name: dns_name.clone(),
+            },
+            Err(exposure) => exposure,
+        };
+        let exposed = matches!(exposure, Exposure::Exposed { .. });
+        self.set_origin(exposed.then_some(dns_name.as_str()));
+        {
+            let mut inner = self.lock();
+            if exposed
+                && inner
+                    .phones
+                    .code()
+                    .is_none_or(|(_, expires)| expires <= now_ms())
+            {
+                inner.phones.new_code(now_ms());
+            }
+        }
+        self.settle(exposure, Some(checklist));
+    }
+
+    fn settle(&self, exposure: Exposure, checklist: Option<Checklist>) {
+        {
+            let mut inner = self.lock();
+            if !inner.settings.enabled {
+                return;
+            }
+            if !matches!(exposure, Exposure::Exposed { .. }) {
+                inner.phones.clear_code();
+            }
+            inner.exposure = exposure;
+            inner.checklist = checklist;
+        }
+        self.publish();
+        self.wake.notify_one();
+    }
+
+    fn set_record(&self, record: Option<ServeRecord>) {
+        let mut inner = self.lock();
+        inner.settings.serve = record;
+        self.save_settings(&inner);
+    }
+
+    async fn remove_recorded(&self, program: &std::path::Path, record: &ServeRecord) {
+        let serve = match tailscale::serve_status(program).await {
+            Ok(serve) => serve,
+            Err(failure) => {
+                record_transport_failure(&failure, "check");
+                return;
+            }
+        };
+        match tailscale::ownership(&serve, &record.dns_name, Some(record)) {
+            Ok(Ownership::Ours { .. }) | Ok(Ownership::Foreign { ours_too: true, .. }) => {
+                match tailscale::serve_remove(program).await {
+                    Ok(()) => {
+                        herdr_core::diagnostic!(json!({
+                            "component": "mobile_transport", "kind": "serve.removed",
+                            "dns_name": record.dns_name, "port": record.port,
+                        }));
+                        self.set_record(None);
+                    }
+                    Err(failure) => record_transport_failure(&failure, "remove"),
+                }
+            }
+            // Gone already, or someone else's now: nothing of hide's is left.
+            Ok(_) => self.set_record(None),
+            Err(message) => herdr_core::diagnostic!(json!({
+                "component": "mobile_transport", "kind": "serve.unreadable", "message": message,
+            })),
+        }
+    }
+
+    /// Adds, keeps or replaces hide's entry, then confirms it with a fresh
+    /// `serve status` read before the QR may show.
+    async fn expose(
+        &self,
+        program: &std::path::Path,
+        dns_name: &str,
+        record: Option<&ServeRecord>,
+        port: u16,
+    ) -> Result<(), Exposure> {
+        let failed = |step: &'static str, failure: &CommandFailure| {
+            record_transport_failure(failure, step);
+            Exposure::Failed {
+                step,
+                message: failure.message(),
+            }
+        };
+        let serve = tailscale::serve_status(program)
+            .await
+            .map_err(|failure| failed("check", &failure))?;
+        let owned =
+            tailscale::ownership(&serve, dns_name, record).map_err(|message| Exposure::Failed {
+                step: "check",
+                message,
+            })?;
+        match owned {
+            Ownership::Foreign { target, ours_too } => {
+                if ours_too {
+                    match tailscale::serve_remove(program).await {
+                        Ok(()) => self.set_record(None),
+                        Err(failure) => record_transport_failure(&failure, "remove"),
+                    }
+                }
+                herdr_core::diagnostic!(json!({
+                    "component": "mobile_transport", "kind": "serve.foreign", "target": target,
+                }));
+                return Err(Exposure::Foreign { target });
+            }
+            Ownership::Ours { port: current } if current == port => {}
+            Ownership::Ours { .. } => {
+                tailscale::serve_remove(program)
+                    .await
+                    .map_err(|failure| failed("remove", &failure))?;
+                self.set_record(None);
+                self.add(program, dns_name, port)
+                    .await
+                    .map_err(|failure| failed("add", &failure))?;
+            }
+            Ownership::Free => {
+                self.add(program, dns_name, port)
+                    .await
+                    .map_err(|failure| failed("add", &failure))?;
+            }
+        }
+        let record = ServeRecord {
+            dns_name: dns_name.to_owned(),
+            port,
+            added_at: now_ms() / 1000,
+        };
+        let confirmed = tailscale::serve_status(program)
+            .await
+            .map_err(|failure| failed("check", &failure))?;
+        match tailscale::ownership(&confirmed, dns_name, Some(&record)) {
+            Ok(Ownership::Ours { port: current }) if current == port => Ok(()),
+            Ok(other) => {
+                let failure = CommandFailure {
+                    command: "tailscale serve status --json".to_owned(),
+                    stderr: format!("hide's entry is not there after adding it ({other:?})"),
+                    exit_code: Some(0),
+                };
+                Err(failed("check", &failure))
+            }
+            Err(message) => Err(Exposure::Failed {
+                step: "check",
+                message,
+            }),
+        }
+    }
+
+    async fn add(
+        &self,
+        program: &std::path::Path,
+        dns_name: &str,
+        port: u16,
+    ) -> Result<(), CommandFailure> {
+        tailscale::serve_add(program, port).await?;
+        herdr_core::diagnostic!(json!({
+            "component": "mobile_transport", "kind": "serve.added", "dns_name": dns_name, "port": port,
+        }));
+        self.set_record(Some(ServeRecord {
+            dns_name: dns_name.to_owned(),
+            port,
+            added_at: now_ms() / 1000,
+        }));
+        Ok(())
+    }
+
+    /// Removes hide's serve entry as the daemon stops (a graceful exit);
+    /// a crash leaves it to the next start's reconcile.
+    pub async fn shutdown(&self) {
+        self.stopping.send_replace(true);
+        let record = self.lock().settings.serve.clone();
+        let (Some(record), Some(program)) = (record, self.config.cli.resolve()) else {
+            return;
+        };
+        let _running = self.reconcile_lock.lock().await;
+        self.remove_recorded(&program, &record).await;
+    }
+
+    async fn observe_loop(self: Arc<Self>) {
+        let mut stopping = self.stopping.subscribe();
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(OBSERVE_INTERVAL) => {}
+                _ = stopping.changed() => return,
+            }
+            let observed = {
+                let inner = self.lock();
+                inner.settings.enabled && !inner.observers.is_empty()
+            };
+            if observed {
+                self.reconcile().await;
+            }
+        }
+    }
+
+    async fn sweep_loop(self: Arc<Self>) {
+        let mut stopping = self.stopping.subscribe();
+        loop {
+            tokio::select! {
+                _ = tokio::time::sleep(SWEEP_INTERVAL) => {}
+                _ = stopping.changed() => return,
+            }
+            self.sweep();
+        }
+    }
+
+    /// Revokes every phone unseen for seven days (PRD D-04).
+    fn sweep(&self) {
+        let connected: Vec<String> = self
+            .live()
+            .values()
+            .map(|phone| phone.phone_id.clone())
+            .collect();
+        let revoked = self.lock().phones.sweep(now_ms(), &connected);
+        for phone in &revoked {
+            herdr_core::diagnostic!(json!({
+                "component": "mobile_phone", "kind": "phone.revoked", "phone_id": phone.id,
+                "reason": "inactive_7_days", "had_subscription": phone.push.is_some(),
+            }));
+        }
+        if !revoked.is_empty() {
+            self.publish();
+        }
+    }
+
+    /// Handles one `mobile_*` event from a renderer.
+    pub fn handle_event(self: &Arc<Self>, connection: u64, event: &Value) -> Result<(), String> {
+        let kind = event.get("kind").and_then(Value::as_str).unwrap_or("");
+        let payload = event.get("payload").cloned().unwrap_or(Value::Null);
+        match kind {
+            "mobile_enable" => {
+                let enabled = payload
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .ok_or("mobile_enable.enabled must be a boolean")?;
+                {
+                    let mut inner = self.lock();
+                    if inner.settings.enabled != enabled {
+                        inner.settings.enabled = enabled;
+                        inner.exposure = if enabled {
+                            Exposure::Checking
+                        } else {
+                            Exposure::Off
+                        };
+                        self.save_settings(&inner);
+                    }
+                }
+                herdr_core::diagnostic!(json!({
+                    "component": "mobile_transport", "kind": "mobile.switched", "enabled": enabled,
+                }));
+                self.publish();
+                let mobile = Arc::clone(self);
+                tokio::spawn(async move { mobile.reconcile().await });
+            }
+            "mobile_observe" => {
+                let observing = payload
+                    .get("observing")
+                    .and_then(Value::as_bool)
+                    .ok_or("mobile_observe.observing must be a boolean")?;
+                let reread = {
+                    let mut inner = self.lock();
+                    if observing {
+                        inner.observers.insert(connection);
+                        // Opening Settings > Mobile again shows a new code (B10).
+                        if matches!(inner.exposure, Exposure::Exposed { .. }) {
+                            inner.phones.new_code(now_ms());
+                        }
+                        inner.settings.enabled
+                    } else {
+                        inner.observers.remove(&connection);
+                        false
+                    }
+                };
+                self.publish();
+                if reread {
+                    let mobile = Arc::clone(self);
+                    tokio::spawn(async move { mobile.reconcile().await });
+                }
+            }
+            "mobile_new_code" => {
+                {
+                    let mut inner = self.lock();
+                    if !matches!(inner.exposure, Exposure::Exposed { .. }) {
+                        return Err("a pairing code needs Mobile exposed".to_owned());
+                    }
+                    inner.phones.new_code(now_ms());
+                }
+                self.publish();
+            }
+            "mobile_revoke" => {
+                let id = payload
+                    .get("phone_id")
+                    .and_then(Value::as_str)
+                    .ok_or("mobile_revoke.phone_id must be a string")?;
+                self.revoke(id, "revoked_in_settings");
+            }
+            "mobile_push_mode" => {
+                let mode = payload
+                    .get("mode")
+                    .and_then(Value::as_str)
+                    .and_then(PushMode::parse)
+                    .ok_or("mobile_push_mode.mode must be off, app_closed or always")?;
+                {
+                    let mut inner = self.lock();
+                    inner.settings.push_mode = mode;
+                    self.save_settings(&inner);
+                }
+                self.publish();
+            }
+            other => return Err(format!("unknown mobile event {other}")),
+        }
+        Ok(())
+    }
+
+    /// A renderer connection closed: it no longer watches Settings > Mobile.
+    pub fn release(&self, connection: u64) {
+        let removed = self.lock().observers.remove(&connection);
+        if removed {
+            self.publish();
+        }
+    }
+
+    /// Revokes a phone: its credential and push subscription go in one
+    /// write and its live connections close. A second revoke is a no-op.
+    pub fn revoke(&self, phone_id: &str, reason: &str) {
+        let removed = {
+            let mut inner = self.lock();
+            inner.pending_clear.remove(phone_id);
+            inner.inputs.remove(phone_id);
+            inner.phones.revoke(phone_id)
+        };
+        if let Some(phone) = removed {
+            herdr_core::diagnostic!(json!({
+                "component": "mobile_phone", "kind": "phone.revoked", "phone_id": phone.id,
+                "reason": reason, "had_subscription": phone.push.is_some(),
+            }));
+            for live in self
+                .live()
+                .values()
+                .filter(|live| live.phone_id == phone_id)
+            {
+                live.close.notify_one();
+            }
+        }
+        self.publish();
+        self.wake.notify_one();
+    }
+
+    fn close_phones(&self, reason: &str) {
+        let live = self.live();
+        if !live.is_empty() {
+            herdr_core::diagnostic!(json!({
+                "component": "mobile_phone", "kind": "phones.closed", "reason": reason, "count": live.len(),
+            }));
+        }
+        for phone in live.values() {
+            phone.close.notify_one();
+        }
+    }
+
+    /// Pairs a phone with the live code (the phone's `pair` handshake). A
+    /// code exists only while Mobile is exposed.
+    pub fn pair(&self, code: &str, user_agent: &str) -> Result<(PhoneRecord, String), PairRefusal> {
+        let result = self.lock().phones.pair(code, user_agent, now_ms());
+        match &result {
+            Ok((phone, _)) => herdr_core::diagnostic!(json!({
+                "component": "mobile_pairing", "kind": "phone.paired", "phone_id": phone.id, "name": phone.name,
+            })),
+            Err(refusal) => herdr_core::diagnostic!(json!({
+                "component": "mobile_pairing", "kind": "pairing.refused", "reason": refusal.reason(),
+            })),
+        }
+        self.publish();
+        self.wake.notify_one();
+        result
+    }
+
+    /// The phone a credential belongs to. `mobile_off` while the switch is
+    /// off (the phone stays paired); `revoked` for a credential no phone
+    /// holds, which is what a revoked phone's credential is.
+    pub fn authenticate(&self, credential: &str) -> Result<PhoneRecord, &'static str> {
+        let mut inner = self.lock();
+        let phone = inner
+            .phones
+            .authenticate(credential)
+            .cloned()
+            .ok_or("revoked")?;
+        if !inner.settings.enabled {
+            return Err("mobile_off");
+        }
+        inner.phones.touch(&phone.id, now_ms());
+        Ok(phone)
+    }
+
+    pub fn phone(&self, id: &str) -> Option<PhoneRecord> {
+        self.lock().phones.get(id).cloned()
+    }
+
+    pub fn register(&self, connection: u64, phone_id: &str) -> Arc<Notify> {
+        let close = Arc::new(Notify::new());
+        self.live().insert(
+            connection,
+            LivePhone {
+                phone_id: phone_id.to_owned(),
+                viewing: None,
+                close: Arc::clone(&close),
+            },
+        );
+        herdr_core::diagnostic!(json!({
+            "component": "mobile_phone", "kind": "phone.connected", "phone_id": phone_id,
+        }));
+        self.publish();
+        self.wake.notify_one();
+        close
+    }
+
+    pub fn unregister(&self, connection: u64) {
+        let removed = self.live().remove(&connection);
+        if let Some(phone) = removed {
+            self.lock().phones.touch(&phone.phone_id, now_ms());
+            herdr_core::diagnostic!(json!({
+                "component": "mobile_phone", "kind": "phone.disconnected", "phone_id": phone.phone_id,
+            }));
+        }
+        self.publish();
+    }
+
+    pub fn set_viewing(&self, connection: u64, viewing: Option<AgentKey>) {
+        if let Some(phone) = self.live().get_mut(&connection) {
+            phone.viewing = viewing;
+        }
+    }
+
+    /// Whether any phone has this root agent's detail open (no push then).
+    fn viewed(&self, root: &AgentKey, projection: &Projection) -> bool {
+        self.live()
+            .values()
+            .filter_map(|phone| phone.viewing.as_ref())
+            .any(|viewing| {
+                viewing == root
+                    || projection
+                        .find(viewing)
+                        .is_some_and(|agent| &agent.root_key() == root)
+            })
+    }
+
+    /// Records an input request id as written; false when it already was.
+    pub fn remember_input(&self, phone_id: &str, request_id: &str) -> bool {
+        let mut inner = self.lock();
+        let seen = inner.inputs.entry(phone_id.to_owned()).or_default();
+        if seen.iter().any(|id| id == request_id) {
+            return false;
+        }
+        if seen.len() >= REMEMBERED_INPUTS {
+            seen.pop_front();
+        }
+        seen.push_back(request_id.to_owned());
+        true
+    }
+
+    pub fn input_written(&self, phone_id: &str, request_id: &str) -> bool {
+        self.lock()
+            .inputs
+            .get(phone_id)
+            .is_some_and(|seen| seen.iter().any(|id| id == request_id))
+    }
+
+    pub fn set_subscription(&self, phone_id: &str, push: PushSubscription) -> bool {
+        if !push::subscription_valid(&push) {
+            herdr_core::diagnostic!(json!({
+                "component": "mobile_push", "kind": "subscription.refused", "phone_id": phone_id,
+            }));
+            return false;
+        }
+        let changed = self.lock().phones.set_subscription(phone_id, Some(push));
+        if changed {
+            herdr_core::diagnostic!(json!({
+                "component": "mobile_push", "kind": "subscription.stored", "phone_id": phone_id,
+            }));
+            self.publish();
+        }
+        true
+    }
+
+    pub fn set_notifications(&self, phone_id: &str, notifications: Notifications) {
+        if self
+            .lock()
+            .phones
+            .set_notifications(phone_id, notifications)
+        {
+            self.publish();
+        }
+    }
+
+    /// The Herdr connection for a pane on this Mac or a connected device.
+    pub fn herdr_api(
+        &self,
+        device_id: &str,
+    ) -> Result<Arc<dyn hide_herdr_client::ApiConnector>, pane::PaneError> {
+        if device_id == projection::LOCAL_DEVICE {
+            return self
+                .config
+                .herdr_socket
+                .as_ref()
+                .map(|socket| {
+                    Arc::new(hide_herdr_client::UnixSocketConnector::new(socket.clone()))
+                        as Arc<dyn hide_herdr_client::ApiConnector>
+                })
+                .ok_or_else(|| {
+                    pane::PaneError::Unavailable("this Mac has no Herdr socket".to_owned())
+                });
+        }
+        match self.config.core.remote_herdr_api(device_id) {
+            Ok(Some(connector)) => Ok(connector),
+            Ok(None) => Err(pane::PaneError::DeviceUnreachable),
+            Err(message) => Err(pane::PaneError::Unavailable(message)),
+        }
+    }
+
+    /// Follows the core's snapshot while Mobile is on with a phone paired:
+    /// one read per notification burst, the phone projection republished
+    /// only when it changed, and push transitions judged on it.
+    async fn follow(self: Arc<Self>) {
+        let mut changes = self.config.core.notify.subscribe();
+        let mut stopping = self.stopping.subscribe();
+        let mut cursors = (0_u64, 0_u64);
+        let mut rest = Value::Null;
+        let mut transitions = push::Transitions::default();
+        loop {
+            if *stopping.borrow() {
+                return;
+            }
+            if !self.follower_active() {
+                cursors = (0, 0);
+                rest = Value::Null;
+                transitions.reset();
+                self.projection.send_if_modified(|current| {
+                    if current.groups.is_empty() {
+                        false
+                    } else {
+                        *current = Arc::new(Projection::default());
+                        true
+                    }
+                });
+                tokio::select! {
+                    _ = self.wake.notified() => continue,
+                    _ = stopping.changed() => return,
+                }
+            }
+            let core = Arc::clone(&self.config.core);
+            let (have_revision, have_sequence) = cursors;
+            let read =
+                tokio::task::spawn_blocking(move || core.snapshot(have_revision, have_sequence))
+                    .await;
+            let value = match read {
+                Ok(Ok(reply)) if !reply.bytes.is_empty() => {
+                    serde_json::from_slice::<Value>(&reply.bytes).ok()
+                }
+                Ok(Err(_)) => return,
+                _ => None,
+            };
+            if let Some(value) = value {
+                let revision = value.get("revision").and_then(Value::as_u64);
+                let dropped = value
+                    .get("chunks_dropped")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false);
+                let full = crate::server::classify_frame(have_revision, revision, dropped);
+                match full {
+                    None => {
+                        // The daemon's revision went back or the window moved:
+                        // read everything again.
+                        cursors = (0, 0);
+                        continue;
+                    }
+                    Some(kind) => {
+                        if let Some(revision) = revision {
+                            cursors.0 = revision;
+                        }
+                        if let Some(sequence) =
+                            value.get("terminal_sequence").and_then(Value::as_u64)
+                        {
+                            cursors.1 = sequence;
+                        }
+                        let full = matches!(kind, crate::server::FrameKind::Snapshot);
+                        if projection::merge_rest(&mut rest, &value, full) {
+                            let next = projection::project(&rest);
+                            let changed = self.projection.send_if_modified(|current| {
+                                if **current == next {
+                                    false
+                                } else {
+                                    *current = Arc::new(next.clone());
+                                    true
+                                }
+                            });
+                            if changed {
+                                let (notices, seen) = transitions.observe(&next);
+                                self.deliver(notices, seen, &next);
+                            }
+                        }
+                    }
+                }
+            }
+            tokio::select! {
+                changed = changes.recv() => {
+                    if matches!(changed, Err(tokio::sync::broadcast::error::RecvError::Closed)) {
+                        return;
+                    }
+                    while changes.try_recv().is_ok() {}
+                }
+                _ = self.wake.notified() => {}
+                _ = stopping.changed() => return,
+            }
+        }
+    }
+
+    /// Sends each notice to every subscribed phone the mode allows, on a
+    /// blocking thread: a push service's latency never holds the follower.
+    fn deliver(
+        self: &Arc<Self>,
+        notices: Vec<push::Notice>,
+        seen: BTreeSet<AgentKey>,
+        projection: &Projection,
+    ) {
+        let (mode, targets, subject) = {
+            let mut inner = self.lock();
+            let ids: Vec<String> = inner
+                .phones
+                .list()
+                .iter()
+                .map(|phone| phone.id.clone())
+                .collect();
+            if !seen.is_empty() {
+                for id in &ids {
+                    inner
+                        .pending_clear
+                        .entry(id.clone())
+                        .or_default()
+                        .extend(seen.iter().cloned());
+                }
+            }
+            let targets: Vec<(String, PushSubscription)> = inner
+                .phones
+                .list()
+                .iter()
+                .filter_map(|phone| phone.push.clone().map(|push| (phone.id.clone(), push)))
+                .collect();
+            let subject = inner
+                .settings
+                .serve
+                .as_ref()
+                .map(|serve| format!("https://{}", serve.dns_name))
+                .unwrap_or_else(|| "mailto:hide@localhost".to_owned());
+            (inner.settings.push_mode, targets, subject)
+        };
+        let renderers = self.config.renderers.load(Ordering::SeqCst);
+        let mut jobs = Vec::new();
+        for notice in notices {
+            if !push::mode_allows(mode, renderers) {
+                herdr_core::diagnostic!(json!({
+                    "component": "mobile_push", "kind": "push.skipped", "reason": "mode",
+                    "mode": mode.as_str(), "renderers": renderers,
+                }));
+                continue;
+            }
+            if self.viewed(&notice.key, projection) {
+                herdr_core::diagnostic!(json!({
+                    "component": "mobile_push", "kind": "push.skipped", "reason": "viewing",
+                }));
+                continue;
+            }
+            for (phone_id, subscription) in &targets {
+                let clear = self
+                    .lock()
+                    .pending_clear
+                    .remove(phone_id)
+                    .unwrap_or_default();
+                jobs.push((
+                    phone_id.clone(),
+                    subscription.clone(),
+                    push::payload(&notice, &clear),
+                ));
+            }
+        }
+        if jobs.is_empty() || self.vapid.is_none() {
+            return;
+        }
+        let mobile = Arc::clone(self);
+        tokio::task::spawn_blocking(move || {
+            let Some(vapid) = mobile.vapid.as_ref() else {
+                return;
+            };
+            for (phone_id, subscription, payload) in jobs {
+                match push::send(vapid, &subject, &subscription, &payload, now_ms() / 1000) {
+                    push::SendOutcome::Delivered => herdr_core::diagnostic!(json!({
+                        "component": "mobile_push", "kind": "push.sent", "phone_id": phone_id,
+                        "tag": payload.get("tag"),
+                    })),
+                    push::SendOutcome::Gone(status) => {
+                        mobile
+                            .lock()
+                            .phones
+                            .drop_subscription(&phone_id, &subscription.endpoint);
+                        herdr_core::diagnostic!(json!({
+                            "component": "mobile_push", "kind": "subscription.dropped", "phone_id": phone_id,
+                            "status": status,
+                        }));
+                        mobile.publish();
+                    }
+                    push::SendOutcome::Failed(message) => herdr_core::diagnostic!(json!({
+                        "component": "mobile_push", "kind": "push.failed", "phone_id": phone_id,
+                        "message": message,
+                    })),
+                }
+            }
+        });
+    }
+}

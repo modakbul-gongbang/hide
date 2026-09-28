@@ -1,0 +1,684 @@
+//! Settings > Mobile and the phone socket against a real daemon and a fake
+//! `tailscale` CLI (PRD mobile-companion B1-B10, B13-B18, B36, B37). The fake
+//! keeps its whole state in files in the test's own folder, so nothing here
+//! reaches the machine's Tailscale.
+
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use futures_util::{SinkExt, StreamExt};
+use hided::env::Env;
+use serde_json::{Value, json};
+use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::http::header::ORIGIN;
+
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+const DNS: &str = "mac.tailnet-name.ts.net";
+
+/// A `tailscale` that answers from files under `state`: `status.json`,
+/// `serve.json`; `fail-serve` makes every serve change fail; every call is
+/// appended to `calls.log`.
+struct FakeTailscale {
+    state: PathBuf,
+    bin: PathBuf,
+}
+
+impl FakeTailscale {
+    fn new(root: &Path) -> Self {
+        let state = root.join("tailscale-state");
+        std::fs::create_dir_all(&state).unwrap();
+        let bin = root.join("tailscale");
+        let script = format!(
+            r#"#!/bin/sh
+S='{state}'
+echo "$*" >> "$S/calls.log"
+case "$1" in
+  status) cat "$S/status.json" ;;
+  serve)
+    shift
+    if [ "$1" = status ]; then cat "$S/serve.json" 2>/dev/null || echo '{{}}'; exit 0; fi
+    if [ -e "$S/fail-serve" ]; then echo "serve config denied: access denied" >&2; exit 1; fi
+    last=""; for a in "$@"; do last="$a"; done
+    if [ "$last" = off ]; then echo '{{}}' > "$S/serve.json"; exit 0; fi
+    printf '{{"TCP":{{"443":{{"HTTPS":true}}}},"Web":{{"{dns}:443":{{"Handlers":{{"/":{{"Proxy":"%s"}}}}}}}}}}' "$last" > "$S/serve.json"
+    ;;
+  *) exit 2 ;;
+esac
+"#,
+            state = state.display(),
+            dns = DNS,
+        );
+        std::fs::write(&bin, script).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+        Self { state, bin }
+    }
+
+    fn status(&self, value: Value) {
+        std::fs::write(self.state.join("status.json"), value.to_string()).unwrap();
+    }
+
+    fn logged_out(&self) {
+        self.status(
+            json!({"BackendState": "NeedsLogin", "Self": {"DNSName": "", "HostName": "mac"}}),
+        );
+    }
+
+    fn https_off(&self) {
+        self.status(json!({"BackendState": "Running", "Self": {"DNSName": format!("{DNS}."), "HostName": "mac"},
+            "CurrentTailnet": {"MagicDNSEnabled": true}}));
+    }
+
+    fn ready(&self) {
+        self.status(json!({"BackendState": "Running", "Self": {"DNSName": format!("{DNS}."), "HostName": "mac"},
+            "CurrentTailnet": {"MagicDNSEnabled": true}, "CertDomains": [DNS]}));
+    }
+
+    fn serve(&self) -> Value {
+        std::fs::read_to_string(self.state.join("serve.json"))
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or(json!({}))
+    }
+
+    fn set_serve(&self, value: Value) {
+        std::fs::write(self.state.join("serve.json"), value.to_string()).unwrap();
+    }
+
+    fn calls(&self) -> String {
+        std::fs::read_to_string(self.state.join("calls.log")).unwrap_or_default()
+    }
+
+    fn proxy(&self) -> Option<String> {
+        self.serve()
+            .pointer(&format!("/Web/{DNS}:443/Handlers/~1/Proxy"))
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+    }
+}
+
+fn env(dir: &Path, tailscale: &Path) -> Env {
+    Env {
+        home: dir.to_path_buf(),
+        herdr_socket_path: None,
+        herdr_bin_path: None,
+        state_dir: dir.join("state"),
+        keep_alive: true,
+        vite_origin: None,
+        bind: "127.0.0.1:0".parse().unwrap(),
+        idle_secs: 600,
+        open_command: None,
+        host_helper_root: None,
+        host_cli_dir: None,
+        pane_id: None,
+        workspace_bridge_dir: None,
+        tailscale_bin: Some(tailscale.to_path_buf()),
+        search_path: None,
+    }
+}
+
+async fn connect(port: u16, origin: &str) -> Socket {
+    let mut request = format!("ws://127.0.0.1:{port}/ws")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(ORIGIN, origin.parse().unwrap());
+    request.headers_mut().insert(
+        "user-agent",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)"
+            .parse()
+            .unwrap(),
+    );
+    tokio_tungstenite::connect_async(request)
+        .await
+        .expect("ws connect")
+        .0
+}
+
+fn loopback(port: u16) -> String {
+    format!("http://127.0.0.1:{port}")
+}
+
+async fn next_frame(socket: &mut Socket) -> Option<Value> {
+    loop {
+        match tokio::time::timeout(Duration::from_secs(15), socket.next()).await {
+            Ok(Some(Ok(Message::Text(text)))) => return serde_json::from_str(&text).ok(),
+            Ok(Some(Ok(Message::Close(_)))) | Ok(None) | Err(_) => return None,
+            Ok(Some(Ok(_))) => {}
+            Ok(Some(Err(_))) => return None,
+        }
+    }
+}
+
+/// A renderer (the desktop shell) on the shell token; returns its socket.
+async fn renderer(running: &hided::RunningDaemon) -> Socket {
+    let mut socket = connect(running.port, &loopback(running.port)).await;
+    socket
+        .send(Message::Text(
+            json!({"token": running.token, "schema_version": 2, "client_kind": "desktop"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    socket
+}
+
+/// Reads frames until a `mobile` frame satisfies `accept`.
+async fn mobile_frame(socket: &mut Socket, accept: impl Fn(&Value) -> bool) -> Value {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    loop {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no matching mobile frame"
+        );
+        let frame = next_frame(socket).await.expect("socket open");
+        if frame["type"] == "mobile" && accept(&frame["payload"]) {
+            return frame["payload"].clone();
+        }
+    }
+}
+
+async fn event(socket: &mut Socket, kind: &str, payload: Value) {
+    socket
+        .send(Message::Text(
+            json!({"schema_version": 2, "kind": kind, "payload": payload})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+}
+
+fn pair_code(qr: &str) -> String {
+    use base64::Engine;
+    let encoded = qr.split("#pair=").nth(1).unwrap();
+    let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(encoded)
+        .unwrap();
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    assert_eq!(value["v"], 1);
+    assert_eq!(value["endpoint"], format!("https://{DNS}"));
+    value["code"].as_str().unwrap().to_owned()
+}
+
+async fn pair(port: u16, origin: &str, code: &str) -> (Socket, Value) {
+    let mut socket = connect(port, origin).await;
+    socket
+        .send(Message::Text(
+            json!({"client_kind": "phone", "pair": code, "name": "Mozilla/5.0 (iPhone)"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    let first = next_frame(&mut socket).await.expect("an answer");
+    (socket, first)
+}
+
+async fn phone(port: u16, credential: &str) -> (Socket, Value) {
+    let mut socket = connect(port, &format!("https://{DNS}")).await;
+    socket
+        .send(Message::Text(
+            json!({"client_kind": "phone", "token": credential, "schema_version": 2})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    let first = next_frame(&mut socket).await.expect("an answer");
+    (socket, first)
+}
+
+async fn close_code(socket: &mut Socket) -> Option<u16> {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(frame) = socket.next().await {
+            if let Ok(Message::Close(Some(close))) = frame {
+                return Some(close.code.into());
+            }
+        }
+        None
+    })
+    .await
+    .ok()
+    .flatten()
+}
+
+#[tokio::test]
+async fn mobile_is_off_by_default_and_never_runs_tailscale() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTailscale::new(dir.path());
+    fake.ready();
+    let running = hided::start_daemon(env(dir.path(), &fake.bin))
+        .await
+        .unwrap();
+    let mut shell = renderer(&running).await;
+    let frame = mobile_frame(&mut shell, |_| true).await;
+    assert_eq!(frame["enabled"], false);
+    assert_eq!(frame["exposure"], "off");
+    assert!(frame["qr"].is_null());
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(fake.calls(), "", "off never runs tailscale (B1)");
+    // The tailnet origin is not allowed while off (B18).
+    let mut outside = connect(running.port, &format!("https://{DNS}")).await;
+    outside
+        .send(Message::Text(
+            json!({"client_kind": "phone", "pair": "x"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(close_code(&mut outside).await, Some(4002));
+    running.stop();
+}
+
+#[tokio::test]
+async fn the_checklist_advances_and_the_qr_follows_a_confirmed_serve_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTailscale::new(dir.path());
+    fake.logged_out();
+    let running = hided::start_daemon(env(dir.path(), &fake.bin))
+        .await
+        .unwrap();
+    let mut shell = renderer(&running).await;
+    mobile_frame(&mut shell, |_| true).await;
+    event(&mut shell, "mobile_observe", json!({"observing": true})).await;
+    event(&mut shell, "mobile_enable", json!({"enabled": true})).await;
+    let blocked = mobile_frame(&mut shell, |frame| frame["exposure"] == "blocked").await;
+    assert_eq!(blocked["checklist"]["installed"], "ok");
+    assert_eq!(blocked["checklist"]["logged_in"], "failed");
+    assert_eq!(blocked["checklist"]["https"], "waiting");
+    assert!(blocked["qr"].is_null());
+    // Logging in without reopening Settings moves the list on (B3).
+    fake.https_off();
+    let https = mobile_frame(&mut shell, |frame| frame["checklist"]["https"] == "failed").await;
+    assert_eq!(https["checklist"]["logged_in"], "ok");
+    assert_eq!(https["checklist"]["host_name"], "mac");
+    assert!(
+        fake.proxy().is_none(),
+        "no serve entry before every check passes"
+    );
+    fake.ready();
+    let exposed = mobile_frame(&mut shell, |frame| frame["exposure"] == "exposed").await;
+    let port = running.port;
+    assert_eq!(fake.proxy(), Some(format!("http://127.0.0.1:{port}")));
+    assert_eq!(exposed["url"], format!("https://{DNS}"));
+    let qr = exposed["qr"].as_str().expect("a QR once exposed (B4)");
+    assert!(qr.starts_with(&format!("https://{DNS}/m/#pair=")));
+    assert!(exposed["code_expires_at_ms"].as_u64().unwrap() > exposed["now_ms"].as_u64().unwrap());
+    // Enabling again converges on the same single entry (B9).
+    event(&mut shell, "mobile_enable", json!({"enabled": true})).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(fake.calls().matches("serve --bg").count(), 1);
+    // A new code voids the one in the QR (B10).
+    let old = pair_code(qr);
+    event(&mut shell, "mobile_new_code", json!({})).await;
+    let renewed = mobile_frame(&mut shell, |frame| {
+        frame["qr"].as_str().is_some_and(|next| next != qr)
+    })
+    .await;
+    let (mut stale, answer) = pair(port, &format!("https://{DNS}"), &old).await;
+    assert_eq!(answer, json!({"type": "refused", "reason": "code_expired"}));
+    assert_eq!(close_code(&mut stale).await, Some(4001));
+    // The shell token is never accepted from the tailnet origin.
+    let mut shell_from_tailnet = connect(port, &format!("https://{DNS}")).await;
+    shell_from_tailnet
+        .send(Message::Text(
+            json!({"token": running.token, "schema_version": 2})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(close_code(&mut shell_from_tailnet).await, Some(4002));
+    let code = pair_code(renewed["qr"].as_str().unwrap());
+    let (_paired, answer) = pair(port, &format!("https://{DNS}"), &code).await;
+    assert_eq!(answer["type"], "paired");
+    assert_eq!(answer["name"], "iPhone");
+    let listed = mobile_frame(&mut shell, |frame| {
+        frame["phones"]
+            .as_array()
+            .is_some_and(|phones| phones.len() == 1)
+    })
+    .await;
+    assert_eq!(listed["phones"][0]["name"], "iPhone");
+    assert_eq!(listed["phones"][0]["connected"], true);
+    // Turning it off removes only hide's entry and forgets the origin (B7).
+    event(&mut shell, "mobile_enable", json!({"enabled": false})).await;
+    mobile_frame(&mut shell, |frame| frame["exposure"] == "off").await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(fake.proxy().is_none());
+    let mut refused = connect(port, &format!("https://{DNS}")).await;
+    refused
+        .send(Message::Text(
+            json!({"client_kind": "phone", "token": "x"})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(close_code(&mut refused).await, Some(4002));
+    running.stop();
+}
+
+#[tokio::test]
+async fn a_foreign_entry_or_a_failed_command_leaves_mobile_unexposed() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTailscale::new(dir.path());
+    fake.ready();
+    let theirs = json!({"TCP": {"443": {"HTTPS": true}}, "Web": {format!("{DNS}:443"): {"Handlers": {"/": {"Proxy": "http://127.0.0.1:3000"}}}}});
+    fake.set_serve(theirs.clone());
+    let running = hided::start_daemon(env(dir.path(), &fake.bin))
+        .await
+        .unwrap();
+    let mut shell = renderer(&running).await;
+    event(&mut shell, "mobile_enable", json!({"enabled": true})).await;
+    let foreign = mobile_frame(&mut shell, |frame| frame["exposure"] == "foreign").await;
+    assert!(
+        foreign["foreign_target"]
+            .as_str()
+            .unwrap()
+            .contains("http://127.0.0.1:3000")
+    );
+    assert!(foreign["qr"].is_null());
+    assert_eq!(
+        fake.serve(),
+        theirs,
+        "hide never touches an entry it did not add (B5)"
+    );
+    assert!(!fake.calls().contains("off"));
+    // A serve command that fails names its step and shows no QR (B6).
+    fake.set_serve(json!({}));
+    std::fs::write(fake.state.join("fail-serve"), "").unwrap();
+    event(&mut shell, "mobile_enable", json!({"enabled": false})).await;
+    mobile_frame(&mut shell, |frame| frame["exposure"] == "off").await;
+    event(&mut shell, "mobile_enable", json!({"enabled": true})).await;
+    let failed = mobile_frame(&mut shell, |frame| frame["exposure"] == "failed").await;
+    assert_eq!(failed["failure"]["step"], "add");
+    assert_eq!(
+        failed["failure"]["message"],
+        "serve config denied: access denied"
+    );
+    assert!(failed["qr"].is_null());
+    // Fixed, then switched on again, it goes on (B6).
+    std::fs::remove_file(fake.state.join("fail-serve")).unwrap();
+    event(&mut shell, "mobile_enable", json!({"enabled": false})).await;
+    mobile_frame(&mut shell, |frame| frame["exposure"] == "off").await;
+    event(&mut shell, "mobile_enable", json!({"enabled": true})).await;
+    mobile_frame(&mut shell, |frame| frame["exposure"] == "exposed").await;
+    running.stop();
+}
+
+#[tokio::test]
+async fn a_restart_on_a_new_port_replaces_hides_entry_and_phones_stay_paired() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTailscale::new(dir.path());
+    fake.ready();
+    let running = hided::start_daemon(env(dir.path(), &fake.bin))
+        .await
+        .unwrap();
+    let first_port = running.port;
+    let mut shell = renderer(&running).await;
+    event(&mut shell, "mobile_enable", json!({"enabled": true})).await;
+    let exposed = mobile_frame(&mut shell, |frame| frame["exposure"] == "exposed").await;
+    let code = pair_code(exposed["qr"].as_str().unwrap());
+    let (mut paired, answer) = pair(first_port, &loopback(first_port), &code).await;
+    let credential = answer["credential"].as_str().unwrap().to_owned();
+    let phones = std::fs::read_to_string(dir.path().join("state/phones.json")).unwrap();
+    assert!(
+        !phones.contains(&credential),
+        "only the credential's hash is stored"
+    );
+    let mode = std::fs::metadata(dir.path().join("state/phones.json")).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(mode.permissions().mode() & 0o777, 0o600);
+    // A crash: the process goes without its graceful stop.
+    let _ = paired.close(None).await;
+    drop(shell);
+    running.stop();
+    drop(running);
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(fake.proxy(), Some(format!("http://127.0.0.1:{first_port}")));
+    let running = hided::start_daemon(env(dir.path(), &fake.bin))
+        .await
+        .unwrap();
+    let second_port = running.port;
+    assert_ne!(first_port, second_port);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    while fake.proxy() != Some(format!("http://127.0.0.1:{second_port}")) {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the old port's entry was not replaced: {:?}",
+            fake.serve()
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    // The phone's credential outlives the restart and the port change (B8).
+    let (_socket, hello) = phone(second_port, &credential).await;
+    assert_eq!(hello["type"], "hello");
+    assert_eq!(hello["mac_name"], "mac");
+    // Mobile on with a phone paired keeps the daemon from its idle exit (B37).
+    assert!(running.mobile.keep_alive());
+    // A graceful stop removes hide's entry (B8).
+    running.mobile.shutdown().await;
+    assert!(fake.proxy().is_none());
+    running.stop();
+}
+
+#[tokio::test]
+async fn phones_are_capped_revoked_and_scoped() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTailscale::new(dir.path());
+    fake.ready();
+    let running = hided::start_daemon(env(dir.path(), &fake.bin))
+        .await
+        .unwrap();
+    let port = running.port;
+    let mut shell = renderer(&running).await;
+    event(&mut shell, "mobile_enable", json!({"enabled": true})).await;
+    mobile_frame(&mut shell, |frame| frame["exposure"] == "exposed").await;
+    let mut credentials = Vec::new();
+    for _ in 0..4 {
+        event(&mut shell, "mobile_new_code", json!({})).await;
+        let paired = credentials.len();
+        let frame = mobile_frame(&mut shell, |frame| {
+            frame["qr"].is_string()
+                && frame["phones"]
+                    .as_array()
+                    .is_some_and(|phones| phones.len() == paired)
+        })
+        .await;
+        let (mut socket, answer) = pair(
+            port,
+            &format!("https://{DNS}"),
+            &pair_code(frame["qr"].as_str().unwrap()),
+        )
+        .await;
+        assert_eq!(answer["type"], "paired", "{answer}");
+        credentials.push((
+            answer["phone_id"].as_str().unwrap().to_owned(),
+            answer["credential"].as_str().unwrap().to_owned(),
+        ));
+        let _ = socket.close(None).await;
+    }
+    event(&mut shell, "mobile_new_code", json!({})).await;
+    let frame = mobile_frame(&mut shell, |frame| {
+        frame["phones"]
+            .as_array()
+            .is_some_and(|phones| phones.len() == 4)
+            && frame["qr"].is_string()
+    })
+    .await;
+    assert_eq!(frame["max_phones"], 4);
+    let (_fifth, answer) = pair(
+        port,
+        &format!("https://{DNS}"),
+        &pair_code(frame["qr"].as_str().unwrap()),
+    )
+    .await;
+    assert_eq!(
+        answer,
+        json!({"type": "refused", "reason": "phone_limit"}),
+        "B14"
+    );
+    // A phone's vocabulary: everything else is refused (B17).
+    let (mut socket, hello) = phone(port, &credentials[0].1).await;
+    assert_eq!(hello["type"], "hello");
+    for request in [
+        json!({"type": "file_open", "path": "/etc/hosts"}),
+        json!({"schema_version": 2, "kind": "ui_state_update", "payload": {}}),
+        json!({"type": "snapshot"}),
+        json!({"type": "open", "device_id": "local", "pane_id": "w9:p9"}),
+    ] {
+        socket
+            .send(Message::Text(request.to_string().into()))
+            .await
+            .unwrap();
+    }
+    let mut refused = 0;
+    let mut gone = 0;
+    while refused + gone < 4 {
+        let frame = next_frame(&mut socket).await.expect("an answer");
+        match frame["type"].as_str() {
+            Some("refused_request") => refused += 1,
+            Some("rows") => {
+                assert_eq!(
+                    frame["state"], "gone",
+                    "a pane that is no agent is not opened"
+                );
+                gone += 1;
+            }
+            _ => {}
+        }
+    }
+    // Revoking closes its live connection and a second revoke is quiet (B15, B9).
+    event(
+        &mut shell,
+        "mobile_revoke",
+        json!({"phone_id": credentials[0].0}),
+    )
+    .await;
+    event(
+        &mut shell,
+        "mobile_revoke",
+        json!({"phone_id": credentials[0].0}),
+    )
+    .await;
+    let mut revoked = None;
+    while let Some(frame) = next_frame(&mut socket).await {
+        if frame["type"] == "refused" {
+            revoked = Some(frame);
+        }
+    }
+    assert_eq!(
+        revoked,
+        Some(json!({"type": "refused", "reason": "revoked"}))
+    );
+    let (_again, answer) = phone(port, &credentials[0].1).await;
+    assert_eq!(
+        answer,
+        json!({"type": "refused", "reason": "revoked"}),
+        "B16"
+    );
+    let frame = mobile_frame(&mut shell, |frame| {
+        frame["phones"]
+            .as_array()
+            .is_some_and(|phones| phones.len() == 3)
+    })
+    .await;
+    assert!(
+        frame["phones"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|phone| phone["id"] != credentials[0].0)
+    );
+    running.stop();
+}
+
+#[tokio::test]
+async fn a_phone_unseen_for_seven_days_is_revoked_at_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTailscale::new(dir.path());
+    fake.ready();
+    let state = dir.path().join("state");
+    std::fs::create_dir_all(&state).unwrap();
+    let week = 7 * 24 * 60 * 60 * 1000_u64;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64;
+    let hash = |credential: &str| hided::mobile::phones::credential_hash(credential);
+    std::fs::write(
+        state.join("phones.json"),
+        json!({"phones": [
+            {"id": "old", "name": "iPad", "credential_sha256": hash("old-credential"), "paired_at_ms": 0, "last_seen_ms": now - week - 1000,
+             "notifications": "on", "push": {"endpoint": "https://web.push.apple.com/x", "p256dh": "k", "auth": "a"}},
+            {"id": "recent", "name": "iPhone", "credential_sha256": hash("recent-credential"), "paired_at_ms": 0, "last_seen_ms": now - 3 * 24 * 60 * 60 * 1000},
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        state.join("mobile.json"),
+        json!({"enabled": true}).to_string(),
+    )
+    .unwrap();
+    let running = hided::start_daemon(env(dir.path(), &fake.bin))
+        .await
+        .unwrap();
+    let mut shell = renderer(&running).await;
+    let frame = mobile_frame(&mut shell, |frame| frame["exposure"] == "exposed").await;
+    let phones = frame["phones"].as_array().unwrap();
+    assert_eq!(phones.len(), 1);
+    assert_eq!(phones[0]["id"], "recent");
+    assert_eq!(
+        phones[0]["revoke_at_ms"],
+        phones[0]["last_seen_ms"].as_u64().unwrap() + week
+    );
+    let file = std::fs::read_to_string(state.join("phones.json")).unwrap();
+    assert!(
+        !file.contains("web.push.apple.com"),
+        "the subscription went with it (B36)"
+    );
+    let (_socket, answer) = phone(running.port, "old-credential").await;
+    assert_eq!(answer, json!({"type": "refused", "reason": "revoked"}));
+    running.stop();
+}
+
+#[tokio::test]
+async fn the_phone_app_is_served_under_m_and_nothing_else_leaks() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTailscale::new(dir.path());
+    let running = hided::start_daemon(env(dir.path(), &fake.bin))
+        .await
+        .unwrap();
+    let status = |path: &str| {
+        let url = format!("http://127.0.0.1:{}{path}", running.port);
+        async move {
+            let output = tokio::process::Command::new("/usr/bin/curl")
+                .args([
+                    "-s",
+                    "-o",
+                    "/dev/null",
+                    "-w",
+                    "%{http_code}",
+                    "--path-as-is",
+                    &url,
+                ])
+                .output()
+                .await
+                .unwrap();
+            String::from_utf8(output.stdout).unwrap()
+        }
+    };
+    assert_eq!(status("/m").await, "308");
+    assert_eq!(status("/m/../hided.json").await, "404");
+    assert_eq!(status("/m/missing.js").await, "404");
+    running.stop();
+}

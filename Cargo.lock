@@ -1369,6 +1369,7 @@ dependencies = [
  "hyper-util",
  "libc",
  "percent-encoding",
+ "ring",
  "serde",
  "serde_json",
  "subtle",
@@ -1377,6 +1378,7 @@ dependencies = [
  "tokio-tungstenite 0.26.2",
  "tower",
  "tower-http",
+ "ureq",
 ]
 
 [[package]]

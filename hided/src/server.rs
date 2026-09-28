@@ -94,6 +94,8 @@ pub struct AppState {
     /// What the Settings General tab reads about this daemon, sent once after
     /// a handshake. No token, no environment beyond the paths it names.
     pub daemon_info: Arc<Value>,
+    /// Settings > Mobile and the phones it pairs (`mobile/`).
+    pub mobile: Arc<crate::mobile::Mobile>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -143,6 +145,9 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/", get(static_asset))
         .route("/assets/{*path}", get(static_asset))
+        .route("/m", get(mobile_asset))
+        .route("/m/", get(mobile_asset))
+        .route("/m/{*path}", get(mobile_asset))
         .fallback(|| async { StatusCode::NOT_FOUND })
         .with_state(state)
 }
@@ -315,6 +320,63 @@ async fn static_asset(uri: Uri, State(state): State<AppState>) -> Response {
     StatusCode::NOT_FOUND.into_response()
 }
 
+/// One file of the built web app by its path under `web/dist`: embedded in
+/// a release build, read from the confined UI folder in a debug build.
+async fn ui_file(state: &AppState, relative: &str) -> Option<Response> {
+    let (content_type, bytes): (&'static str, Vec<u8>) = if has_embedded_ui() {
+        let (name, bytes) = embedded_file(relative)?;
+        (mime_for(std::path::Path::new(name)), bytes.to_vec())
+    } else {
+        let candidate = confined_file(state.ui_dir.as_deref()?, relative)?;
+        if !candidate.is_file() {
+            return None;
+        }
+        (
+            mime_for(&candidate),
+            tokio::fs::read(&candidate).await.ok()?,
+        )
+    };
+    let mut response = Response::builder()
+        .status(StatusCode::OK)
+        .header("content-type", content_type);
+    // The service worker and the manifest are read fresh so a new build
+    // replaces the cached app (PRD D-16).
+    if relative.ends_with("sw.js")
+        || relative.ends_with(".webmanifest")
+        || relative.ends_with(".html")
+    {
+        response = response.header("cache-control", "no-cache");
+    }
+    Some(
+        response
+            .body(Body::from(bytes))
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response()),
+    )
+}
+
+/// The phone app (PRD D-16): `/m/` is `mobile.html` and `/m/<file>` is
+/// `m/<file>` (manifest, service worker, icons); its scripts and styles are
+/// the shared `/assets`. Runtime data never comes from here, only over `/ws`.
+async fn mobile_asset(uri: Uri, State(state): State<AppState>) -> Response {
+    let path = uri.path();
+    if path == "/m" {
+        return Response::builder()
+            .status(StatusCode::PERMANENT_REDIRECT)
+            .header(header::LOCATION, "/m/")
+            .body(Body::empty())
+            .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response());
+    }
+    let rest = path.trim_start_matches("/m/");
+    let relative = if rest.is_empty() {
+        "mobile.html".to_owned()
+    } else {
+        format!("m/{rest}")
+    };
+    ui_file(&state, &relative)
+        .await
+        .unwrap_or_else(|| StatusCode::NOT_FOUND.into_response())
+}
+
 async fn ws_upgrade(
     ws: WebSocketUpgrade,
     headers: HeaderMap,
@@ -324,7 +386,14 @@ async fn ws_upgrade(
         .get("origin")
         .and_then(|value| value.to_str().ok())
         .map(str::to_owned);
-    ws.on_upgrade(move |socket| client_loop(socket, state, origin))
+    let user_agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .chars()
+        .take(512)
+        .collect::<String>();
+    ws.on_upgrade(move |socket| client_loop(socket, state, origin, user_agent))
 }
 
 fn check_origin(origin: Option<&str>, allowed: &HashSet<String>) -> Result<(), CloseReason> {
@@ -338,9 +407,19 @@ fn check_origin(origin: Option<&str>, allowed: &HashSet<String>) -> Result<(), C
     }
 }
 
-async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<String>) {
-    if let Err(reason) = check_origin(origin.as_deref(), &state.allowed_origins) {
-        refuse(&mut socket, reason, None).await;
+async fn client_loop(
+    mut socket: WebSocket,
+    state: AppState,
+    origin: Option<String>,
+    user_agent: String,
+) {
+    // This Mac's tailnet address is an allowed Origin only while Mobile is
+    // exposed, and only for a phone: the shell token is never accepted from
+    // it (PRD D-16).
+    let loopback = check_origin(origin.as_deref(), &state.allowed_origins).is_ok();
+    let tailnet = !loopback && state.mobile.origin_allowed(origin.as_deref());
+    if !loopback && !tailnet {
+        refuse(&mut socket, CloseReason::OriginNotAllowed, None).await;
         return;
     }
     let connection = state.connections.fetch_add(1, Ordering::SeqCst);
@@ -351,7 +430,30 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
             return;
         }
     };
-    let handshake: Handshake = match serde_json::from_str(&first) {
+    let first_value = serde_json::from_str::<Value>(&first).unwrap_or(Value::Null);
+    if crate::mobile::phone::is_phone(&first_value) {
+        let previous = state.clients.fetch_add(1, Ordering::SeqCst);
+        if previous >= MAX_CLIENTS {
+            state.clients.fetch_sub(1, Ordering::SeqCst);
+            refuse(&mut socket, CloseReason::ClientLimit, Some(previous + 1)).await;
+            return;
+        }
+        crate::mobile::phone::serve(
+            socket,
+            first_value,
+            Arc::clone(&state.mobile),
+            connection,
+            user_agent,
+        )
+        .await;
+        client_gone(&state, connection, false, false);
+        return;
+    }
+    if !loopback {
+        refuse(&mut socket, CloseReason::OriginNotAllowed, None).await;
+        return;
+    }
+    let handshake: Handshake = match serde_json::from_value(first_value) {
         Ok(value) => value,
         Err(_) => {
             refuse(&mut socket, CloseReason::InvalidToken, None).await;
@@ -419,6 +521,20 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
         client_gone(&state, connection, renderer, desktop);
         return;
     }
+    // Settings > Mobile reads one `mobile` frame, sent now and on each change.
+    let mut mobile_frames = state.mobile.subscribe_frame();
+    if renderer {
+        let frame =
+            json!({"type": "mobile", "payload": mobile_frames.borrow_and_update().as_ref()});
+        if socket
+            .send(Message::Text(frame.to_string().into()))
+            .await
+            .is_err()
+        {
+            client_gone(&state, connection, renderer, desktop);
+            return;
+        }
+    }
     if send_snapshot(&mut socket, &state, &mut have_revision, &mut have_sequence)
         .await
         .is_err()
@@ -472,6 +588,15 @@ async fn client_loop(mut socket: WebSocket, state: AppState, origin: Option<Stri
                     // snapshot stream; the tree re-reads on the next change.
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => {}
+                }
+            }
+            changed = mobile_frames.changed(), if renderer => {
+                if changed.is_err() {
+                    break;
+                }
+                let frame = json!({"type": "mobile", "payload": mobile_frames.borrow_and_update().as_ref()});
+                if socket.send(Message::Text(frame.to_string().into())).await.is_err() {
+                    break;
                 }
             }
             Some(frame) = device_bytes.recv() => {
@@ -895,6 +1020,10 @@ fn handle_client_text(
         }
         Some("ai_settings") => {
             return handle_ai_settings(state, event, connection);
+        }
+        Some(kind) if kind.starts_with("mobile_") => {
+            state.mobile.handle_event(connection, &event)?;
+            return Ok(ClientAction::Replies(Vec::new()));
         }
         Some("open_external") => {
             // This token-authenticated socket can be reached through an SSH
@@ -2381,6 +2510,7 @@ fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool)
         state.desktop_renderers.fetch_sub(1, Ordering::SeqCst);
     }
     state.attachments.release(connection);
+    state.mobile.release(connection);
     state.demand.release(connection, |observing| {
         dispatch_observation(state, connection, observing)
     });
@@ -2422,6 +2552,7 @@ pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result
     let last_client_gone = Arc::clone(&state.last_client_gone);
     let clients = Arc::clone(&state.clients);
     let shutdown = Arc::clone(&state.shutdown);
+    let mobile = Arc::clone(&state.mobile);
     let idle_task = {
         let shutdown = Arc::clone(&shutdown);
         tokio::spawn(async move {
@@ -2431,6 +2562,13 @@ pub async fn serve(listener: tokio::net::TcpListener, state: AppState) -> Result
             loop {
                 tokio::time::sleep(Duration::from_secs(1)).await;
                 if clients.load(Ordering::SeqCst) != 0 {
+                    continue;
+                }
+                // Mobile on with a phone paired: the phone may come back at
+                // any time and push has to keep going (PRD D-10). The idle
+                // clock starts over when that ends.
+                if mobile.keep_alive() {
+                    *last_client_gone.lock().expect("client timestamp") = Instant::now();
                     continue;
                 }
                 let gone = *last_client_gone.lock().expect("client timestamp");
@@ -2469,6 +2607,7 @@ pub(crate) fn mime_for(path: &std::path::Path) -> &'static str {
         Some("json") => "application/json",
         Some("svg") => "image/svg+xml",
         Some("png") => "image/png",
+        Some("webmanifest") => "application/manifest+json",
         Some("woff") => "font/woff",
         Some("woff2") => "font/woff2",
         _ => "application/octet-stream",
