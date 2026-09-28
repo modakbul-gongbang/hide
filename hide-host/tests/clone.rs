@@ -39,12 +39,16 @@ fn origin(outer: &Path) -> PathBuf {
     git(&work, &["add", "."]);
     git(&work, &["commit", "-q", "-m", "fixture"]);
     let bare = outer.join("origin.git");
+    // `--no-local` sends the objects through Git's transport instead of
+    // hard-linking or copying each object file, which failed on a CI runner
+    // with "failed to copy file ... No such file or directory".
     git(
         outer,
         &[
             "clone",
             "-q",
             "--bare",
+            "--no-local",
             work.to_str().unwrap(),
             bare.to_str().unwrap(),
         ],
