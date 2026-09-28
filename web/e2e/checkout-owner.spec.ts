@@ -76,6 +76,40 @@ test("A new tab in a Git checkout goes to the workspace Herdr binds to it, not t
   }
 });
 
+test("With no workspace bound, Herdr binds the unbound one already at the checkout, and Hide leaves its name", async ({ page }) => {
+  test.setTimeout(120_000);
+  const herdr = await startHerdr({ agents: false });
+  let daemon: Daemon | null = null;
+  try {
+    const root = path.join(herdr.root, "fixture");
+    const git = (...args: string[]) => execFileSync("git", ["-C", root, ...args], { env: herdr.env });
+    fs.writeFileSync(path.join(root, "note.txt"), "original\n");
+    git("init", "-q", "-b", "main"); git("add", ".");
+    git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-qm", "Initial files");
+    const [unbound] = workspaces(herdr);
+    expect(unbound.worktree ?? null).toBeNull();
+
+    daemon = await startHided(herdr, "checkout-owner-adopt");
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await enterWorkspace(page, "fixture");
+    const tabs = page.locator('[data-agent-tab-bar] [role="tab"]');
+    await expect(tabs).toHaveCount(1);
+    await twoQuickNewTabs(page);
+    await expect(tabs).toHaveCount(3, { timeout: 20_000 });
+    // worktree.open answered already_open with the fixture's own workspace.
+    const after = workspaces(herdr);
+    expect(after).toHaveLength(1);
+    expect(after[0].workspace_id).toBe(unbound.workspace_id);
+    expect(fs.realpathSync(after[0].worktree!.checkout_path)).toBe(fs.realpathSync(root));
+    expect(after[0].label).toBe(unbound.label);
+    expect(tabCount(herdr, unbound.workspace_id)).toBe(3);
+    await screenshot(page, "checkout-owner-adopt");
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});
+
 test("A new tab in a linked worktree with no workspace opens one bound to it, named by its branch, and the next tab reuses it", async ({ page }) => {
   test.setTimeout(120_000);
   await page.setViewportSize({ width: 1400, height: 900 });
