@@ -1329,7 +1329,8 @@ export function createActions(dispatch: DispatchFn) {
 
     /**
      * A project row: its Overview, a screen of this page alone, and the fold
-     * `projectRowExpansion` chose, the click's one core event.
+     * `projectRowExpansion` chose, the click's only core event and
+     * sent only when the fold changes.
      */
     openProject(workspace: Workspace, expanded: boolean | undefined) {
       ui().setScreen({ kind: "overview", projectId: workspace.id });
