@@ -25,7 +25,8 @@ function useContextMenu() {
   return state;
 }
 
-function ContextMenu({ onOpenChange, children }: { onOpenChange?: (open: boolean) => void; children: React.ReactNode }) {
+/** `canOpen` is asked on every right-click or menu key; false keeps the menu closed, as a disabled trigger does. */
+function ContextMenu({ onOpenChange, canOpen, children }: { onOpenChange?: (open: boolean) => void; canOpen?: () => boolean; children: React.ReactNode }) {
   const [point, setPoint] = useState<Point | null>(null);
   const host = useRef<HTMLElement | null>(null);
   const change = (next: boolean) => {
@@ -34,6 +35,7 @@ function ContextMenu({ onOpenChange, children }: { onOpenChange?: (open: boolean
   };
   useEscapeLayer(point !== null, () => change(false));
   const openAt = (at: Point) => {
+    if (canOpen && !canOpen()) return;
     setPoint(at);
     onOpenChange?.(true);
   };
@@ -46,7 +48,10 @@ function ContextMenu({ onOpenChange, children }: { onOpenChange?: (open: boolean
   );
 }
 
-/** The target: a right-click opens the menu at the pointer, the menu key or ⇧F10 under the target. */
+/**
+ * The target: a right-click opens the menu at the pointer, the menu key or ⇧F10 under the target.
+ * A `disabled` target offers no menu: the right-click opens nothing, not even the browser's own.
+ */
 function ContextMenuTrigger({ asChild = false, className, onContextMenu, onKeyDown, disabled = false, ...props }: ComponentProps<"div"> & { asChild?: boolean; disabled?: boolean }) {
   const { point, openAt, host } = useContextMenu();
   const Comp = asChild ? Slot.Root : "div";
@@ -61,9 +66,10 @@ function ContextMenuTrigger({ asChild = false, className, onContextMenu, onKeyDo
         className={className}
         onContextMenu={(event: MouseEvent<HTMLDivElement>) => {
           onContextMenu?.(event);
-          if (disabled || event.defaultPrevented) return;
+          if (event.defaultPrevented) return;
           event.preventDefault();
           event.stopPropagation();
+          if (disabled) return;
           openAt({ x: event.clientX, y: event.clientY });
         }}
         onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
