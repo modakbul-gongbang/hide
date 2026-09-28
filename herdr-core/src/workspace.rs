@@ -457,6 +457,7 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
                     .to_owned();
                 projects.push(WorkspaceSnapshot {
                     home_issues: Default::default(),
+                    pull_requests: Vec::new(),
                     tasks: Default::default(),
                     id: workspace_id.clone(),
                     label: name.clone(),
@@ -787,6 +788,7 @@ fn inspect(
 
     WorkspaceSnapshot {
         home_issues: Default::default(),
+        pull_requests: Vec::new(),
         tasks: Default::default(),
         id: id.to_owned(),
         label: label.to_owned(),
@@ -1352,6 +1354,7 @@ mod tests {
         ];
         let project = WorkspaceSnapshot {
             home_issues: Default::default(),
+            pull_requests: Vec::new(),
             tasks: Default::default(),
             id: "outer".to_owned(),
             label: "Outer".to_owned(),
@@ -1407,6 +1410,7 @@ mod tests {
         ];
         let project = WorkspaceSnapshot {
             home_issues: Default::default(),
+            pull_requests: Vec::new(),
             tasks: Default::default(),
             id: "fixture".to_owned(),
             label: "Fixture".to_owned(),

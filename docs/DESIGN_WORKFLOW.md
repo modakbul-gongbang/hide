@@ -133,14 +133,23 @@ node scripts/pen-transplant.mjs --from <branch-file> --into <main-file> --sheet 
 `design/hide-screens.pen` draws every area the web shell shows today, one `Screen / <Area>` sheet per area, imported from `design/hide-ui.lib.pen` the same way a `Component /` sheet is drawn from `System /` masters.
 Each sheet carries a `Light` and a `Dark` frame and uses realistic content, including Korean labels and a long path, to show real wrapping and truncation rather than an abstract state.
 `scripts/check-hide-screens.mjs` enforces the shape (`Screen / ` naming, both theme frames, every reference resolving against the library, every cross-library color restated locally, and local variables matching `design/tokens.json`) and `scripts/gen-screens.mjs` regenerates the file from `scripts/pen-screens.mjs`.
+Because the file is generated and several megabytes of JSON, `.gitattributes` marks it `-diff linguist-generated=true`: `git diff` reports only that it changed and GitHub folds it in a pull request, so review reads `scripts/pen-screens.mjs`; `git diff --text` still shows its lines when they are needed.
 
 The Overview of every project is `Screen / Main`, named after its web file and screen kind.
-It draws the agent and project sidebar beside the Overview, the sidebar's Overview row marked: its title with Add project, its facts line, the waiting band, the `Tasks · Agents · Projects` tabs, every project's tasks on one board, and a project with agents and no task source gathered under it; below it, the Dependencies mode with each card's project above its title and an arrow that crosses projects.
-Its web files are `web/src/App.tsx`, `web/src/sidebar.tsx`, `web/src/MainScreen.tsx`, `web/src/TaskBoards.tsx`, and `web/src/WaitingBand.tsx`.
+It draws the agent and project sidebar beside the Overview, the sidebar's Overview row marked: its title with Add project and `새 이슈` as the primary action, its facts line with the open issues, and the `Tasks · Agents · Projects` tabs with the waiting count on Agents, whose view is the Project Overview's lanes or lineage over every project.
+Its Tasks board holds every project's issues in `백로그 · 진행 중 · 리뷰 · 완료`, each card an issue with its project beside its id, `시작` on a backlog card under the pointer, the worktrees with no issue folded into one line at the foot of 진행 중, and 완료 folded to one line per project with its count.
+Below it, the Dependencies mode draws an arrow that crosses projects, with the blocker named by its repository on the lock line.
+Its web files are `web/src/App.tsx`, `web/src/sidebar.tsx`, `web/src/MainScreen.tsx`, `web/src/TaskBoards.tsx`, and `web/src/projectBoard.ts`.
 
 Project Overview is `Screen / Project Overview`.
-It draws a project's Tasks board under its header: the title row with the path back and New agent, the facts line, the waiting band, the Tasks, Agents and Sessions tabs, the five columns with Done folded, task cards (id and title, the lock line, delivery facts, at most two agents, an untracked checkout with no task, Start agent on a ready card), and a needs-you card in the warning halo; under it, the Dependencies mode (the `Board | Dependencies` toggle, a chain of cards with stage words and arrows, blocked and done cards dimmed, unrelated tasks below); beside it, the Agents board with each agent's checkout, task chip and device.
-Its web files are `web/src/ProjectOverview.tsx`, `web/src/TaskBoards.tsx`, `web/src/WaitingBand.tsx` and `web/src/projectBoard.ts`; its agent rows are `web/src/components/agent-row.tsx`.
+Each frame carries its header: the title row with the path back, New agent as the quiet action and `새 이슈` as the primary one, the facts line of worktrees, disk, behind and merged with the view's mode control at its right end, and the tiles `Agents · Issues · PRs · Sessions`, the chosen one outlined.
+Its first frame is Agents › 체크아웃 as every entry opens it: a lane per checkout with its head (glyph and branch, purpose, issue and PR chips, `↑N ↓N`, files), main pinned on top with a lane selected, delegation lines down across lanes in the Observer's column, the operator's turn in a yellow node, a merged lane dimmed with `정리`, and the two fold lines.
+Under it is Agents › 계보: the `Observer · Implementor · 하위 에이전트` columns, a row per lineage with the asking one first, each node's checkout, issue and PR chips, and the two fold lines.
+Beside them are Issues › Board (PRD overview-lenses-issues), the facts line carrying the filter beside the mode control and the four columns `백로그 · 진행 중 · 리뷰 · 완료` of issue cards only (백로그 with `+` and a card offering `시작` under the pointer, the operator's turn in the warning border, the checkout and PR chips, `이슈 없는 워크트리 N` and `이슈 없는 PR N` at the foot of 진행 중 and 리뷰, 완료 folded to one line per issue with the pull request that closed it), Issues › Card states (each stage's buttons in the id line's slot, a Local issue's edit, the operator's turn, blocked, a failed source read, the card whose panel is open, and the id's preview), and Issues › Dependencies (a chain of cards with stage words and arrows, blocked cards dimmed, unrelated issues below).
+The issue panel frames stand beside the board in the width it leaves: a GitHub issue in progress (properties, 이 이슈로 한 일, the Markdown body and comments), a Local issue, a Local issue edited in place, and a GitHub issue whose read failed with `재시도`.
+The PRs frames (PRD overview-lenses-prs) are PRs with its groups, a row unfolded to its agents and icon buttons, a blocked row under the pointer with `▷ 맡기기` in the time slot and `최근 머지` folded, then 이슈 잇기's confirmation over a row whose empty issue cell has turned into the link icon.
+The issue card and panel, the pull request row and its confirmation are drawn on local tokens and library refs in this sheet, not as `Component /` masters, because each is one screen's part (`web/src/TaskBoards.tsx`, `web/src/IssuePanel.tsx`, `web/src/PullRequestsView.tsx`, `web/src/PrDialogs.tsx`) rather than a composite under `web/src/components`.
+Its web files are `web/src/ProjectOverview.tsx`, `web/src/OverviewLenses.tsx`, `web/src/overviewLens.ts`, `web/src/IssuesView.tsx`, `web/src/TaskBoards.tsx`, `web/src/IssuePanel.tsx`, `web/src/PullRequestsView.tsx`, `web/src/PrDialogs.tsx` and `web/src/projectBoard.ts`; a card's agent rows are `web/src/components/agent-row.tsx`.
 
 Workspace is `Screen / Workspace`.
 It draws the side panel (`Component / Side panel`) open at the Workspace's full height over the agent column, then the panel closed with two views still open.
@@ -152,7 +161,7 @@ It draws the Project Overview on its Sessions tab: the Overview's header over th
 Its web files are `web/src/ProjectOverview.tsx` and `web/src/ProjectSessions.tsx`.
 
 Settings is `Screen / Settings`.
-It draws the six-tab strip (General, Appearance, Agents, Devices, Performance, Shortcuts) and the Group/Row layout a tab renders, shown on the Appearance tab.
+It draws the seven tabs (General, Appearance, Agents, Issues, Devices, Performance, Shortcuts) and the Group/Row layout a tab renders, shown on the Appearance tab.
 The Mobile tab sits after Devices; its strip and content are drawn on `Screen / Mobile`, and this sheet's strip does not carry it yet.
 Its web files are `web/src/SettingsSheet.tsx` and `web/src/settings.ts`.
 
@@ -161,8 +170,8 @@ It draws the sidebar's Search icon with its `Search ⌘K` hint, the ⌘K palette
 Its web files are `web/src/Palette.tsx`, `web/src/search.ts`, and `web/src/components/sidebar-header.tsx`.
 
 Dialogs and Sheets is `Screen / Dialogs and Sheets`.
-It draws every Dialog and AlertDialog surface the shell opens: New worktree, Delete worktree, Remove project, Purpose, Unsaved drafts, Add a project, and Keyboard shortcuts; the committed sheet still draws the removed sidebar New workspace panel in Add a project's place until the screen is redrawn.
-Its web files are `web/src/WorkspaceDialogs.tsx`, `web/src/AddProjectDialog.tsx`, `web/src/DraftRecovery.tsx`, and `web/src/ShortcutSheet.tsx`.
+It draws every Dialog and AlertDialog surface the shell opens: New worktree, Delete worktree, Remove project, Purpose, Unsaved drafts, Add a project, Keyboard shortcuts, New issue (with `만들고 바로 시작` unchecked and checked), and Start from an issue; the committed sheet still draws the removed sidebar New workspace panel in Add a project's place until the screen is redrawn.
+Its web files are `web/src/WorkspaceDialogs.tsx`, `web/src/AddProjectDialog.tsx`, `web/src/DraftRecovery.tsx`, `web/src/ShortcutSheet.tsx`, and `web/src/IssueDialogs.tsx`.
 
 Menus and Overlays is `Screen / Menus and Overlays`.
 It draws the sidebar row menu, the Explorer context menu, the device picker, and the Explorer git-status notice, each anchored in its real screen context.

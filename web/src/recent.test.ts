@@ -3,18 +3,24 @@ import {
   currentSurface,
   expectSurface,
   focusSignature,
+  isScreenVisit,
   lastSurfaceOf,
+  observeEntries,
   observeProject,
-  observeSurfaces,
   panelItem,
   projectItem,
   reconcileCycle,
+  recentEntries,
   recentProjectOrder,
-  recentSurfaces,
   resetRecent,
   visibleWindow,
 } from "./recent";
+import { createActions } from "./actions";
+import { commitCycle, observeRecent, panelCycle, reconcileHeldCycle } from "./keyboard";
+import { openingProgress } from "./navigation";
 import type { AgentRow, Checkout, SnapshotRest, ViewDisplaySnapshot, Workspace } from "./snapshot";
+import { useShellStore } from "./store";
+import { entryLens, useUiStore, type OverviewLens, type Screen } from "./ui";
 
 // Two projects: "hide" with checkouts main (tabs t1, t2) and feature (tab t3,
 // labelled like its project so its place collapses), and "notes" (tab t4).
@@ -52,7 +58,7 @@ function session(checkoutId: string, tabId: string, displays: ViewDisplaySnapsho
   const front = shape.flatMap((row) => row.checkouts).find((row) => row.id === checkoutId)!;
   front.active_tab_id = tabId;
   return {
-    navigator: { focused_workspace_id: front.workspace_id, focused_checkout_id: checkoutId, workspaces: shape, agents },
+    navigator: { focused_workspace_id: front.workspace_id, focused_checkout_id: checkoutId, workspaces: shape, agents, devices: [{ id: "local", label: "This Mac", kind: "local", state: "local", message: null }] },
     workspace_view: {
       device_id: "local",
       path: front.path,
@@ -67,10 +73,10 @@ function session(checkoutId: string, tabId: string, displays: ViewDisplaySnapsho
 }
 
 function use(rest: SnapshotRest, inView = false) {
-  observeSurfaces(rest, currentSurface(rest, inView));
+  observeEntries(rest, currentSurface(rest, inView));
 }
 
-const order = () => recentSurfaces().map((surface) => `${surface.checkoutId}/${surface.id}`);
+const order = () => recentEntries().map((entry) => (isScreenVisit(entry) ? entry.key : `${entry.checkoutId}/${entry.id}`));
 
 describe("Recent Panels order", () => {
   beforeEach(() => resetRecent());
@@ -143,7 +149,7 @@ describe("Recent Panels rows", () => {
   it("names a one-agent tab by its agent with its mark, and keeps a shared tab's label", () => {
     const rest = session("c-main", "t1");
     use(rest);
-    const [one, two] = ["t1", "t2"].map((id) => panelItem(rest, recentSurfaces().find((surface) => surface.id === id)!)!);
+    const [one, two] = ["t1", "t2"].map((id) => panelItem(rest, recentEntries().find((entry) => !isScreenVisit(entry) && entry.id === id)!)!);
     expect(one).toMatchObject({ title: "Fix the build", detail: "hide · main · Terminal", agent: { symbol: "●" } });
     expect(two).toMatchObject({ title: "t2 label", agent: null });
   });
@@ -151,7 +157,94 @@ describe("Recent Panels rows", () => {
   it("collapses the place to the checkout when it shares the project's name, and names a display's type", () => {
     const rest = session("c-feature", "t3", [display("d1", "a.diff", "diff")]);
     use(rest, true);
-    expect(panelItem(rest, recentSurfaces()[0]!)).toMatchObject({ title: "a.diff", detail: "hide · Diff" });
+    expect(panelItem(rest, recentEntries()[0]!)).toMatchObject({ title: "a.diff", detail: "hide · Diff" });
+  });
+});
+
+describe("Recent Panels over the every-project Overview and each Project's Overview", () => {
+  beforeEach(() => {
+    resetRecent();
+    useUiStore.setState({ screen: null, cycle: null, opening: null });
+  });
+
+  const overview = (projectId: string, lens: OverviewLens = entryLens(null, "board")): Screen => ({ kind: "overview", projectId, lens });
+
+  /** The page showing `screen` over `rest`, observed as the page observes a move. */
+  function show(rest: SnapshotRest, screen: Screen) {
+    useShellStore.setState({ rest });
+    useUiStore.setState({ screen });
+    observeRecent(rest, true);
+  }
+
+  const rows = (rest: SnapshotRest) => panelCycle(rest)!.items.map((item) => `${item.kind} ${item.title} (${item.detail})`);
+
+  it("puts the Overview just left one chord back, and from the Overview the Workspace surface it was left from", () => {
+    const rest = session("c-main", "t1");
+    show(rest, { kind: "workspace" });
+    show(rest, overview("w-notes"));
+    expect(rows(rest).slice(0, 2)).toEqual(["overview notes (Overview)", "herdr Fix the build (hide · main · Terminal)"]);
+    show(rest, { kind: "workspace" });
+    expect(rows(rest).slice(0, 2)).toEqual(["herdr Fix the build (hide · main · Terminal)", "overview notes (Overview)"]);
+  });
+
+  it("keeps one row per Overview, moves a revisited one to the front, and has the every-project Overview as its own row, read as its sidebar row", () => {
+    const rest = session("c-main", "t1");
+    show(rest, { kind: "main" });
+    show(rest, overview("w-notes"));
+    show(rest, { kind: "workspace" });
+    show(rest, overview("w-hide"));
+    show(rest, overview("w-notes"));
+    expect(rows(rest)).toEqual([
+      "overview notes (Overview)",
+      "overview hide (Overview)",
+      "herdr Fix the build (hide · main · Terminal)",
+      "main Overview (2 projects)",
+      "herdr t2 label (hide · main · Terminal)",
+      "herdr t3 label (hide · Terminal)",
+      "herdr t4 label (notes · Terminal)",
+    ]);
+    // Recent Projects still restores a Project's Workspace surface, not its Overview.
+    expect(lastSurfaceOf("w-hide")?.id).toBe("t1");
+  });
+
+  it("drops the Overview of a Project that left the catalog, from the order and from a held cycle", () => {
+    const rest = session("c-main", "t1");
+    show(rest, overview("w-notes"));
+    show(rest, { kind: "workspace" });
+    const held = { ...panelCycle(rest)!, index: 1 };
+    expect(held.items[1]).toMatchObject({ kind: "overview", title: "notes" });
+    const gone = session("c-main", "t1", [], workspaces().slice(0, 1));
+    show(gone, { kind: "workspace" });
+    expect(rows(gone).some((row) => row.startsWith("overview"))).toBe(false);
+    expect(reconcileHeldCycle(held, gone)!.items.map((item) => item.kind)).not.toContain("overview");
+  });
+
+  it("commits an Overview row by showing it, and a Workspace surface from an Overview by bringing its checkout forward", () => {
+    const sent: { kind: string; payload: Record<string, unknown> }[] = [];
+    const actions = createActions((event) => {
+      sent.push(event as { kind: string; payload: Record<string, unknown> });
+      return true;
+    });
+    const rest = session("c-main", "t1");
+    show(rest, overview("w-notes"));
+    // The lens changed on the Overview is the visit Recent Panels brings back (PRD overview-lenses-tiles-agents B11),
+    // the issue panel and the filter with it (PRD overview-lenses-issues D-08), and the PRs tab's unfolded rows
+    // (PRD overview-lenses-prs B23: ^Tab brings the PRs tab back as it was left).
+    const left: OverviewLens = { tab: "prs", agentsMode: "lineage", tasksMode: "list", lane: "c-notes", folds: ["cleanup"], focusTask: null, panel: "local:/notes#3", filter: { query: "sigterm", turn: true }, prs: { open: [218], focus: 218, merged: true } };
+    show(rest, overview("w-notes", left));
+    show(rest, { kind: "workspace" });
+    // A commit still on its way does not keep the Overview from being the visit.
+    expectSurface(displayKey("c-notes", "d9"));
+    commitCycle({ ...panelCycle(rest)!, index: 1 }, actions);
+    expect(useUiStore.getState().screen).toEqual(overview("w-notes", left));
+    expect(sent).toEqual([]);
+    observeRecent(rest, true);
+    expect(rows(rest)[0]).toBe("overview notes (Overview)");
+
+    commitCycle({ ...panelCycle(rest)!, index: 1 }, actions);
+    expect(sent).toMatchObject([{ kind: "focus_tab", payload: { workspace_id: "w-hide", checkout_id: "c-main", tab_id: "t1" } }]);
+    // The checkout is already in front, so the Workspace shows at once.
+    expect(openingProgress(rest, useUiStore.getState().opening!)).toBe("landed");
   });
 });
 
@@ -168,13 +261,13 @@ describe("Recent Projects", () => {
     expect(recentProjectOrder(["w-notes", "w-hide", "w-new"])).toEqual(["w-hide", "w-notes", "w-new"]);
     expect(lastSurfaceOf("w-notes")?.id).toBe("d1");
     const row = projectItem(main.navigator!.workspaces![1]!, main, true);
-    expect(row).toMatchObject({ title: "notes", detail: "plan.md · notes", surface: { id: "d1", kind: "browser" } });
+    expect(row).toMatchObject({ title: "notes", detail: "plan.md · notes", target: { kind: "surface", surface: { id: "d1", kind: "browser" } } });
   });
 
   it("comes forward on its checkout when no surface of it was used", () => {
     const rest = session("c-main", "t1");
     const row = projectItem(rest.navigator!.workspaces![1]!, rest, false);
-    expect(row).toMatchObject({ surface: null, checkoutId: "c-notes", detail: "notes" });
+    expect(row).toMatchObject({ target: { kind: "checkout", checkoutId: "c-notes" }, detail: "notes" });
   });
 });
 

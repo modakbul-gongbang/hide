@@ -1670,6 +1670,7 @@ fn branch_migration_receipt_preserves_core_focus() {
             pane_id: "new:pane".into(),
             purpose_error: None,
             unconfirmed_purpose_token: None,
+            issue_error: None,
         })
     ));
     assert_eq!(
@@ -1732,6 +1733,7 @@ fn created_worktree_starts_collapsed_and_keeps_purpose_failure_non_blocking() {
             pane_id: "w-created:p1".to_owned(),
             purpose_error: Some("injected purpose mirror failure".to_owned()),
             unconfirmed_purpose_token: Some("Unconfirmed creation purpose".to_owned()),
+            issue_error: None,
         })
     ));
 
@@ -2617,6 +2619,7 @@ fn a_task_agent_start_reports_apart_from_the_creation_it_follows() {
             pane_id: "w1:p9".into(),
             purpose_error: None,
             unconfirmed_purpose_token: None,
+            issue_error: None,
         }),
     ));
     let operation = runtime.snapshot().task_operation.clone().unwrap();
@@ -2624,7 +2627,7 @@ fn a_task_agent_start_reports_apart_from_the_creation_it_follows() {
     assert_eq!(operation.agent_phase.as_deref(), Some("starting"));
     assert_eq!(
         runtime.pending_task_agent_start(id),
-        Some(("w1:p9".to_owned(), "claude".to_owned()))
+        Some(("w1:p9".to_owned(), "claude".to_owned(), None))
     );
     // An acknowledgement while the agent is still starting keeps the slot.
     runtime.acknowledge_task_operation(id);
@@ -3073,6 +3076,7 @@ fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
                 host_cli_dir: None,
                 workspace_views_path: None,
                 shortcut_import_path: None,
+                local_issues_path: None,
             },
             environment::EnvironmentReport {
                 statuses: vec![],

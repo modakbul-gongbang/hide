@@ -1112,11 +1112,13 @@ pub(crate) fn agent_state(value: Value) -> Result<AgentState, String> {
     }
 }
 
-/// Which process group holds a pane's terminal, and which is its shell's.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Which process group holds a pane's terminal, which is its shell's, and
+/// the processes in the foreground group.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PaneProcessGroup {
     pub(crate) shell_pid: Option<u32>,
     pub(crate) foreground_process_group_id: Option<u32>,
+    pub(crate) foreground_pids: Vec<u32>,
 }
 
 pub(crate) fn tab_rename_params(tab_id: &str, label: &str) -> Result<Value, String> {
@@ -1162,7 +1164,30 @@ pub(crate) fn pane_process_group(value: Value) -> Result<PaneProcessGroup, Strin
         res::ResponseResult::PaneProcessInfo { process_info, .. } => Ok(PaneProcessGroup {
             shell_pid: process_info.shell_pid,
             foreground_process_group_id: process_info.foreground_process_group_id,
+            foreground_pids: process_info
+                .foreground_processes
+                .iter()
+                .map(|process| process.pid)
+                .collect(),
         }),
+        _ => Err(missing.into()),
+    }
+}
+
+/// The first prompt for an agent that `agent.start` reported ready. No wait:
+/// the prompt is the operator's, and the pane shows how the turn goes.
+pub(crate) fn agent_prompt_params(pane_id: &str, text: &str) -> Result<Value, String> {
+    params(req::AgentPromptParams {
+        target: pane_id.into(),
+        text: text.into(),
+        wait: None,
+    })
+}
+
+pub(crate) fn prompted_agent(value: Value) -> Result<(), String> {
+    let missing = "agent.prompt response is missing its agent";
+    match response(value, missing)? {
+        res::ResponseResult::AgentPrompted { .. } => Ok(()),
         _ => Err(missing.into()),
     }
 }

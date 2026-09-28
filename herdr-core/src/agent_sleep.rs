@@ -520,6 +520,7 @@ mod tests {
             progress: Some("Split the lexer".to_owned()),
             expected_reply: None,
             detail: None,
+            message: None,
             status_word_visible: true,
             elapsed: "3m".to_owned(),
             last_activity: "1788871000000".to_owned(),

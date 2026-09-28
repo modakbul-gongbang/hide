@@ -3,14 +3,15 @@
 // Nothing here reads the store, so every rule is tested without a browser.
 
 import type { DaemonInfo } from "./store";
-import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, HerdrStatus, RemoteStatus } from "./snapshot";
+import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, HerdrStatus, IssueSettings, RemoteStatus, Workspace } from "./snapshot";
 
-export type SettingsTab = "general" | "appearance" | "agents" | "devices" | "mobile" | "performance" | "shortcuts";
+export type SettingsTab = "general" | "appearance" | "agents" | "issues" | "devices" | "mobile" | "performance" | "shortcuts";
 
 export const SETTINGS_TABS: readonly { id: SettingsTab; title: string; subtitle: string }[] = [
   { id: "general", title: "General", subtitle: "This daemon, the Herdr runtime behind it, and where its state lives." },
   { id: "appearance", title: "Appearance", subtitle: "Theme, accent and interface density." },
   { id: "agents", title: "Agents", subtitle: "The agent CLIs the daemon's machine can launch, Background AI, and hooks." },
+  { id: "issues", title: "Issues", subtitle: "이슈를 어디에 두고 어떻게 작업을 시작할지." },
   { id: "devices", title: "Devices", subtitle: "SSH targets. Authentication stays in the daemon machine's SSH environment." },
   { id: "mobile", title: "Mobile", subtitle: "이 맥의 hide를 폰에서 열고, 기다리는 에이전트에 답하고, 알림을 받습니다." },
   { id: "performance", title: "Performance", subtitle: "What this machine ends while you are away, and resumes when you come back." },
@@ -37,6 +38,72 @@ export function sleepAfterChoice(hours: unknown): string {
 export function sleepingCount(agents: readonly AgentRow[] | undefined): number {
   return (agents ?? []).filter((agent) => agent.sleep && !agent.pane_id.startsWith("remote:")).length;
 }
+
+/** What `gh` answered across this Mac's Git projects, the Issues tab's GitHub row. */
+export type GithubAccess = { state: "connected" } | { state: "failed"; category: string; reason: string | null };
+
+/**
+ * Whether GitHub reads work on this Mac: connected once any local Git
+ * project's last read succeeded, otherwise the failure `gh` itself gave, and
+ * null while nothing has answered. A repository with no GitHub remote says
+ * nothing about `gh`, and a refusal of `gh` itself (not installed, not logged
+ * in) is the same for every repository, so it speaks before a network one.
+ */
+export function githubAccess(workspaces: readonly Workspace[]): GithubAccess | null {
+  const statuses = workspaces
+    .filter((workspace) => workspace.is_git && !workspace.remote_target_id)
+    .flatMap((workspace) => workspace.checkouts.map((checkout) => checkout.github))
+    .filter((status) => status !== undefined);
+  if (statuses.some((status) => status.last_success_at_unix_ms != null && !status.stale)) return { state: "connected" };
+  const failure =
+    statuses.find((status) => status.failure_category === "not installed" || status.failure_category === "not logged in") ??
+    statuses.find((status) => status.failure_category != null && status.failure_category !== "no GitHub remote");
+  return failure?.failure_category ? { state: "failed", category: failure.failure_category, reason: failure.unavailable_reason } : null;
+}
+
+const GH_FAILURE_TEXT: Record<string, string> = {
+  "not installed": "gh 설치 안 됨",
+  "not logged in": "gh 로그인 안 됨",
+  "network or rate limit": "읽기 실패",
+};
+
+/** What the GitHub row's state says; a category this build does not know is shown as the core named it. */
+export function githubAccessLine(access: GithubAccess): { text: string; tone: "ok" | "warn" } {
+  if (access.state === "connected") return { text: "연결됨", tone: "ok" };
+  return { text: GH_FAILURE_TEXT[access.category] ?? access.category, tone: "warn" };
+}
+
+export type IssueSourceChoice = "auto" | "github" | "local";
+
+/**
+ * A local project's issue source choices and the one in force. Auto names
+ * the source it resolves to only where the core's answer shows it: the
+ * project reads its default now, or it is a folder, which is always Local.
+ * GitHub is offered only to a Git project, and a stored choice the project
+ * cannot take (GitHub for a folder) reads as Auto, the source the core falls
+ * back to.
+ */
+export function issueSourceChoices(
+  workspace: Workspace,
+  stored: string | undefined,
+): { value: IssueSourceChoice; options: { id: IssueSourceChoice; label: string }[] } {
+  const source = workspace.tasks?.source ?? null;
+  const resolved = source && (!source.chosen || !workspace.is_git) ? source.label : null;
+  const repository = source?.kind === "github" ? source.name : (workspace.home_issues?.repository ?? null);
+  const options: { id: IssueSourceChoice; label: string }[] = [
+    { id: "auto", label: resolved ? `자동 (${resolved})` : "자동" },
+    ...(workspace.is_git ? [{ id: "github" as const, label: repository ? `GitHub · ${repository}` : "GitHub" }] : []),
+    { id: "local", label: "Local" },
+  ];
+  return { value: options.find((option) => option.id === stored)?.id ?? "auto", options };
+}
+
+/** The agents the Start dialog can select first (`issue_settings.default_agent`). */
+export const ISSUE_AGENT_CHOICES: readonly { id: IssueSettings["default_agent"]; label: string }[] = [
+  { id: "claude", label: "Claude" },
+  { id: "codex", label: "Codex" },
+  { id: "terminal", label: "터미널만" },
+];
 
 /** The interface font sizes Appearance offers, the native Settings range. */
 export const FONT_SIZE_MIN = 11;

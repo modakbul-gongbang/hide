@@ -280,6 +280,7 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
         host_cli_dir: None,
         workspace_views_path: None,
         shortcut_import_path: None,
+        local_issues_path: None,
     };
     let restarted = Runtime::new(
         options,

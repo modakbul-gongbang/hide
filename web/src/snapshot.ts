@@ -20,7 +20,11 @@ export type AgentRow = {
   group: string;
   status_label: string;
   detail?: string | null;
+  /** Everything the agent last said through its hooks, uncut: the request, then the progress, one per line; absent when it said nothing. */
+  message?: string | null;
   elapsed: string;
+  /** The core's ordering key: the label plugin's activity clock, else Herdr's state sequence, zero-padded so it sorts as text. */
+  last_activity?: string;
   emphasized: boolean;
   unread: boolean;
   requires_close_confirmation?: boolean;
@@ -109,6 +113,12 @@ export type PullRequest = {
   is_draft: boolean;
   /** The CI rollup; unknown and absent checks never read as a pass (`PullRequestChecks`). */
   checks?: "unknown" | "none" | "pending" | "failed" | "passing";
+  merged_at_unix_ms?: number | null;
+  updated_at_unix_ms?: number | null;
+  /** The branch the pull request comes from. */
+  head_branch?: string;
+  /** The issues its body closes when it merges, as GitHub reads the body. */
+  closing_issues?: IssueReference[];
 };
 
 /** How a repository's `gh` lookup is doing, apart from what it found (`GithubStatusSnapshot`). */
@@ -142,16 +152,18 @@ export type ProjectIssues = { repository: string | null; issues: Issue[]; overfl
 /**
  * One task of a project's source, in the core's source-neutral shape
  * (`TaskSnapshot`, PRD task-agents-views D-14). The web reads no source's own
- * shape: `source` is `github` today, and a later source is drawn the same way.
+ * shape: `source` is `github` or `local`, and a later source is drawn the same way.
  */
 export type Task = {
   key: string;
   source: string;
-  /** The id the source shows (`#N`, `owner/repo#N` for another repository), or null when it has none. */
+  /** The id the source shows (`#N`, `owner/repo#N` for another repository, `L-N` for a local issue), or null when it has none. */
   id: string | null;
   url: string | null;
   title: string;
   open: boolean;
+  /** When the source last changed it, for the backlog's order and age. */
+  updated_at_unix_ms?: number | null;
   /** The open tasks this one waits on, possibly of another project (`TaskRefSnapshot`). */
   blocked_by?: TaskRef[];
 };
@@ -169,15 +181,87 @@ export type TaskSource = {
   /** The last read failed; the tasks are the answer before it. */
   failure: string | null;
   last_read_at_unix_ms: number | null;
+  /** The operator chose this source in Settings › Issues rather than the default. */
+  chosen?: boolean;
 };
 
-/** A project's tasks (`ProjectTasksSnapshot`); `source` is null while none is connected. */
+/** A project's tasks (`ProjectTasksSnapshot`); `source` is null only for a device's project. */
 export type ProjectTasks = {
   source: TaskSource | null;
-  unconnected_reason: string | null;
   tasks: Task[];
   overflow: boolean;
 };
+
+/** How starting work from an issue behaves (`IssueSettingsSnapshot`, Settings › Issues). */
+export type IssueSettings = {
+  ai_worktree_name: boolean;
+  default_agent: "claude" | "codex" | "terminal";
+  closes_instruction: boolean;
+};
+
+/** A label as the issue's source colours it (`TaskLabel`); `color` is six hex digits. */
+export type IssueLabel = { name: string; color: string | null };
+
+export type IssueComment = { author: string | null; created_at_unix_ms: number | null; body: string };
+
+/**
+ * One issue as its panel and the Start dialog read it (`IssueDetailSnapshot`):
+ * the body, and for a GitHub issue its labels, author, assignees and latest
+ * comments. The fields past `message` are empty until `ready`.
+ */
+export type IssueDetail = {
+  task_key: string;
+  phase: "reading" | "ready" | "failed";
+  body: string | null;
+  message: string | null;
+  labels: IssueLabel[];
+  author: string | null;
+  created_at_unix_ms: number | null;
+  assignees: string[];
+  /** Absent for a source with no comments (Local). */
+  comment_count: number | null;
+  comments: IssueComment[];
+};
+
+/** The Overview's issue work in flight (`IssueWorkSnapshot`), one slot each. */
+export type IssueWork = {
+  create: { id: number; workspace_id: string; phase: "working" | "ready" | "failed"; task_key: string | null; message: string | null } | null;
+  detail: IssueDetail | null;
+  name: { request_id: string; phase: "working" | "ready" | "failed"; name: string | null; message: string | null } | null;
+  /** The answer to a Local issue's edit, by the web's request id. */
+  update?: { request_id: string; task_key: string; phase: "ready" | "failed"; message: string | null } | null;
+};
+
+/** A pull request linked to an issue (`PrLinkSnapshot`): the issue made, Hide's link, then `Closes #N` in the body. */
+export type PrLink = {
+  request_id: string;
+  workspace_id: string;
+  pr_number: number;
+  /** The step working now, or the one that failed. */
+  step: "create" | "link" | "body";
+  phase: "working" | "ready" | "failed";
+  issue_key: string | null;
+  /** The id the source shows for the issue (`#12`, `L-3`). */
+  issue_id: string | null;
+  /** This request made the issue. */
+  created: boolean;
+  message: string | null;
+};
+
+/** A pull request's body, failed checks and standing change requests, read for a new issue made from it or an agent's first prompt (`PrFeedbackSnapshot`). */
+export type PrFeedback = {
+  request_id: string;
+  pr_number: number;
+  phase: "reading" | "ready" | "failed";
+  /** The body once read. */
+  body: string | null;
+  failed_checks: { name: string; url: string | null }[];
+  change_requests: { author: string | null; body: string }[];
+  message: string | null;
+};
+
+/** The Overview's pull-request work in flight (`PrWorkSnapshot`), one slot each. */
+export type PrWork = { link: PrLink | null; feedback: PrFeedback | null };
 
 export type Purpose = { text: string; origin: string };
 
@@ -323,6 +407,13 @@ export type Workspace = {
   home_issues?: ProjectIssues;
   /** The project's tasks, the Overview's Tasks and Agents views read these. */
   tasks?: ProjectTasks;
+  /**
+   * The project's pull requests for the Overview's PRs tab, one per branch:
+   * every open one, and a merged one while its worktree is recorded here or
+   * for 14 days after it merged (PRD overview-lenses-prs D-52). A local Git
+   * project's only; absent while it has none.
+   */
+  pull_requests?: PullRequest[];
   /**
    * A local Git project's allocated disk, every worktree and the shared Git
    * directory counted once. Present once an Overview named the project for
@@ -848,6 +939,8 @@ export type SnapshotRest = {
   };
   connection?: { kind: string; state: string; target_id: string | null };
   task_operation?: TaskOperation | null;
+  issue_work?: IssueWork;
+  pr_work?: PrWork;
   repository_clone?: RepositoryClone | null;
   worktree_removal?: WorktreeRemoval | null;
   tab?: Tab;
@@ -882,6 +975,9 @@ export type SnapshotRest = {
     browser_shortcut_bindings?: Record<string, string>;
     /** Sleep idle agents after this many hours; null or absent is Never (PRD agent-sleep). */
     agent_sleep_after_hours?: number | null;
+    /** Each local project's chosen issue source (`github` or `local`) by path; absent is the default. */
+    project_issue_sources?: Record<string, string>;
+    issue_settings?: IssueSettings;
     [key: string]: unknown;
   };
   status?: {

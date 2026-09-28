@@ -1287,6 +1287,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         progress,
         expected_reply,
         detail: None,
+        message: agent_message(&agent.tokens),
         status_word_visible: true,
         elapsed,
         last_activity,
@@ -1648,6 +1649,28 @@ fn token_text(tokens: &BTreeMap<String, Value>, name: &str, max_chars: usize) ->
         .map(|value| value.chars().take(max_chars).collect())
 }
 
+/// What the agent last said through its hooks (PRD overview-lenses-tiles-agents
+/// D-50): the `expected_reply` and `progress` tokens whole, request first,
+/// each trimmed but not collapsed or cut to a row, joined by a line break.
+/// Herdr already bounds a token value, and each part is held to
+/// `MAX_TOKEN_TEXT_CHARS` so a token that outran Herdr's cap cannot grow the
+/// snapshot.
+fn agent_message(tokens: &BTreeMap<String, Value>) -> Option<String> {
+    let parts: Vec<String> = ["expected_reply", "progress"]
+        .into_iter()
+        .filter_map(|name| token_string(tokens, name))
+        .map(|value| {
+            value
+                .trim()
+                .chars()
+                .take(MAX_TOKEN_TEXT_CHARS)
+                .collect::<String>()
+        })
+        .filter(|value| !value.is_empty())
+        .collect();
+    (!parts.is_empty()).then(|| parts.join("\n"))
+}
+
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
 }
@@ -1720,6 +1743,7 @@ mod tests {
         };
         let workspace = |checkout| WorkspaceSnapshot {
             home_issues: Default::default(),
+            pull_requests: Vec::new(),
             tasks: Default::default(),
             id: "project".into(),
             label: "Project".into(),
@@ -1825,6 +1849,7 @@ mod tests {
         };
         let mut workspaces = vec![WorkspaceSnapshot {
             home_issues: Default::default(),
+            pull_requests: Vec::new(),
             tasks: Default::default(),
             checkouts: vec![
                 checkout(
@@ -2416,6 +2441,28 @@ mod tests {
         ]));
         assert_eq!(projected[0].identity_label, "task-factory");
         assert_eq!(projected[0].detail, None);
+    }
+
+    /// PRD overview-lenses-tiles-agents D-50: `message` carries both hook
+    /// sentences whole, request first and line breaks kept, while `detail`
+    /// stays the row's one cut sentence; an agent that reported neither has none.
+    #[test]
+    fn message_carries_both_hook_sentences_uncut() {
+        let long_reply = "가".repeat(60);
+        let projected = projected(json!([
+            {"pane_id":"p1","id":"p1","workspace_label":"hide","tokens":{"status_working":"●","activity":"0000000000001","progress":"  hook 보고\n경로 교체 중  ","expected_reply":long_reply}},
+            {"pane_id":"p2","id":"p2","workspace_label":"hide","tokens":{"status_idle":"○","activity":"0000000000002","progress":"  "}}
+        ]));
+        assert_eq!(
+            projected[0].message.as_deref(),
+            Some(format!("{long_reply}\nhook 보고\n경로 교체 중").as_str())
+        );
+        assert_eq!(projected[1].message, None);
+        let wire = serde_json::to_value(&projected[1]).unwrap();
+        assert!(
+            wire.get("message").is_none(),
+            "an agent that said nothing carries no key"
+        );
     }
 
     /// PRD D-05: the sentences are one line each and `expected_reply` is cut

@@ -5,6 +5,7 @@
 import { create } from "zustand";
 import type { Relation } from "./lineage";
 import type { Opening } from "./navigation";
+import { NO_FILTER, type IssueFilter } from "./projectBoard";
 import type { SettingsTab } from "./settings";
 import type { CycleItem } from "./recent";
 import type { NumberedFamily } from "./shortcuts";
@@ -37,28 +38,79 @@ export type PendingClose = {
  * it shows is the core's front checkout.
  * `null` until the first snapshot decides where the page starts (D-11).
  */
-export type Screen = { kind: "main" } | { kind: "overview"; projectId: string } | { kind: "workspace" };
+export type Screen = { kind: "main" } | { kind: "overview"; projectId: string; lens: OverviewLens } | { kind: "workspace" };
 
 /**
- * How a scope is looked at: its Tasks board, its Agents board, a Project's
- * session history (PRD S8), or All projects' list of Projects. It belongs to
- * the page, not to one scope, so choosing another Project keeps the view the
- * operator was using, and a scope without it shows its first view (PRD
- * task-agents-views D-01).
+ * How All projects is looked at: every Project's tasks, every agent, or the
+ * list of Projects (PRD task-agents-views D-01). A Project's Overview has its
+ * own tiles instead (`OverviewLens`).
  */
-export type ProjectView = "tasks" | "agents" | "sessions" | "projects";
+export type MainView = "tasks" | "agents" | "projects";
+
+/** A Project Overview's tiles (PRD overview-lenses-tiles-agents D-02, D-36; overview-lenses-prs D-14): its agents, its issues, its pull requests, its sessions. */
+export type OverviewTab = "agents" | "issues" | "prs" | "sessions";
 
 /**
- * How the Tasks view draws its tasks: the stage columns, or the tasks that
- * wait on one another laid out left to right (PRD task-agents-views D-02).
- * Like the view it belongs to the page, so another scope keeps it (B9).
+ * The PRs tab's own state (PRD overview-lenses-prs B5, B19, B21): the rows
+ * unfolded, the row the keyboard or a chip asked for, and whether `최근 머지`
+ * is open.
  */
-export type TasksMode = "board" | "dependencies";
+export type PrLens = { open: readonly number[]; focus: number | null; merged: boolean };
 
-/** The view a scope draws: the page's own when the scope has it, else the scope's first. */
-export function scopeView(view: ProjectView, views: readonly ProjectView[]): ProjectView {
-  return views.includes(view) ? view : (views[0] ?? view);
+export const NO_PR_LENS: PrLens = { open: [], focus: null, merged: false };
+
+/** The Agents tab's two modes (D-03): a lane per checkout, or a row per lineage. */
+export type AgentsMode = "checkouts" | "lineage";
+
+/** A folded line the operator opened: worktrees with no agent, the ones only there to be removed, resting lineages. */
+export type LensFold = "empty" | "cleanup" | "resting";
+
+/**
+ * How a Project's Overview is looked at, the screen's own page state (D-04,
+ * D-17): the tile, the Agents mode, the Issues mode, the selected lane, the
+ * folds opened, and the issue card an issue chip asked for. It rides on the
+ * screen, so Recent Panels brings a Project's Overview back exactly as it was
+ * left (B11); every other way in starts from `entryLens`. Nothing here is
+ * stored.
+ */
+export type OverviewLens = {
+  tab: OverviewTab;
+  agentsMode: AgentsMode;
+  tasksMode: TasksMode;
+  /** The checkout whose lane is selected, or null. */
+  lane: string | null;
+  folds: readonly LensFold[];
+  /** The issue card to bring into view on the Issues tab. */
+  focusTask: string | null;
+  /** The issue whose panel is open beside the Issues board, by task key (PRD overview-lenses-issues D-08). */
+  panel: string | null;
+  /** The Issues filter (B21). */
+  filter: IssueFilter;
+  /** The PRs tab's rows and folds (PRD overview-lenses-prs). */
+  prs: PrLens;
+};
+
+/** `folds` with `fold` opened, or closed again when it was open. */
+export function toggledFold(folds: readonly LensFold[], fold: LensFold): LensFold[] {
+  return folds.includes(fold) ? folds.filter((open) => open !== fold) : [...folds, fold];
 }
+
+/**
+ * Where every way into a Project's Overview lands (D-04, D-17): Agents ›
+ * checkouts, the given lane selected. The Issues mode is the page's, the one
+ * All projects' Tasks shows too (task-agents-views D-10).
+ */
+export function entryLens(lane: string | null, tasksMode: TasksMode): OverviewLens {
+  return { tab: "agents", agentsMode: "checkouts", tasksMode, lane, folds: [], focusTask: null, panel: null, filter: NO_FILTER, prs: NO_PR_LENS };
+}
+
+/**
+ * How the Tasks view draws its tasks: the stage columns, one row per task
+ * grouped by stage, or the tasks that wait on one another laid out left to
+ * right (PRD task-agents-views D-02). Like the view it belongs to the page,
+ * so another scope keeps it (B9).
+ */
+export type TasksMode = "board" | "list" | "dependencies";
 
 /** `file_palette_beside` is ⌘P's list for "Open file to the side" (S7 B4): its pick opens beside the active View area. */
 export type Overlay = "none" | "shortcuts" | "find" | "add_project" | "file_palette" | "file_palette_beside" | "diff_palette" | "search" | "settings";
@@ -77,6 +129,16 @@ export type Notice = {
 /** A project or checkout management dialog, named by the row that opened it. */
 export type WorkspaceDialog =
   | { kind: "new_worktree"; workspaceId: string }
+  /** A new issue, in the named project's source to begin with; the dialog can move it to another project. */
+  | { kind: "new_issue"; workspaceId: string }
+  /** Work started from an issue: a worktree named for it, its agent and first prompt. */
+  | { kind: "start_issue"; workspaceId: string; taskKey: string }
+  /** A pull request linked to an issue of its project's source (PRD overview-lenses-prs B10, B11). */
+  | { kind: "pr_link"; workspaceId: string; prNumber: number; issueKey: string }
+  /** A new issue made from a pull request's title and body, then linked (B12, B13). */
+  | { kind: "pr_new_issue"; workspaceId: string; prNumber: number }
+  /** A pull request handed to an agent on its branch (B15, B16, B18). */
+  | { kind: "pr_delegate"; workspaceId: string; prNumber: number }
   | { kind: "purpose"; workspaceId: string; checkoutId: string }
   | { kind: "delete_worktree"; workspaceId: string; checkoutId: string }
   | { kind: "remove_project"; workspaceId: string };
@@ -116,8 +178,12 @@ export type PendingTrash = {
 
 type UiStore = {
   screen: Screen | null;
-  projectView: ProjectView;
+  /** All projects' view; the page keeps it while the operator visits a Project. */
+  mainView: MainView;
+  /** All projects' Tasks mode. */
   tasksMode: TasksMode;
+  /** All projects' Agents mode. */
+  agentsMode: AgentsMode;
   /** The focus asked for by a chip, a Return or a relationship Open, until another replaces it (S6 B15, B16). */
   relation: Relation | null;
   sidebarMode: SidebarMode;
@@ -186,8 +252,11 @@ type UiStore = {
    */
   tooltips: (() => void)[];
   setScreen: (screen: Screen) => void;
-  setProjectView: (view: ProjectView) => void;
+  setMainView: (view: MainView) => void;
   setTasksMode: (mode: TasksMode) => void;
+  setAgentsMode: (mode: AgentsMode) => void;
+  /** Changes the Project Overview's lens in place; a no-op on any other screen. */
+  setLens: (patch: Partial<OverviewLens>) => void;
   setRelation: (relation: Relation | null) => void;
   setSidebarMode: (mode: SidebarMode) => void;
   toggleSidebarMode: () => void;
@@ -225,8 +294,9 @@ type UiStore = {
 
 export const useUiStore = create<UiStore>((set, get) => ({
   screen: null,
-  projectView: "tasks",
+  mainView: "tasks",
   tasksMode: "board",
+  agentsMode: "checkouts",
   relation: null,
   sidebarMode: "projects",
   explorerSelection: null,
@@ -254,8 +324,17 @@ export const useUiStore = create<UiStore>((set, get) => ({
   // Moving by hand drops an open still waiting for its Workspace, so a late
   // answer does not pull the screen away from where the operator went.
   setScreen: (screen) => set({ screen, opening: null }),
-  setProjectView: (projectView) => set({ projectView }),
+  setMainView: (mainView) => set({ mainView }),
   setTasksMode: (tasksMode) => set({ tasksMode }),
+  setAgentsMode: (agentsMode) => set({ agentsMode }),
+  // A lens change is a new screen value, so Recent Panels records the
+  // Overview as it now is; the open request stays, since nothing moved away.
+  // An Issues mode chosen here is the page's as well.
+  setLens: (patch) => {
+    const screen = get().screen;
+    if (screen?.kind !== "overview") return;
+    set({ screen: { ...screen, lens: { ...screen.lens, ...patch } }, ...(patch.tasksMode ? { tasksMode: patch.tasksMode } : {}) });
+  },
   setRelation: (relation) => set({ relation }),
   setSidebarMode: (sidebarMode) => set({ sidebarMode }),
   toggleSidebarMode: () => {

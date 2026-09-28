@@ -1,0 +1,379 @@
+use super::*;
+use crate::issues::{IssueReference, IssueSnapshot, ProjectIssuesSnapshot};
+use crate::model::{PullRequestBadge, PullRequestChecks, PullRequestSnapshot};
+
+const DAY: u64 = 24 * 60 * 60 * 1000;
+
+fn issue(number: u32) -> IssueSnapshot {
+    IssueSnapshot {
+        reference: reference(number),
+        title: format!("Task {number}"),
+        url: format!("https://github.com/acme/project/issues/{number}"),
+        state: "OPEN".into(),
+        project_status: None,
+        updated_at_unix_ms: Some(1),
+        blocked_by: Vec::new(),
+    }
+}
+
+fn reference(number: u32) -> IssueReference {
+    IssueReference {
+        repository: "acme/project".into(),
+        number,
+    }
+}
+
+fn pull_request(
+    number: u32,
+    branch: &str,
+    badge: PullRequestBadge,
+    merged_at: Option<u64>,
+) -> PullRequestSnapshot {
+    PullRequestSnapshot {
+        closing_issues: Vec::new(),
+        title: format!("PR {number}"),
+        checks: PullRequestChecks::Failed,
+        number,
+        head_branch: branch.into(),
+        base_branch: "main".into(),
+        url: format!("https://github.com/acme/project/pull/{number}"),
+        badge,
+        review: None,
+        is_draft: false,
+        merged_at_unix_ms: merged_at,
+        updated_at_unix_ms: Some(1),
+    }
+}
+
+/// A GitHub project `/repo` whose worktree `c` is on `4-task`, and the pull
+/// requests `gh` listed for it.
+fn pr_runtime(pull_requests: Vec<PullRequestSnapshot>) -> Runtime {
+    let mut runtime = runtime();
+    let mut checkout = checkout("w", "c", "/repo/task", Some(pane("p", "/repo/task")));
+    checkout.is_worktree = true;
+    checkout.branch = Some("4-task".into());
+    let mut workspace = workspace("w", "Repo", "/repo", vec![checkout]);
+    workspace.is_git = true;
+    runtime.snapshot.navigator.workspaces = vec![workspace];
+    runtime
+        .github
+        .projects
+        .push(crate::model::GithubProjectSnapshot {
+            root_path: "/repo".into(),
+            issues: ProjectIssuesSnapshot {
+                repository: Some("acme/project".into()),
+                issues: (1..=4).map(issue).collect(),
+                overflow: false,
+                dependencies_failure: None,
+            },
+            status: crate::model::GithubStatusSnapshot {
+                available: true,
+                last_success_at_unix_ms: Some(1),
+                ..Default::default()
+            },
+            pull_requests,
+            pull_requests_read: true,
+            issues_read: true,
+        });
+    runtime.apply_pull_requests();
+    runtime
+}
+
+fn event(kind: &str, payload: serde_json::Value) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({"schema_version": 2, "kind": kind, "payload": payload}))
+        .unwrap()
+}
+
+fn link(runtime: &Runtime) -> crate::model::PrLinkSnapshot {
+    runtime.snapshot().pr_work.link.clone().unwrap()
+}
+
+/// D-32, D-52: the tab gets every open pull request, a merged one while its
+/// worktree is recorded here or for 14 days, and never a closed one.
+#[test]
+fn the_prs_tab_gets_open_ones_and_merged_ones_with_a_worktree_or_merged_lately() {
+    let now = unix_milliseconds();
+    let runtime = pr_runtime(vec![
+        pull_request(1, "4-task", PullRequestBadge::Merged, Some(now - 40 * DAY)),
+        pull_request(2, "open-work", PullRequestBadge::Open, None),
+        pull_request(
+            3,
+            "old-merge",
+            PullRequestBadge::Merged,
+            Some(now - 20 * DAY),
+        ),
+        pull_request(
+            4,
+            "new-merge",
+            PullRequestBadge::Merged,
+            Some(now - 2 * DAY),
+        ),
+        pull_request(5, "given-up", PullRequestBadge::Closed, None),
+        pull_request(6, "in-review", PullRequestBadge::Review, None),
+    ]);
+    let shown: Vec<u32> = runtime.snapshot().navigator.workspaces[0]
+        .pull_requests
+        .iter()
+        .map(|pull_request| pull_request.number)
+        .collect();
+    assert_eq!(shown, vec![1, 2, 4, 6]);
+}
+
+/// D-13, D-53: a GitHub issue is linked in Hide on the worktree of the pull
+/// request's branch at once, and `Closes #N` goes to the body on a worker; a
+/// core with no worker says so rather than staying `working`, and the body's
+/// answer shows the pull request closing the issue at once.
+#[test]
+fn a_github_issue_links_the_branch_and_its_body_write_settles_the_request() {
+    let mut runtime = pr_runtime(vec![pull_request(
+        7,
+        "4-task",
+        PullRequestBadge::Open,
+        None,
+    )]);
+    assert!(runtime.dispatch_json(&event(
+        "pr_link_issue",
+        serde_json::json!({"request_id": "r1", "workspace_id": "w", "pr_number": 7, "issue_key": "github:acme/project#3"}),
+    )));
+    assert_eq!(
+        runtime.snapshot().task_operation.as_ref().unwrap().kind,
+        "checkout_issue",
+        "Hide's link is written on the branch's worktree"
+    );
+    let failed = link(&runtime);
+    assert_eq!(
+        (
+            failed.step.as_str(),
+            failed.phase.as_str(),
+            failed.issue_id.as_deref()
+        ),
+        ("body", "failed", Some("#3"))
+    );
+    assert!(failed.message.unwrap().contains("No worker"));
+
+    // The retry's worker answers: the body now closes #3.
+    runtime.snapshot.pr_work.link = Some(crate::model::PrLinkSnapshot {
+        phase: "working".into(),
+        message: None,
+        ..link(&runtime)
+    });
+    assert!(runtime.finish_pr_body("r1", &reference(3), Ok(false)));
+    assert_eq!(link(&runtime).phase, "ready");
+    let workspace = &runtime.snapshot().navigator.workspaces[0];
+    assert_eq!(
+        workspace.pull_requests[0].closing_issues,
+        vec![reference(3)]
+    );
+    assert_eq!(
+        workspace.checkouts[0]
+            .pull_request
+            .as_ref()
+            .unwrap()
+            .closing_issues,
+        vec![reference(3)]
+    );
+    // A late answer for a request already settled changes nothing.
+    assert!(!runtime.finish_pr_body("r1", &reference(3), Err("late".into())));
+}
+
+/// D-31: a new GitHub issue made for a pull request stays when the body
+/// write fails, and the request names it for `본문 다시 쓰기`.
+#[test]
+fn a_new_github_issue_stays_when_the_body_write_fails() {
+    let mut runtime = pr_runtime(vec![pull_request(
+        8,
+        "bot/bump",
+        PullRequestBadge::Open,
+        None,
+    )]);
+    assert!(runtime.dispatch_json(&event(
+        "pr_link_issue",
+        serde_json::json!({"request_id": "r2", "workspace_id": "w", "pr_number": 8, "new_issue": {"title": "Bump the parser", "body": "why"}}),
+    )));
+    assert_eq!(
+        (link(&runtime).step.as_str(), link(&runtime).phase.as_str()),
+        ("create", "failed")
+    );
+    // The worker's answer: the issue was made, the body write was refused.
+    runtime.snapshot.pr_work.link = Some(crate::model::PrLinkSnapshot {
+        phase: "working".into(),
+        message: None,
+        ..link(&runtime)
+    });
+    assert!(runtime.ingest_pr_issue_created(
+        "r2",
+        Ok(issue(9)),
+        Some(Err("HTTP 403: Resource not accessible".into())),
+    ));
+    let failed = link(&runtime);
+    assert_eq!(
+        (
+            failed.step.as_str(),
+            failed.phase.as_str(),
+            failed.created,
+            failed.issue_key.as_deref()
+        ),
+        ("body", "failed", true, Some("github:acme/project#9"))
+    );
+    assert!(
+        runtime.snapshot().navigator.workspaces[0]
+            .home_issues
+            .issues
+            .iter()
+            .any(|known| known.reference == reference(9)),
+        "the made issue is kept"
+    );
+}
+
+/// D-34: a Local issue is linked in Hide only; nothing is written to GitHub
+/// and the link write's own answer settles the request.
+#[test]
+fn a_local_issue_is_linked_in_hide_only() {
+    let mut runtime = pr_runtime(vec![pull_request(
+        7,
+        "4-task",
+        PullRequestBadge::Open,
+        None,
+    )]);
+    assert!(runtime.dispatch_json(&event(
+        "issue_source_set",
+        serde_json::json!({"project_path": "/repo", "source": "local"}),
+    )));
+    assert!(runtime.dispatch_json(&event(
+        "pr_link_issue",
+        serde_json::json!({"request_id": "r3", "workspace_id": "w", "pr_number": 7, "new_issue": {"title": "로컬 이슈"}}),
+    )));
+    // No live Herdr here, so the link write fails at once, and no body step ran.
+    let failed = link(&runtime);
+    assert_eq!(
+        (
+            failed.step.as_str(),
+            failed.phase.as_str(),
+            failed.issue_id.as_deref(),
+            failed.created
+        ),
+        ("link", "failed", Some("L-1"), true)
+    );
+    assert_eq!(
+        runtime.snapshot().navigator.workspaces[0].tasks.tasks[0]
+            .id
+            .as_deref(),
+        Some("L-1")
+    );
+
+    // With the write answered, the request is done.
+    assert!(runtime.dispatch_json(&event(
+        "pr_link_issue",
+        serde_json::json!({"request_id": "r4", "workspace_id": "w", "pr_number": 7, "issue_key": "local:/repo#1"}),
+    )));
+    runtime.snapshot.pr_work.link = Some(crate::model::PrLinkSnapshot {
+        phase: "working".into(),
+        message: None,
+        ..link(&runtime)
+    });
+    runtime.pr_link_checkout = Some("c".into());
+    runtime.issue_write_pending = Some((7, "c".into(), "L-1".into()));
+    let request = crate::live::PurposeTaskRequest {
+        id: 7,
+        checkout_id: "c".into(),
+        repository_root: "/repo".into(),
+        branch: Some("4-task".into()),
+        session_workspace_id: None,
+        purpose: "L-1".into(),
+    };
+    runtime.ingest_issue_operation_result(&request, Ok(None));
+    assert_eq!(
+        (
+            link(&runtime).request_id.as_str(),
+            link(&runtime).phase.as_str()
+        ),
+        ("r4", "ready")
+    );
+}
+
+/// A pull request that is not open is refused in the request's own slot,
+/// and a second link while one works is refused without replacing it.
+#[test]
+fn a_settled_pull_request_or_a_second_link_is_refused() {
+    let mut runtime = pr_runtime(vec![
+        pull_request(1, "4-task", PullRequestBadge::Merged, Some(1)),
+        pull_request(2, "open-work", PullRequestBadge::Open, None),
+    ]);
+    assert!(runtime.dispatch_json(&event(
+        "pr_link_issue",
+        serde_json::json!({"request_id": "r5", "workspace_id": "w", "pr_number": 1, "issue_key": "github:acme/project#2"}),
+    )));
+    assert_eq!(link(&runtime).phase, "failed");
+    runtime.snapshot.pr_work.link = Some(crate::model::PrLinkSnapshot {
+        phase: "working".into(),
+        ..link(&runtime)
+    });
+    assert!(runtime.dispatch_json(&event(
+        "pr_link_issue",
+        serde_json::json!({"request_id": "r6", "workspace_id": "w", "pr_number": 2, "issue_key": "github:acme/project#2"}),
+    )));
+    assert_eq!(link(&runtime).request_id, "r5");
+    assert_eq!(
+        runtime.snapshot().status.last_error.as_ref().unwrap().kind,
+        "pr_link.busy"
+    );
+}
+
+/// D-12, D-46: handing a pull request to an agent starts it in the checkout
+/// of its branch with the prompt, and with no checkout here goes through a
+/// worktree of that branch; a provider Hide cannot start is refused.
+#[test]
+fn handing_a_pull_request_to_an_agent_starts_in_its_checkout_or_a_worktree_of_its_branch() {
+    let mut runtime = pr_runtime(vec![
+        pull_request(7, "4-task", PullRequestBadge::Open, None),
+        pull_request(8, "bot/bump", PullRequestBadge::Open, None),
+    ]);
+    assert!(runtime.dispatch_json(&event(
+        "pr_delegate",
+        serde_json::json!({"workspace_id": "w", "pr_number": 7, "provider": "claude", "prompt": "CI를 고쳐줘"}),
+    )));
+    let operation = runtime.snapshot().task_operation.clone().unwrap();
+    assert_eq!(
+        (operation.kind.as_str(), operation.agent_kind.as_deref()),
+        ("agent_start", Some("claude"))
+    );
+    // No checkout on `bot/bump`: a worktree of that branch, which needs the
+    // repository's worktrees read first.
+    assert!(runtime.dispatch_json(&event(
+        "pr_delegate",
+        serde_json::json!({"workspace_id": "w", "pr_number": 8, "provider": "codex", "prompt": ""}),
+    )));
+    assert_eq!(
+        runtime.snapshot().status.last_error.as_ref().unwrap().kind,
+        "worktree.create_unread"
+    );
+    assert!(runtime.dispatch_json(&event(
+        "pr_delegate",
+        serde_json::json!({"workspace_id": "w", "pr_number": 7, "provider": "terminal"}),
+    )));
+    assert_eq!(
+        runtime.snapshot().status.last_error.as_ref().unwrap().kind,
+        "pr_delegate.unknown_provider"
+    );
+}
+
+/// D-46, B18: a feedback read with no worker fails its own slot with why.
+#[test]
+fn a_feedback_read_that_cannot_run_says_why_in_its_slot() {
+    let mut runtime = pr_runtime(vec![pull_request(
+        8,
+        "bot/bump",
+        PullRequestBadge::Open,
+        None,
+    )]);
+    assert!(runtime.dispatch_json(&event(
+        "pr_feedback_read",
+        serde_json::json!({"request_id": "f1", "workspace_id": "w", "pr_number": 8}),
+    )));
+    let feedback = runtime.snapshot().pr_work.feedback.clone().unwrap();
+    assert_eq!(
+        (feedback.request_id.as_str(), feedback.phase.as_str()),
+        ("f1", "failed")
+    );
+    assert!(feedback.message.unwrap().contains("No worker"));
+}

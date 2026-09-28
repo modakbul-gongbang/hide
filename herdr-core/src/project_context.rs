@@ -292,6 +292,7 @@ mod tests {
     ) -> WorkspaceSnapshot {
         WorkspaceSnapshot {
             home_issues: Default::default(),
+            pull_requests: Vec::new(),
             tasks: Default::default(),
             id: id.to_owned(),
             label: id.to_owned(),
@@ -388,6 +389,7 @@ mod tests {
             host_cli_dir: None,
             workspace_views_path: None,
             shortcut_import_path: None,
+            local_issues_path: None,
         })
         .navigator;
         navigator.workspaces = workspaces;

@@ -14,6 +14,8 @@ import { Input } from "./components/ui/input";
 import { RadioGroup, RadioGroupItem } from "./components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Note, Status } from "./components/settings-rows";
+import { NewIssueDialog, StartIssueDialog } from "./IssueDialogs";
+import { PrDelegateDialog, PrLinkDialog, PrNewIssueDialog } from "./PrDialogs";
 import type { Checkout, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -84,6 +86,42 @@ export function WorkspaceDialogs({ actions }: { actions: Actions }) {
     );
   }
   if (dialog.kind === "new_worktree") return <NewWorktreeDialog actions={actions} workspace={target.workspace} onClose={close} />;
+  if (dialog.kind === "new_issue") return <NewIssueDialog key={dialog.workspaceId} actions={actions} workspace={target.workspace} onClose={close} />;
+  if (dialog.kind === "start_issue") {
+    const task = target.workspace.tasks?.tasks.find((row) => row.key === dialog.taskKey);
+    if (task) return <StartIssueDialog key={task.key} actions={actions} workspace={target.workspace} task={task} onClose={close} />;
+    return (
+      <Dialog open onOpenChange={(next) => { if (!next) close(); }}>
+        <DialogContent aria-label="Unavailable">
+          <DialogBody>
+            <Note tone="warn">그 이슈가 이제 목록에 없습니다. 아무것도 바뀌지 않았습니다.</Note>
+          </DialogBody>
+          <DialogFooter>
+            <Button onClick={close}>닫기</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
+  if (dialog.kind === "pr_link" || dialog.kind === "pr_new_issue" || dialog.kind === "pr_delegate") {
+    const pr = target.workspace.pull_requests?.find((row) => row.number === dialog.prNumber);
+    const task = dialog.kind === "pr_link" ? target.workspace.tasks?.tasks.find((row) => row.key === dialog.issueKey) : undefined;
+    if (pr && dialog.kind === "pr_delegate") return <PrDelegateDialog key={pr.number} actions={actions} workspace={target.workspace} pr={pr} onClose={close} />;
+    if (pr && dialog.kind === "pr_new_issue") return <PrNewIssueDialog key={pr.number} actions={actions} workspace={target.workspace} pr={pr} onClose={close} />;
+    if (pr && task) return <PrLinkDialog key={`${pr.number}:${task.key}`} actions={actions} workspace={target.workspace} pr={pr} task={task} onClose={close} />;
+    return (
+      <Dialog open onOpenChange={(next) => { if (!next) close(); }}>
+        <DialogContent aria-label="Unavailable">
+          <DialogBody>
+            <Note tone="warn">그 PR이나 이슈가 이제 목록에 없습니다. 아무것도 바뀌지 않았습니다.</Note>
+          </DialogBody>
+          <DialogFooter>
+            <Button onClick={close}>닫기</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    );
+  }
   if (dialog.kind === "remove_project") return <RemoveProjectDialog actions={actions} workspace={target.workspace} listed={found !== null} onClose={close} />;
   if (dialog.kind === "purpose" && target.checkout) return <PurposeDialog actions={actions} checkout={target.checkout} deviceLabel={deviceLabel(target.workspace)} onClose={close} />;
   if (dialog.kind === "delete_worktree" && target.checkout) return <DeleteWorktreeDialog actions={actions} deviceId={target.workspace.device_id} checkout={target.checkout} onClose={close} />;
@@ -497,6 +535,8 @@ export function WorkspaceNotices({ actions }: { actions: Actions }) {
   // core selects it when the creation lands, but only a focus request is
   // tracked until Herdr confirms it, so the move is made explicit once the
   // pane is listed: a late focus event for the pane left behind cannot undo it.
+  // It is opened as an agent row opens its pane, so a worktree started from
+  // an Overview (Start, New agent) brings its Workspace to the front.
   const focusWhenListed = useUiStore((s) => s.focusWhenListed);
   const listed = useShellStore((s) =>
     focusWhenListed !== null &&
@@ -507,7 +547,7 @@ export function WorkspaceNotices({ actions }: { actions: Actions }) {
   useEffect(() => {
     if (!focusWhenListed || !listed) return;
     useUiStore.getState().setFocusWhenListed(null);
-    actions.focusPane(focusWhenListed);
+    actions.openAgent(focusWhenListed);
   }, [focusWhenListed, listed, actions]);
 
   if (!task || !task.agent_phase || task.agent_phase === "started") return null;

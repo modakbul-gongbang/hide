@@ -388,6 +388,9 @@ A request outlives reading: a question, approval or error keeps its sentence unt
 Beside a sentence the word is never drawn; the mark and the group heading already say it.
 A delegated row follows the same table for its own group, which for a child is Working or Seen, so a delegated child that has stopped shows only its title unless it is still asking.
 
+Beside `detail` the row carries `message`: both sentences, `expected_reply` then `progress`, each whole up to the token cap and joined by a line break, absent when the plugin has written neither.
+It is what the agent last said, and the Overview's node shows it only when the operator rests on the node's line (PRD overview-lenses-tiles-agents D-50, B22); the second line stays the one sentence the table above chooses.
+
 The core publishes the sentence; when a view shows it is that view's presentation.
 The web sidebar row keeps a request line in the warning color until the request resolves, shows the sentence of an unread row as a bright line that goes once the row is read, reveals the full sentence up to two lines on the selected or hovered row with the rest in a tooltip, and otherwise draws one line (`web/src/agentRow.ts`, owned by `agentRow.test.ts`; docs/UI_BEHAVIOR.md).
 The pane header is one line: `title · sentence`, or `title · word` for a row with no sentence, with the sentence dropped first and the word second when the header is narrow, and a shell operation string (`forking…`, `reopening…`) taking the sentence's slot while it runs.
@@ -403,10 +406,11 @@ Neither the core nor the plugin renames the Herdr tab for this; the Recent Panel
 ### Project Home
 
 Project Home is the empty local checkout surface and the Shift-Command-H overlay.
-Its session-local choice defaults to Tasks; Agents groups the same card by the canonical root request's group.
-Tasks derives delivery in priority order: merged worktree or merged PR, open PR, changed files or ahead commits, then ready.
+Every entry opens its Agents view on the checkout lanes (PRD overview-lenses-tiles-agents D-04, D-17); the Agents view reads the rows' groups into four buckets, the operator's turn (Needs You, or Done unread), waiting on children (`waiting_on_descendants`), working, and resting, which order the lanes, the lineages and a lane's nodes and fill the Agents tile's bar (`web/src/overviewLens.ts`).
+The Issues view is the Tasks board below.
+Tasks derives delivery in priority order: merged worktree or merged PR, open PR, then in progress; an open issue no checkout works on is the backlog.
 Needs You changes the halo and stable sort priority, never this delivery stage.
-Main and non-Git checkouts appear only in the ad hoc row when they have agents.
+Main and non-Git checkouts appear on Tasks only while an agent there works on a linked issue; otherwise their agents are on the Agents view only.
 Completed columns start collapsed and disappear only with their underlying pane or worktree.
 
 `runtime/issues.rs` resolves workspace manual overrides, pane-family issue tokens, branch configuration, PR closing references, then the two supported branch prefixes.

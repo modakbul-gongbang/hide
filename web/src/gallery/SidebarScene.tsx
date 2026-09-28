@@ -10,7 +10,7 @@ import { createActions } from "../actions";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { Sidebar } from "../sidebar";
 import { useShellStore } from "../store";
-import { useUiStore } from "../ui";
+import { entryLens, useUiStore } from "../ui";
 import { applyEvent, REFERENCE_FOLDS, sidebarScene, type SceneContent, type SceneFolds } from "./sceneData";
 
 /** What one scene document shows; every value comes from its query string. */
@@ -55,7 +55,7 @@ export function SidebarScene({ theme, width, scale, content }: SceneParams) {
   }, [scene, width]);
 
   useLayoutEffect(() => {
-    useUiStore.setState({ sidebarMode: "projects", screen: { kind: "overview", projectId: "herdr-ide" } });
+    useUiStore.setState({ sidebarMode: "projects", screen: { kind: "overview", projectId: "herdr-ide", lens: entryLens(null, "board") } });
   }, []);
 
   useLayoutEffect(() => {

@@ -80,6 +80,12 @@ export function App() {
     window.addEventListener("focusin", observeFocus);
     window.addEventListener("pointerdown", endCommit, true);
     window.addEventListener("keydown", endCommit, true);
+    // All projects and an Overview are visits of their own, and leaving one
+    // for the Workspace makes the surface there the one in use; neither
+    // changes core state, so the page's screen is watched here.
+    const unsubscribeScreen = useUiStore.subscribe((state, previous) => {
+      if (state.screen !== previous.screen) observeRecent(useShellStore.getState().rest, true);
+    });
     const unsubscribe = useShellStore.subscribe((state, previous) => {
       if (state.rest === previous.rest) return;
       // A terminal lives as long as the core streams its pane; released or
@@ -123,6 +129,7 @@ export function App() {
       window.removeEventListener("focusin", observeFocus);
       window.removeEventListener("pointerdown", endCommit, true);
       window.removeEventListener("keydown", endCommit, true);
+      unsubscribeScreen();
       unsubscribe();
       keyboard();
       session.close();
@@ -319,7 +326,7 @@ function CenterScreen({ actions }: { actions: Actions }) {
       </div>
     );
   }
-  if (screen.kind === "overview") return <ProjectOverview projectId={screen.projectId} actions={actions} />;
+  if (screen.kind === "overview") return <ProjectOverview projectId={screen.projectId} lens={screen.lens} actions={actions} />;
   if (screen.kind === "workspace" && front && hasView) return <WorkspaceScreen actions={actions} />;
   return <MainScreen actions={actions} />;
 }
