@@ -43,6 +43,8 @@ type Instance = {
   observer: ResizeObserver | null;
   /** A self-contained snapshot arrived while parked; the next show asks for a full frame. */
   stale: boolean;
+  /** The grid the core last got from this instance, so a host resize that keeps it sends nothing; null when the core may not have one. */
+  grid: { cols: number; rows: number } | null;
   /** Wheel rows accumulated toward the next flush, and the pending flush. */
   wheel: { rows: number; remainder: number; column: number; row: number; modifiers: number; frame: number | null };
   /** The cell of a primary press that may still become a click, or null once it dragged or was not one. */
@@ -138,6 +140,7 @@ export function feedChunks(chunks: TerminalChunk[]) {
 export function resetAllTerminals() {
   for (const instance of instances.values()) {
     instance.term.reset();
+    instance.grid = null;
     if (!instance.host) instance.stale = true;
   }
 }
@@ -207,11 +210,17 @@ function disposeInstance(paneId: string, instance: Instance) {
   instances.delete(paneId);
 }
 
-function sendGrid(paneId: string, instance: Instance, newView: boolean) {
+function sendGrid(paneId: string, instance: Instance, newView: boolean, onlyChanged = false) {
   if (!instance.host) return;
   instance.fit.fit();
   const { term } = instance;
-  if (term.cols < 2 || term.rows < 2) return;
+  if (term.cols < 2 || term.rows < 2) {
+    // A host not laid out yet sent nothing, so its real size must go out.
+    instance.grid = null;
+    return;
+  }
+  if (onlyChanged && instance.grid?.cols === term.cols && instance.grid.rows === term.rows) return;
+  instance.grid = { cols: term.cols, rows: term.rows };
   instance.dispatch({
     schema_version: 2,
     kind: "terminal_viewport",
@@ -406,6 +415,7 @@ function createInstance(paneId: string, dispatch: DispatchFn, scale: number): In
     host: null,
     observer: null,
     stale: false,
+    grid: null,
     wheel: { rows: 0, remainder: 0, column: 0, row: 0, modifiers: 0, frame: null },
     press: null,
     disposeHandlers: () => {},
@@ -496,7 +506,9 @@ export function attachTerminal(
       );
     });
   }
-  const observer = new ResizeObserver(() => sendGrid(paneId, shown, false));
+  // The observer also fires once when it starts watching, with the grid the
+  // attach below just sent; only a grid the host's new size changes goes out.
+  const observer = new ResizeObserver(() => sendGrid(paneId, shown, false, true));
   observer.observe(host);
   shown.observer = observer;
   const needsFrame = fresh || shown.stale;
