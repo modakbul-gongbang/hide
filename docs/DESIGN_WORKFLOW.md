@@ -152,7 +152,8 @@ It draws the Project Overview on its Sessions tab: the Overview's header over th
 Its web files are `web/src/ProjectOverview.tsx` and `web/src/ProjectSessions.tsx`.
 
 Settings is `Screen / Settings`.
-It draws the five tabs (General, Appearance, Agents, Devices, Shortcuts) and the Group/Row layout a tab renders, shown on the Appearance tab.
+It draws the six-tab strip (General, Appearance, Agents, Devices, Performance, Shortcuts) and the Group/Row layout a tab renders, shown on the Appearance tab.
+The Mobile tab sits after Devices; its strip and content are drawn on `Screen / Mobile`, and this sheet's strip does not carry it yet.
 Its web files are `web/src/SettingsSheet.tsx` and `web/src/settings.ts`.
 
 Palette is `Screen / Palette`.
@@ -172,6 +173,12 @@ It draws the sidebar's Projects tab as the scope picker: above it the fixed Over
 The Overview child owns selection on Overview; a checkout row opens and unfolds, then folds on activation while already selected and unfolded.
 Beside each theme's sidebar it draws a pull-request row under the pointer with its card (`Component / PR hover card`) opened to the right, the state the row's tooltip has become.
 Its web files are `web/src/sidebar.tsx`, `web/src/components/sidebar-header.tsx`, `web/src/projects.ts` and `web/src/components/pr-card.tsx`.
+
+Mobile is `Screen / Mobile`.
+It draws Settings > Mobile, blocked on a failing Tailscale check with only that step lit, one action beside it and no QR, then ready with every check passing, the QR, the ts.net address, the code countdown with 새 코드, the connected phones (2 / 4) with 해지, and the three push modes.
+Beside it, the phone app: the pairing confirm the QR opens, the list in four groups (내 확인 대기, 끝, 진행 중, 확인함), the detail with its read-only scrollback, five quick keys and one-line reply, the unreachable state over the dimmed last list, the empty state, and the push banner.
+The machine name and tailnet are placeholders, and the QR is a drawn pattern, never a real code.
+Its web files are `web/src/MobileTab.tsx` and `web/src/mobileSettings.ts`, and the phone app under `web/src/mobile/` with its entry `web/mobile.html`.
 
 ## How to add a token
 

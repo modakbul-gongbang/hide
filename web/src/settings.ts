@@ -5,13 +5,14 @@
 import type { DaemonInfo } from "./store";
 import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, HerdrStatus, RemoteStatus } from "./snapshot";
 
-export type SettingsTab = "general" | "appearance" | "agents" | "devices" | "performance" | "shortcuts";
+export type SettingsTab = "general" | "appearance" | "agents" | "devices" | "mobile" | "performance" | "shortcuts";
 
 export const SETTINGS_TABS: readonly { id: SettingsTab; title: string; subtitle: string }[] = [
   { id: "general", title: "General", subtitle: "This daemon, the Herdr runtime behind it, and where its state lives." },
   { id: "appearance", title: "Appearance", subtitle: "Theme, accent and interface density." },
   { id: "agents", title: "Agents", subtitle: "The agent CLIs the daemon's machine can launch, Background AI, and hooks." },
   { id: "devices", title: "Devices", subtitle: "SSH targets. Authentication stays in the daemon machine's SSH environment." },
+  { id: "mobile", title: "Mobile", subtitle: "이 맥의 hide를 폰에서 열고, 기다리는 에이전트에 답하고, 알림을 받습니다." },
   { id: "performance", title: "Performance", subtitle: "What this machine ends while you are away, and resumes when you come back." },
   { id: "shortcuts", title: "Shortcuts", subtitle: "The pane chords this host runs. Every other chord is on the ⌘/ sheet." },
 ];

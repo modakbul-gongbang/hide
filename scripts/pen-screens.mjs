@@ -1634,6 +1634,416 @@ function buildProjectsSidebar(tokens) {
   return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, sidebar-header.tsx, projects.ts: the Projects tab, the scope picker. Above it, fixed, the global destinations: one Overview row with the house glyph and the project count, which opens the every-project Overview and carries the selected fill only while that screen is in front; under it the Projects | Agents tab strip, Projects first, ending in New workspace (Projects only) and Search, the icon that opens ⌘K. The list starts at the first project; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it; beside the sidebar each row kind is drawn with its menu open (Project: Open Overview, New worktree…, New tab in main, Reveal in Finder, Copy path, Pin, Remove project…; Checkout: Open, New tab here, Open pull request, Set purpose…, Set as default checkout, Copy branch name, Copy path, Reveal in Finder, Delete worktree…; Agent: Show, Copy title, Copy session id, Close tab…). A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent; a checkout without either is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. A folded parent keeps its own-checkout descendants in the badge and draws one C-style line per other checkout, with the R1 server-glyph device chip. A checkout raised by an external root prefixes line two with the parent checkout. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.', build, build);
 }
 
+// -- Screen / Mobile ---------------------------------------------------------------
+
+// The mobile companion (PRD mobile-companion D-08, D-12): Settings > Mobile on the
+// desktop, blocked on a failing check and ready with its QR, and the phone app's
+// pairing, list, detail, unreachable and empty states and its push banner. Drawn
+// as the operator-approved board drew it: plain nodes on this file's local tokens,
+// because no library master draws a phone screen, so every size is a number this
+// builder owns. The machine name and tailnet are placeholders, and the QR is a
+// deterministic pattern, never a real code.
+function buildMobile(tokens) {
+  const XS = num(tokens, '--spacing-xs'), SM = num(tokens, '--spacing-sm'), MD = num(tokens, '--spacing-md');
+  const LG = num(tokens, '--spacing-lg'), XL = num(tokens, '--spacing-xl');
+  const SP = {xs: '$--spacing-xs', sm: '$--spacing-sm', md: '$--spacing-md', lg: '$--spacing-lg', xl: '$--spacing-xl'};
+  const FG = '$--foreground', MUTED = '$--muted-foreground', SUBTLE = '$--subtle-foreground';
+  const WARN = '$--warning', OK = '$--success', WORK = '$--agent-working', BAD = '$--destructive';
+  const PILL = 999;
+  const PHONE_W = 390, PHONE_H = 800, STATUS_H = 44, HOME_H = 24;
+  const CONTENT_W = PHONE_W - 2 * LG;
+  const SET_W = num(tokens, '--size-settings-sheet-w');
+  const MACHINE = 'my-mac';
+  const URL = `https://${MACHINE}.tailnet-name.ts.net`;
+
+  // Pen has no ellipsis: cut a string to a measured width.
+  function measure(s, size, mono = false) {
+    let w = 0;
+    for (const ch of s) {
+      const c = ch.codePointAt(0);
+      if ((c >= 0xac00 && c <= 0xd7a3) || (c >= 0x3130 && c <= 0x318f)) w += size * 0.93;
+      else if (mono) w += size * 0.6;
+      else if (ch === ' ') w += size * 0.28;
+      else if (/[A-Z#@%MW]/.test(ch)) w += size * 0.68;
+      else if (/[il.,:;'|!]/.test(ch)) w += size * 0.28;
+      else w += size * 0.55;
+    }
+    return w;
+  }
+  function fit(s, max, size, mono = false) {
+    if (!s || measure(s, size, mono) <= max) return s;
+    let cut = s;
+    while (cut.length && measure(`${cut}…`, size, mono) > max) cut = cut.slice(0, -1);
+    return `${cut.trimEnd()}…`;
+  }
+
+  // -- atoms --
+  const spacer = id => frame(id, 'Spacer', {width: 'fill_container', height: 1}, []);
+  const rule = (id, width) => ({type: 'line', id, name: 'Rule', width, height: 0, stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'center'});
+  const STATUS = {working: ['●', WORK], done: ['✓', OK], seen: ['○', SUBTLE], question: ['?', WARN], approval: ['!', WARN], error: ['×', BAD]};
+  function mark(id, status, size = 14) {
+    const [glyph, fill] = STATUS[status];
+    const box = size + 2;
+    const shell = children => frame(id, 'Mark', {width: box, height: box, alignItems: 'center', justifyContent: 'center'}, children);
+    if (glyph === '●') return shell([frame(`${id}-d`, 'Dot', {width: 8, height: 8, cornerRadius: PILL, fill}, [])]);
+    if (glyph === '○') return shell([frame(`${id}-r`, 'Ring', {width: 8, height: 8, cornerRadius: PILL, stroke: fill, strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [])]);
+    return shell([text(`${id}-g`, glyph, {size, fill, weight: '600', mono: true})]);
+  }
+  function provider(id, kind, size = 14) {
+    return frame(id, 'Provider', {width: size, height: size, cornerRadius: 3, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${kind}.png`, mode: 'fit'}}, []);
+  }
+  function chip(id, label, {glyph, fill = '$--secondary', color = MUTED} = {}) {
+    return frame(id, 'Chip', {layout: 'horizontal', gap: SP.xs, alignItems: 'center', padding: [1, 6], fill, cornerRadius: PILL, height: 18}, [
+      ...(glyph ? [icon(`${id}-i`, glyph, {size: 11, fill: color})] : []),
+      text(`${id}-t`, label, {size: '$--text-caption', fill: color}),
+    ]);
+  }
+  function button(id, label, {primary = false, width, height = 40, size = 15} = {}) {
+    return frame(id, label, {layout: 'horizontal', alignItems: 'center', justifyContent: 'center', height, ...(width ? {width} : {padding: [0, SP.lg]}), fill: primary ? '$--primary' : '$--secondary', cornerRadius: '$--radius-lg'}, [
+      text(`${id}-t`, label, {size, weight: '600', fill: primary ? '$--primary-foreground' : FG}),
+    ]);
+  }
+
+  // -- phone chrome --
+  function phone(id, name, body) {
+    return frame(id, name, {layout: 'vertical', width: PHONE_W, height: PHONE_H, fill: '$--background', cornerRadius: 40, clip: true, stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
+      frame(`${id}-sb`, 'Status bar', {layout: 'horizontal', width: PHONE_W, height: STATUS_H, padding: [0, SP.xl], alignItems: 'center'}, [
+        text(`${id}-sb-t`, '9:41', {size: 15, weight: '600', fill: FG}),
+        spacer(`${id}-sb-s`),
+        text(`${id}-sb-r`, '●●● ▲ ▮', {size: '$--text-caption', fill: FG}),
+      ]),
+      frame(`${id}-body`, 'Body', {layout: 'vertical', width: PHONE_W, height: PHONE_H - STATUS_H - HOME_H, clip: true}, body),
+      frame(`${id}-hb`, 'Home', {width: PHONE_W, height: HOME_H, alignItems: 'center', justifyContent: 'center'}, [
+        frame(`${id}-hb-b`, 'Bar', {width: 134, height: 5, cornerRadius: PILL, fill: FG, opacity: 0.6}, []),
+      ]),
+    ]);
+  }
+  function header(id, {title, sub, back = null, connected = true, trailing = null}) {
+    const titleRow = frame(`${id}-r`, 'Title row', {layout: 'horizontal', gap: SP.sm, alignItems: 'center', width: CONTENT_W, height: 32}, [
+      ...(back ? [frame(`${id}-bk`, 'Back', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', height: 32}, [icon(`${id}-bi`, 'arrow-left', {size: 18, fill: FG}), text(`${id}-bt`, back, {size: 15, fill: FG})])] : []),
+      ...(back ? [] : [text(`${id}-t`, title, {size: 22, weight: '600', fill: FG})]),
+      spacer(`${id}-s`),
+      ...(trailing ? [trailing] : []),
+      ...(back ? [] : [frame(`${id}-dot`, 'Connection', {width: 8, height: 8, cornerRadius: PILL, fill: connected ? OK : MUTED}, [])]),
+    ]);
+    const subRow = sub ? [frame(`${id}-sub`, 'Sub', {layout: 'horizontal', gap: SP.xs, alignItems: 'center', width: CONTENT_W, height: 18}, [
+      icon(`${id}-si`, 'laptop', {size: 12, fill: MUTED}),
+      text(`${id}-st`, sub, {size: '$--text-body', fill: MUTED}),
+    ])] : [];
+    return frame(id, 'Header', {layout: 'vertical', gap: '$--spacing-xxs', width: PHONE_W, padding: [SP.sm, SP.lg, SP.md, SP.lg]}, [titleRow, ...subRow]);
+  }
+
+  // -- phone: list --
+  const INSET = 16 + XS + 14 + XS;
+  function sectionLabel(id, label, count) {
+    return frame(id, label, {layout: 'horizontal', gap: SP.sm, alignItems: 'center', width: PHONE_W, height: 32, padding: [SP.md, SP.lg, 2, SP.lg]}, [
+      text(`${id}-t`, label, {size: '$--text-body', weight: '500', fill: MUTED}),
+      text(`${id}-c`, String(count), {size: '$--text-body', fill: MUTED, mono: true}),
+    ]);
+  }
+  function agentRow(id, {title, status, kind = 'claude', project, branch, machine = null, age, request = null, news = null, dim = false}) {
+    const attention = status === 'question' || status === 'approval' || status === 'error';
+    const titleW = CONTENT_W - 16 - XS - 14 - SM - 36 - SM - 16;
+    const line2 = request ?? news ?? null;
+    return frame(id, title, {layout: 'vertical', gap: 3, width: PHONE_W, height: line2 ? 82 : 64, padding: [SP.sm, SP.lg, SP.sm, SP.lg]}, [
+      frame(`${id}-l1`, 'Line 1', {layout: 'horizontal', gap: SP.xs, alignItems: 'center', width: CONTENT_W, height: 22}, [
+        mark(`${id}-m`, status),
+        provider(`${id}-p`, kind),
+        frame(`${id}-tw`, 'Title', {width: titleW, height: 22, alignItems: 'center', clip: true, padding: [0, 0, 0, SP.xs]}, [
+          text(`${id}-t`, fit(title, titleW, 15), {size: 15, weight: attention ? '600' : dim ? '400' : '500', fill: dim ? MUTED : attention ? FG : SUBTLE}),
+        ]),
+        spacer(`${id}-s`),
+        text(`${id}-a`, age, {size: '$--text-body', fill: MUTED, mono: true}),
+        icon(`${id}-c`, 'chevron-right', {size: 16, fill: MUTED}),
+      ]),
+      frame(`${id}-l2`, 'Line 2', {layout: 'horizontal', gap: SP.sm, alignItems: 'center', width: CONTENT_W, height: 18, padding: [0, 0, 0, INSET]}, [
+        text(`${id}-pb`, fit(`${project} · ${branch}`, CONTENT_W - 120, 12), {size: '$--text-body', fill: MUTED}),
+        ...(machine ? [chip(`${id}-mc`, machine, {glyph: 'server'})] : []),
+      ]),
+      ...(line2 ? [frame(`${id}-l3`, 'Line 3', {layout: 'horizontal', width: CONTENT_W, height: 18, padding: [0, 0, 0, INSET], alignItems: 'center'}, [
+        text(`${id}-rq`, fit(line2, CONTENT_W - 40, 13), {size: '$--text-subhead', fill: request ? WARN : FG}),
+      ])] : []),
+      spacer(`${id}-sp`),
+      rule(`${id}-rule`, CONTENT_W),
+    ]);
+  }
+  const AGENTS = {
+    needs: [
+      {title: '솔루션 6 구현', status: 'approval', project: 'herdr-ide', branch: 'prd/mobile-companion', age: '2m', request: 'Bash(cargo test -p hided) 실행을 허용할까요?'},
+      {title: 'hcoord 플러그인 구현', status: 'question', kind: 'codex', project: 'herdr-ide', branch: 'prd/hcoord-plugin', machine: 'mini', age: '9m', request: '워크스페이스 이름을 어떤 걸로 할까요?'},
+    ],
+    done: [
+      {title: '사이드바 행 클릭으로 펼치기', status: 'done', project: 'herdr-ide', branch: 'prd/sidebar-row-click-unfold', age: '14m', news: 'PR #186 열림 · CI 통과'},
+    ],
+    working: [
+      {title: '리뷰 반영', status: 'working', project: 'herdr-ide', branch: 'fix/hook-probe', age: '5m'},
+      {title: '세션 초기화 작업 대기', status: 'working', kind: 'codex', project: 'contong', branch: 'main', machine: 'mini', age: '21m'},
+      {title: 'Agent tab group 시각화 검토', status: 'working', project: 'herdr-ide', branch: 'prd/agent-tab-groups', age: '38m'},
+    ],
+    seen: [
+      {title: '코덱스 데이터 구조 조사', status: 'seen', project: 'herdr-ide', branch: 'main', age: '1h', dim: true},
+      {title: 'tab-names 구현 상태 점검', status: 'seen', project: 'herdr-ide', branch: 'main', age: '2h', dim: true},
+      {title: '체크아웃 capability 구현', status: 'seen', project: 'herdr-ide', branch: 'prd/checkout-capability', age: '3h', dim: true},
+    ],
+  };
+  function listBody(id, {unreachable = false, empty = false} = {}) {
+    const groups = empty ? [] : [
+      sectionLabel(`${id}-g1`, '내 확인 대기', AGENTS.needs.length), ...AGENTS.needs.map((a, i) => agentRow(`${id}-n${i}`, a)),
+      sectionLabel(`${id}-g2`, '끝', AGENTS.done.length), ...AGENTS.done.map((a, i) => agentRow(`${id}-d${i}`, a)),
+      sectionLabel(`${id}-g3`, '진행 중', AGENTS.working.length), ...AGENTS.working.map((a, i) => agentRow(`${id}-w${i}`, a)),
+      sectionLabel(`${id}-g4`, '확인함', AGENTS.seen.length), ...AGENTS.seen.map((a, i) => agentRow(`${id}-s${i}`, a)),
+    ];
+    const banner = unreachable ? [frame(`${id}-un`, 'Unreachable', {layout: 'horizontal', gap: SP.sm, alignItems: 'center', width: PHONE_W, padding: [SP.sm, SP.lg, SP.sm, SP.lg], fill: '$--muted'}, [
+      icon(`${id}-ui`, 'loader-circle', {size: 14, fill: MUTED}),
+      text(`${id}-ut`, '연결 안 됨 · 맥의 hide가 꺼져 있거나 폰의 Tailscale이 꺼져 있어요. 다시 시도 중', {size: '$--text-body', fill: MUTED, width: CONTENT_W - 22}),
+    ])] : [];
+    const emptyLine = empty ? [frame(`${id}-em`, 'Empty', {width: PHONE_W, padding: [SP.xl, SP.lg]}, [text(`${id}-et`, '실행 중인 에이전트가 없어요', {size: '$--text-title', fill: MUTED})])] : [];
+    return [
+      header(`${id}-h`, {title: 'hide', sub: `${MACHINE} · 폰 1대 더 연결됨`, connected: !unreachable}),
+      ...banner,
+      frame(`${id}-list`, 'List', {layout: 'vertical', width: PHONE_W, opacity: unreachable ? 0.45 : 1}, [...groups, ...emptyLine]),
+    ];
+  }
+
+  // -- phone: detail --
+  const SCROLLBACK = [
+    ['● 페어링 코드는 hided 상태 파일에 0600으로 두고, 코드 교환은 /ws의', FG],
+    ['  첫 프레임으로 받겠습니다. 먼저 테스트를 돌립니다.', FG],
+    ['', MUTED],
+    ['● Bash(cargo test -p hided)', SUBTLE],
+    ['  ⎿  Running…', MUTED],
+    ['', MUTED],
+    ['$ cargo test -p hided', SUBTLE],
+    ['   Compiling hided v0.1.0 (/Users/example/projects/herdr-ide/hided)', MUTED],
+    ['    Finished test [unoptimized] target(s) in 41.2s', MUTED],
+    ['test server::tests::token_compare_needs_the_whole_token ... ok', MUTED],
+    ['test pane_auth::tests::sweep_drops_unregistered ... ok', MUTED],
+    ['test pane_auth::tests::phone_credential_refuses_file_open ... ok', MUTED],
+    ['test mobile::tests::pairing_code_is_single_use ... ok', MUTED],
+    ['test mobile::tests::pairing_code_expires_after_five_minutes ... ok', MUTED],
+    ['test result: ok. 128 passed; 0 failed', OK],
+    ['', MUTED],
+    ['● hided의 페어링 코드 검사를 구현했습니다. 다음으로 7일 미접속', FG],
+    ['  해지 스윕을 붙이겠습니다.', FG],
+    ['', MUTED],
+    ['╭─────────────────────────────────────────────╮', MUTED],
+    ['│ Bash command                                │', FG],
+    ['│   cargo test -p hided -- --include-ignored  │', FG],
+    ['│                                             │', MUTED],
+    ['│ Do you want to proceed?                     │', FG],
+    ['│ ❯ 1. Yes                                    │', WARN],
+    ['│   2. Yes, and don\'t ask again this session  │', FG],
+    ['│   3. No, and tell Claude what to do         │', FG],
+    ['╰─────────────────────────────────────────────╯', MUTED],
+  ];
+  function scrollback(id, height) {
+    return frame(id, 'Scrollback', {layout: 'vertical', gap: 0, width: PHONE_W, height, padding: [SP.sm, SP.lg, SP.sm, SP.lg], fill: '$--card', clip: true, alignItems: 'start', justifyContent: 'end'}, SCROLLBACK.map(([s, fill], i) =>
+      frame(`${id}-l${i}`, 'Line', {width: CONTENT_W, height: 18, alignItems: 'center', clip: true}, [text(`${id}-t${i}`, s === '' ? ' ' : fit(s, CONTENT_W, 11, true), {size: '$--text-caption', fill, mono: true})])));
+  }
+  function quickKeys(id) {
+    const keys = ['⏎', 'Esc', '↑', '↓', '^C'];
+    const w = (CONTENT_W - 4 * SM) / keys.length;
+    return frame(id, 'Quick keys', {layout: 'horizontal', gap: SP.sm, width: PHONE_W, padding: [SP.sm, SP.lg, 0, SP.lg]}, keys.map((k, i) =>
+      frame(`${id}-k${i}`, k, {width: w, height: 34, fill: '$--secondary', cornerRadius: '$--radius-md', alignItems: 'center', justifyContent: 'center'}, [text(`${id}-kt${i}`, k, {size: '$--text-title', weight: '600', fill: FG, mono: true})])));
+  }
+  function replyBar(id) {
+    return frame(id, 'Reply bar', {layout: 'horizontal', gap: SP.sm, alignItems: 'center', width: PHONE_W, padding: [SP.sm, SP.lg, SP.md, SP.lg]}, [
+      frame(`${id}-in`, 'Input', {layout: 'horizontal', alignItems: 'center', width: CONTENT_W - SM - 76, height: 40, padding: [0, SP.md], fill: '$--secondary', cornerRadius: 12}, [
+        text(`${id}-ph`, '답장…', {size: 15, fill: MUTED}),
+      ]),
+      button(`${id}-send`, '보내기', {primary: true, width: 76}),
+    ]);
+  }
+  function detailBody(id, a) {
+    const headH = 32 + 2 + 18 + SM + MD;
+    const bodyH = PHONE_H - STATUS_H - HOME_H;
+    const sbH = bodyH - headH - 22 - (SM + 34) - (SM + 40 + MD);
+    return [
+      header(`${id}-h`, {back: '목록', title: a.title, trailing: text(`${id}-age`, a.age, {size: '$--text-body', fill: MUTED, mono: true})}),
+      frame(`${id}-ar`, 'Agent', {layout: 'vertical', gap: '$--spacing-xxs', width: PHONE_W, padding: [0, SP.lg, SP.sm, SP.lg]}, [
+        frame(`${id}-ar1`, 'Line 1', {layout: 'horizontal', gap: SP.xs, alignItems: 'center', width: CONTENT_W, height: 22}, [
+          mark(`${id}-m`, a.status), provider(`${id}-p`, a.kind ?? 'claude'),
+          text(`${id}-t`, a.title, {size: 17, weight: '600', fill: FG}),
+        ]),
+        frame(`${id}-ar2`, 'Line 2', {layout: 'horizontal', gap: SP.sm, alignItems: 'center', width: CONTENT_W, height: 18, padding: [0, 0, 0, INSET]}, [
+          text(`${id}-pb`, `${a.project} · ${a.branch}`, {size: '$--text-body', fill: MUTED}),
+          ...(a.machine ? [chip(`${id}-mc`, a.machine, {glyph: 'server'})] : []),
+        ]),
+      ]),
+      scrollback(`${id}-sb`, sbH),
+      quickKeys(`${id}-qk`),
+      replyBar(`${id}-rb`),
+    ];
+  }
+
+  // -- phone: pairing --
+  function pairBody(id) {
+    return [
+      frame(`${id}-c`, 'Pairing', {layout: 'vertical', gap: SP.lg, alignItems: 'center', width: PHONE_W, height: PHONE_H - STATUS_H - HOME_H, padding: [120, SP.lg, 0, SP.lg]}, [
+        frame(`${id}-logo`, 'Logo', {width: 64, height: 64, cornerRadius: '$--radius-xl', fill: '$--primary', alignItems: 'center', justifyContent: 'center'}, [text(`${id}-lt`, 'h', {size: 34, weight: '700', fill: '$--primary-foreground'})]),
+        text(`${id}-t`, `${MACHINE}과 연결`, {size: 22, weight: '600', fill: FG}),
+        text(`${id}-d`, '이 폰에서 hide의 에이전트를 보고, 기다리는 에이전트에 답할 수 있어요.', {size: '$--text-title', fill: MUTED, width: CONTENT_W - 32, align: 'center'}),
+        frame(`${id}-sp`, 'Gap', {height: LG, width: 1}, []),
+        button(`${id}-ok`, '연결', {primary: true, width: CONTENT_W, height: 48, size: 16}),
+        text(`${id}-n`, '코드는 5분 안에 만료돼요. 만료되면 맥에서 QR을 다시 여세요.', {size: '$--text-body', fill: MUTED, width: CONTENT_W - 32, align: 'center'}),
+      ]),
+    ];
+  }
+
+  // -- push banner --
+  function pushBanner(id) {
+    const W = 360;
+    return frame(id, 'Push banner', {layout: 'horizontal', gap: SP.md, alignItems: 'center', width: W, padding: [SP.md, SP.lg], fill: '$--popover', cornerRadius: 22, stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
+      frame(`${id}-ic`, 'App icon', {width: 38, height: 38, cornerRadius: 9, fill: '$--primary', alignItems: 'center', justifyContent: 'center'}, [text(`${id}-it`, 'h', {size: 22, weight: '700', fill: '$--primary-foreground'})]),
+      frame(`${id}-tx`, 'Text', {layout: 'vertical', gap: 1, width: W - 2 * LG - 38 - MD}, [
+        frame(`${id}-r1`, 'Row', {layout: 'horizontal', width: 'fill_container', alignItems: 'center'}, [text(`${id}-app`, 'hide', {size: '$--text-subhead', weight: '600', fill: FG}), spacer(`${id}-s`), text(`${id}-when`, '지금', {size: '$--text-body', fill: MUTED})]),
+        text(`${id}-ti`, '솔루션 6 구현', {size: '$--text-title', weight: '600', fill: FG}),
+        text(`${id}-bo`, '내 확인 대기 · herdr-ide', {size: '$--text-subhead', fill: SUBTLE}),
+      ]),
+    ]);
+  }
+
+  // -- Settings > Mobile --
+  const ROW_W = SET_W - 2 * XL;
+  // Deterministic pseudo-QR: three finder patterns and a seeded module field, drawn
+  // as rows of cells. Black on white in both themes, as a camera needs it.
+  function qr(id, size = 168) {
+    const n = 25, cell = Math.floor((size - 16) / n), pad = (size - cell * n) / 2;
+    const finder = (r, c) => (r >= 0 && r < 7 && c >= 0 && c < 7) && (r === 0 || r === 6 || c === 0 || c === 6 || (r >= 2 && r <= 4 && c >= 2 && c <= 4));
+    let seed = 7;
+    const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+    const rows = [];
+    for (let r = 0; r < n; r++) {
+      const cells = [];
+      for (let c = 0; c < n; c++) {
+        let on;
+        if (r < 7 && c < 7) on = finder(r, c);
+        else if (r < 7 && c >= n - 7) on = finder(r, c - (n - 7));
+        else if (r >= n - 7 && c < 7) on = finder(r - (n - 7), c);
+        else if ((r < 8 && c < 8) || (r < 8 && c >= n - 8) || (r >= n - 8 && c < 8)) on = false;
+        else on = rnd() < 0.45;
+        cells.push(frame(`${id}-c${r}-${c}`, 'm', {width: cell, height: cell, fill: on ? '#101112' : '#FFFFFF'}, []));
+      }
+      rows.push(frame(`${id}-r${r}`, 'row', {layout: 'horizontal', gap: 0, width: cell * n, height: cell}, cells));
+    }
+    return frame(id, 'QR', {layout: 'vertical', gap: 0, width: size, height: size, padding: pad, fill: '#FFFFFF', cornerRadius: '$--radius-md'}, rows);
+  }
+  // settings.ts SETTINGS_TABS with Mobile after Devices (PRD mobile-companion B1).
+  const TABS = ['General', 'Appearance', 'Agents', 'Devices', 'Mobile', 'Performance', 'Shortcuts'];
+  function tabStrip(id) {
+    return frame(`${id}-w`, 'Tabs', {layout: 'vertical', gap: 0, width: SET_W}, [
+      frame(id, 'Tab strip', {layout: 'horizontal', gap: SP.xs, width: SET_W, padding: [SP.sm, SP.xl], fill: '$--sidebar'}, TABS.map((t, i) =>
+        frame(`${id}-t${i}`, t, {padding: [4, 10], cornerRadius: '$--radius-sm', ...(t === 'Mobile' ? {fill: '$--secondary'} : {})}, [text(`${id}-tt${i}`, t, {size: '$--text-body', weight: t === 'Mobile' ? '600' : '400', fill: t === 'Mobile' ? FG : MUTED})]))),
+      rule(`${id}-rule`, SET_W),
+    ]);
+  }
+  function groupTitle(id, label) {
+    return frame(id, label, {width: ROW_W, padding: [SP.lg, 0, SP.xs, 0]}, [text(`${id}-t`, label, {size: '$--text-caption', weight: '500', fill: MUTED})]);
+  }
+  function row(id, {label, detail = null, trailing = null, leading = null, tone = FG}) {
+    return frame(`${id}-w`, label, {layout: 'vertical', gap: 0, width: ROW_W}, [
+      frame(id, label, {layout: 'horizontal', gap: SP.md, alignItems: 'center', width: ROW_W, padding: [SP.sm, 0]}, [
+        ...(leading ? [leading] : []),
+        frame(`${id}-tx`, 'Text', {layout: 'vertical', gap: '$--spacing-xxs', width: 'fill_container'}, [
+          text(`${id}-l`, label, {size: '$--text-body', fill: tone}),
+          ...(detail ? [text(`${id}-d`, detail, {size: '$--text-caption', fill: MUTED, width: ROW_W - 160})] : []),
+        ]),
+        ...(trailing ? [trailing] : []),
+      ]),
+      rule(`${id}-rule`, ROW_W),
+    ]);
+  }
+  function toggle(id, on) {
+    return frame(id, 'Switch', {width: 32, height: 18, cornerRadius: PILL, fill: on ? '$--primary' : '$--secondary', padding: 2, layout: 'horizontal', justifyContent: on ? 'end' : 'start', alignItems: 'center'}, [
+      frame(`${id}-k`, 'Knob', {width: 14, height: 14, cornerRadius: PILL, fill: on ? '$--primary-foreground' : MUTED}, []),
+    ]);
+  }
+  function radio(id, on) {
+    return frame(id, 'Radio', {width: 14, height: 14, cornerRadius: PILL, stroke: on ? '$--primary' : '$--border', strokeWidth: on ? 4 : 1, strokeAlignment: 'inner', fill: '$--background'}, []);
+  }
+  function linkButton(id, label, danger = false) {
+    return frame(id, label, {padding: [4, 10], cornerRadius: '$--radius-sm', fill: '$--secondary'}, [text(`${id}-t`, label, {size: '$--text-body', fill: danger ? BAD : FG})]);
+  }
+  function checkItem(id, label, state, action = null) {
+    const glyph = state === 'ok' ? 'check' : state === 'fail' ? 'triangle-alert' : 'circle-alert';
+    const fill = state === 'ok' ? OK : state === 'fail' ? WARN : MUTED;
+    const trailing = action ? frame(`${id}-a`, 'Action', {layout: 'horizontal', gap: SP.xs, alignItems: 'center'}, [text(`${id}-at`, action, {size: '$--text-body', fill: '$--primary'}), icon(`${id}-ai`, 'external-link', {size: 12, fill: '$--primary'})]) : null;
+    const detail = state === 'fail' ? 'Tailscale 관리 콘솔 › DNS에서 MagicDNS와 HTTPS Certificates를 켜세요. 켜면 여기서 바로 이어집니다.' : null;
+    return row(id, {label, tone: state === 'todo' ? MUTED : FG, leading: icon(`${id}-i`, glyph, {size: 14, fill}), trailing, detail});
+  }
+  function settings(id, {passing}) {
+    const content = [
+      groupTitle(`${id}-g0`, '모바일'),
+      row(`${id}-on`, {label: '폰에서 hide 열기', detail: '맥의 Tailscale로 이 hide를 tailnet 안에서만 엽니다. hide가 tailscale serve를 켜고, 끄면 자기가 만든 항목만 지웁니다.', trailing: toggle(`${id}-sw`, true)}),
+      checkItem(`${id}-c1`, '맥에 Tailscale 설치됨', 'ok'),
+      checkItem(`${id}-c2`, `Tailscale에 로그인됨 · ${MACHINE}`, 'ok'),
+      checkItem(`${id}-c3`, passing ? 'tailnet에 MagicDNS와 HTTPS 켜짐' : 'tailnet에 HTTPS가 꺼져 있어요', passing ? 'ok' : 'fail', passing ? null : '관리 콘솔 열기'),
+      checkItem(`${id}-c4`, '폰에도 Tailscale 앱을 설치하고 같은 계정으로 로그인', passing ? 'ok' : 'todo'),
+    ];
+    const qrBlock = passing ? [
+      frame(`${id}-qrw`, 'QR row', {layout: 'horizontal', gap: SP.xl, alignItems: 'center', width: ROW_W, padding: [SP.lg, 0]}, [
+        qr(`${id}-qr`),
+        frame(`${id}-qt`, 'QR text', {layout: 'vertical', gap: SP.sm, width: ROW_W - 168 - XL}, [
+          text(`${id}-q1`, '폰 카메라로 찍으세요', {size: '$--text-title', weight: '600', fill: FG}),
+          text(`${id}-q2`, '열리는 페이지에서 연결을 누르고, 공유 › 홈 화면에 추가로 앱처럼 두세요.', {size: '$--text-body', fill: MUTED, width: ROW_W - 168 - XL}),
+          text(`${id}-q3`, URL, {size: '$--text-caption', fill: SUBTLE, mono: true}),
+          frame(`${id}-qx`, 'Expiry', {layout: 'horizontal', gap: SP.sm, alignItems: 'center'}, [text(`${id}-q4`, '코드는 4:38 후 만료', {size: '$--text-caption', fill: MUTED, mono: true}), linkButton(`${id}-qn`, '새 코드')]),
+        ]),
+      ]),
+    ] : [
+      frame(`${id}-noqr`, 'No QR', {layout: 'horizontal', gap: SP.sm, alignItems: 'center', width: ROW_W, padding: [SP.lg, 0]}, [
+        icon(`${id}-nqi`, 'circle-alert', {size: 14, fill: MUTED}),
+        text(`${id}-nqt`, '위 항목이 모두 통과하면 QR이 여기 나타납니다.', {size: '$--text-body', fill: MUTED}),
+      ]),
+    ];
+    const phones = passing ? [
+      groupTitle(`${id}-g1`, '연결된 폰 · 2 / 4'),
+      row(`${id}-p1`, {label: 'iPhone 15 Pro', detail: '방금 · 알림 받는 중', trailing: linkButton(`${id}-p1r`, '해지', true)}),
+      row(`${id}-p2`, {label: 'iPad', detail: '3일 전 · 4일 뒤 자동 해지', trailing: linkButton(`${id}-p2r`, '해지', true)}),
+      groupTitle(`${id}-g2`, '푸시 알림'),
+      row(`${id}-r0`, {label: '끔', leading: radio(`${id}-r0b`, false)}),
+      row(`${id}-r1`, {label: '앱이 닫혀 있을 때만', detail: '데스크톱 hide가 연결돼 있지 않은 동안만 폰으로 보냅니다. 내 확인 대기와 끝 두 전이에서만.', leading: radio(`${id}-r1b`, true)}),
+      row(`${id}-r2`, {label: '항상', leading: radio(`${id}-r2b`, false)}),
+    ] : [];
+    return frame(id, passing ? 'Settings · Mobile · ready' : 'Settings · Mobile · blocked', {layout: 'vertical', width: SET_W, fill: '$--background', cornerRadius: 12, clip: true, stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
+      frame(`${id}-ttl`, 'Sheet title', {layout: 'horizontal', alignItems: 'center', width: SET_W, height: 44, padding: [0, SP.xl], fill: '$--sidebar'}, [text(`${id}-tt`, 'Settings', {size: '$--text-title', weight: '600', fill: FG}), spacer(`${id}-ts`), icon(`${id}-tx`, 'x', {size: 14, fill: MUTED})]),
+      tabStrip(`${id}-tabs`),
+      frame(`${id}-body`, 'Body', {layout: 'vertical', width: SET_W, padding: [0, SP.xl, SP.xl, SP.xl]}, [...content, ...qrBlock, ...phones]),
+    ]);
+  }
+
+  // -- sheet --
+  function labeled(id, label, note, node) {
+    return frame(id, label, {layout: 'vertical', gap: SP.sm, alignItems: 'start'}, [
+      text(`${id}-l`, label, {size: '$--text-title', weight: '600', fill: FG}),
+      text(`${id}-n`, note, {size: '$--text-caption', fill: MUTED, width: node.width ?? PHONE_W}),
+      node,
+    ]);
+  }
+  function build(s) {
+    const p = key => `mob-${key}-${s}`;
+    const needs0 = AGENTS.needs[0];
+    const rowFrame = (key, name, children) => frame(p(key), name, {layout: 'horizontal', gap: SP.xl, alignItems: 'start'}, children);
+    return [frame(p('wrap'), 'Wrap', {layout: 'vertical', gap: SP.xl}, [
+      rowFrame('row-settings', 'Settings', [
+        labeled(p('cap-blocked'), '설정 › Mobile · 3단계에서 막힘', '막힌 단계만 강조하고 정확한 행동 하나를 붙입니다. QR은 안 나옵니다.', settings(p('set-blocked'), {passing: false})),
+        labeled(p('cap-ready'), '설정 › Mobile · 모두 통과', 'QR + ts.net 주소 + 만료 카운트다운, 연결된 폰 목록(해지, 자동 해지 예고), 푸시 3단.', settings(p('set-ready'), {passing: true})),
+      ]),
+      rowFrame('row-phone', 'Phone', [
+        labeled(p('cap-pair'), '① 페어링 확인', 'QR을 찍으면 Safari에 열리는 첫 화면. 연결을 누르면 코드가 교환되고 목록으로.', phone(p('pair'), 'Phone · Pairing', pairBody(p('pair-b')))),
+        labeled(p('cap-list'), '② 목록', '내 확인 대기 / 끝 / 진행 중 / 확인함. 요청은 warning, 소식은 bright, 확인한 건 dim. SSH 머신은 칩.', phone(p('list'), 'Phone · List', listBody(p('list-b')))),
+        labeled(p('cap-detail'), '③ 상세', '읽기 전용 스크롤백(위로 당기면 더), 퀵키 5개, 한 줄 답장. 권한 프롬프트는 ↑↓⏎로 답합니다.', phone(p('detail'), 'Phone · Detail', detailBody(p('detail-b'), needs0))),
+      ]),
+      rowFrame('row-states', 'Phone states', [
+        labeled(p('cap-unreach'), '④ 연결 안 됨', '한 줄로 두 원인을 말하고 자동 재시도. 목록은 마지막 상태로 흐리게.', phone(p('unreach'), 'Phone · Unreachable', listBody(p('unreach-b'), {unreachable: true}))),
+        labeled(p('cap-empty'), '⑤ 비어 있음', '에이전트가 없을 때의 가장 작은 형태.', phone(p('empty'), 'Phone · Empty', listBody(p('empty-b'), {empty: true}))),
+        labeled(p('cap-push'), '⑥ 푸시 배너', '루트 에이전트당 하나, 작업명 + 상태 + 프로젝트. 탭하면 ③으로.', pushBanner(p('push'))),
+      ]),
+    ])];
+  }
+  return screenSheet('screen-mobile', 'Screen / Mobile', 'web/src/MobileTab.tsx, mobile.ts, and the phone app under web/src/mobile/ (entry web/mobile.html), PRD mobile-companion D-08 and D-12: Settings > Mobile after Devices, blocked with only the failing check lit and one action beside it and no QR, then ready with every check passing, the QR, the ts.net address, the code countdown with 새 코드, the connected phones (2 / 4) with 해지 and the automatic-removal notice, and the three push modes. The phone app: the pairing confirm the QR opens, the list in four groups (내 확인 대기, 끝, 진행 중, 확인함) on the desktop row rules at phone sizes, the detail with its read-only scrollback, five quick keys and one-line reply, the unreachable state (one line naming both causes over the dimmed last list), the empty state, and the push banner that opens the detail. The machine name and tailnet are placeholders and the QR is never a real code.', build, build);
+}
+
 // -- assembly ---------------------------------------------------------------------
 
 export function readLocalVariables(root) {
@@ -1659,5 +2069,6 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Dialogs and Sheets', build: () => buildDialogs(tokens)},
     {name: 'Screen / Menus and Overlays', build: () => buildMenus()},
     {name: 'Screen / Projects Sidebar', build: () => buildProjectsSidebar(tokens)},
+    {name: 'Screen / Mobile', build: () => buildMobile(tokens)},
   ];
 }
