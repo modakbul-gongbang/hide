@@ -1,7 +1,7 @@
 ---
 topic: "Overview 렌즈 1: 타일 머리와 Agents 체크아웃 · 계보"
 status: "ready"
-human_approval: "pending"
+human_approval: "approved"  # user 2026-09-28 verbatim: PRD 3개 승인했으니 저거 3개를 순차적으로 opus 5.5 spawn해서 작업하게 해.
 review_profile: "standard"
 review_rationale: "웹 셸의 Overview 화면 구조를 바꾸고 기존 워크트리 삭제 대화상자를 재사용할 뿐, 새 바깥 쓰기·인증·데이터 이동은 없다."
 source_intake: "agents/interview/overview-lenses/qa-log.md"

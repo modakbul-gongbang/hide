@@ -1,7 +1,7 @@
 ---
 topic: "Overview 렌즈 3: PRs 탭, 맡기기, 이슈 잇기"
 status: "ready"
-human_approval: "pending"
+human_approval: "approved"  # user 2026-09-28 verbatim: PRD 3개 승인했으니 저거 3개를 순차적으로 opus 5.5 spawn해서 작업하게 해.
 review_profile: "high-risk"
 review_rationale: "이슈 잇기가 운영자의 GitHub PR 본문을 고치고 이슈를 만드는 바깥 쓰기이며, 맡기기가 PR 브랜치에서 에이전트를 시작한다."
 source_intake: "agents/interview/overview-lenses/qa-log.md"

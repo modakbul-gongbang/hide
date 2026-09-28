@@ -1,7 +1,7 @@
 ---
 topic: "Overview 렌즈 2: Issues 이슈만, 이슈 패널, 카드 규칙"
 status: "ready"
-human_approval: "pending"
+human_approval: "approved"  # user 2026-09-28 verbatim: PRD 3개 승인했으니 저거 3개를 순차적으로 opus 5.5 spawn해서 작업하게 해.
 review_profile: "standard"
 review_rationale: "이슈 본문·댓글을 읽고 Local 이슈의 제목·본문을 hide 안 파일에 고치는 UI 변경이며, GitHub에는 쓰지 않는다."
 source_intake: "agents/interview/overview-lenses/qa-log.md"
