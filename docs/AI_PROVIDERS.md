@@ -46,7 +46,10 @@ The one environment variable it sets is that `CODEX_HOME`, pointing the app-serv
   The app-server then writes its own state beside the symlink (`installation_id`, `models_cache.json`, its sqlite databases, `shell_snapshots/`, `skills/`, `tmp/`; 2 to 5 MB a session, measured 2026-09-20), but no `sessions/` rollout, so the ephemeral thread leaves no transcript.
   With no config the app-server starts none of the MCP servers the user's real config declares, which measurement (2026-09-17) showed `-c mcp_servers={}` and a per-thread `config` override both failed to prevent.
   The directory is removed when the session ends; if it or the symlink cannot be created the request fails with `ProviderUnavailable(codex_home_unavailable:<stage>:<kind>)` rather than falling back to `~/.codex`.
-  An owner that dies without running `Drop` (a `kill -9`, which the CI kill test performs) leaves its directory behind, and nothing sweeps them yet.
+  An owner that ends without running `Drop` (a `kill -9`, or a process exit while a session is open) leaves its directory behind, so every `CodexAppServerBackend` sweeps them when it is built, on a thread of its own (`hide-ai/src/codex_home.rs`).
+  The sweep removes a `hide-ai-codex-home-<pid>-<nanos>` directory under `$TMPDIR` only when it is a plain directory the current user owns and no process has that pid; a pid that is alive keeps its directories even if it was reused by an unrelated process, because a dead owner's leftover costs disk while deleting a live owner's breaks its app-server.
+  A name that does not parse is never touched, symlinks are never followed, so the user's `auth.json` stays, and one sweep removes at most 32 directories so a backlog (346 were measured on one machine) is cleared over several starts.
+  A sweep that removed or failed to remove anything logs `ai.codex_home.swept` with `removed`, `bytes`, `failed` and `capped` counts; a temporary directory it could not read, or a sweep thread that could not be started, logs `ai.codex_home.sweep_failed` with the stage and the error kind.
   The credential file is referenced through the symlink and never read.
   codex's own token refresh writes through it to the real file: the default `file` credential store opens `CODEX_HOME/auth.json` for truncating write, no temp file and no rename, so the symlink is followed and survives (read from `codex-rs/login/src/auth/storage.rs` at `rust-v0.155.1`).
   A `keyring` or `auto` credential store keys the entry by the canonical `CODEX_HOME` path, so a private home has no entry and the provider reports `needs_login`; that mode is not supported here.
@@ -233,7 +236,7 @@ The context-label plugin parks a turn for good on a settled failure and asks aga
 
 ## Logging
 
-The router emits `ai.attempt`, `ai.request.finished`, `ai.request.joined`, `ai.fallback`, `ai.provider.degraded`, `ai.provider.recovered`, `ai.budget.exceeded`, `ai.app_server.over_budget` and, once per UTC day, `ai.daily_rollup`; the codex backend emits `ai.app_server.idle_exit`.
+The router emits `ai.attempt`, `ai.request.finished`, `ai.request.joined`, `ai.fallback`, `ai.provider.degraded`, `ai.provider.recovered`, `ai.budget.exceeded`, `ai.app_server.over_budget` and, once per UTC day, `ai.daily_rollup`; the codex backend emits `ai.app_server.idle_exit`, `ai.codex_home.swept` and `ai.codex_home.sweep_failed`.
 A line carries the request id, feature id, provider, outcome class, attempt, duration, input length, output tokens and schema version.
 Every codex `ai.request.finished` also carries the app-server pid and the process measurement (`app_server_pid`, `descendants`, `rss_bytes`), or `measurement=unavailable` where the platform cannot measure it.
 It never carries the prompt, the input, the generated text, a token, a file path from a transcript, or a provider thread id.
