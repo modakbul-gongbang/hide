@@ -1042,7 +1042,14 @@ pub fn remove_worktree(
         arguments.push("--force");
     }
     arguments.extend(["--", &checkout_arg]);
-    let answer = git_within(repository_root, &arguments, REMOVE_DEADLINE);
+    // Moved aside, Git only drops the registration, which is a quick write;
+    // only a folder left in place needs the removal's own bound.
+    let deadline = if set_aside.is_some() {
+        GIT_DEADLINE
+    } else {
+        REMOVE_DEADLINE
+    };
+    let answer = git_within(repository_root, &arguments, deadline);
     // A folder moved aside goes back while Git still registers it, so a
     // refused removal leaves the worktree exactly where it was; the same
     // rule decides what a sweep may delete.
