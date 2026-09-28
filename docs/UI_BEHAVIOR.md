@@ -204,7 +204,8 @@ On a connected SSH device, the native page uses that device's localhost or conse
 Opening an address the Workspace already shows moves to that view and loads it again instead of adding a second one.
 The view's own toolbar holds Back, Forward, Reload (Stop while the page loads) and the address, which shows a web address without its scheme until it is focused; focusing it selects the whole address, Return loads what was typed, and Escape puts the page's address back.
 A page that cannot load says so in its place with the address and the reason, and Reload tries again; nothing else on screen changes.
-While the palette, a menu, a dialog, or a dragged tab covers a page, the page is shown as a still picture of itself, so the overlay draws over it, and it comes back live when the overlay closes.
+While the palette, a menu, or a dialog covers a page, the page is shown as a still picture of itself, so the overlay draws over it, and it comes back live when the overlay closes.
+While the shell drags something (a tab, a divider, the side panel's edge, an Explorer item), every page is shown as its still, so the guide or preview draws over it and a drop lands in the shell rather than the page; the pages come back live at release, and a drag inside a page is the page's own.
 In a plain browser tab the view keeps its address on the toolbar row, level with a document header beside it, and below it reads `Pages open in the hide desktop app.`; a web address offers Open in browser, and nothing else is drawn in its place.
 [BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md) owns which addresses a page may hold, the `file:` boundary, and the page's lifetime.
 
