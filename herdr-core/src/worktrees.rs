@@ -22,10 +22,23 @@ use crate::reader::BackgroundRead;
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct WorktreeRequest {
     pub projects: Vec<WorktreeProjectRequest>,
-    /// Bumped when something invalidates every answer at once - a worktree
-    /// removal, most of all. A changed request is always due, so this is how
+    /// Bumped when something invalidates every answer at once - a manual
+    /// refresh, most of all. A changed request is always due, so this is how
     /// an unchanged project list still gets re-read.
     pub generation: u64,
+    /// The local worktree removals the runtime had settled. It invalidates
+    /// no answer - a removal changes its own repository's Git directory, which
+    /// that project's freshness key already watches - and travels back with
+    /// the answer, so the runtime can tell a read that started before a
+    /// removal from one that started after it.
+    pub removals: u64,
+}
+
+/// One read's catalog and the [`WorktreeRequest::removals`] it started under.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WorktreeAnswer {
+    pub catalog: WorktreeCatalogSnapshot,
+    pub removals: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -56,7 +69,8 @@ struct ProjectObservation {
     content_generation: u64,
 }
 
-type ObservedRequest = (u64, Vec<ProjectObservation>);
+/// The generation, the settled removals and every project's observation.
+type ObservedRequest = (u64, u64, Vec<ProjectObservation>);
 
 /// One project's answer. `None` is a folder that is not a repository, which
 /// contributes no project entry at all. The paths are what the working-tree
@@ -66,7 +80,7 @@ type ProjectAnswer = (PathBuf, Option<ProjectWorktreesSnapshot>, Vec<PathBuf>);
 const FILE_STATS_PER_WAKE: usize = 32;
 
 pub struct WorktreeReader {
-    inner: BackgroundRead<ObservedRequest, Vec<ProjectAnswer>>,
+    inner: BackgroundRead<ObservedRequest, (u64, Vec<ProjectAnswer>)>,
     /// Every path the last answer named, tagged with the requested root it
     /// belongs to.
     known_paths: Vec<(PathBuf, PathBuf)>,
@@ -89,7 +103,7 @@ impl WorktreeReader {
         }
     }
 
-    pub fn read_if_due(&mut self, request: WorktreeRequest) -> Option<WorktreeCatalogSnapshot> {
+    pub fn read_if_due(&mut self, request: WorktreeRequest) -> Option<WorktreeAnswer> {
         let observations = request
             .projects
             .iter()
@@ -144,7 +158,9 @@ impl WorktreeReader {
         if !self.known_paths.is_empty() {
             self.scan_cursor = (self.scan_cursor + sample_count) % self.known_paths.len();
         }
-        let answers = self.inner.poll((request.generation, observations))?;
+        let (removals, answers) =
+            self.inner
+                .poll((request.generation, request.removals, observations))?;
         let mut projects: Vec<ProjectWorktreesSnapshot> = Vec::new();
         let mut paths = Vec::new();
         for (root, project, project_paths) in answers {
@@ -165,7 +181,10 @@ impl WorktreeReader {
         }
         self.content_generations
             .retain(|root, _| request.projects.iter().any(|p| &p.root_path == root));
-        Some(WorktreeCatalogSnapshot { projects })
+        Some(WorktreeAnswer {
+            catalog: WorktreeCatalogSnapshot { projects },
+            removals,
+        })
     }
 }
 
@@ -187,13 +206,13 @@ type ProjectCache = BTreeMap<
 fn read_observed(
     cache: &std::sync::Mutex<ProjectCache>,
     request: &ObservedRequest,
-) -> Vec<ProjectAnswer> {
-    let (generation, observations) = request;
+) -> (u64, Vec<ProjectAnswer>) {
+    let (generation, removals, observations) = request;
     let mut cache = cache
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     cache.retain(|root, _| observations.iter().any(|o| &o.request.root_path == root));
-    observations
+    let answers = observations
         .iter()
         .map(|observation| {
             let root = observation.request.root_path.clone();
@@ -215,7 +234,8 @@ fn read_observed(
             );
             (root, project, paths)
         })
-        .collect()
+        .collect();
+    (*removals, answers)
 }
 
 /// One project's rows and the working-tree paths behind them.

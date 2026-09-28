@@ -628,6 +628,12 @@ pub static GIT_CALLS: std::sync::Mutex<Vec<(PathBuf, String)>> = std::sync::Mute
 /// Runs `git` in `cwd` within [`GIT_DEADLINE`], answering its stdout or a
 /// one-line reason.
 pub fn git(cwd: &Path, arguments: &[&str]) -> Result<String, String> {
+    git_within(cwd, arguments, GIT_DEADLINE)
+}
+
+/// [`git`] with its own bound, for the one command that may legitimately
+/// outlast a read: a removal that deletes the folder in place.
+fn git_within(cwd: &Path, arguments: &[&str], deadline: Duration) -> Result<String, String> {
     #[cfg(feature = "call-log")]
     GIT_CALLS
         .lock()
@@ -639,14 +645,14 @@ pub fn git(cwd: &Path, arguments: &[&str]) -> Result<String, String> {
             .arg("-C")
             .arg(cwd)
             .args(arguments),
-        GIT_DEADLINE,
+        deadline,
     )
     .map_err(|error| format!("git could not be run: {error}"))?;
     let Some(output) = output else {
         return Err(format!(
             "git {} did not finish within {} s",
             arguments[0],
-            GIT_DEADLINE.as_secs()
+            deadline.as_secs()
         ));
     };
     if !output.status.success() {
@@ -1006,25 +1012,62 @@ pub fn registered(root: &Path) -> Result<Vec<Registered>, String> {
 /// have accepted.
 ///
 /// Every build cache the checkout owns lives inside it (`target/`,
-/// `web/dist/`), so this one Git command is the whole cleanup.
+/// `web/dist/`), so this is the whole cleanup. Deleting a multi-GB build
+/// folder takes longer than any Git read may, so the folder is first moved
+/// aside into the repository's [`TRASH`] folder, one rename on the same
+/// volume; `git worktree remove` then finds it missing and drops only the
+/// registration, and the files are deleted in the background
+/// ([`sweep_trash`]). The folder is moved only when Git would remove it -
+/// registered, not the main worktree, not locked, and clean unless `force` -
+/// so every refusal is still Git's own. A folder that cannot be moved (the
+/// checkout sits on another volume than its repository) is removed by Git in
+/// place, within [`REMOVE_DEADLINE`].
 pub fn remove_worktree(
     repository_root: &Path,
     checkout: &Path,
     force: bool,
 ) -> Result<String, String> {
+    let common = git(
+        repository_root,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )
+    .ok()
+    .map(|path| PathBuf::from(path.trim()));
+    let set_aside = common
+        .as_deref()
+        .and_then(|common| set_aside(repository_root, common, checkout, force));
     let checkout_arg = checkout.to_string_lossy();
     let mut arguments = vec!["worktree", "remove"];
     if force {
         arguments.push("--force");
     }
     arguments.extend(["--", &checkout_arg]);
-    let answer = git(repository_root, &arguments);
+    let answer = git_within(repository_root, &arguments, REMOVE_DEADLINE);
+    // A folder moved aside goes back while Git still registers it, so a
+    // refused removal leaves the worktree exactly where it was; the same
+    // rule decides what a sweep may delete.
+    if let Some(aside) = set_aside.as_ref()
+        && still_registered(&aside.admin)
+    {
+        std::fs::rename(&aside.entry, checkout).map_err(|error| {
+            format!(
+                "Git kept the worktree but its folder could not be moved back from {} ({error}). Move it back to {} before retrying.",
+                aside.entry.display(),
+                checkout.display()
+            )
+        })?;
+    }
+    // Every removal sweeps, so an entry a stopped process left behind goes
+    // with the next removal in its repository, including its own retry.
+    if let Some(common) = common.as_deref() {
+        sweep_trash(&common.join(TRASH));
+    }
     // What is on disk decides, so an answer cut short (a held pipe) after
     // Git removed the folder still reads as removed, and a failure whose
     // readback also fails keeps Git's own reason.
-    let remains = registered(repository_root)
+    let listed = registered(repository_root)
         .map(|rows| rows.iter().any(|row| Path::new(&row.path) == checkout));
-    let remains = match (remains, &answer) {
+    let remains = match (listed, &answer) {
         (Ok(listed), Err(_)) => listed || checkout.try_exists().unwrap_or(true),
         (Ok(listed), Ok(_)) => {
             listed || checkout.try_exists().map_err(|error| error.to_string())?
@@ -1041,6 +1084,163 @@ pub fn remove_worktree(
             "Git acknowledged removal but the folder or registration remains. Review again.".into(),
         ),
     }
+}
+
+/// The bound on a `git worktree remove` that deletes the folder itself,
+/// which only a checkout that could not be moved aside needs. It stays under
+/// the core's wait for the removal's answer, so a removal that runs out is
+/// reported by the host rather than left unknown.
+pub const REMOVE_DEADLINE: Duration = Duration::from_secs(60);
+
+/// The folder under the repository's shared Git directory where removed
+/// worktree folders wait to be deleted. Git ignores it, the operator never
+/// browses it, and it is on the checkout's volume in the usual layout.
+pub const TRASH: &str = "hide-removed";
+
+/// A worktree folder moved into its repository's [`TRASH`]: the entry the
+/// folder now is, and Git's administrative folder that registers it.
+struct SetAside {
+    entry: PathBuf,
+    admin: PathBuf,
+}
+
+/// Moves `checkout` into the repository's [`TRASH`] when Git would remove
+/// it. The entry is named `<nanos>-<pid>-<admin id>`, so [`sweep_trash`] can
+/// tell from Git's own registration whether it is still a worktree. `None`
+/// leaves the folder where it is for Git to remove or refuse in place.
+fn set_aside(root: &Path, common: &Path, checkout: &Path, force: bool) -> Option<SetAside> {
+    let rows = registered(root).ok()?;
+    let index = rows
+        .iter()
+        .position(|row| Path::new(&row.path) == checkout)?;
+    if index == 0 || rows[index].locked || rows[index].unavailable {
+        return None;
+    }
+    if !std::fs::symlink_metadata(checkout).ok()?.is_dir() {
+        return None;
+    }
+    // Git's own check before it deletes a folder it was not forced to.
+    if !force
+        && !git(
+            checkout,
+            &["status", "--porcelain", "--ignore-submodules=none"],
+        )
+        .ok()?
+        .trim()
+        .is_empty()
+    {
+        return None;
+    }
+    let id = admin_id(checkout)?;
+    let admin = common.join("worktrees").join(&id);
+    if !admin.is_dir() {
+        return None;
+    }
+    let trash = common.join(TRASH);
+    std::fs::create_dir_all(&trash).ok()?;
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    let entry = trash.join(format!("{nanos}-{}-{id}", std::process::id()));
+    std::fs::rename(checkout, &entry).ok()?;
+    Some(SetAside { entry, admin })
+}
+
+/// The name of the worktree's administrative folder, from the `gitdir:`
+/// line of its `.git` file.
+fn admin_id(checkout: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(checkout.join(".git")).ok()?;
+    let gitdir = text
+        .lines()
+        .find_map(|line| line.strip_prefix("gitdir: "))?;
+    Path::new(gitdir.trim())
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+}
+
+/// Entries of a trash folder being deleted by this process, so two sweeps
+/// never delete the same folder at once.
+static DELETING: std::sync::Mutex<std::collections::BTreeSet<PathBuf>> =
+    std::sync::Mutex::new(std::collections::BTreeSet::new());
+
+/// Deletes, each on its own thread, every entry of `trash` that is no longer
+/// a worktree: Git has no administrative folder for it, or that folder now
+/// belongs to another worktree whose `.git` exists. An entry Git still
+/// registers - a removal that has not reached Git yet, or one whose folder
+/// could not be moved back - is kept.
+pub fn sweep_trash(trash: &Path) {
+    let Some(common) = trash.parent() else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(trash) else {
+        return;
+    };
+    for entry in entries.filter_map(Result::ok) {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let Some(admin) = name.splitn(3, '-').nth(2) else {
+            continue;
+        };
+        if still_registered(&common.join("worktrees").join(admin)) {
+            continue;
+        }
+        if !DELETING
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(path.clone())
+        {
+            continue;
+        }
+        let spawned = std::thread::Builder::new()
+            .name("hide-worktree-trash".into())
+            .spawn({
+                let path = path.clone();
+                move || {
+                    let result = std::fs::remove_dir_all(&path);
+                    DELETING
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .remove(&path);
+                    if let Err(error) = result
+                        && error.kind() != std::io::ErrorKind::NotFound
+                    {
+                        eprintln!(
+                            "{}",
+                            serde_json::json!({
+                                "component": "worktree_trash",
+                                "kind": "delete_failed",
+                                "entry": path,
+                                "message": error.to_string(),
+                            })
+                        );
+                    }
+                }
+            });
+        if spawned.is_err() {
+            DELETING
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .remove(&path);
+        }
+    }
+}
+
+/// Whether Git's administrative folder `admin` still registers the folder
+/// that was moved away from it: it exists and the `.git` it names is gone.
+fn still_registered(admin: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(admin.join("gitdir")) else {
+        // No readable registration: missing means removed; anything else is
+        // kept rather than guessed at.
+        return admin.exists();
+    };
+    let named = Path::new(text.trim());
+    let named = if named.is_absolute() {
+        named.to_path_buf()
+    } else {
+        admin.join(named)
+    };
+    !named.exists()
 }
 
 /// One operator-confirmed worktree deletion, as the runtime recorded it when
