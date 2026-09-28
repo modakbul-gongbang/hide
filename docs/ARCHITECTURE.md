@@ -138,6 +138,7 @@ A path outside every checkout never reaches the core: the shell hands it to macO
 
 A spawned child does not split the operator's pane.
 Herdr owns split geometry and the PTY size, so a delegated child pane is really moved out - `pane.move` to a new tab in the workspace it is already in - rather than left undrawn; a tab holding nothing but delegated children then stays out of the tab strip while remaining in the checkout.
+A move stays in flight until the published layout shows the child in its own tab, not only until Herdr acknowledges it: the move's events arrive after the answer, and asking again before they did moved the pane out of the tab the first move had made, so no layout ever landed and the moves repeated; `RELOCATION_RETRY_INTERVAL_MS` bounds a move whose events never come.
 Detection is the same on every pass, so a child that arrives while Hide is running and one already split when Hide started take the same path, and a refusal is retried on a fixed interval rather than assumed to have worked.
 Herdr reports a refusal as an unchanged move with a reason rather than as an error, so the decision reads `changed` instead of trusting a successful request.
 Machine-qualified lineage is resolved before tab ownership is projected; local snapshots, remote snapshots and machine identity changes all update the tab strip and Agent area membership in the same transition.
