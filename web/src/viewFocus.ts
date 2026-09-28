@@ -16,6 +16,12 @@ export type KeyboardOwner =
   | { kind: "none" };
 
 let owner: KeyboardOwner = { kind: "none" };
+// The shell element a native page took the keyboard from. To deliver a menu
+// command pressed in a page, the host hands the keyboard back to the shell,
+// and the browser announces focus on that element again; that is not the
+// operator moving the keyboard, so the page stays the owner until the
+// command has run (`noteCommandDelivered`) or the operator moves.
+let handedBack: Element | null = null;
 
 export function noteKeyboardOwner(next: KeyboardOwner): void {
   owner = next;
@@ -25,25 +31,39 @@ export function keyboardOwner(): KeyboardOwner {
   return owner;
 }
 
+/** The region an element belongs to, or null while a menu borrows the keyboard from its invoker. */
+function ownerOf(target: Element | null): KeyboardOwner | null {
+  if (target?.closest('[role="menu"]')) return null;
+  const workspace = target?.closest<HTMLElement>("[data-workspace-screen]")?.dataset.workspaceScreen;
+  if (!target || !workspace) return { kind: "none" };
+  const tool = target.closest("[data-workspace-tools]");
+  const areaId = target.closest<HTMLElement>("[data-view-area-id]")?.dataset.viewAreaId;
+  const paneId = target.closest<HTMLElement>("[data-pane-view]")?.dataset.paneView;
+  return tool ? { kind: "tool", workspace }
+    : areaId ? { kind: "view", workspace, areaId }
+    : paneId ? { kind: "pane", workspace, paneId }
+    : target.closest("[data-agent-areas]") ? { kind: "agent", workspace }
+    : { kind: "none" };
+}
+
+/**
+ * A menu command the host delivered has run. When it was pressed in a native
+ * page, the keyboard is the shell's again, so the owner follows the element
+ * holding it, and the next chord acts where the operator now types.
+ */
+export function noteCommandDelivered(): void {
+  if (!handedBack) return;
+  handedBack = null;
+  owner = ownerOf(document.activeElement) ?? owner;
+}
+
 /** One bounded value per page; no core events or per-key DOM reads. */
 export function installKeyboardOwner(): () => void {
   const record = (event: Event) => {
     const target = event.target instanceof Element ? event.target : null;
-    // A menu temporarily borrows the keyboard from its invoker.
-    if (target?.closest('[role="menu"]')) return;
-    const workspace = target?.closest<HTMLElement>("[data-workspace-screen]")?.dataset.workspaceScreen;
-    if (!target || !workspace) {
-      owner = { kind: "none" };
-      return;
-    }
-    const tool = target.closest("[data-workspace-tools]");
-    const areaId = target.closest<HTMLElement>("[data-view-area-id]")?.dataset.viewAreaId;
-    const paneId = target.closest<HTMLElement>("[data-pane-view]")?.dataset.paneView;
-    owner = tool ? { kind: "tool", workspace }
-      : areaId ? { kind: "view", workspace, areaId }
-      : paneId ? { kind: "pane", workspace, paneId }
-      : target.closest("[data-agent-areas]") ? { kind: "agent", workspace }
-      : { kind: "none" };
+    if (event.type === "focusin" && target !== null && target === handedBack) return;
+    handedBack = null;
+    owner = ownerOf(target) ?? owner;
   };
   // Native browser pages are outside the renderer DOM. Their host reports
   // the same ownership transition when the operator enters a page.
@@ -54,7 +74,9 @@ export function installKeyboardOwner(): () => void {
     const checkout = frontCheckout(rest);
     if (!view?.layout || !checkout || view.panel === "closed" || workspaceKey(view) !== event.workspace) return;
     const located = locateDisplay(view.layout.root, event.id);
-    if (located) noteKeyboardOwner({ kind: "view", workspace: checkout.id, areaId: located.area.id });
+    if (!located) return;
+    noteKeyboardOwner({ kind: "view", workspace: checkout.id, areaId: located.area.id });
+    handedBack = document.activeElement !== document.body ? document.activeElement : null;
   });
   window.addEventListener("focusin", record, true);
   window.addEventListener("pointerdown", record, true);
@@ -63,6 +85,7 @@ export function installKeyboardOwner(): () => void {
     window.removeEventListener("focusin", record, true);
     window.removeEventListener("pointerdown", record, true);
     owner = { kind: "none" };
+    handedBack = null;
   };
 }
 
@@ -89,6 +112,27 @@ export function closeShortcutPolicy(input: {
   return paneIds.includes(owner.paneId)
     ? { kind: "pane", id: owner.paneId }
     : { kind: "nothing", reason: "the focused pane is no longer visible" };
+}
+
+export type NewTabTarget =
+  | { kind: "view"; areaId: string }
+  | { kind: "agent"; areaId: string | null };
+
+/**
+ * Open the new tab where the keyboard is: its drawn View area, or the Agent
+ * area holding its pane; anything else keeps the Agent active area (null).
+ */
+export function newTabPolicy(input: {
+  owner: KeyboardOwner;
+  workspace: string | null;
+  viewAreaIds: readonly string[];
+  paneAreas: Readonly<Record<string, string>>;
+}): NewTabTarget {
+  const { owner, workspace, viewAreaIds, paneAreas } = input;
+  if (owner.kind === "none" || owner.workspace !== workspace) return { kind: "agent", areaId: null };
+  if (owner.kind === "view" && viewAreaIds.includes(owner.areaId)) return { kind: "view", areaId: owner.areaId };
+  if (owner.kind === "pane") return { kind: "agent", areaId: paneAreas[owner.paneId] ?? null };
+  return { kind: "agent", areaId: null };
 }
 
 /**
