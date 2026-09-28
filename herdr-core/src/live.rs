@@ -654,11 +654,31 @@ pub(crate) fn open_owner_tab(
 ) -> Result<OwnedTab, ControlFailure> {
     let (workspace_id, first_tab) = ensure_owner(connector, owner, env.clone())?;
     let owned = match first_tab {
-        Some((tab_id, pane_id)) => OwnedTab {
-            workspace_id,
-            tab_id,
-            pane_id,
-        },
+        Some((tab_id, pane_id)) => {
+            // The owner's first tab is the new tab, so it takes the label the
+            // request carries, as `tab.create` would give it; the tab is real
+            // either way.
+            if !label.trim().is_empty()
+                && let Err(error) = mutation_request(
+                    connector,
+                    "tab.rename",
+                    wire::tab_rename_params(&tab_id, label)?,
+                )
+            {
+                crate::diagnostic!(json!({
+                    "component": "checkout_owner",
+                    "kind": "owner.tab_label_failed",
+                    "workspace_id": workspace_id,
+                    "tab_id": tab_id,
+                    "message": error.message(),
+                }));
+            }
+            OwnedTab {
+                workspace_id,
+                tab_id,
+                pane_id,
+            }
+        }
         None => create_tab_in(connector, &workspace_id, cwd, label, env)?,
     };
     crate::diagnostic!(json!({
@@ -4760,6 +4780,10 @@ mod tests {
                 "tab": {"tab_id": "w9:t1", "workspace_id": "w9", "number": 1, "label": "1", "focused": true, "pane_count": 1, "agent_status": "idle"},
                 "root_pane": {"pane_id": "w9:p1", "terminal_id": "fixture-terminal", "workspace_id": "w9", "tab_id": "w9:t1", "focused": true, "agent_status": "idle", "revision": 1}
             }),
+            "tab.rename" => json!({
+                "type": "tab_info",
+                "tab": {"tab_id": "w9:t1", "workspace_id": "w9", "number": 1, "label": "Tab 2", "focused": true, "pane_count": 1, "agent_status": "idle"}
+            }),
             "workspace.rename" => json!({
                 "type": "workspace_info",
                 "workspace": {"workspace_id": "w9", "number": 9, "label": "feat", "focused": true, "pane_count": 1, "tab_count": 1, "active_tab_id": "w9:t1", "agent_status": "idle"}
@@ -4804,6 +4828,10 @@ mod tests {
                 (
                     "workspace.rename".to_owned(),
                     json!({"workspace_id": "w9", "label": "feat"})
+                ),
+                (
+                    "tab.rename".to_owned(),
+                    json!({"tab_id": "w9:t1", "label": "Tab 2"})
                 ),
             ]
         );
@@ -4906,6 +4934,10 @@ mod tests {
                 *marked_in_server.lock().unwrap() = true;
                 json!({"type": "ok"})
             }
+            "tab.rename" => json!({
+                "type": "tab_info",
+                "tab": {"tab_id": "w4:t1", "workspace_id": "w4", "number": 1, "label": "Tab 1", "focused": true, "pane_count": 1, "agent_status": "idle"}
+            }),
             "tab.create" => json!({
                 "type": "tab_created",
                 "tab": {"tab_id": "w4:t2", "workspace_id": "w4", "number": 2, "label": "Tab 2", "focused": true, "pane_count": 1, "agent_status": "idle"},
@@ -4951,6 +4983,7 @@ mod tests {
                 "workspace.list",
                 "workspace.create",
                 "workspace.report_metadata",
+                "tab.rename",
                 "workspace.list",
                 "tab.create"
             ]
