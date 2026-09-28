@@ -4,8 +4,8 @@
 //
 // The daemon's own keys (HIDE_STATE_DIR, HERDR_SOCKET_PATH, ...) are not
 // read here: the `hide` CLI inherits this process's environment and
-// `hided/src/env.rs` owns them. HOME and HERDR_BIN_PATH are read by both:
-// the host reads HERDR_BIN_PATH and HERDR_PANE_ID only to know whether it
+// `hided/src/env.rs` owns them. HOME, HERDR_BIN_PATH and HERDR_PANE_ID are
+// read by both: the host reads the two Herdr keys only to know whether it
 // may name the Herdr it bundles (`herdr.ts`).
 
 import os from "node:os";

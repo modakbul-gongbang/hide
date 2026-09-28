@@ -27,6 +27,6 @@ export function chooseHerdr(input: { bundledDir: string | null; herdrBinPath: st
   if (bundledDir === null) return { path: null, source: "inherited", replacedPaneValue: null };
   const bundled = path.join(bundledDir, "herdr");
   if (herdrBinPath === null) return { path: bundled, source: "bundled", replacedPaneValue: null };
-  if (herdrPaneId !== null) return { path: bundled, source: "bundled", replacedPaneValue: herdrBinPath };
+  if (herdrPaneId !== null) return { path: bundled, source: "bundled", replacedPaneValue: herdrBinPath === bundled ? null : herdrBinPath };
   return { path: null, source: "inherited", replacedPaneValue: null };
 }

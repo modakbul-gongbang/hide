@@ -19,6 +19,8 @@ describe("chooseHerdr", () => {
       source: "bundled",
       replacedPaneValue: gone,
     });
+    const current = chooseHerdr({ ...packaged, herdrBinPath: "/A/Contents/Resources/herdr", herdrPaneId: "w1:p1" });
+    expect(current).toEqual({ path: "/A/Contents/Resources/herdr", source: "bundled", replacedPaneValue: null });
   });
 
   it("adds nothing when unpackaged, pane or not", () => {
