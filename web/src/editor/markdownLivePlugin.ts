@@ -58,10 +58,13 @@ class CheckboxWidget extends WidgetType {
   }
 }
 
-function build(state: EditorState): DecorationSet {
+/** No selection anywhere in the document, so no mark is revealed. */
+const NOWHERE = { from: -1, to: -1 };
+
+function build(state: EditorState, reveal: boolean): DecorationSet {
   const doc = state.doc;
   if (doc.length > MARKDOWN_LIVE_BYTE_LIMIT) return Decoration.none;
-  const plan = markdownLivePlan(syntaxTree(state), doc, state.selection.main);
+  const plan = markdownLivePlan(syntaxTree(state), doc, reveal ? state.selection.main : NOWHERE);
   const ranges: Range<Decoration>[] = [];
   for (const range of plan) {
     switch (range.kind) {
@@ -109,8 +112,11 @@ function build(state: EditorState): DecorationSet {
  */
 class LivePlugin implements PluginValue {
   decorations: DecorationSet;
-  constructor(view: EditorView) {
-    this.decorations = build(view.state);
+  constructor(
+    view: EditorView,
+    private readonly reveal: boolean,
+  ) {
+    this.decorations = build(view.state, reveal);
   }
   update(update: ViewUpdate) {
     if (
@@ -119,11 +125,16 @@ class LivePlugin implements PluginValue {
       update.viewportChanged ||
       syntaxTree(update.state) !== syntaxTree(update.startState)
     ) {
-      this.decorations = build(update.state);
+      this.decorations = build(update.state, this.reveal);
     }
   }
 }
 
-export function markdownLive(): Extension {
-  return ViewPlugin.fromClass(LivePlugin, { decorations: (value) => value.decorations });
+/**
+ * `reveal` shows the marks of the lines the selection touches, as an editor
+ * does; a read-only text (an issue's body) has no caret to edit at, so it
+ * never reveals them.
+ */
+export function markdownLive({ reveal = true }: { reveal?: boolean } = {}): Extension {
+  return ViewPlugin.define((view) => new LivePlugin(view, reveal), { decorations: (value) => value.decorations });
 }

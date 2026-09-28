@@ -22,7 +22,7 @@ import {
   TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { createContext, useContext, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
+import { createContext, useContext, useId, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
 import { lineTone, markTone, rowAccessibleName, rowLine } from "./agentRow";
@@ -38,6 +38,7 @@ import { Switch } from "./components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
 import { Hint, Tooltip, TooltipContent, TooltipTrigger, useHintOpen } from "./components/ui/tooltip";
 import { previewRead, useCachedDetail } from "./issueDetails";
+import { markdownPlainText } from "./markdownPlain";
 import { cn } from "./lib/utils";
 import { useMeasuredPaths } from "./measuredPaths";
 import { AgentMessageHint, PullRequestChip } from "./OverviewLenses";
@@ -219,12 +220,12 @@ function Count({ value }: { value: string | number }) {
   return <span className="font-normal text-muted-foreground">{value}</span>;
 }
 
-/** A one-line button at a column's foot: `+N`, or the work with no issue folded. */
-function FoldLine({ children, onClick, open, data }: { children: ReactNode; onClick: () => void; open?: boolean; data: Record<string, string> }) {
+/** A one-line button at a column's foot: `+N`, or the work with no issue folded. It passes a popover trigger's props through. */
+function FoldLine({ children, open, data, ...props }: Omit<ComponentProps<"button">, "type"> & { open?: boolean; data: Record<string, string> }) {
   return (
     <button
+      {...props}
       type="button"
-      onClick={onClick}
       aria-expanded={open}
       className="flex w-full items-center gap-xs rounded-sm border border-border px-sm py-xxs text-left text-caption text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
       {...data}
@@ -880,7 +881,7 @@ function IssuePreviewBody({ card, detail }: { card: TaskCard; detail: IssueDetai
       <span className="line-clamp-2 text-body font-semibold text-foreground">{card.title}</span>
       {detail?.body ? (
         <p className="line-clamp-3 whitespace-pre-line break-words text-caption text-subtle-foreground" data-issue-preview-body="true">
-          {detail.body}
+          {markdownPlainText(detail.body)}
         </p>
       ) : null}
       {byline ? <span className="text-caption text-muted-foreground">{byline}</span> : null}

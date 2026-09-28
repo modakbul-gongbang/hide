@@ -125,7 +125,17 @@ export function IssuePanel({
         </Hint>
       </header>
       {editing ? (
-        <LocalEditor card={card} body={read.detail?.body ?? ""} actions={actions} onDone={() => setEditing(false)} />
+        <LocalEditor
+          card={card}
+          body={read.detail?.body ?? ""}
+          actions={actions}
+          onCancel={() => setEditing(false)}
+          onSaved={() => {
+            // The body shown is the read from before the edit; the saved one is read again.
+            setEditing(false);
+            readIssue();
+          }}
+        />
       ) : (
         <>
           <h2
@@ -372,7 +382,7 @@ function Comments({ detail }: { detail: IssueDetail }) {
  * cancels, and nothing on the board changes before the save. A refused save
  * keeps the text and says why in place.
  */
-function LocalEditor({ card, body, actions, onDone }: { card: TaskCard; body: string; actions: Actions; onDone: () => void }) {
+function LocalEditor({ card, body, actions, onCancel, onSaved }: { card: TaskCard; body: string; actions: Actions; onCancel: () => void; onSaved: () => void }) {
   const [title, setTitle] = useState(card.title);
   const [text, setText] = useState(body);
   const [request, setRequest] = useState<string | null>(null);
@@ -380,10 +390,13 @@ function LocalEditor({ card, body, actions, onDone }: { card: TaskCard; body: st
     const update = s.rest?.issue_work?.update ?? null;
     return request !== null && update?.request_id === request ? update : null;
   });
-  useEscapeLayer(onDone);
+  useEscapeLayer(onCancel);
+  const saved = useRef(onSaved);
+  saved.current = onSaved;
+  const ready = answer?.phase === "ready";
   useEffect(() => {
-    if (answer?.phase === "ready") onDone();
-  }, [answer, onDone]);
+    if (ready) saved.current();
+  }, [ready]);
   const save = () => {
     const id = `edit-${card.task.key}-${Date.now()}`;
     setRequest(id);
@@ -418,7 +431,7 @@ function LocalEditor({ card, body, actions, onDone }: { card: TaskCard; body: st
           저장
           <Kbd>⌘↵</Kbd>
         </Button>
-        <Button variant="ghost" size="sm" onClick={onDone} data-issue-editor-cancel="true">
+        <Button variant="ghost" size="sm" onClick={onCancel} data-issue-editor-cancel="true">
           취소
           <Kbd>Esc</Kbd>
         </Button>

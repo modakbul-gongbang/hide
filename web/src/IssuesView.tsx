@@ -73,11 +73,13 @@ export function IssuesView({
     ) : (
       <TasksView board={shown} scope={scope} page={boardPage} actions={actions} handlers={handlers} doneOpen={doneOpen} onToggleDone={onToggleDone} filtered={filterActive(filter)} onClearFilter={() => onFilterChange(NO_FILTER)} />
     );
+  // One tree whether or not the panel is open: the board is never remounted,
+  // so its scroll, its unfolded lines and the card the keyboard is on stay.
   return (
     <FocusedTask.Provider value={focusTask}>
-      {open ? (
-        <div className="flex min-h-0 flex-1 items-stretch gap-md pb-lg pr-lg" data-issues-split="true">
-          <div className="min-h-0 min-w-0 flex-1 overflow-auto">{view}</div>
+      <div className={open ? "flex min-h-0 flex-1 items-stretch gap-md pb-lg pr-lg" : "contents"} data-issues-split={open ? "true" : undefined}>
+        <div className={open ? "min-h-0 min-w-0 flex-1 overflow-auto" : "contents"}>{view}</div>
+        {open ? (
           <IssuePanel
             card={open}
             actions={actions}
@@ -91,10 +93,8 @@ export function IssuesView({
               document.querySelector<HTMLElement>(`[data-issue-card="${CSS.escape(open.task.key)}"]`)?.focus();
             }}
           />
-        </div>
-      ) : (
-        view
-      )}
+        ) : null}
+      </div>
     </FocusedTask.Provider>
   );
 }

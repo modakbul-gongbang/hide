@@ -11,9 +11,10 @@ import { languageLoader } from "./editor/languages";
 import { markdownLive } from "./editor/markdownLivePlugin";
 import { baseTheme, liveTheme } from "./editor/theme";
 
+// The chrome sets the editor's monospace on `.cm-content`; prose outranks it.
 const prose = EditorView.theme({
   "&": { backgroundColor: "transparent", height: "auto" },
-  ".cm-content": { fontFamily: "var(--font-ui)", fontSize: "var(--text-body)", lineHeight: "1.5", padding: "0" },
+  "&.cm-editor .cm-content": { fontFamily: "var(--font-sans)", fontSize: "var(--text-body)", lineHeight: "1.5", padding: "0" },
   ".cm-line": { padding: "0" },
   "&.cm-focused": { outline: "none" },
 });
@@ -28,7 +29,7 @@ export function MarkdownText({ text }: { text: string }) {
       parent,
       state: EditorState.create({
         doc: text,
-        extensions: [baseTheme(), liveTheme, prose, language.of([]), markdownLive(), EditorView.lineWrapping, EditorState.readOnly.of(true), EditorView.editable.of(false)],
+        extensions: [baseTheme(), liveTheme, prose, language.of([]), markdownLive({ reveal: false }), EditorView.lineWrapping, EditorState.readOnly.of(true), EditorView.editable.of(false)],
       }),
     });
     let live = true;
