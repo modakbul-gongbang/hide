@@ -16,7 +16,7 @@ import { useShellStore } from "./store";
 import { IssueFilterControl, TasksModeToggle } from "./TaskBoards";
 import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
 import { toggledFold, useUiStore, type LensFold, type MainView } from "./ui";
-import { hostKind } from "./host";
+import { hostBridge, hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
 
 // The Overview of every project (PRD S6 D-02, B1-B4, B21; `screen.kind ===
@@ -111,10 +111,12 @@ export function MainScreen({ actions }: { actions: Actions }) {
       <header className="flex shrink-0 flex-col gap-xs border-b border-border px-lg py-sm">
         <div className="flex min-w-0 items-center gap-lg">
           <h1 className="min-w-0 flex-1 truncate text-headline font-semibold text-foreground">Overview</h1>
-          <Button variant="ghost" onClick={() => actions.openNewWorkspace()} data-main-add-project="true">
-            <PlusIcon aria-hidden="true" />
-            Add project <span className="text-muted-foreground">{displayCommand("new_workspace", hostKind())}</span>
-          </Button>
+          {hostBridge() ? (
+            <Button variant="ghost" onClick={() => actions.openAddProject()} data-main-add-project="true">
+              <PlusIcon aria-hidden="true" />
+              Add project <span className="text-muted-foreground">{displayCommand("new_workspace", hostKind())}</span>
+            </Button>
+          ) : null}
           {issueProject ? (
             <Button onClick={newIssue} data-main-new-issue="true">
               <PlusIcon aria-hidden="true" />
@@ -184,9 +186,11 @@ export function MainScreen({ actions }: { actions: Actions }) {
       ) : total === 0 && sections.every((section) => section.availability.state === "ready") ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-main-empty="true">
           <p>No project is registered yet.</p>
-          <Button variant="secondary" onClick={() => actions.openNewWorkspace()} data-main-empty-add="true">
-            Add project
-          </Button>
+          {hostBridge() ? (
+            <Button variant="secondary" onClick={() => actions.openAddProject()} data-main-empty-add="true">
+              Add project
+            </Button>
+          ) : null}
         </div>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col gap-lg overflow-auto p-md" data-main-projects="true">

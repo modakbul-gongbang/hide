@@ -1981,29 +1981,32 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
     runtime.snapshot.ui_state.focused_checkout_id = Some(checkout_id);
     let workspace_id = runtime.snapshot.navigator.workspaces[0].id.clone();
     runtime.snapshot.navigator.focused_workspace_id = Some(workspace_id);
-    runtime.ingest_worktrees(crate::model::WorktreeCatalogSnapshot {
-        projects: vec![crate::model::ProjectWorktreesSnapshot {
-            root_path: "/fixture".to_owned(),
-            base_source: "default_branch".to_owned(),
-            default_branch: Some("main".to_owned()),
-            worktrees: vec![
-                crate::model::WorktreeSnapshot {
-                    path: "/fixture".to_owned(),
-                    branch: Some("main".to_owned()),
-                    is_main: true,
-                    upstream_state: "pushed".to_owned(),
-                    ..Default::default()
-                },
-                crate::model::WorktreeSnapshot {
-                    path: "/fixture/quiet".to_owned(),
-                    branch: Some("quiet".to_owned()),
-                    upstream_state: "pushed".to_owned(),
-                    ..Default::default()
-                },
-            ],
-            ..Default::default()
-        }],
-    });
+    runtime.ingest_worktrees(
+        crate::model::WorktreeCatalogSnapshot {
+            projects: vec![crate::model::ProjectWorktreesSnapshot {
+                root_path: "/fixture".to_owned(),
+                base_source: "default_branch".to_owned(),
+                default_branch: Some("main".to_owned()),
+                worktrees: vec![
+                    crate::model::WorktreeSnapshot {
+                        path: "/fixture".to_owned(),
+                        branch: Some("main".to_owned()),
+                        is_main: true,
+                        upstream_state: "pushed".to_owned(),
+                        ..Default::default()
+                    },
+                    crate::model::WorktreeSnapshot {
+                        path: "/fixture/quiet".to_owned(),
+                        branch: Some("quiet".to_owned()),
+                        upstream_state: "pushed".to_owned(),
+                        ..Default::default()
+                    },
+                ],
+                ..Default::default()
+            }],
+        },
+        0,
+    );
     let overview = runtime
         .snapshot
         .git_worktrees

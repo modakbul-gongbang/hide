@@ -1,7 +1,8 @@
 // Delete worktree… on a worktree that would lose work: the menu item is
 // enabled, the dialog names the dirt, the unmerged commit and the agent it
 // stops, Delete waits for the discard checkbox, and with both boxes ticked
-// the folder and its unmerged branch go and the row leaves the sidebar.
+// the row is dimmed with a spinner while it goes, then the folder and its
+// unmerged branch go and the row leaves the sidebar.
 
 import { expect, test } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -87,10 +88,20 @@ test("a dirty worktree with an unmerged branch and an agent is deleted once both
     await dialog.locator("[data-delete-discard]").click();
     await expect(confirm).toBeEnabled();
     await screenshot(page, "worktree-delete-dialog-ticked");
+    // Every state the row passes through, however briefly it is drawn.
+    await page.evaluate((branch) => {
+      const seen: string[] = [];
+      (window as unknown as { __removingSeen: string[] }).__removingSeen = seen;
+      new MutationObserver(() => {
+        const row = [...document.querySelectorAll("[data-checkout-row]")].find((li) => li.querySelector(`[data-checkout][aria-label^="${branch}"]`));
+        if (row?.getAttribute("data-checkout-removing") === "true" && row.querySelector("[data-checkout-removing-mark]") && row.querySelector("[data-checkout]:disabled")) seen.push("removing");
+      }).observe(document.body, { subtree: true, childList: true, attributes: true });
+    }, BRANCH);
     await confirm.click();
 
     await expect(dialog.locator('[data-delete-result="finished"]')).toBeVisible({ timeout: 60_000 });
     await expect(feature).toHaveCount(0, { timeout: 30_000 });
+    expect(await page.evaluate(() => (window as unknown as { __removingSeen: string[] }).__removingSeen.length)).toBeGreaterThan(0);
     expect(fs.existsSync(worktree)).toBe(false);
     expect(git(repo, ["branch", "--list", BRANCH]).trim()).toBe("");
   } finally {

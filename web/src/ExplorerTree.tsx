@@ -3,6 +3,7 @@ import { RefreshCwIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { isHtmlFile } from "./browserViews";
+import { holdShellDrag } from "./shellDrag";
 import { EntryPointMenu, type MenuEntry } from "./components/entry-menu";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
@@ -456,9 +457,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
                     event.preventDefault();
                     setMenu({ path: row.path, isDirectory: row.isDirectory, x: event.clientX, y: event.clientY });
                   }}
-                  onDragStart={() => {
-                    dragPath.current = row.path;
-                  }}
+                  onDragStart={(source) => beginDrag(row.path, source)}
                   onDrop={(from) => {
                     if (from && from !== row.path && !row.path.startsWith(`${from}/`)) actions.moveEntry(from, row.path);
                   }}
@@ -502,6 +501,26 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
 
 /** The one path a drag is carrying; a ref because a drag never re-renders. */
 const dragPath = { current: null as string | null };
+
+/**
+ * Starts carrying `path` from its row. The drag marks the root while it runs,
+ * so a page it crosses gives way to its still and never takes the drop. The
+ * mark and the carried path go at the drag's end, heard on the row itself: a
+ * row the list drew away mid-drag still gets its `dragend`, which never
+ * reaches the window or React.
+ */
+function beginDrag(path: string, source: HTMLElement): void {
+  dragPath.current = path;
+  const release = holdShellDrag("file");
+  source.addEventListener(
+    "dragend",
+    () => {
+      dragPath.current = null;
+      release();
+    },
+    { once: true },
+  );
+}
 
 function DraftRowView({
   depth,
@@ -632,7 +651,7 @@ function ExplorerRowView({
   onOpen: (row: ExplorerRow, preview: boolean) => void;
   onRefresh: () => void;
   onContextMenu: (event: React.MouseEvent) => void;
-  onDragStart: () => void;
+  onDragStart: (source: HTMLElement) => void;
   onDrop: (from: string | null) => void;
 }) {
   const [over, setOver] = useState(false);
@@ -669,7 +688,7 @@ function ExplorerRowView({
         event.stopPropagation();
         event.dataTransfer.effectAllowed = "move";
         event.dataTransfer.setData("text/plain", row.path);
-        onDragStart();
+        onDragStart(event.currentTarget);
       }}
       onDragOver={(event) => {
         if (!row.isDirectory || !dragPath.current) return;
@@ -685,10 +704,7 @@ function ExplorerRowView({
         dragPath.current = null;
         onDrop(from || null);
       }}
-      onDragEnd={() => {
-        dragPath.current = null;
-        setOver(false);
-      }}
+      onDragEnd={() => setOver(false)}
     >
       <span className="w-[var(--size-lineage-chevron)] shrink-0 text-center text-caption text-muted-foreground" aria-hidden="true">
         {disclosureMark(row)}

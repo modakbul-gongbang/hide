@@ -2,8 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { AgentLayout } from "./agentLayout";
 import type { TreeRow } from "./agentRow";
 import { numberedTarget } from "./keyboard";
-import { numberedAgents, numberedTabs, numberOf } from "./numbering";
-import type { AgentRow, Checkout, SnapshotRest } from "./snapshot";
+import { numberedAgents, numberedTabs, numberOf, projectListNumbers } from "./numbering";
+import { projectRows } from "./projects";
+import type { AgentRow, Checkout, SnapshotRest, Workspace } from "./snapshot";
 
 function checkoutWith(tabs: string[], extra: { id: string; kind: "file" | "diff" }[] = []): Checkout {
   return {
@@ -86,5 +87,23 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
     expect(numberedTarget("agents", 2, state)).toBe("p1");
     expect(numberedTarget("agents", 3, state)).toBeNull();
     expect(numberedTarget("tabs", 1, { rest: null, agents: [] })).toBeNull();
+  });
+
+  it("shows each agent's Agents-list number once in Projects: its raised row, else its own checkout's row", () => {
+    const checkout = (id: string, panes: string[]) => ({ id, tabs: [{ id: `${id}-t`, panes: panes.map((pane) => ({ id: pane })) }] });
+    const workspaces = [{ id: "w", device_id: "local", pinned: false, checkouts: [checkout("main", ["ask", "parent"]), checkout("wt", ["child"])] } as unknown as Workspace];
+    const listed = [agent("ask", { group: "needs_you" }), agent("parent"), agent("child")].map((row) => ({ agent: row, device: null }));
+    const rows = projectRows(workspaces, [], listed);
+    const numbered = new Map([[1, "ask"], [2, "parent"], [3, "child"]] as const);
+    const numberOfPane = projectListNumbers(numbered, rows, workspaces);
+    // Raised: the number sits there, and not again on its tree row.
+    expect(numberOfPane("ask", null)).toBe(1);
+    expect(numberOfPane("ask", "main")).toBeNull();
+    // Not raised: only the checkout that owns the pane shows it, so a child
+    // drawn under its parent in another checkout carries none there.
+    expect(numberOfPane("parent", null)).toBeNull();
+    expect(numberOfPane("parent", "main")).toBe(2);
+    expect(numberOfPane("child", "main")).toBeNull();
+    expect(numberOfPane("child", "wt")).toBe(3);
   });
 });

@@ -151,3 +151,52 @@ export async function keyboardFocus(page: Page, control: Locator): Promise<void>
 // The sidebar's geometry is measured in one module, shared with the design
 // review command, so a spec and a review judge the same boxes.
 export { sidebarColumns, sidebarOverflow, sidebarRowsFit } from "./sidebar-geometry.mjs";
+
+/**
+ * Sends one client event on a socket of its own, as a second client would,
+ * and returns the first frame `answered` accepts, or null right after the
+ * send when no answer is awaited. The browser shell has no Add project (the
+ * desktop app's folder picker is its only way in), so a spec registers a
+ * folder this way.
+ */
+export async function sendEvent(
+  page: Page,
+  daemon: { origin: string; token: string },
+  kind: string,
+  payload: Record<string, unknown>,
+  answered?: string,
+): Promise<Record<string, unknown> | null> {
+  return page.evaluate(
+    async ({ origin, token, kind, payload, answered }) =>
+      new Promise<Record<string, unknown> | null>((resolve, reject) => {
+        const ws = new WebSocket(`${origin.replace(/^http/, "ws")}/ws`);
+        const timer = setTimeout(() => reject(new Error(`${kind}: no ${answered ?? "handshake"} frame`)), 15_000);
+        let sent = false;
+        ws.onerror = () => reject(new Error(`${kind}: socket failed`));
+        ws.onopen = () => ws.send(JSON.stringify({ token, schema_version: 2 }));
+        ws.onmessage = (message) => {
+          if (!sent) {
+            sent = true;
+            ws.send(JSON.stringify({ schema_version: 2, kind, payload }));
+            if (answered) return;
+          } else {
+            const frame = JSON.parse(String(message.data)) as Record<string, unknown>;
+            if (frame.type !== answered) return;
+            clearTimeout(timer);
+            ws.close();
+            resolve(frame);
+            return;
+          }
+          clearTimeout(timer);
+          ws.close();
+          resolve(null);
+        };
+      }),
+    { origin: daemon.origin, token: daemon.token, kind, payload, answered },
+  );
+}
+
+/** Registers a folder of this machine the way Add a project does: one `create_workspace`. */
+export async function registerFolder(page: Page, daemon: { origin: string; token: string }, folder: string): Promise<void> {
+  await sendEvent(page, daemon, "create_workspace", { path: folder, label: path.basename(folder), initialize_git: false });
+}

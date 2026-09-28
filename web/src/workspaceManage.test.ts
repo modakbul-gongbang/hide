@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Checkout, TaskOperation, Workspace } from "./snapshot";
-import { agentMenu, branchProblem, checkoutMenu, deletionConsequences, folderMenu, normalizePurpose, projectMenu, projectRemovalConsequences, purposeCountLabel, purposeIsLong, purposeScope, removalFor, scalarCount, taskFor } from "./workspaceManage";
+import { agentMenu, branchProblem, checkoutMenu, checkoutRemoving, deletionConsequences, folderMenu, normalizePurpose, projectMenu, projectRemovalConsequences, purposeCountLabel, purposeIsLong, purposeScope, removalFor, scalarCount, taskFor } from "./workspaceManage";
 
 const workspace = (patch: Partial<Workspace> = {}): Workspace => ({
   id: "w1",
@@ -263,6 +263,18 @@ describe("receipts", () => {
     // The same path on another device is not this page's removal.
     expect(removalFor(removal, "studio", "/r-feature", 2)).toBeNull();
     expect(removalFor({ ...removal, device_id: "studio" }, "studio", "/r-feature", 2)?.id).toBe(3);
+  });
+
+  it("marks a checkout as being deleted only while its removal closes panes or runs Git", () => {
+    const removal = { id: 3, repository_root: "/r", checkout_path: "/r-feature", branch: "feature", delete_branch: false, phase: "closing", message: null };
+    expect(checkoutRemoving(removal, "local", "/r-feature")).toBe(true);
+    expect(checkoutRemoving({ ...removal, phase: "removing" }, "local", "/r-feature")).toBe(true);
+    // A finished removal took the row away; a failed one gives it back as it was.
+    expect(checkoutRemoving({ ...removal, phase: "finished" }, "local", "/r-feature")).toBe(false);
+    expect(checkoutRemoving({ ...removal, phase: "failed" }, "local", "/r-feature")).toBe(false);
+    expect(checkoutRemoving(removal, "local", "/r-other")).toBe(false);
+    expect(checkoutRemoving(removal, "studio", "/r-feature")).toBe(false);
+    expect(checkoutRemoving(null, "local", "/r-feature")).toBe(false);
   });
 });
 

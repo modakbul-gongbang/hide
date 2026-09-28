@@ -31,7 +31,7 @@ export type TerminalChunk = {
 /** `inode` is the entry's own identity in a checkout listing, which a trash of the row confirms. */
 export type DirectoryEntry = { name: string; path: string; is_directory: boolean; inode?: number };
 export type DirectoryList = {
-  /** The event that asked: `remote_file_list` for the registration input, `file_list` for the Explorer. */
+  /** The event that asked: `file_list`, the Explorer's. */
   kind: string;
   root_path: string;
   entries: DirectoryEntry[];
@@ -131,11 +131,9 @@ type Store = {
   focusedPaneId: string | null;
   herdrState: string | null;
   find: PaneFind | null;
-  /** The last registration listing hided answered; the registration input reads it. */
-  directoryList: DirectoryList | null;
   /** The Explorer's listings, one per expanded folder, oldest evicted past `LISTING_CAP`. */
   listings: Record<string, DirectoryList>;
-  /** The last path hided refused; cleared when the input changes. */
+  /** The last path hided refused; Add a project clears it before it sends a folder. */
   pathRefusal: PathRefusal | null;
   /** The last device folder that could not be listed, until a listing for it arrives. */
   directoryUnavailable: DirectoryUnavailable | null;
@@ -239,7 +237,6 @@ export const useShellStore = create<Store>((set, get) => ({
   focusedPaneId: null,
   herdrState: null,
   find: null,
-  directoryList: null,
   listings: {},
   pathRefusal: null,
   directoryUnavailable: null,
@@ -340,8 +337,6 @@ export const useShellStore = create<Store>((set, get) => ({
           listings: withListing(get().listings, listing),
           directoryUnavailable: unavailable?.root_path === listing.root_path ? null : unavailable,
         });
-      } else if (listing.kind === "remote_file_list") {
-        set({ directoryList: listing });
       } else {
         get().noteDiagnostic(`directory_list without a known kind=${listing.kind || "none"}`);
       }

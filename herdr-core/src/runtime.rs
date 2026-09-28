@@ -1279,8 +1279,16 @@ pub struct Runtime {
     cleanup: Option<live::cleanup::CleanupSnapshot>,
     next_cleanup_id: u64,
     /// Bumped when the worktree list itself is known to have changed through a
-    /// manual refresh, an in-app removal, or an observed Herdr worktree event.
+    /// manual refresh, a refused removal, or an observed Herdr worktree event.
     worktree_generation: u64,
+    /// Local worktree removals settled so far. A catalog read carries the
+    /// count it started under, so the core can tell a read that began before
+    /// a removal from one that began after it.
+    worktree_removals: u64,
+    /// Checkouts a settled removal dropped from the catalog, with the count
+    /// that dropped them. A read that started earlier still lists them; a
+    /// read that started later retires the entry.
+    removed_worktrees: Vec<(u64, String)>,
     /// Identifies one delete handshake across core, Herdr and the shell.
     /// A repeated callback for an older request cannot authorize a newer one.
     next_worktree_removal_id: u64,
@@ -1581,6 +1589,8 @@ impl Runtime {
             cleanup: None,
             next_cleanup_id: 0,
             worktree_generation: 0,
+            worktree_removals: 0,
+            removed_worktrees: Vec::new(),
             next_worktree_removal_id: 0,
             workspace_removals_in_flight: HashSet::new(),
             next_task_operation_id: 0,

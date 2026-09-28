@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, FolderGit2Icon, FolderIcon, LayoutDashboardIcon, SettingsIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, FolderGit2Icon, FolderIcon, LayoutDashboardIcon, Loader2Icon, SettingsIcon } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
@@ -8,11 +8,10 @@ import { Hint } from "./components/ui/tooltip";
 import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
 import { CheckoutCardHint, pullRequestOpenExternal } from "./components/pr-card";
 import { DevicePicker } from "./DevicePicker";
-import { NewWorkspace } from "./NewWorkspace";
 import { badgeWords, unfoldedRows } from "./agentRow";
 import { Badge } from "./components/ui/badge";
 import { cn } from "./lib/utils";
-import { agentNumber, numberOf, numberedAgents } from "./numbering";
+import { agentNumber, listedAgentOrder, numberOf, numberedAgents, projectListNumbers } from "./numbering";
 import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow, type AgentRowMenu } from "./components/sidebar-agent-row";
 import { StatusBadge } from "./components/status-badge";
@@ -36,10 +35,10 @@ import {
   type CheckoutPresentation,
   type ProjectRow,
 } from "./projects";
-import { hostKind } from "./host";
-import { displayCommand, hostRegistry } from "./shortcuts";
+import { hostBridge, hostKind } from "./host";
+import { displayCommand, hostRegistry, type Digit } from "./shortcuts";
 import { contextWorkspaces, deviceCatalogLine, remoteContext, remoteView } from "./remote";
-import { agentMenu, checkoutMenu, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
+import { agentMenu, checkoutMenu, checkoutRemoving, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
 import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
@@ -107,13 +106,12 @@ export function Sidebar({ actions }: { actions: Actions }) {
           onOverview={() => useUiStore.getState().setScreen({ kind: "main" })}
           onMode={actions.showSidebarMode}
           onSearch={() => actions.openSearch()}
-          onNewWorkspace={() => actions.openNewWorkspace()}
+          onNewWorkspace={hostBridge() ? () => actions.openAddProject() : null}
         />
         {status ? (
           <div className="border-b border-border px-md py-sm text-caption text-muted-foreground">{status}</div>
         ) : null}
         {mode === "agents" ? <AgentList actions={actions} /> : <ProjectList actions={actions} />}
-        <NewWorkspace actions={actions} />
         <div className="flex shrink-0 items-center gap-xs border-t border-border px-md py-xs">
           <DevicePicker actions={actions} />
           <span className="flex-1" />
@@ -380,14 +378,24 @@ function ProjectList({ actions }: { actions: Actions }) {
   const catalogState = useShellStore((s) => catalogLineOf(s.rest)?.state ?? null);
   const catalogText = useShellStore((s) => catalogLineOf(s.rest)?.text ?? null);
   const catalogLine = catalogState && catalogText ? { state: catalogState, text: catalogText } : null;
-  const rows = projectRows(workspaces, groups);
+  const rows = useMemo(() => projectRows(workspaces, groups, listedAgents), [workspaces, groups, listedAgents]);
   const agentRowMenu = useAgentRowMenu(actions);
   const presentations = useMemo(() => new Map(agents.map((agent) => [agent.pane_id, foldedLineage(agent, agents, lineageWorkspaces)])), [agents, lineageWorkspaces]);
+  const placeOf = useMemo(() => agentPlaces(localWorkspaces, remoteStatuses, devices), [localWorkspaces, remoteStatuses, devices]);
+  // An ⌥ hold shows each agent's number once, on its raised row or else its
+  // own checkout's row; ⌥n selects by the Agents list, so the number is that list's.
+  const numbered = useUiStore((s) => s.hint === "agents");
+  const numberOfPane = useMemo(
+    () => (numbered ? projectListNumbers(numberedAgents(listedAgentOrder(listedAgents)), rows, workspaces) : null),
+    [numbered, listedAgents, rows, workspaces],
+  );
   // The folds are this machine's choices, like the inactive groups, so a
   // selected SSH device's tree is drawn open with every checkout's line two.
   const context: ListContext = {
     agents,
     presentationOf: (agent) => presentations.get(agent.pane_id)!,
+    placeOf,
+    numberOf: numberOfPane,
     focusedCheckoutId,
     focusedPaneId,
     workspaceScreen: screenKind === "workspace",
@@ -411,9 +419,11 @@ function ProjectList({ actions }: { actions: Actions }) {
       {!remote && workspaces.length === 0 ? (
         <li className="flex flex-col items-start gap-sm px-sm py-sm text-caption text-muted-foreground" data-projects-empty="true">
           No project on this machine yet.
-          <Button variant="secondary" size="sm" onClick={() => actions.openNewWorkspace()} data-projects-empty-add="true">
-            Add project
-          </Button>
+          {hostBridge() ? (
+            <Button variant="secondary" size="sm" onClick={() => actions.openAddProject()} data-projects-empty-add="true">
+              Add project
+            </Button>
+          ) : null}
         </li>
       ) : null}
     </ul>
@@ -426,6 +436,10 @@ const NO_IDS: string[] = [];
 type ListContext = {
   agents: AgentRow[];
   presentationOf: (agent: AgentRow) => FoldedLineage;
+  /** The Agents list's context line for a raised row, which no project row above names. */
+  placeOf: (device: string | null, paneId: string) => string | null;
+  /** The number an ⌥ hold shows on an agent's raised row (checkout null) or tree row, while one shows. */
+  numberOf: ((paneId: string, checkoutId: string | null) => Digit | null) | null;
   focusedCheckoutId: string | null;
   focusedPaneId: string | null;
   /** A Workspace is in front, so the focused checkout and agent are the scope shown. */
@@ -444,6 +458,8 @@ function rowKey(row: ProjectRow): string {
   switch (row.kind) {
     case "header":
       return `header:${row.title}`;
+    case "raised":
+      return `raised:${row.group}`;
     case "workspace":
       return `workspace:${row.workspace.id}`;
     case "inactive_projects":
@@ -459,6 +475,7 @@ const ProjectRowView = memo(function ProjectRowView({ row, context }: { row: Pro
       </li>
     );
   }
+  if (row.kind === "raised") return <RaisedSection row={row} context={context} />;
   if (row.kind === "inactive_projects") {
     return (
       <li>
@@ -475,6 +492,46 @@ const ProjectRowView = memo(function ProjectRowView({ row, context }: { row: Pro
   }
   return <WorkspaceRows workspace={row.workspace} level={row.level} context={context} />;
 });
+
+/**
+ * A raised Needs You or Done section above the project tree
+ * (docs/status-model.md): the Agents list's row for each agent, drawn
+ * whatever its project, checkout or parent has folded. A raised row never
+ * unfolds, so it always wears its descendant badge; opening it does what the
+ * same row does in Agents.
+ */
+function RaisedSection({ row, context }: { row: Extract<ProjectRow, { kind: "raised" }>; context: ListContext }) {
+  return (
+    <li data-raised-group={row.group}>
+      <div className="px-sm pt-sm pb-xxs text-micro font-medium text-muted-foreground" data-section={row.title} id={`raised-group-${row.group}`}>
+        {row.title} · {row.agents.length}
+      </div>
+      <ul aria-labelledby={`raised-group-${row.group}`}>
+        {row.agents.map(({ agent, device }) => {
+          const presentation = context.presentationOf(agent);
+          return (
+            <SidebarAgentRow
+              key={`${device ?? "local"}:${agent.id}`}
+              agent={agent}
+              device={device}
+              place={context.placeOf(device, agent.pane_id)}
+              depth={0}
+              descendants={presentation.badgeDescendants}
+              childRows={presentation.badgeChildren}
+              selected={context.workspaceScreen && agent.pane_id === context.focusedPaneId}
+              onOpen={context.actions.openAgent}
+              onToggleTree={null}
+              inset={PROJECT_COLUMN}
+              foldedLineage={presentation}
+              number={context.numberOf?.(agent.pane_id, null) ?? null}
+              menu={context.agentRowMenu}
+            />
+          );
+        })}
+      </ul>
+    </li>
+  );
+}
 
 // The Projects columns (PRD sidebar-readability D-2): a project's glyph at the
 // row's inset, a checkout's glyph one lineage step in, and an opened
@@ -707,7 +764,9 @@ function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: Che
  * the purpose, and the last-commit age ends the row's last line on the time
  * column: line two's when the row has a purpose, line one's otherwise.
  * Opened, its rows and it share a small group fill, and the rows' own marks
- * stand for the badge.
+ * stand for the badge. While its worktree is being deleted the row and its
+ * agent rows are dimmed, a spinner stands where the badge was, and neither
+ * the row nor its menu opens anything.
  */
 const CheckoutRowView = memo(function CheckoutRowView({
   workspace,
@@ -724,15 +783,21 @@ const CheckoutRowView = memo(function CheckoutRowView({
 }) {
   const { actions } = context;
   const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote));
+  const removing = useShellStore((s) => checkoutRemoving(s.rest?.worktree_removal, workspace.device_id, checkout.path));
   const view = checkoutPresentation(workspace, checkout, Date.now());
   const name = checkout.branch ?? checkout.label;
   const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context);
   const marks = checkout.agent_summary?.marks;
   return (
-    <li data-checkout-row={checkout.id} data-checkout-open={open ? "true" : undefined} className={cn(open && "rounded-sm bg-muted py-xs")}>
+    <li
+      data-checkout-row={checkout.id}
+      data-checkout-open={open ? "true" : undefined}
+      data-checkout-removing={removing ? "true" : undefined}
+      className={cn(open && "rounded-sm bg-muted py-xs", removing && "opacity-(--opacity-dimmed)")}
+    >
       <EntryContextMenu
         label={`${name} actions`}
-        items={() => checkoutMenu(workspace, checkout, menuHost(), purposeProblem)}
+        items={() => (removing ? [] : checkoutMenu(workspace, checkout, menuHost(), purposeProblem))}
         onSelect={(item) => runCheckoutItem(actions, workspace, checkout, item)}
         className="group flex items-stretch"
         data-checkout-menu={checkout.id}
@@ -741,8 +806,8 @@ const CheckoutRowView = memo(function CheckoutRowView({
           className={cn(
             "relative flex w-full flex-col justify-center gap-xxs rounded-sm pr-xs",
             secondLine ? "min-h-(--size-checkout-row-detailed)" : "min-h-(--size-checkout-row)",
-            focused ? "bg-secondary" : "hover:bg-accent",
-            view.settled && "opacity-(--opacity-dimmed)",
+            focused ? "bg-secondary" : !removing && "hover:bg-accent",
+            view.settled && !removing && "opacity-(--opacity-dimmed)",
           )}
           style={{ paddingLeft: CHECKOUT_COLUMN }}
         >
@@ -751,9 +816,10 @@ const CheckoutRowView = memo(function CheckoutRowView({
             checkout={checkout}
             view={view}
             focused={focused}
-            label={[name, open ? null : badgeWords(marks), view.age, purpose].filter(Boolean).join(", ")}
+            label={[name, removing ? "deleting" : open ? null : badgeWords(marks), view.age, purpose].filter(Boolean).join(", ")}
             actions={actions}
             expanded={checkoutRowExpansion(foldable, context.workspaceScreen && focused, open)}
+            disabled={removing}
           />
           {/* The row button covers the whole row; a control drawn over it is positioned, so it stacks above.
               Line one is 20 whatever it carries: the 24-high fold toggle overhangs it rather than moving line two. */}
@@ -763,7 +829,11 @@ const CheckoutRowView = memo(function CheckoutRowView({
             <CheckoutBadge checkout={checkout} />
             <span className="flex-1" />
             <RowEnd>
-              {open ? null : <StatusBadge counts={marks} data-checkout-status={checkout.id} />}
+              {removing ? (
+                <Loader2Icon aria-hidden="true" data-checkout-removing-mark="true" className="size-(--size-icon-sm) shrink-0 animate-spin text-muted-foreground" />
+              ) : open ? null : (
+                <StatusBadge counts={marks} data-checkout-status={checkout.id} />
+              )}
               {!secondLine && view.age ? <CheckoutAge age={view.age} /> : null}
               {foldable ? (
                 <FoldToggle
@@ -914,6 +984,7 @@ function CheckoutOpenButton({
   label,
   actions,
   expanded,
+  disabled = false,
 }: {
   workspace: Workspace;
   checkout: Checkout;
@@ -922,6 +993,7 @@ function CheckoutOpenButton({
   label: string;
   actions: Actions;
   expanded?: boolean;
+  disabled?: boolean;
 }) {
   // Read on every render, like `view.detail`: a memo keyed on the checkout would keep the Commit age from the last change to this row.
   const card = checkoutCard(workspace, checkout, Date.now());
@@ -933,7 +1005,8 @@ function CheckoutOpenButton({
         data-checkout-kind={view.kind}
         aria-current={focused ? "true" : undefined}
         aria-label={label}
-        className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+        disabled={disabled}
+        className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default"
         onClick={() => actions.openWorkspace(workspace.device_id, checkout.workspace_id, checkout.id, expanded)}
       />
     </CheckoutCardHint>
@@ -1043,6 +1116,7 @@ function OpenAgentRows({ checkoutId, deviceId, agentRows, inset, context }: { ch
             inset={inset}
             branchShown={row.depth > 0}
             foldedLineage={presentation}
+            number={context.numberOf?.(row.agent.pane_id, checkoutId) ?? null}
             menu={context.agentRowMenu}
           />
         );

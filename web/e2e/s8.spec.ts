@@ -14,7 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { countSent, screenshot } from "./wire";
+import { countSent, registerFolder, screenshot } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -270,14 +270,8 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await expect(rows).toHaveCount(4);
     await expect(page.locator("[data-session-detail]")).toHaveAttribute("data-session-detail", "failed");
 
-    await other.keyboard.press("Alt+Shift+KeyN");
-    const input = other.getByLabel("Workspace path");
-    // The field checks a path against the home it lists first; until then Enter does nothing.
-    await expect(input).toHaveValue(`${daemon.home}/`);
-    await input.fill(alpha);
-    await other.keyboard.press("Enter");
-    // This machine's sheet stays open for another path; the Project shows on All projects.
-    await other.getByLabel("Close new workspace").first().click();
+    // The second window registers a folder; the Project shows on All projects.
+    await registerFolder(other, daemon, alpha);
     await other.locator("[data-go-main]").first().click();
     await other.locator('[data-main-tab="projects"]').click();
     await expect(other.locator("[data-main-project]", { hasText: "alpha" })).toBeVisible({ timeout: 20_000 });

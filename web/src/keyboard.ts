@@ -187,7 +187,7 @@ export function installKeyboard(actions: Actions): () => void {
       case "reopen_closed_tab":
         return actions.reopenClosed();
       case "new_workspace":
-        return actions.openNewWorkspace();
+        return actions.openAddProject();
       case "recent_panel":
       case "previous_recent_panel":
       case "recent_project":
