@@ -440,6 +440,8 @@ async fn a_restart_on_a_new_port_replaces_hides_entry_and_phones_stay_paired() {
         .unwrap();
     let first_port = running.port;
     let mut shell = renderer(&running).await;
+    // Settings > Mobile is open, as it is whenever the switch is used.
+    event(&mut shell, "mobile_observe", json!({"observing": true})).await;
     event(&mut shell, "mobile_enable", json!({"enabled": true})).await;
     let exposed = mobile_frame(&mut shell, |frame| frame["exposure"] == "exposed").await;
     let code = pair_code(exposed["qr"].as_str().unwrap());

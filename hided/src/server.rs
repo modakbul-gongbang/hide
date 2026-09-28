@@ -2576,14 +2576,17 @@ fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool)
     }
 }
 
+/// How long a refusal's close frame may take to leave.
+const REFUSE_SEND_LIMIT: Duration = Duration::from_secs(10);
+
 async fn refuse(socket: &mut WebSocket, reason: CloseReason, extra: Option<usize>) {
     log_refusal(reason, extra);
-    let _ = socket
-        .send(Message::Close(Some(CloseFrame {
-            code: reason.code(),
-            reason: reason.name().into(),
-        })))
-        .await;
+    // Bounded: a stalled tailnet socket must not hold this task open.
+    let close = socket.send(Message::Close(Some(CloseFrame {
+        code: reason.code(),
+        reason: reason.name().into(),
+    })));
+    let _ = tokio::time::timeout(REFUSE_SEND_LIMIT, close).await;
 }
 
 fn log_refusal(reason: CloseReason, extra: Option<usize>) {

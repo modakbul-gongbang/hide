@@ -88,6 +88,9 @@ struct Inner {
     pending_clear: HashMap<String, BTreeSet<AgentKey>>,
     /// Input request ids each phone sent, and how each ended (PRD B27).
     inputs: HashMap<String, VecDeque<(String, InputState)>>,
+    /// An exposed Mobile's last pass could not read Tailscale; one such miss
+    /// keeps the exposure, the next one in a row drops it.
+    missed_check: bool,
 }
 
 /// Where one input request id stands.
@@ -205,6 +208,7 @@ impl Mobile {
                 observers: HashSet::new(),
                 pending_clear: HashMap::new(),
                 inputs: HashMap::new(),
+                missed_check: false,
             }),
             config,
             reconcile_lock: tokio::sync::Mutex::new(()),
@@ -462,6 +466,10 @@ impl Mobile {
             Ok(status) => status,
             Err(failure) => {
                 record_transport_failure(&failure, "status");
+                if self.tolerate_missed_check() {
+                    return;
+                }
+                self.set_origin(None);
                 // A CLI that cannot answer reads as not logged in: the
                 // Tailscale app is not running or not signed in.
                 self.settle(
@@ -487,6 +495,11 @@ impl Mobile {
             },
             Err(exposure) => exposure,
         };
+        if matches!(exposure, Exposure::Failed { step: "check", .. })
+            && self.tolerate_missed_check()
+        {
+            return;
+        }
         let exposed = matches!(exposure, Exposure::Exposed { .. });
         self.set_origin(exposed.then_some(dns_name.as_str()));
         if matches!(exposure, Exposure::Failed { step: "funnel", .. }) {
@@ -506,7 +519,10 @@ impl Mobile {
         }
         {
             let mut inner = self.lock();
+            // A code exists for someone looking at Settings > Mobile; the
+            // minute pass with no one watching mints none.
             if exposed
+                && !inner.observers.is_empty()
                 && inner
                     .phones
                     .code()
@@ -518,6 +534,17 @@ impl Mobile {
         self.settle(exposure, Some(checklist));
     }
 
+    /// A read of Tailscale failed: an exposed Mobile stays exposed through
+    /// one such miss, so a single slow `tailscale` call does not refuse
+    /// phones until the next pass. True when this miss is tolerated.
+    fn tolerate_missed_check(&self) -> bool {
+        let mut inner = self.lock();
+        let exposed = matches!(inner.exposure, Exposure::Exposed { .. });
+        let tolerated = exposed && !inner.missed_check;
+        inner.missed_check = tolerated;
+        tolerated
+    }
+
     fn settle(&self, exposure: Exposure, checklist: Option<Checklist>) {
         {
             let mut inner = self.lock();
@@ -527,6 +554,8 @@ impl Mobile {
             if !matches!(exposure, Exposure::Exposed { .. }) {
                 inner.phones.clear_code();
             }
+            // A pass that reached an answer ends any run of missed checks.
+            inner.missed_check = false;
             inner.exposure = exposure;
             inner.checklist = checklist;
         }
