@@ -739,7 +739,8 @@ A passed step shows a check; only the first failing step shows a warning with it
 The phone step is guidance hide cannot check: it waits until the QR shows and then reads as done.
 The tab rechecks every three seconds while it is open, so logging in or turning HTTPS on continues without reopening it.
 Once every Mac step passes and hide has confirmed its serve entry, the tab shows the QR, 폰 카메라로 찍으세요, the ts.net address, the code's m:ss countdown and 새 코드.
-An HTTPS entry hide did not make shows its target in one line and no QR; a failed serve command shows the failed step and its message in one line.
+An HTTPS entry hide did not make shows its target in one line and no QR; a failed serve command shows the failed step and its message in one line, and so does a Funnel that would publish the address.
+A removal that fails when the switch goes off keeps that line under the switch until hide finishes it.
 Opening the tab, pressing 새 코드, or a phone pairing shows a new code, and the previous code stops working.
 The phones group is titled 연결된 폰 · n / 4; each row shows the phone's name, when it was last seen, whether notifications are on or off, the days left before the seven-day revoke once it has been away a day, and 해지, which closes that phone at once.
 푸시 알림 offers 끔 (the default), 앱이 닫혀 있을 때만 and 항상, and the choice survives a restart.
@@ -754,6 +755,7 @@ With no agents the list is one line, 실행 중인 에이전트가 없어요.
 When hided is out of reach the last list stays dimmed under "연결 안 됨 · 맥의 hide가 꺼져 있거나 폰의 Tailscale이 꺼져 있어요. 다시 시도 중", the app retries on its own, and it shows the same line when opened without a network.
 A row opens its detail: ← 목록, the elapsed time, the row's head, and the pane's recent rows read-only in the terminal's colours with the newest at the bottom; pulling to the top loads older rows until the pane has no more.
 Every detail has the quick keys (Enter, Escape, 위 화살표, 아래 화살표, Ctrl-C by accessible name) and a one-line reply with 보내기; a reply is sent with Enter after it and clears on success, a failure keeps the text with the reason under it, and a reply over 2,000 characters is named before it is sent.
+When hide cannot tell whether a reply reached the pane, the line says so and asks the operator to check the terminal before sending it again.
 A closed pane shows "이 pane은 더 이상 열려 있지 않아요" and disables the reply bar; a disconnected SSH device shows that its device is not connected.
 With push on, the list offers 알림 켜기; a Safari tab without push is told to open hide from the Home Screen first, and a refused permission shows "알림이 꺼져 있어요 · 설정 > 알림에서 hide를 켜세요".
 A notification's title is the task name and its body 내 확인 대기 or 끝 with the project; tapping it opens that agent's detail.

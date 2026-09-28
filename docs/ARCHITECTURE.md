@@ -356,10 +356,14 @@ Mobile is off until the operator turns it on in Settings > Mobile, and it is kep
 The transport is the operator's own Tailscale, and `mobile/tailscale.rs` is the only file that knows it, so a relay later replaces that one module.
 It finds the CLI at `HIDE_TAILSCALE_BIN`, then the macOS app bundle's `/Applications/Tailscale.app/Contents/MacOS/Tailscale`, then `tailscale` on PATH, and reads `tailscale status --json` for the backend state, `Self.DNSName`, `Self.HostName`, MagicDNS and `CertDomains`; every command runs with a fifteen-second bound.
 hided binds loopback as before and adds `tailscale serve --bg --yes --https=443 http://127.0.0.1:<port>`, then confirms the entry with `serve status --json` before a QR is shown.
+It records the entry before running the add, so an add that took effect and then failed or timed out is still recognised as its own on the next pass.
+It refuses to expose while `AllowFunnel` covers that HTTPS 443 name, because Funnel would publish the address to the internet, and says so on screen.
 It owns only the entry it recorded (`{dns_name, port, added_at}`): an HTTPS 443 handler it did not record is shown as the foreign target and left alone, an entry for its old port is replaced, and switching off or a clean exit removes it with `serve --yes --https=443 --set-path=/ off`.
 Every start reconciles the record, so a crash's leftover entry is repaired or removed on the next start; `run_daemon` answers SIGTERM and SIGINT with the same shutdown, which removes the entry before the process exits.
-A failed command leaves Mobile unexposed with the step that failed on screen, and its command line and stderr go to a `mobile_transport` record.
+A failed command leaves Mobile unexposed with the step that failed on screen, and its command line and stderr go to a `mobile_transport` record; a removal that fails at switch-off stays on screen and is retried until it succeeds, and shutdown waits for a reconcile already running.
 While exposed, `https://<Self.DNSName>` joins the allowed WebSocket Origins, and only a phone handshake may use it; a desktop handshake from that Origin is closed with 4002.
+A request that arrives through `tailscale serve` (a forwarded-for or Tailscale identity header, or a Host that is not loopback) reaches only `/m`, `/m/*`, `/assets/*` and `/ws`, everything else answers 404, and its `/ws` takes only a phone handshake whatever Origin it claims, with a 64 KiB frame limit.
+Every handshake has ten seconds to send its first frame.
 
 The phone app is a static shell and a data channel, kept apart.
 `/m/` serves `mobile.html`, and `/m/manifest.webmanifest`, `/m/sw.js` and the icons come from `web/public/m/` through the same static route as the desktop shell's `/assets`; the page, the service worker and the manifest are served `no-cache`.
@@ -368,24 +372,26 @@ Pairing, the agent list, a pane's rows, replies, keys and the push subscription 
 The first frame decides the client: `{client_kind: "phone", token}` for a paired phone or `{client_kind: "phone", pair, name}` to pair; a phone counts toward `MAX_CLIENTS`, and a refusal sends `{type: "refused", reason}` (`code_expired`, `phone_limit`, `revoked`, `mobile_off`) and closes with 4001.
 Every frame to a phone goes through `mobile::phone::encode`, the one place a relay would wrap in end-to-end encryption.
 
-A pairing code is sixteen random bytes, lives only in memory for five minutes, is spent by the first phone that uses it, and is replaced whenever Settings > Mobile opens, 새 코드 is pressed, or a phone pairs while the tab is open.
+A pairing code is sixteen random bytes, is accepted only while Mobile is on and exposed, lives only in memory for five minutes, is spent by the first phone that uses it, and is replaced whenever Settings > Mobile opens, 새 코드 is pressed, or a phone pairs while the tab is open.
 The QR is `https://<DNSName>/m/#pair=<base64url {v:1, endpoint, code}>`, so the code never reaches a request line or a log.
 A paired phone gets a 32-byte credential; `phones.json` (mode 0600) keeps only its SHA-256, compared in constant time, with the name, the last connection, the notification answer and the push subscription.
 The phone keeps the credential in its storage and in its address fragment (`#k=`), because the manifest has no `start_url` and a Home Screen app starts from the address it was added from, whose storage iOS may keep apart from Safari's.
 At most four phones pair; the limit is checked before the code is spent.
-A phone away for seven days is revoked at start and by an hourly sweep, and a revoke, manual or automatic, drops the credential and the subscription in one write and closes that phone's connection.
+A phone keeps at most two connections, the oldest closed first, and a connection that answers no ping for 45 seconds is closed and recorded as `phone.silent`.
+A phone away for seven days is revoked at start, by an hourly sweep and when it next connects, and a revoke, manual or automatic, drops the credential and the subscription in one write and closes that phone's connection.
 
 A phone's whole vocabulary is `open`, `more`, `close`, `input`, `push_subscription` and `push_permission`; anything else is answered `refused_request` and recorded as `scope.refused`, and a phone never receives a file, a path, a setting or the core snapshot.
 The list is a projection of the snapshot's `rest` section (`mobile/projection.rs`): the local navigator's agents and every connected device's, in the desktop's four groups, each keyed by device id and pane id with its lineage root.
 hided follows the core only while Mobile is on with a phone paired, reads the snapshot off the core lock with its own cursors once per notification burst, and republishes the list only when it changed.
 A detail reads its pane with `pane.read` (`source: recent`, `format: ansi`), 200 lines at first and 200 more per pull up to 1000, once a second and only while it is open; it sends rows only when their text or the asked count changed, because Herdr's read `revision` counts pane state rather than output, and offers older rows only when Herdr reports it cut some (`truncated`).
 A reply is `pane.send_input` with the text and then the `enter` key; the quick keys are `enter`, `esc`, `up`, `down` and `ctrl+c`.
-A reply is at most 2,000 characters with no control characters, and a request id the phone repeats after a lost answer is written once.
+A reply is at most 2,000 characters with no control characters, and a request id the phone repeats after a lost answer is written once: a repeat answers `ok` after a confirmed write, `in_flight` while the first is still running, and `uncertain` when the first write may have reached the pane, so the phone asks the operator to check rather than typing it again.
 Neither path goes through the attach set or a core key event, so a phone never moves the desktop's visible tab, focus, terminal size or attach window; a device pane uses the core's existing API connection to that device, and a device that is not connected reads as `device_unreachable`.
 
 Push is Web Push that hided signs and encrypts itself with `ring`: a VAPID ES256 key made once and kept in `mobile.json`, RFC 8291 `aes128gcm` bodies, and a POST through `ureq` over rustls on a blocking thread, never under the core lock.
-Only the push services' own hosts are accepted as endpoints (Apple, FCM, Mozilla, Windows), plus a loopback endpoint in a debug build for the e2e.
+Only the push services' own hosts are accepted as endpoints (Apple, FCM, Mozilla, Windows), parsed as an `https` URL with no userinfo and no port but 443 and posted without following redirects, plus a loopback endpoint in a debug build for the e2e.
 The first list only seeds the transitions; after it, a root agent entering Needs You or Done sends one notice per subscribed phone, a descendant's question, approval or error raises its root, and the notice's tag (`device|root pane`) replaces the one before it.
+An agent that leaves the list is remembered for ten minutes, so one that comes back in the same state is not announced again.
 The mode decides whether it is sent: never for 끔, only while no desktop renderer is connected for 앱이 닫혀 있을 때만, and always for 항상; a phone viewing that agent's detail is skipped in every mode.
 A root that turned Seen rides the next notice's `clear` list, and the app closes those notifications when it opens, because iOS drops a subscription that receives a push it does not show.
 A 404 or 410 answer drops that subscription, and the phone registers again on its next connection.
