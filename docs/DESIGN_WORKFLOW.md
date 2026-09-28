@@ -135,16 +135,17 @@ Each sheet carries a `Light` and a `Dark` frame and uses realistic content, incl
 `scripts/check-hide-screens.mjs` enforces the shape (`Screen / ` naming, both theme frames, every reference resolving against the library, every cross-library color restated locally, and local variables matching `design/tokens.json`) and `scripts/gen-screens.mjs` regenerates the file from `scripts/pen-screens.mjs`.
 
 The Overview of every project is `Screen / Main`, named after its web file and screen kind.
-It draws the agent and project sidebar beside the Overview, the sidebar's Overview row marked: its title with Add project and `새 이슈` as the primary action, its facts line with the open issues, and the `Tasks · Agents · Projects` tabs with the waiting count on Agents.
+It draws the agent and project sidebar beside the Overview, the sidebar's Overview row marked: its title with Add project and `새 이슈` as the primary action, its facts line with the open issues, and the `Tasks · Agents · Projects` tabs with the waiting count on Agents, whose view is the Project Overview's lanes or lineage over every project.
 Its Tasks board holds every project's issues and worktrees in `백로그 · 진행 중 · 리뷰 · 완료`, each card with its project beside its id, `시작` on a backlog card under the pointer, the idle worktrees folded at the foot of 진행 중, and 완료 folded to one line per project with its count.
 Below it, the Dependencies mode draws an arrow that crosses projects, with the blocker named by its repository on the lock line.
 Its web files are `web/src/App.tsx`, `web/src/sidebar.tsx`, `web/src/MainScreen.tsx`, `web/src/TaskBoards.tsx`, and `web/src/projectBoard.ts`.
 
 Project Overview is `Screen / Project Overview`.
-It draws a project's issue-first Tasks board under its header: the title row with the path back, New agent as the quiet action and `새 이슈` as the primary one, the facts line starting with the open issues and their source, and the Tasks, Agents and Sessions tabs with the waiting count on Agents and `Board | List | Dependencies` on the right.
-The board has the four columns `백로그 · 진행 중 · 리뷰 · 완료`: 백로그 with `+` in its head and a card offering `시작` under the pointer, a needs-you card in the warning border, a worktree with no issue leading with its branch and offering `이슈 연결` under the pointer, the idle worktrees folded at the foot of 진행 중, and 완료 folded to branch names.
-Beside it are the Dependencies mode (a chain of cards with stage words and arrows, blocked cards dimmed, unrelated tasks below) and the Agents inbox, rows grouped `내 차례 · 실행 중 · 쉬는 중 · 정리할 것` with each agent's issue id or checkout, pull request and age.
-Its web files are `web/src/ProjectOverview.tsx`, `web/src/TaskBoards.tsx` and `web/src/projectBoard.ts`; its agent rows are `web/src/components/agent-row.tsx`.
+Each frame carries its header: the title row with the path back, New agent as the quiet action and `새 이슈` as the primary one, the facts line of worktrees, disk, behind and merged with the view's mode control at its right end, and the tiles `Agents · Issues · Sessions`, the chosen one outlined.
+Its first frame is Agents › 체크아웃 as every entry opens it: a lane per checkout with its head (glyph and branch, purpose, issue and PR chips, `↑N ↓N`, files), main pinned on top with a lane selected, delegation lines down across lanes in the Observer's column, the operator's turn in a yellow node, a merged lane dimmed with `정리`, and the two fold lines.
+Under it is Agents › 계보: the `Observer · Implementor · 하위 에이전트` columns, a row per lineage with the asking one first, each node's checkout, issue and PR chips, and the two fold lines.
+Beside them are Issues › Board, the four columns `백로그 · 진행 중 · 리뷰 · 완료` (백로그 with `+` and a card offering `시작` under the pointer, a needs-you card in the warning border, a worktree with no issue offering `이슈 연결`, the idle worktrees folded at the foot of 진행 중, 완료 folded to branch names), and Issues › Dependencies (a chain of cards with stage words and arrows, blocked cards dimmed, unrelated tasks below).
+Its web files are `web/src/ProjectOverview.tsx`, `web/src/OverviewLenses.tsx`, `web/src/overviewLens.ts`, `web/src/TaskBoards.tsx` and `web/src/projectBoard.ts`; a task card's agent rows are `web/src/components/agent-row.tsx`.
 
 Workspace is `Screen / Workspace`.
 It draws the side panel (`Component / Side panel`) open at the Workspace's full height over the agent column, then the panel closed with two views still open.

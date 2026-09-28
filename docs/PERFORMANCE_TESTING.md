@@ -338,3 +338,7 @@ Closed and cross-repository identities are resolved in one bounded query.
 Manual writes use the existing task-operation slot and a terminating worker; cleanup shares the bounded purpose mirror queue.
 Manual acceptance in the desktop app includes empty-checkout entry, overlay dismissal, both groupings, issue linking, stale facts, narrow widths and mixed Korean/English labels.
 `runtime::tests::issues` owns projection memoization, stage priority, deduplication, issue precedence and transition-only refresh regressions.
+
+The Overview's tiles, lanes and lineages (PRD overview-lenses-tiles-agents B27, B32) are pure functions of the snapshot the page already holds (`web/src/overviewLens.ts`), memoized on the projects, agents and devices they read; one pass over the scope's agents buckets them and a delegation's crossing columns are found per lane from the spans, so the work grows with agents times lanes, not with snapshot frames.
+Opening the Overview adds one `sessions_refresh` and nothing per frame; hover, focus and the half-second popovers are local component state that publishes nothing, and the delegation lines are measured by a ResizeObserver on the board, not per snapshot.
+`web/src/overviewLens.test.ts` owns the order and column rules, and `web/e2e/overview.spec.ts` counts the client events during hovers.
