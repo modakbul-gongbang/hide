@@ -20,8 +20,8 @@ export type Daemon = {
   stateDir: string;
   hostId: string;
   stop: () => void;
-  /** `beforeStart` runs on the daemon's state directory while it is down. */
-  restart: (beforeStart?: (stateDir: string) => void) => Promise<Daemon>;
+  /** `beforeStart` runs on the daemon's state directory while it is down, and may wait. */
+  restart: (beforeStart?: (stateDir: string) => void | Promise<void>) => Promise<Daemon>;
 };
 
 /** `extraEnv` is laid over the daemon's environment; an undefined value leaves that variable unset. */
@@ -94,10 +94,10 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
         const origin = `http://127.0.0.1:${state.port}`;
         if ((await fetch(`${origin}/health`)).ok) {
           const hostId = fs.readFileSync(path.join(dir, "hide", "host-id"), "utf8").trim();
-          const restart = async (beforeStart?: (stateDir: string) => void) => {
+          const restart = async (beforeStart?: (stateDir: string) => void | Promise<void>) => {
             child.kill();
             await exited;
-            beforeStart?.(path.join(dir, "hide"));
+            await beforeStart?.(path.join(dir, "hide"));
             return launch(herdr, label, dir, home, String(state.port), extraEnv);
           };
           return { origin, token: state.token, home: fs.realpathSync(home), stateDir: path.join(dir, "hide"), hostId, stop, restart };

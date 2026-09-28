@@ -183,9 +183,9 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const key = required(args, "intent"), parent = person(state, required(args, "parent"));
     // Without --machine the child is placed beside its parent, as before (PRD B4).
     const machine = optional(args, "machine") ?? parent.machine, session = required(args, "session"), name = required(args, "name"), kind = required(args, "kind");
-    validateSpawnSpec(name, kind);
     const nativeArgs = args["nativeArgs"];
     if (!Array.isArray(nativeArgs) || nativeArgs.some((value) => typeof value !== "string")) throw new HcoordError("invalid_argument", "nativeArgs must be a string array");
+    validateSpawnSpec(name, kind, nativeArgs);
     if (parent.session !== session) throw new HcoordError("identity_conflict", "parent is not bound to the selected session");
     const repo = optional(args, "repo"), branch = optional(args, "branch"), worktreePath = optional(args, "path");
     if ((repo === null) !== (branch === null)) throw new HcoordError("invalid_argument", "--repo and --branch are given together");
@@ -255,6 +255,23 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     else if (phase === "pending" && record.initialization === "reserved") record.initialization = "pending";
     else throw new HcoordError("invalid_state", "spawn initialization phase cannot make that transition");
     event(state, at, `agent.spawn_initialization_${phase}`, record.parent, record.key, { pane: record.pane });
+    return { changed: true, value: record };
+  }
+  if (operation === "agent.spawn.started") {
+    const record = own(state.spawnIntents, required(args, "intent"));
+    if (!record || record.pane === null || record.status === "complete") throw new HcoordError("invalid_state", "spawn start has no active saved pane");
+    const instance = required(args, "instance"), session = optional(args, "session");
+    if ((record.observedInstance != null && record.observedInstance !== instance) || (session !== null && record.observedSession != null && record.observedSession !== session)) throw new HcoordError("identity_conflict", "spawn execution differs from its first observation");
+    record.observedInstance = instance;
+    if (session !== null) record.observedSession = session;
+    event(state, at, "agent.spawn_started", record.parent, record.key, { pane: record.pane });
+    return { changed: true, value: record };
+  }
+  if (operation === "agent.spawn.start_reset") {
+    const record = own(state.spawnIntents, required(args, "intent"));
+    if (!record || record.pane === null || record.status === "complete") throw new HcoordError("invalid_state", "spawn start reset has no active saved pane");
+    record.observedInstance = null; record.observedSession = null;
+    event(state, at, "agent.spawn_start_reset", record.parent, record.key, { pane: record.pane });
     return { changed: true, value: record };
   }
   if (operation === "agent.spawn.identity") {

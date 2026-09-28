@@ -31,6 +31,10 @@ enum Command {
     WorkspaceRemoteRoutes {
         reply: Sender<Vec<herdr_core::WorkspaceRemoteRoute>>,
     },
+    RemoteHerdrApi {
+        device_id: String,
+        reply: Sender<Option<Arc<dyn hide_herdr_client::ApiConnector>>>,
+    },
     BrowserRouteSource {
         device_id: String,
         checkout_path: String,
@@ -136,6 +140,23 @@ impl CoreHandle {
             .map_err(|_| "core owner thread is gone".to_owned())?;
         rx.recv()
             .map_err(|_| "core owner thread dropped remote routes".to_owned())
+    }
+
+    /// The Herdr API connection the core holds for a connected SSH device;
+    /// see `Core::remote_herdr_api`.
+    pub fn remote_herdr_api(
+        &self,
+        device_id: &str,
+    ) -> Result<Option<Arc<dyn hide_herdr_client::ApiConnector>>, String> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::RemoteHerdrApi {
+                device_id: device_id.to_owned(),
+                reply,
+            })
+            .map_err(|_| "core owner thread is gone".to_owned())?;
+        rx.recv()
+            .map_err(|_| "core owner thread dropped the device connection reply".to_owned())
     }
 
     pub fn browser_route_source(
@@ -305,6 +326,9 @@ fn owner_loop(
             }
             Command::WorkspaceRemoteRoutes { reply } => {
                 let _ = reply.send(core.workspace_remote_routes());
+            }
+            Command::RemoteHerdrApi { device_id, reply } => {
+                let _ = reply.send(core.remote_herdr_api(&device_id));
             }
             Command::BrowserRouteSource {
                 device_id,

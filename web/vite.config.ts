@@ -6,6 +6,13 @@ const hided = process.env.HIDED_ORIGIN ?? "http://127.0.0.1:9876";
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  build: {
+    rollupOptions: {
+      // The desktop shell and the phone app (PRD mobile-companion D-16): hided
+      // serves `mobile.html` at `/m/` and both share `/assets`.
+      input: { main: "index.html", mobile: "mobile.html" },
+    },
+  },
   server: {
     host: "127.0.0.1",
     port: 5173,

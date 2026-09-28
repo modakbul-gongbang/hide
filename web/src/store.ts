@@ -15,6 +15,7 @@ import {
 } from "./snapshot";
 
 export type { AgentRow, SnapshotRest } from "./snapshot";
+import type { MobileState } from "./mobileSettings";
 
 function focusedPaneOf(rest: SnapshotRest): string | null {
   const remote = remoteContext(rest);
@@ -115,6 +116,8 @@ type Store = {
   connection: ConnectionState;
   /** The daemon this page is connected to; null until the first handshake. */
   daemon: DaemonInfo | null;
+  /** Settings > Mobile as the daemon reports it (`mobile` frame); null until the first one. */
+  mobile: MobileState | null;
   revision: number;
   terminalSequence: number;
   /** The core's rest section, structurally shared across frames (`share.ts`). */
@@ -248,6 +251,7 @@ function withDiagnostics(
 export const useShellStore = create<Store>((set, get) => ({
   connection: "connecting",
   daemon: null,
+  mobile: null,
   revision: 0,
   terminalSequence: 0,
   rest: null,
@@ -429,6 +433,10 @@ export const useShellStore = create<Store>((set, get) => ({
     if (frame.type === "open_external_result") return [];
     if (frame.type === "daemon") {
       set({ daemon: frame.payload as unknown as DaemonInfo });
+      return [];
+    }
+    if (frame.type === "mobile") {
+      set({ mobile: frame.payload as unknown as MobileState });
       return [];
     }
     if (frame.type === "file_index_result") {
