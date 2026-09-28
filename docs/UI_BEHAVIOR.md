@@ -51,7 +51,7 @@ Changing the panel's state only changes space, and expanding never makes a split
 Inside the panel the View areas behave as they do anywhere else: tabs, splits, preview, dirty state and browser displays, each page inside the panel's bounds.
 
 An Agent tab shows the focused pane's status mark, provider logo, then title, using the sidebar row's title and mark rules.
-A custom Herdr label wins; an empty, numeric, or `Tab N` label instead follows the focused pane's agent title, foreground process name, then `Tab N` using Herdr's stable number.
+A custom Herdr label wins; an empty, numeric, or `Tab N` label instead follows the focused pane's agent title (its task, or its provider's name), foreground process name, then `Tab N` using Herdr's stable number; a Herdr workspace label is never a tab or agent name.
 A plain terminal tab shows the terminal icon and that name; terminal titles are never used to guess a process.
 Local and remote process names are read only for focused panes of attached tabs, outside the runtime lock, on focus or agent-state changes and a 30-second recheck.
 The foreground process is the process-group leader, or the last returned process when the leader is absent; its name is the basename of `argv0`, falling back to `name` only when `argv0` is empty, and to `Tab N` when both are empty.
@@ -537,7 +537,7 @@ A checkout's second line is its purpose, after the parent checkout it was raised
 A checkout with neither, or one whose Git facts have not been read yet, is one line, with its age on that line.
 Workspace disclosure persists across launches and hides only the nested agent rows, preserving selection, running panes, and raised attention rows.
 The web shell draws the raised groups at the top of the Projects list as `Needs You · N` then `Done · N`, each left out while empty: the Needs You or Done agents whose pane a listed project's checkout owns, in the core's order, on the Agents list's own row with its place line, drawn whatever their project, checkout or parent has folded, never unfolded themselves, and opened as the Agents row opens.
-An agent row's title is its identity label at both densities: the rolling task, or the workspace label when no task exists; a Herdr agent name remains a control identifier and never becomes display copy.
+An agent row's title is its identity label at both densities: the rolling task, or the provider's name when no task exists; a Herdr agent name and a Herdr workspace label never become display copy.
 A row whose descendants are folded, and every raised row, wears a descendant badge counting live descendants by state before the elapsed time; opening the fold removes the badge because the opened rows carry their own marks.
 
 ### Purpose, pinning, and PR chrome
