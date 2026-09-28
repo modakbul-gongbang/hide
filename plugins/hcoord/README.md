@@ -66,10 +66,16 @@ Inside a pane with a reported agent session, `here` identifies that execution an
   --intent issue-123 \
   --repo /path/to/repository \
   --branch issue-123 \
-  -- codex
+  --kind claude \
+  -- --model opus "Fix issue 123"
 ```
 
+`--kind` selects the agent Herdr starts (`codex` by default), and the arguments after `--` go to that executable itself, so they never repeat its name.
+Claude takes its flags and then the prompt as its first message; Codex takes its flags and at most one task as the last argument, which hcoord submits as the first turn once Codex is ready.
+`hcoord agent spawn --help` prints the full usage.
+The arguments are checked before anything is created, so a refused spawn leaves no worktree, workspace, pane, or parent registration behind.
 Without `HERDR_PANE_ID`, or when Herdr reports no session-bearing agent in that pane, the command explains the refusal and creates nothing.
+Right after starting the child, hcoord names it again when Herdr reports it without its name, so one spawn writes the lineage.
 Retry a failed lineage write with the same intent so hcoord repairs the existing child instead of starting another one.
 
 Remote registration, worktree spawn, and outbox collection use the machine names saved by Herdr.

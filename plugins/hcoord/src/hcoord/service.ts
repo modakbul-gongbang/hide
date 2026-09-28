@@ -183,9 +183,9 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     const key = required(args, "intent"), parent = person(state, required(args, "parent"));
     // Without --machine the child is placed beside its parent, as before (PRD B4).
     const machine = optional(args, "machine") ?? parent.machine, session = required(args, "session"), name = required(args, "name"), kind = required(args, "kind");
-    validateSpawnSpec(name, kind);
     const nativeArgs = args["nativeArgs"];
     if (!Array.isArray(nativeArgs) || nativeArgs.some((value) => typeof value !== "string")) throw new HcoordError("invalid_argument", "nativeArgs must be a string array");
+    validateSpawnSpec(name, kind, nativeArgs);
     if (parent.session !== session) throw new HcoordError("identity_conflict", "parent is not bound to the selected session");
     const repo = optional(args, "repo"), branch = optional(args, "branch"), worktreePath = optional(args, "path");
     if ((repo === null) !== (branch === null)) throw new HcoordError("invalid_argument", "--repo and --branch are given together");

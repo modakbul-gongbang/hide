@@ -6,7 +6,7 @@ import { API_VERSION, HcoordError, LETTER_OPERATIONS, MAX_AGENTS, MAX_CONNECTION
 import { event } from "./model";
 import { execute, recordLetter, watchForRequest } from "./service";
 import { outboxCount, parseLetter, readOutbox, removeLetters, type Found, type RawLetter } from "./outbox";
-import { blockedSpawnError, confirmSpawnPane, createSpawnPane, createSpawnWorktree, observedPlacement, discoverAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, parentPlacement, prepareSpawnInitialization, startSpawnedAgent, submitOfficial, submitSpawnInitialization, validateBinding, waitForSpawnInitialization } from "./herdr";
+import { blockedSpawnError, confirmSpawnPane, createSpawnPane, createSpawnWorktree, observedPlacement, discoverAgents, officialDeliveryAvailable, OFFICIAL_PROMPT_BOUNDARY, inspectDelivery, inspectParticipant, inspectSpawnedAgent, nameStartedAgent, parentPlacement, prepareSpawnInitialization, startSpawnedAgent, submitOfficial, submitSpawnInitialization, validateBinding, waitForSpawnInitialization } from "./herdr";
 import type { SpawnIntent } from "./model";
 import { dataDir, ledgerPath, loadLedger, saveLedger, socketPath, stopMarkerPath } from "./store";
 import { notifyHuman, notifyText } from "./platform";
@@ -238,6 +238,7 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
         if (started.state === "initializing" && started.blocked) throw blockedSpawnError(intent);
         throw error;
       }
+      if (nameStartedAgent(intent)) process.stderr.write(`${JSON.stringify({ event: "hcoord.spawn_name_restored", at: new Date().toISOString(), intent: intent.key, pane: intent.pane, machine: intent.machine })}\n`);
       identity = inspectSpawnedAgent(intent);
       if (identity.state === "absent") throw new HcoordError("spawn_uncertain", "agent start returned but its named execution is unavailable", { intent: intent.key, pane: intent.pane });
     }
