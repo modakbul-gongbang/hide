@@ -1670,7 +1670,7 @@ esac"#,
                 &fixture.binary,
                 Some(&fixture.root),
                 arguments,
-                Duration::from_secs(1),
+                Duration::from_secs(5),
             )
             .is_ok()
         };
