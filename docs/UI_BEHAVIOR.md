@@ -108,7 +108,7 @@ A disabled split explains its reason, and opening the menu changes no selection.
 The palette opened from an Agent pane adds these area commands and next/previous area focus and grow/shrink commands, including unavailable reasons.
 An area's New tab adds at its end.
 The new tab chord, ⌘T in the desktop app and ⌥T in a browser, opens where the keyboard is: with a panel View area focused it is that area's New tab, with an Agent pane focused it adds an agent tab at the end of the area showing that pane, and anywhere else (the sidebar, the Overview, the tools, the Agent controls) it adds one to the Agent active area.
-The Files View and Agent active areas are independent, so the chord follows the recorded keyboard owner, never whichever column's active area changed last.
+The View and Agent columns keep separate active areas, so the chord follows the recorded keyboard owner, never whichever column's active area changed last.
 Externally created tabs append to the active area without changing the shown tab; Herdr's own reorder never changes Hide's area order.
 Delegated-only tabs remain absent from every bar and occupy the active canvas when chosen from the sidebar.
 Choosing a normal tab elsewhere activates its owning area.

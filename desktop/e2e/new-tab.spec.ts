@@ -23,13 +23,19 @@ test("Command T from the menu opens the new tab in the View area whose native pa
     await page.locator('[data-explorer-menu] [data-menu-item="open-browser"]').click();
     await expect(page.locator("[data-browser-slot]")).toBeVisible();
     // The page lives in native child contents, outside the shell DOM; its
-    // host reports the focus, and Command T reaches the shell as a menu click.
-    await expect.poll(() => app!.evaluate(({ BrowserWindow }) => {
-      const view = BrowserWindow.getAllWindows()[0]!.contentView.children.find((child) =>
+    // host reports the focus, and Command T reaches the shell as a menu click,
+    // which hands the keyboard back to the shell first. A page holds the
+    // keyboard only in the key window, so this test's window comes to the front.
+    await expect.poll(() => app!.evaluate(({ app: electron, BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows()[0]!;
+      const view = window.contentView.children.find((child) =>
         (child as { webContents?: Electron.WebContents }).webContents?.getTitle() === "New tab page");
       if (!view) return false;
-      (view as unknown as { webContents: Electron.WebContents }).webContents.focus();
-      return true;
+      electron.focus({ steal: true });
+      window.focus();
+      const contents = (view as unknown as { webContents: Electron.WebContents }).webContents;
+      contents.focus();
+      return contents.isFocused();
     })).toBe(true);
     await app.evaluate(({ Menu }) => Menu.getApplicationMenu()!.getMenuItemById("new_tab")!.click());
     await expect(page.locator('[data-view-tab-bar] [role="tab"]')).toHaveCount(2);
