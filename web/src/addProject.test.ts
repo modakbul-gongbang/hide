@@ -43,7 +43,7 @@ describe("Add a project", () => {
   });
 
   it("refuses what Git would not clone or would read as something else", () => {
-    for (const url of ["", "http://example.com/r.git", "git://example.com/r.git", "ext::sh -c id", "-uhttps://x/y", "https://github.com", "https://github.com/", "/home/me/repo", "repo", "git@github.com:", "git@github.com:.git", "file://relative/r"]) {
+    for (const url of ["", "http://example.com/r.git", "git://example.com/r.git", "ext::sh -c id", "ext::true", "-uhttps://x/y", "https://github.com", "https://github.com/", "/home/me/repo", "repo", "git@github.com:", "git@github.com:.git", "file://relative/r"]) {
       expect(parseCloneUrl(url).ok, url).toBe(false);
     }
   });

@@ -70,8 +70,9 @@ export type CloneUrl = { ok: true; host: string; name: string } | { ok: false; r
 export function parseCloneUrl(raw: string): CloneUrl {
   const url = raw.trim();
   if (!url) return { ok: false, reason: "Enter a Git URL." };
+  // `::` is Git's transport-helper form (`ext::`), never a URL this accepts.
   // eslint-disable-next-line no-control-regex
-  if (url.startsWith("-") || /[\s\u0000-\u001f\u007f]/.test(url)) return { ok: false, reason: "This is not a Git URL." };
+  if (url.startsWith("-") || url.includes("::") || /[\s\u0000-\u001f\u007f]/.test(url)) return { ok: false, reason: "This is not a Git URL." };
   let host: string;
   let path: string;
   const scheme = /^(https|ssh|file):\/\/(.*)$/.exec(url);

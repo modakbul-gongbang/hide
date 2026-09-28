@@ -72,7 +72,13 @@ impl CloneSource {
         if url.is_empty() {
             return Err("Enter a Git URL.".to_owned());
         }
-        if url.starts_with('-') || url.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        // `::` is Git's transport-helper form (`ext::`, `fd::`), which no
+        // accepted URL spells; `GIT_ALLOW_PROTOCOL` refuses it too, but it
+        // is not offered as a clone in the first place.
+        if url.starts_with('-')
+            || url.contains("::")
+            || url.chars().any(|c| c.is_whitespace() || c.is_control())
+        {
             return Err("This is not a Git URL.".to_owned());
         }
         let (host, path) = if let Some(rest) = url.strip_prefix("https://") {
@@ -579,6 +585,8 @@ mod tests {
             "http://example.com/repo.git",
             "git://example.com/repo.git",
             "ext::sh -c touch% /tmp/pwned",
+            "ext::true",
+            "fd::3",
             "-uhttps://example.com/x",
             "https://github.com",
             "https://github.com/",

@@ -223,16 +223,28 @@ fn spawn_clone(
                     notifier.notify();
                 }
             };
-            let result = hide_host::clone::clone_repository(
-                &source,
-                &parent,
-                hide_host::clone::STALL_LIMIT,
-                // The runtime going away ends the clone with it.
-                &|| cancel.load(Ordering::SeqCst) || runtime.strong_count() == 0,
-                &mut |progress| {
-                    publish(&mut |guard| guard.note_repository_clone_progress(id, progress.clone()))
-                },
-            );
+            // A panic still settles the slot, which is the only one: a clone
+            // left `cloning` would refuse every later clone. Git's group and
+            // the staging folder are released by their guards on unwinding.
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                hide_host::clone::clone_repository(
+                    &source,
+                    &parent,
+                    hide_host::clone::STALL_LIMIT,
+                    // The runtime going away ends the clone with it.
+                    &|| cancel.load(Ordering::SeqCst) || runtime.strong_count() == 0,
+                    &mut |progress| {
+                        publish(&mut |guard| {
+                            guard.note_repository_clone_progress(id, progress.clone())
+                        })
+                    },
+                )
+            }))
+            .unwrap_or_else(|_| {
+                Err(hide_host::clone::CloneFailure::Io(
+                    "The clone stopped unexpectedly; nothing was kept.".to_owned(),
+                ))
+            });
             let mut result = Some(result);
             publish(&mut |guard| {
                 result

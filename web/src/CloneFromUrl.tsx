@@ -57,8 +57,9 @@ export function CloneFromUrl({ actions, onBack }: { actions: Actions; onBack: ()
   const coreError = useErrorSince(sentAt, ["repository.clone", "workspace.create", "workspace.remove_in_flight", "workspace.control_unavailable"]);
   const hidedRefusal =
     following && "path" in following && pathRefusal?.kind === "clone_repository" && pathRefusal.path === following.path ? pathRefusal.reason : null;
-  // A refusal ends what Clone started; the clone the core reports is the other answer.
-  const refused = clone === null && (hidedRefusal !== null || coreError !== null);
+  // A refusal ends what Clone started, before the clone (hided's, or the core
+  // refusing the clone) or after it (the folder could not be registered).
+  const refused = (clone === null && hidedRefusal !== null) || (coreError !== null && !cloneRunning(clone));
   const answer = target && name && target.parent === parentPath && target.name === name ? target : null;
   const added = clone?.phase === "finished" && registrations.some((row) => row.device_id === "local" && trimFolder(row.path) === clone.path);
   const waiting = following !== null && !refused && (clone === null || running || (clone.phase === "finished" && !added));
@@ -159,10 +160,15 @@ export function CloneFromUrl({ actions, onBack }: { actions: Actions; onBack: ()
             </p>
           ) : null}
         </div>
-        <CloneProgress clone={clone} following={following !== null} added={added} />
+        <CloneProgress clone={clone} following={following !== null} added={added || refused} />
         {refused ? (
           <div role="alert" className="flex min-w-0 flex-col gap-xxs" data-clone-refused={hidedRefusal ?? "core"}>
             <Status tone="error">{hidedRefusal ? refusalText(hidedRefusal) : coreError}</Status>
+            {clone?.phase === "finished" ? (
+              <span className="break-all text-caption text-muted-foreground" data-clone-kept={clone.path}>
+                The repository is at <span className="font-mono">{clone.path}</span>; add it with Browse folder.
+              </span>
+            ) : null}
           </div>
         ) : null}
         {running && clone ? (
