@@ -7,6 +7,9 @@ export const BINDINGS_CHANNEL = "hide:bindings";
 /** A folder the shell asks Finder to show (a sidebar row's Reveal in Finder), renderer -> main. */
 export const REVEAL_CHANNEL = "hide:reveal";
 
+/** Add a project's Browse folder: the native folder picker, answered with the chosen folder or null (invoke). */
+export const PICK_FOLDER_CHANNEL = "hide:pick-folder";
+
 /**
  * Browser displays (issue 155): the shell reports where each browser display
  * of the front Workspace sits (renderer -> main), asks for a still of one

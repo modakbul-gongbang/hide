@@ -29,11 +29,14 @@ describe("shortcut registry", () => {
     }
   });
 
-  it("marks exactly the eight moved chords", () => {
+  it("marks exactly the seven moved chords", () => {
     const moved = REGISTRY.filter((command) => command.moved).map((command) => command.id).sort();
-    expect(moved).toEqual(
-      ["close_pane", "close_tab", "new_tab", "new_workspace", "previous_recent_panel", "recent_panel", "reopen_closed_tab", "settings"].sort(),
-    );
+    expect(moved).toEqual(["close_pane", "close_tab", "new_tab", "previous_recent_panel", "recent_panel", "reopen_closed_tab", "settings"].sort());
+  });
+
+  it("offers Add project only in the desktop app, which has the folder picker", () => {
+    expect(displayCommand("new_workspace", "browser")).toBe("");
+    expect(displayCommand("new_workspace", "electron")).toBe("⇧⌘N");
   });
 
   it("gives the desktop app the macOS chords", () => {

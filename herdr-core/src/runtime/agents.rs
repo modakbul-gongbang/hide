@@ -128,10 +128,11 @@ impl Runtime {
                 let host = self.host_snapshot(&target_id);
                 if host.state == "not_allowed" {
                     let helper_root = host.helper_root.unwrap_or_else(|| self.host_helper_root());
+                    let cli_dir = host.cli_dir.unwrap_or_default();
                     let files = &mut self.snapshot.status.remote[status_index].files;
                     files.state = "not_allowed".to_owned();
                     files.message = Some(format!(
-                        "Hide reads this device's files through a small helper it installs at {helper_root} and runs only while Hide is connected over SSH. Allowing it lets Hide read and change files and Git in this device's checkouts; later updates within the same scope install without asking again."
+                        "Hide reads this device's files through a small helper it installs at {helper_root} and runs only while Hide is connected over SSH, with the hide command beside it linked in {cli_dir}. Allowing it lets Hide read and change files and Git in this device's checkouts and lets its panes open files and pages in Hide; later updates within the same scope install without asking again."
                     ));
                 }
                 return true;

@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
-import { countSent, screenshot, showExplorer, showTool } from "./wire";
+import { countSent, registerFolder, screenshot, showExplorer, showTool } from "./wire";
 
 test.describe.configure({ timeout: 90_000 });
 
@@ -126,14 +126,8 @@ test("registered subfolder History opens inside patches and hides sibling change
 
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator('[data-sidebar-mode="projects"]').click();
-    await page.keyboard.press("Alt+Shift+KeyN");
-    const input = page.getByLabel("Workspace path");
-    await expect(input).toHaveValue(`${daemon.home}/`);
-    await input.fill(registered);
-    await expect(page.locator(`[data-suggestion="${registered}"]`)).toBeVisible();
-    await input.press("Enter");
+    await registerFolder(page, daemon, registered);
     await expect.poll(() => sent.get("create_workspace") ?? 0).toBe(1);
-    await expect(page.locator(`[data-recent-path="${registered}"]`)).toBeVisible();
     const project = page.locator("[data-project]", { hasText: "registered" });
     await expect(project).toBeVisible({ timeout: 20_000 });
     await project.locator("[data-checkout]").first().click();

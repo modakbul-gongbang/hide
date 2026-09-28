@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Checkout, TaskOperation, Workspace } from "./snapshot";
-import { agentMenu, branchProblem, checkoutMenu, folderMenu, normalizePurpose, projectMenu, projectRemovalConsequences, purposeCountLabel, purposeIsLong, purposeScope, removalFor, scalarCount, taskFor } from "./workspaceManage";
+import { agentMenu, branchProblem, checkoutMenu, deletionConsequences, folderMenu, normalizePurpose, projectMenu, projectRemovalConsequences, purposeCountLabel, purposeIsLong, purposeScope, removalFor, scalarCount, taskFor } from "./workspaceManage";
 
 const workspace = (patch: Partial<Workspace> = {}): Workspace => ({
   id: "w1",
@@ -36,8 +36,7 @@ const checkout = (patch: Partial<Checkout> = {}): Checkout => ({
     dirty: false,
     changed_file_count: 0,
     pane_count: 0,
-    running_agent_count: 0,
-    deletion_gate: { blocked_reason: null, warnings: [], button_label: "Delete worktree", can_delete_branch: true },
+    deletion_gate: { blocked_reason: null, warnings: [], button_label: "Delete worktree", can_delete_branch: true, branch_warning: null, discard_label: null },
   },
   pull_request: null,
   tabs: [],
@@ -164,23 +163,57 @@ describe("row menus", () => {
     expect(reason(workspace(), checkout({ exists: false }))).toMatch(/missing/);
   });
 
-  it("greys out Finder, the default and deletion on a device's checkout and keeps the rest (B9)", () => {
+  it("greys out Finder and the default on a device's checkout and keeps the rest, deletion included (B9)", () => {
     const remote = checkoutMenu(workspace({ device_id: "studio", remote_target_id: "studio" }), checkout(), desktop);
     expect(remote.filter((item) => item.unavailable !== null).map((item) => [item.id, item.unavailable])).toEqual([
       ["set_primary", "Not available for a checkout on another device."],
       ["reveal_finder", "Only for folders on this Mac."],
-      ["delete_worktree", "Not available for a checkout on another device."],
     ]);
     const project = projectMenu(workspace({ device_id: "studio", remote_target_id: "studio", checkouts: [primary()] }), desktop);
     expect(project.filter((item) => item.unavailable !== null).map((item) => item.id)).toEqual(["reveal_finder"]);
   });
 
-  it("keeps the worktree gate's reason and a detached checkout's missing branch", () => {
-    const blocked = checkout();
-    if (blocked.worktree) blocked.worktree.deletion_gate.blocked_reason = "The main worktree cannot be deleted";
-    expect(checkoutMenu(workspace(), blocked, desktop).find((item) => item.id === "delete_worktree")?.unavailable).toBe("The main worktree cannot be deleted");
-    expect(checkoutMenu(workspace(), checkout({ worktree: null }), desktop).find((item) => item.id === "delete_worktree")?.unavailable).toMatch(/not been read/);
+  it("never disables Delete worktree, dirty or unread, and keeps a detached checkout's missing branch", () => {
+    const dirty = checkout();
+    if (dirty.worktree) {
+      dirty.worktree.dirty = true;
+      dirty.worktree.deletion_gate.discard_label = "Discard 3 changed files";
+    }
+    const deletion = (row: Checkout) => checkoutMenu(workspace(), row, desktop).find((item) => item.id === "delete_worktree");
+    expect(deletion(dirty)?.unavailable).toBeNull();
+    expect(deletion(checkout({ worktree: null }))?.unavailable).toBeNull();
+    expect(deletion(checkout({ is_worktree: false }))).toBeUndefined();
     expect(checkoutMenu(workspace(), checkout({ branch: null }), desktop).find((item) => item.id === "copy_branch")?.unavailable).toMatch(/Detached/);
+  });
+
+  it("names the agents a deletion stops once, by name and state, beside the gate's warnings", () => {
+    const pane = (id: string, identity: string | null, status: string) => ({
+      id,
+      herdr_label: null,
+      terminal_title: null,
+      workspace_label: null,
+      cwd: "/Users/example/hide.worktrees/feature",
+      status_label: status,
+      requires_close_confirmation: false,
+      requires_close_status_check: false,
+      identity_label: identity,
+    });
+    const row = checkout({
+      tabs: [
+        { id: "t1", workspace_id: "w1", checkout_id: "c1", label: "1", empty: false, delegated: false, panes: [pane("p1", "Fix the parser", "Working"), pane("p2", null, "")] },
+        { id: "t2", workspace_id: "w1", checkout_id: "c1", label: "2", empty: false, delegated: false, panes: [pane("p3", "Review tests", "Idle")] },
+      ],
+    });
+    if (row.worktree) {
+      row.worktree.deletion_gate.warnings = ["3 changed files not committed", "ahead 2 unmerged"];
+    }
+    expect(deletionConsequences(row, 3)).toEqual([
+      "The folder /Users/example/hide.worktrees/feature is removed from disk. This cannot be undone.",
+      "3 panes in this worktree close first, stopping whatever runs there.",
+      "Stops 2 agents: Fix the parser (Working), Review tests (Idle).",
+      "3 changed files not committed",
+      "ahead 2 unmerged",
+    ]);
   });
 
   it("puts a folder's own checkout items after its project items, past a separator", () => {

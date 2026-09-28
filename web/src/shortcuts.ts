@@ -1,9 +1,10 @@
 // The shortcut registry: one table, command -> key per host (PRD S2 D-01).
 //
-// The browser column is what Chrome lets a page claim. Six chords Chrome keeps
-// for itself (⌘T ⌘W ⌘⇧T ⌘⇧N ⌃Tab ⌃⇧Tab) moved to the ⌥ family, and ⌘⇧W
+// The browser column is what Chrome lets a page claim. Five chords Chrome keeps
+// for itself (⌘T ⌘W ⌘⇧T ⌃Tab ⌃⇧Tab) moved to the ⌥ family, and ⌘⇧W
 // (Chrome's close-window) moved with them (D-06); `moved` marks each so the
-// sheet can say so. The Electron column is the macOS chord set: the desktop host
+// sheet can say so. ⌘⇧N, Add project, has no browser chord: adding a project
+// needs the desktop app's folder picker, which a browser tab does not have. The Electron column is the macOS chord set: the desktop host
 // has no browser keeping chords, so the moved ones return to their native
 // keys there. The one exception is ⌘E, which shows the Explorer in both
 // hosts (issue 170) while the macOS set keeps it on the sidebar switch; the
@@ -128,7 +129,7 @@ export const REGISTRY: readonly Command[] = [
   { id: "close_tab", title: "Close focused view or pane", group: "Tabs", browser: { code: "KeyW", alt: true }, electron: { code: "KeyW", meta: true }, moved: true, movedFrom: "⌘W" },
   { id: "reopen_closed_tab", title: "Reopen closed tab", group: "Tabs", browser: { code: "KeyT", alt: true, shift: true }, electron: { code: "KeyT", meta: true, shift: true }, moved: true, movedFrom: "⌘⇧T" },
   ...numberedEntries(NUMBERED_FAMILIES[0]!),
-  { id: "new_workspace", title: "New workspace", group: "Navigate", browser: { code: "KeyN", alt: true, shift: true }, electron: { code: "KeyN", meta: true, shift: true }, moved: true, movedFrom: "⌘⇧N" },
+  { id: "new_workspace", title: "Add project", group: "Navigate", browser: null, electron: { code: "KeyN", meta: true, shift: true }, moved: false },
   { id: "recent_panel", title: "Next recent panel", group: "Navigate", browser: { code: "Backquote", alt: true }, electron: { code: "Tab", ctrl: true }, moved: true, movedFrom: "⌃Tab" },
   { id: "previous_recent_panel", title: "Previous recent panel", group: "Navigate", browser: { code: "Backquote", alt: true, shift: true }, electron: { code: "Tab", ctrl: true, shift: true }, moved: true, movedFrom: "⌃⇧Tab" },
   { id: "recent_project", title: "Next recent project", group: "Navigate", browser: { code: "Tab", alt: true }, electron: { code: "Tab", alt: true }, moved: false },

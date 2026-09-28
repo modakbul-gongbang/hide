@@ -21,6 +21,7 @@ fn test_env(keep_alive: bool) -> (tempfile::TempDir, Env) {
         idle_secs: 600,
         open_command: None,
         host_helper_root: None,
+        host_cli_dir: None,
         pane_id: None,
         workspace_bridge_dir: None,
     };
@@ -419,7 +420,7 @@ async fn send_event(
 }
 
 #[tokio::test]
-async fn local_listing_and_refusals_are_answered_by_hided() {
+async fn registration_refusals_are_answered_by_hided() {
     let (dir, running) = start().await;
     let home = dir.path().canonicalize().unwrap();
     std::fs::create_dir_all(home.join("projects/alpha")).unwrap();
@@ -430,30 +431,6 @@ async fn local_listing_and_refusals_are_answered_by_hided() {
     std::os::unix::fs::symlink(outside.path().join("nope"), home.join("projects/dangling"))
         .unwrap();
     let mut socket = live_socket(&running).await;
-
-    let listing = send_event(
-        &mut socket,
-        "remote_file_list",
-        json!({"target_id": "local", "root_path": home.join("projects").display().to_string()}),
-    )
-    .await;
-    assert_eq!(listing["type"], "directory_list");
-    let names: Vec<&str> = listing["payload"]["entries"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|e| e["name"].as_str().unwrap())
-        .collect();
-    assert_eq!(
-        names,
-        vec!["alpha"],
-        "no file, no hidden dir, no escaping symlink"
-    );
-    assert_eq!(listing["payload"]["kind"], "remote_file_list");
-    assert_eq!(
-        listing["payload"]["entries"][0]["is_directory"], true,
-        "the registration listing carries directories only"
-    );
 
     let cases = [
         (
@@ -500,55 +477,58 @@ async fn local_listing_and_refusals_are_answered_by_hided() {
         assert_eq!(refused["payload"]["reason"], reason, "{path}");
         assert_eq!(refused["payload"]["kind"], "create_workspace");
     }
-    let refused_list = send_event(
-        &mut socket,
-        "remote_file_list",
-        json!({"target_id": "local", "root_path": outside.path().display().to_string()}),
-    )
-    .await;
-    assert_eq!(refused_list["payload"]["reason"], "outside_home");
-    assert_eq!(refused_list["payload"]["kind"], "remote_file_list");
     running.stop();
 }
 
 #[tokio::test]
-async fn a_remote_listing_for_another_target_is_forwarded_untouched() {
+async fn a_remote_listing_is_forwarded_untouched() {
     let (_dir, running) = start().await;
     let outside = tempfile::tempdir().unwrap();
     let mut socket = live_socket(&running).await;
-    // The path is on the remote machine; locally it is outside home, so a
+    // The path is on a remote machine; locally it is outside home, so a
     // boundary that wrongly ran would answer `path_refused`. The core has no
     // such target and records that instead, which shows the event arrived.
-    socket
-        .send(Message::Text(
-            json!({
-                "schema_version": 2,
-                "kind": "remote_file_list",
-                "payload": {"target_id": "mini", "root_path": outside.path().display().to_string()},
-            })
-            .to_string()
-            .into(),
-        ))
-        .await
-        .unwrap();
-    let reaction = tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            let frame = first_frame(&mut socket).await;
-            assert_ne!(
-                frame["type"], "path_refused",
-                "a non-local listing must not meet the local boundary"
-            );
-            if frame.to_string().contains("remote.files.unknown_target") {
-                return frame;
+    // `local` is no exception: hided lists no folder of this machine for
+    // registration, since Add a project picks it with the native picker.
+    for target in ["mini", "local"] {
+        socket
+            .send(Message::Text(
+                json!({
+                    "schema_version": 2,
+                    "kind": "remote_file_list",
+                    "payload": {"target_id": target, "root_path": outside.path().display().to_string()},
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .unwrap();
+        let reaction = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let frame = first_frame(&mut socket).await;
+                assert_ne!(
+                    frame["type"], "path_refused",
+                    "a listing must not meet the local boundary"
+                );
+                assert_ne!(
+                    frame["type"], "directory_list",
+                    "hided lists nothing for {target}"
+                );
+                if frame
+                    .to_string()
+                    .contains(&format!("unconfigured target {target}"))
+                {
+                    return frame;
+                }
             }
-        }
-    })
-    .await
-    .expect("the core's reaction to the forwarded event");
-    assert!(matches!(
-        reaction["type"].as_str(),
-        Some("delta" | "snapshot")
-    ));
+        })
+        .await
+        .expect("the core's reaction to the forwarded event");
+        assert!(matches!(
+            reaction["type"].as_str(),
+            Some("delta" | "snapshot")
+        ));
+    }
     running.stop();
 }
 
@@ -624,10 +604,9 @@ async fn explorer_paths_are_checked_against_the_registered_checkout() {
     std::fs::create_dir_all(checkout.join("src")).unwrap();
     std::fs::write(checkout.join("src/main.rs"), "fn main() {}\n").unwrap();
     // A directory under home that no registration covers: the registration
-    // line reads it, the Explorer line must not.
+    // line would accept it, the Explorer line must not.
     let notes = home.join("projects/notes");
     std::fs::create_dir_all(&notes).unwrap();
-    std::fs::create_dir_all(notes.join("plans")).unwrap();
     std::fs::write(notes.join("todo.md"), "- [ ] x\n").unwrap();
     seed_registration(&env.state_dir, "w-alpha", &checkout);
     let running = hided::start_daemon(env).await.expect("start daemon");
@@ -733,25 +712,6 @@ async fn explorer_paths_are_checked_against_the_registered_checkout() {
         "the tab the core makes carries the file's own name"
     );
 
-    // The two lines stay separate. The registration line answers for the home
-    // tree on its own, so a directory under home that no checkout covers is
-    // listed rather than refused: the checkout line would have called this
-    // path `outside_checkout`.
-    let listing = send_event_expecting(
-        &mut socket,
-        "remote_file_list",
-        json!({"target_id": "local", "root_path": notes.display().to_string()}),
-        |frame| frame["type"] == "directory_list",
-    )
-    .await;
-    assert_eq!(listing["type"], "directory_list");
-    let names: Vec<&str> = listing["payload"]["entries"]
-        .as_array()
-        .expect("a listing carries entries")
-        .iter()
-        .map(|entry| entry["name"].as_str().unwrap())
-        .collect();
-    assert_eq!(names, vec!["plans"], "no file, only the directory");
     running.stop();
 }
 

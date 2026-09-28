@@ -39,7 +39,8 @@ export function SidebarHeader({
   onOverview: () => void;
   onMode: (mode: SidebarMode) => void;
   onSearch: () => void;
-  onNewWorkspace: () => void;
+  /** Add project; null where the host cannot pick a folder (a browser tab). */
+  onNewWorkspace: (() => void) | null;
 }) {
   return (
     <>
@@ -83,8 +84,8 @@ export function SidebarHeader({
           </ModeHint>
         ))}
         <span className="flex-1" />
-        {mode === "projects" ? (
-          <Hint label="New workspace" shortcut={newWorkspaceChord}>
+        {mode === "projects" && onNewWorkspace ? (
+          <Hint label="Add project" shortcut={newWorkspaceChord}>
             <Button variant="ghost" size="icon-sm" data-sidebar-new-workspace="true" onClick={onNewWorkspace}>
               <PlusIcon />
             </Button>

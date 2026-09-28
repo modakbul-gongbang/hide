@@ -12,9 +12,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { app, BrowserWindow, ipcMain, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import type { CommandId } from "../../../web/src/shortcuts";
-import { BINDINGS_CHANNEL, COMMAND_CHANNEL, REVEAL_CHANNEL } from "../channel";
+import { BINDINGS_CHANNEL, COMMAND_CHANNEL, PICK_FOLDER_CHANNEL, REVEAL_CHANNEL } from "../channel";
 import { BrowserViews, type ResolvedPage } from "./browser";
 import {
   loginPathCommand,
@@ -109,6 +109,7 @@ export class DesktopHost {
       (workspace, id, load) => this.releaseBrowserRoute(workspace, id, load),
     );
     this.listenReveal();
+    this.listenPickFolder();
     this.openWindow();
     void this.prepareHcoord().finally(() => this.discover("launch"));
   }
@@ -169,9 +170,31 @@ export class DesktopHost {
     });
   }
 
+  /**
+   * Add a project's Browse folder: macOS's own folder picker, a sheet on this
+   * window, which can also make a new folder. Only this window's page on the
+   * daemon origin is answered; a refused sender and a cancelled pick both
+   * answer null, and hided judges the chosen path like any other. The log
+   * records the outcome, never the path.
+   */
+  private listenPickFolder(): void {
+    ipcMain.handle(PICK_FOLDER_CHANNEL, async (event: IpcMainInvokeEvent) => {
+      if (!this.fromShell(event) || !this.window) {
+        this.log.event("pick_folder.refused", { reason: "sender" });
+        return null;
+      }
+      const picked = await dialog.showOpenDialog(this.window, { properties: ["openDirectory", "createDirectory"] });
+      const folder = picked.canceled ? null : (picked.filePaths[0] ?? null);
+      this.log.event("pick_folder.answered", { picked: folder !== null });
+      return folder;
+    });
+  }
+
   /** An app-menu click, delivered to the shell only while it is loaded. */
   sendCommand(id: CommandId): void {
     if (!this.window || (this.state.kind !== "attached" && this.state.kind !== "lost")) return;
+    // Text size in a page is the page's zoom, and the page keeps the keyboard.
+    if (this.browsers?.zoomFocused(id)) return;
     // A chord the page of a browser display left unhandled reaches the menu;
     // the command's surface (the palette, a dialog) needs the keyboard.
     if (this.browsers?.hasFocus()) this.window.webContents.focus();

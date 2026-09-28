@@ -21,6 +21,7 @@ import { Sidebar } from "./sidebar";
 import { focusedRemoteDevice, frontCheckout } from "./snapshot";
 import { OPEN_ANSWER_TIMEOUT_MS, openingProgress, startupScreen } from "./navigation";
 import { useShellStore } from "./store";
+import { AddProjectDialog } from "./AddProjectDialog";
 import { WorkspaceDialogs, WorkspaceNotices } from "./WorkspaceDialogs";
 import { applyEditorTheme } from "./editor/theme";
 import { applyTerminalTheme, attachedPaneIds, feedChunks, liveTerminalIds, resetAllTerminals, retainTerminals, terminalFor, terminalSelectionText } from "./terminals";
@@ -239,6 +240,7 @@ export function App() {
         <ShortcutSheetGate actions={actions} />
         <SettingsGate actions={actions} />
         <WorkspaceDialogs actions={actions} />
+        <AddProjectDialog actions={actions} />
         <BrowserHost actions={actions} />
       </div>
     </TooltipProvider>

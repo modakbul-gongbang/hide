@@ -147,8 +147,9 @@ pub enum Call {
     Registrable {
         path: String,
     },
-    /// Rechecks and removes one operator-confirmed linked worktree without
-    /// force (`hide_host::worktrees::remove_confirmed`).
+    /// Rechecks and removes one operator-confirmed linked worktree, forced
+    /// only as far as the operator accepted
+    /// (`hide_host::worktrees::remove_confirmed`).
     WorktreeRemove {
         removal: crate::worktrees::ConfirmedRemoval,
     },

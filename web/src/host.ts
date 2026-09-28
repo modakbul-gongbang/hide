@@ -72,6 +72,8 @@ export type HostBridge = {
   reportBindings(bindings: Record<string, string>): void;
   /** Shows a folder of this Mac in Finder; Finder selects it and opens nothing. */
   revealPath(path: string): void;
+  /** The native folder picker, modal to the window; the chosen folder, or null when the operator cancelled. */
+  pickFolder(): Promise<string | null>;
   browser: BrowserBridge;
 };
 

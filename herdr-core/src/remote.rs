@@ -1341,10 +1341,37 @@ pub fn parse_herdr_server_status(
     Ok(status)
 }
 
+/// One device client's Tokio runtime. Its clones travel with channels,
+/// forwards and file routes into hided's own async tasks, so the last one can
+/// be dropped inside another runtime, where the blocking shutdown of a plain
+/// drop panics; there it shuts down in the background instead.
+struct RemoteRuntime(Option<Runtime>);
+
+impl std::ops::Deref for RemoteRuntime {
+    type Target = Runtime;
+
+    fn deref(&self) -> &Runtime {
+        self.0
+            .as_ref()
+            .expect("a remote runtime is taken only when it drops")
+    }
+}
+
+impl Drop for RemoteRuntime {
+    fn drop(&mut self) {
+        let Some(runtime) = self.0.take() else {
+            return;
+        };
+        if tokio::runtime::Handle::try_current().is_ok() {
+            runtime.shutdown_background();
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct RusshRemoteClient {
     host: SshAlias,
-    runtime: Arc<Runtime>,
+    runtime: Arc<RemoteRuntime>,
     /// The answer `herdr status server --json` reported on the host. It is
     /// asked for on first use and forgotten when a socket open fails, so a
     /// server restarted under another path or version is found again on the
@@ -1492,7 +1519,7 @@ impl ConnectionShutdown for RusshApiShutdown {
 }
 
 struct RusshApiStream {
-    runtime: Arc<Runtime>,
+    runtime: Arc<RemoteRuntime>,
     _connection: Arc<RusshApiConnection>,
     stream: Option<russh::ChannelStream<Msg>>,
     stopped: Arc<AtomicBool>,
@@ -1710,7 +1737,7 @@ impl RusshRemoteClient {
             })?;
         Ok(Self {
             host,
-            runtime: Arc::new(runtime),
+            runtime: Arc::new(RemoteRuntime(Some(runtime))),
             herdr_status: Arc::new(Mutex::new(None)),
             herdr_socket: None,
         })
@@ -2986,7 +3013,7 @@ impl RemoteTerminalProcess {
 }
 
 struct RemoteTerminalReader {
-    runtime: Arc<Runtime>,
+    runtime: Arc<RemoteRuntime>,
     channel: Channel<Msg>,
     pending: Vec<u8>,
     pending_offset: usize,
@@ -3044,7 +3071,7 @@ impl Read for RemoteTerminalReader {
 }
 
 struct RemoteTerminalWriter {
-    runtime: Arc<Runtime>,
+    runtime: Arc<RemoteRuntime>,
     writer: Pin<Box<dyn AsyncWrite + Send>>,
 }
 
@@ -3059,29 +3086,44 @@ impl Write for RemoteTerminalWriter {
 }
 
 struct RemoteTerminalConnection {
-    runtime: Arc<Runtime>,
+    runtime: Arc<RemoteRuntime>,
     session: Option<Handle<KnownHostHandler>>,
     target_id: String,
     pane_id: String,
 }
 
 impl RemoteTerminalConnection {
+    /// Safe from any thread. A caller already inside a Tokio runtime (a
+    /// supervisor task stopping a route) gets the disconnect spawned on this
+    /// connection's runtime, because blocking on it there would panic.
     fn shutdown(mut self) {
         let Some(session) = self.session.take() else {
             return;
         };
-        if let Err(error) = self.runtime.block_on(session.disconnect(
-            Disconnect::ByApplication,
-            "remote terminal session complete",
-            "en",
-        )) {
-            crate::diagnostic!(json!({
-                "component": "remote_terminal_session",
-                "kind": "disconnect.failed",
-                "target": self.target_id,
-                "pane_id": self.pane_id,
-                "message": error.to_string(),
-            }));
+        let target_id = std::mem::take(&mut self.target_id);
+        let pane_id = std::mem::take(&mut self.pane_id);
+        let disconnect = async move {
+            if let Err(error) = session
+                .disconnect(
+                    Disconnect::ByApplication,
+                    "remote terminal session complete",
+                    "en",
+                )
+                .await
+            {
+                crate::diagnostic!(json!({
+                    "component": "remote_terminal_session",
+                    "kind": "disconnect.failed",
+                    "target": target_id,
+                    "pane_id": pane_id,
+                    "message": error.to_string(),
+                }));
+            }
+        };
+        if tokio::runtime::Handle::try_current().is_ok() {
+            self.runtime.spawn(disconnect);
+        } else {
+            self.runtime.block_on(disconnect);
         }
     }
 }
@@ -3487,7 +3529,7 @@ impl Handler for KnownHostHandler {
 }
 
 pub struct RemotePtySession {
-    runtime: Arc<Runtime>,
+    runtime: Arc<RemoteRuntime>,
     session: Mutex<Option<Handle<KnownHostHandler>>>,
     channel: Mutex<Option<Channel<Msg>>>,
     endpoint: RemotePtyEndpoint,
@@ -3844,7 +3886,7 @@ pub struct RemoteTunnelDescriptor {
 }
 
 pub struct RemoteTunnelHandle {
-    runtime: Arc<Runtime>,
+    runtime: Arc<RemoteRuntime>,
     session: Mutex<Option<Handle<KnownHostHandler>>>,
     descriptor: RemoteTunnelDescriptor,
     forward_error: Arc<Mutex<Option<String>>>,
@@ -3852,7 +3894,7 @@ pub struct RemoteTunnelHandle {
 }
 
 pub struct RemoteWorkspaceForward {
-    runtime: Arc<Runtime>,
+    runtime: Arc<RemoteRuntime>,
     session: Mutex<Option<Handle<KnownHostHandler>>>,
     remote_port: u16,
     forward_error: Arc<Mutex<Option<String>>>,
@@ -3860,7 +3902,7 @@ pub struct RemoteWorkspaceForward {
 }
 
 pub struct RemoteLocalForward {
-    runtime: Arc<Runtime>,
+    runtime: Arc<RemoteRuntime>,
     local_addr: SocketAddr,
     session: Arc<Handle<KnownHostHandler>>,
     task: Mutex<Option<tokio::task::JoinHandle<()>>>,
@@ -4478,6 +4520,18 @@ mod tests {
             "/tmp/known_hosts",
         )
         .unwrap()
+    }
+
+    /// hided's reaper drops a removed device's last forward on its own runtime.
+    #[test]
+    fn a_client_released_inside_another_runtime_shuts_down_quietly() {
+        let client = RusshRemoteClient::new(host()).unwrap();
+        let forward_share = Arc::clone(&client.runtime);
+        drop(client);
+        Builder::new_current_thread()
+            .build()
+            .unwrap()
+            .block_on(async move { drop(forward_share) });
     }
 
     /// Russh starts a socket-owning task after the SSH banner but before it

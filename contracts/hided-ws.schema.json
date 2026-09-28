@@ -77,7 +77,7 @@
       }
     },
     "serverFrame": {
-      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `remote_file_list` for the `local` target or a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `remote_file_list` and `create_workspace`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move`, `path_trash` and `file_bytes` (see directoryList and pathRefused). A `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move` or `path_trash` that names an SSH device in `device_id` never meets this machine's checkout roots: the core accepts it only for the checkout in front on that device and the device's helper confines every path to that checkout's opened root. file_bytes_error answers a `file_bytes` read the daemon could not serve as bytes (see fileBytes). directory_unavailable answers a `file_list` for a checkout on an SSH device that its helper could not list (see directoryUnavailable). directory_changed announces that a watched folder changed, so the client re-reads that one folder (see directoryChanged). attachment_refused answers an `attachment_stage` or `attachment_commit` that could not be staged (see attachments). file_index_result answers a `file_index` query with the ranked checkout paths (see fileIndex). daemon is the first frame after a valid handshake and describes the daemon itself (see daemonInfo). A `file_bytes` read that succeeds is answered with one or more binary frames on the same socket, not a text frame (see fileBytes).",
+      "description": "snapshot/delta carry the core state; error answers a malformed client event; directory_list answers a `file_list`, and path_refused answers any event whose path failed its boundary - the $HOME line for `create_workspace`, the checkout-root line for `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move`, `path_trash` and `file_bytes` (see directoryList and pathRefused). A `file_list`, `file_open`, `reveal_path`, `file_save`, `file_create`, `dir_create`, `path_rename`, `path_move` or `path_trash` that names an SSH device in `device_id` never meets this machine's checkout roots: the core accepts it only for the checkout in front on that device and the device's helper confines every path to that checkout's opened root. file_bytes_error answers a `file_bytes` read the daemon could not serve as bytes (see fileBytes). directory_unavailable answers a `file_list` for a checkout on an SSH device that its helper could not list (see directoryUnavailable). directory_changed announces that a watched folder changed, so the client re-reads that one folder (see directoryChanged). attachment_refused answers an `attachment_stage` or `attachment_commit` that could not be staged (see attachments). file_index_result answers a `file_index` query with the ranked checkout paths (see fileIndex). daemon is the first frame after a valid handshake and describes the daemon itself (see daemonInfo). A `file_bytes` read that succeeds is answered with one or more binary frames on the same socket, not a text frame (see fileBytes).",
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "payload"],
@@ -193,12 +193,12 @@
       "enum": ["outside_home", "home_root", "outside_checkout", "not_found", "not_a_directory", "not_a_file", "invalid_path"]
     },
     "directoryList": {
-      "description": "Payload of a directory_list frame. kind names the event that asked: a `remote_file_list` for the `local` target lists the visible subdirectories of root_path under $HOME, and a `file_list` lists the children of a folder under a registered checkout root - files and directories, hidden names included, `.git` and a symlink that leaves the root absent, directories first and then the natural name order the macOS Explorer uses. root_path is the real path that was listed (a request of `~` lists home and answers with its path). is_directory is what the Explorer draws and opens by; a `remote_file_list` answer carries directories only, so every entry in it is one. truncated is true past the listing cap. device_id names the machine the listing came from: absent for this daemon's own machine, and an SSH device's id for a `file_list` that named that device, whose paths are that device's and are never read here.",
+      "description": "Payload of a directory_list frame. kind names the event that asked: a `file_list` lists the children of a folder under a registered checkout root - files and directories, hidden names included, `.git` and a symlink that leaves the root absent, directories first and then the natural name order the macOS Explorer uses. root_path is the real path that was listed. is_directory is what the Explorer draws and opens by. truncated is true past the listing cap. device_id names the machine the listing came from: absent for this daemon's own machine, and an SSH device's id for a `file_list` that named that device, whose paths are that device's and are never read here.",
       "type": "object",
       "additionalProperties": false,
       "required": ["kind", "root_path", "entries", "truncated"],
       "properties": {
-        "kind": { "type": "string", "enum": ["remote_file_list", "file_list"] },
+        "kind": { "type": "string", "enum": ["file_list"] },
         "device_id": { "type": "string", "minLength": 1 },
         "root_path": { "type": "string" },
         "entries": {
@@ -211,7 +211,7 @@
               "name": { "type": "string" },
               "path": { "type": "string" },
               "is_directory": { "type": "boolean" },
-              "inode": { "type": "integer", "minimum": 0, "description": "The entry's own inode (a link's, not its target's) in a `file_list` answer: the identity a `path_trash` of this row sends, so the host moves only the item the operator confirmed. Absent from a `remote_file_list` answer." }
+              "inode": { "type": "integer", "minimum": 0, "description": "The entry's own inode (a link's, not its target's) in a `file_list` answer: the identity a `path_trash` of this row sends, so the host moves only the item the operator confirmed." }
             }
           }
         },
@@ -240,7 +240,6 @@
         "kind": {
           "type": "string",
           "enum": [
-            "remote_file_list",
             "create_workspace",
             "file_list",
             "file_open",

@@ -362,7 +362,7 @@ The facts line holds only numbers the system has: the worktree count, the open p
 Opening a local Git project's Overview asks the core to measure its disk and to read its tasks; the size reads `… GB` while that runs and is left out, with the reason only in the diagnostic log, when a part cannot be read, and there is no refresh control.
 The view is the page's, so choosing another scope keeps Tasks, Agents or Sessions, and a scope without that view shows its first one.
 The Overview has `Tasks · Agents · Projects`: the Tasks board mixes every project's tasks, and a project with agents and no task source is gathered under the board in one cell (`<project> · 태스크 출처 연결 안 됨`, its agent count, `GitHub 이슈 연결`) instead of spreading through the columns; the Agents board holds every agent; Projects is the list of every registered project by device.
-Its title row carries Add project, and its facts line the project count and, only when every project can give its part, the open pull-request and merged totals, which are plain facts there.
+Its title row carries Add project in the desktop app, and its facts line the project count and, only when every project can give its part, the open pull-request and merged totals, which are plain facts there.
 New agent opens the New worktree dialog on a Git project and the folder's Workspace otherwise.
 Before the first snapshot the shell's own connecting state shows instead.
 While hided or a device is unreachable the board keeps the last snapshot and the existing connection or device line is the only signal.
@@ -494,7 +494,12 @@ A project row's menu is `Open Overview`, `New worktree…`, `New tab in main` (a
 A checkout row's menu is `Open` (the row's open, without unfolding its agents), `New tab here`, `Open pull request #n` while GitHub knows one, then `Set purpose…`, `Set as default checkout`, `Copy branch name`, `Copy path` and `Reveal in Finder`, then `Delete worktree…` in the destructive color on a linked worktree.
 An agent row's menu, in Agents and under an opened checkout, is `Show` (the row's own open, with the ⌥n that selects the same row where the host has one), then `Copy title` and `Copy session id` (the conversation id Herdr recorded, disabled when it recorded none), then `Close tab…`, which closes the tab holding the agent's pane, wherever it is, through the tab close flow; Herdr 0.9.1 can neither mark a pane seen nor stop an agent, so neither is offered.
 `New tab in main` and `New tab here` show the registry's new-tab chord; `Reveal in Finder` is the desktop app's only (a browser tab lists no such item) and shows the folder in Finder without opening anything.
-On a device's rows `Reveal in Finder`, `Set as default checkout` and `Delete worktree…` are disabled with the reason; the rest act on that device as they do here.
+On a device's rows `Reveal in Finder` and `Set as default checkout` are disabled with the reason; the rest act on that device as they do here.
+`Delete worktree…` is never disabled on a linked worktree, on any device and before its Git state has been read; its confirmation says what would be lost and holds the choices, and reads `Reading the worktree's Git state…` until the row arrives.
+The confirmation lists the folder's removal, the panes that close, one line naming every agent those panes stop with its state, and the core's warnings (uncommitted files with their count, a worktree inside it, the base branch, Git status unavailable, commits not merged, not pushed).
+`Also delete branch <name>` deletes the branch with `git branch -d` when Git counts it merged, and otherwise with `git branch -D`, saying how many commits not on the base go with it or that Git could not tell; it is not offered for the base branch or a missing folder.
+A folder that holds uncommitted files, a worktree inside it, or a status Git could not read shows a `Discard …` checkbox, and Delete stays disabled until it is ticked, because that loss cannot be undone; ticked, the folder is removed with `git worktree remove --force`.
+Files that change after the confirmation, typically written by an agent as it stops, stop an unticked removal with that reason and keep the worktree; every refusal and failure is shown in the dialog above the choices, and Delete tries again on the row as it is then.
 A copy that the clipboard refuses goes to the diagnostic log.
 A web checkout row opens its checkout and unfolds its agent rows in one event; activating its already selected, unfolded Workspace folds the agents while keeping that Workspace in front.
 Click, Enter and Space have the same behavior, and a checkout without agents only opens.
@@ -511,9 +516,9 @@ A web project row carries no time: it ends in its checkouts' badges added up, wh
 An opened checkout's parent agent folds its children with the lineage chevron and badge the Agents list uses, from the same core state; a child working in another checkout is also drawn as a root in that checkout, so folding a parent never hides where an agent runs, and a selected SSH device's lineage is drawn unfolded with no chevron.
 A checkout whose root came from another checkout prefixes its purpose line with the Return glyph and the parent checkout's branch, adding `+N` when more than one external root raised it.
 Folding a project by its row or chevron, a parent by its chevron, or using a checkout chevron changes the list only: the center, the focused pane and tab, read state, groups and running processes stay as they were.
-Before the first snapshot arrives the Agents and Projects lists say they are connecting rather than drawing an empty list, and a local Projects list with no registered project offers Add project.
-The sidebar's top is fixed above both lists: the global destinations, today one Overview row with the house glyph and `N projects` (no count before the first snapshot), in the project row's height, font and focus ring, which opens the Overview by click, Enter or Space; then the `Projects | Agents` tab strip, Projects first and shown at launch, the choice kept for the session, ending in New workspace (on Projects only, where the Agents tab leaves its place empty) and Search, icons whose hints read `New workspace` and `Search` with their chords.
-Search opens the ⌘K palette and New workspace the new-workspace flow, on this machine or a selected SSH device alike; there is no Search field row and no bottom new-workspace button.
+Before the first snapshot arrives the Agents and Projects lists say they are connecting rather than drawing an empty list, and in the desktop app a local Projects list with no registered project offers Add project.
+The sidebar's top is fixed above both lists: the global destinations, today one Overview row with the house glyph and `N projects` (no count before the first snapshot), in the project row's height, font and focus ring, which opens the Overview by click, Enter or Space; then the `Projects | Agents` tab strip, Projects first and shown at launch, the choice kept for the session, ending in Add project (on Projects only, where the Agents tab leaves its place empty, and only in the desktop app) and Search, icons whose hints read `Add project` and `Search` with their chords.
+Search opens the ⌘K palette and Add project the Add a project dialog (see Adding a project), on this machine or a selected SSH device alike; there is no Search field row and no bottom new-workspace button.
 The Herdr status line sits under the strip and above the list, and the footer is unchanged.
 The web Projects list is the scope picker, starting at its first project.
 One row carries the selected fill at a time, the row of the scope the center shows: the Overview row while the Overview is in front, a Git project’s Overview child on its Overview, or the focused checkout and its open agent row only while a Workspace is in front.
@@ -594,6 +599,17 @@ An ordinary merge is proven by Git ancestry; a squash merge requires the exact G
 Removal is one `git worktree remove`, so every build cache a checkout owns is deleted with it and nothing outside the folder is touched.
 Confirm rechecks current Git and Herdr state before each target and refuses changed state with a Review-again path.
 Completion lists individual removed/refused outcomes, and repeating the same completed intent does not repeat removal; Review and Cancel perform no filesystem mutations.
+
+### Adding a project
+
+Web owner: `web/src/AddProjectDialog.tsx`, `web/src/addProject.ts`; desktop owner: the `hide:pick-folder` channel in `desktop/src/main/host.ts`.
+Add project opens one centered `Add a project` dialog from each of its entry points: the sidebar strip's +, the Overview's title row and empty state, the empty local Projects list, ⌘⇧N and the File menu; Escape and × close it.
+Only the desktop app offers it, because the native folder picker is how a local project is added: a plain browser tab draws none of those entry points and has no chord for it.
+The Host selector lists this Mac and every registered device, and starts on the focused device.
+On this Mac the primary `Browse folder` row holds the keyboard, so Enter activates it; it opens macOS's own folder picker as a sheet on the window, which can also make a new folder, and a cancelled pick leaves the dialog as it was.
+The chosen folder is registered with one `create_workspace`; the dialog closes when the project appears, and says `Adding <folder>…` until then.
+A refusal stays inside the dialog as an alert naming the folder, and the dialog stays open for another pick: `already_registered` from the shell's own registrations, before anything is sent, and `outside_home`, `home_root`, `not_found`, `not_a_directory` or `invalid_path` from hided's `$HOME` line, or the core's own error.
+A device's folders are not this Mac's to browse, so on a device the dialog shows a `~/` path field instead, sent to that device's helper through the same event, with its refusal shown the same way.
 
 ### Removing a project's registration
 
