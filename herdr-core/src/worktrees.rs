@@ -294,27 +294,40 @@ fn stat_tree(path: &Path, stamps: &mut Vec<(PathBuf, Option<std::time::SystemTim
 }
 
 /// The sole deletion policy, consumed by all three presentation surfaces.
+///
+/// Only the main worktree is refused; everything else that can lose work is a
+/// warning the confirmation shows, and the loss itself is a choice the
+/// operator makes there (`discard_label`, `can_delete_branch`).
 pub fn deletion_gate(
     worktree: &WorktreeSnapshot,
     is_base: bool,
     pane_count: usize,
-    running_agent_count: usize,
 ) -> WorktreeDeletionGateSnapshot {
-    let blocked_reason = if worktree.is_main {
-        Some("The main worktree cannot be deleted")
-    } else if is_base {
-        Some("The current base branch worktree cannot be deleted")
-    } else if worktree.dirty {
-        Some("Commit or discard uncommitted changes first")
-    } else if worktree.nested {
-        Some("Delete nested worktrees first")
-    } else if worktree.unavailable_reason.is_some() && !worktree.missing {
-        Some("Git status is unavailable")
-    } else {
-        None
-    }
-    .map(str::to_owned);
+    let blocked_reason = worktree
+        .is_main
+        .then(|| "The main worktree cannot be deleted".to_owned());
+    let status_unknown = worktree.unavailable_reason.is_some() && !worktree.missing;
+    let files = |count: u32| match count {
+        0 => "uncommitted changes".to_owned(),
+        1 => "1 changed file".to_owned(),
+        count => format!("{count} changed files"),
+    };
     let mut warnings = Vec::new();
+    if worktree.dirty {
+        warnings.push(format!(
+            "{} not committed",
+            files(worktree.changed_file_count)
+        ));
+    }
+    if worktree.nested {
+        warnings.push("another worktree lies inside it".to_owned());
+    }
+    if is_base {
+        warnings.push("holds the base branch".to_owned());
+    }
+    if status_unknown {
+        warnings.push("Git status unavailable".to_owned());
+    }
     if !worktree.missing {
         if worktree.merged != Some(true) {
             warnings.push(format!("ahead {} unmerged", worktree.ahead));
@@ -323,13 +336,31 @@ pub fn deletion_gate(
             warnings.push("not pushed".to_owned());
         }
     }
-    if running_agent_count > 0 {
-        warnings.push(if running_agent_count == 1 {
-            "1 running agent".to_owned()
-        } else {
-            format!("{running_agent_count} running agents")
-        });
-    }
+    let discard_label = match (worktree.dirty, worktree.nested) {
+        (true, true) => Some(format!(
+            "Discard {} and the worktree inside it",
+            files(worktree.changed_file_count)
+        )),
+        (true, false) => Some(format!("Discard {}", files(worktree.changed_file_count))),
+        (false, true) => Some("Discard the worktree inside it".to_owned()),
+        (false, false) => status_unknown.then(|| "Discard any uncommitted changes".to_owned()),
+    };
+    let can_delete_branch = !worktree.missing && worktree.branch.is_some() && !is_base;
+    let branch_warning = match worktree.merged {
+        _ if !can_delete_branch => None,
+        Some(true) => None,
+        Some(false) => Some(format!(
+            "{} not on {} {} lost with it",
+            if worktree.ahead == 1 {
+                "1 commit".to_owned()
+            } else {
+                format!("{} commits", worktree.ahead)
+            },
+            worktree.base_branch.as_deref().unwrap_or("the base"),
+            if worktree.ahead == 1 { "is" } else { "are" },
+        )),
+        None => Some("Git could not tell whether it is merged; it is deleted anyway".to_owned()),
+    };
     WorktreeDeletionGateSnapshot {
         blocked_reason,
         warnings,
@@ -340,9 +371,9 @@ pub fn deletion_gate(
         } else {
             "Delete worktree…".to_owned()
         },
-        can_delete_branch: !worktree.missing
-            && worktree.branch.is_some()
-            && worktree.merged == Some(true),
+        can_delete_branch,
+        branch_warning,
+        discard_label,
     }
 }
 
@@ -401,7 +432,6 @@ pub fn project_snapshot(
                 worktree.deletion_gate = deletion_gate(
                     &worktree,
                     worktree.branch == base_branch && base_branch.is_some(),
-                    0,
                     0,
                 );
                 worktree

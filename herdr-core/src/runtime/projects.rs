@@ -464,7 +464,6 @@ impl Runtime {
                     worktree,
                     worktree.branch == project.base_branch && project.base_branch.is_some(),
                     worktree.pane_count,
-                    worktree.running_agent_count,
                 );
             }
             project.shared_git_disk = disk_usage
@@ -825,8 +824,7 @@ impl Runtime {
             self.refresh_worktrees();
             return true;
         };
-        if let Some(reason) = worktree.deletion_gate.blocked_reason.as_ref() {
-            self.set_error("worktree.remove_blocked", reason.clone(), true);
+        if !self.worktree_removal_allowed(&worktree, &payload) {
             return true;
         }
         let pane_ids = self
@@ -840,21 +838,13 @@ impl Runtime {
             .flat_map(|tab| tab.panes.iter())
             .map(|pane| pane.id.clone())
             .collect::<Vec<_>>();
-        self.next_worktree_removal_id = self.next_worktree_removal_id.wrapping_add(1).max(1);
-        let id = self.next_worktree_removal_id;
-        self.snapshot.worktree_removal = Some(crate::model::WorktreeRemovalSnapshot {
-            id,
-            device_id: None,
+        let id = self.begin_worktree_removal(
+            None,
             repository_root,
-            checkout_path: payload.checkout_path.clone(),
-            expected_head_sha: worktree.head_sha.clone(),
-            expected_branch: worktree.branch.clone(),
             protected_base_branch,
-            branch: worktree.branch,
-            delete_branch: payload.delete_branch && worktree.deletion_gate.can_delete_branch,
-            phase: "closing".to_owned(),
-            message: None,
-        });
+            worktree,
+            &payload,
+        );
         eprintln!(
             "{}",
             serde_json::json!({
@@ -913,8 +903,7 @@ impl Runtime {
             self.request_device_worktrees(device, true);
             return true;
         };
-        if let Some(reason) = worktree.deletion_gate.blocked_reason.as_ref() {
-            self.set_error("worktree.remove_blocked", reason.clone(), true);
+        if !self.worktree_removal_allowed(&worktree, &payload) {
             return true;
         }
         let context = match self.device_worktree_target(device) {
@@ -945,21 +934,13 @@ impl Runtime {
             .filter_map(|pane| super::remote_pane_source_id(device, &pane.id))
             .map(str::to_owned)
             .collect::<Vec<_>>();
-        self.next_worktree_removal_id = self.next_worktree_removal_id.wrapping_add(1).max(1);
-        let id = self.next_worktree_removal_id;
-        self.snapshot.worktree_removal = Some(crate::model::WorktreeRemovalSnapshot {
-            id,
-            device_id: Some(device.to_owned()),
+        let id = self.begin_worktree_removal(
+            Some(device),
             repository_root,
-            checkout_path: payload.checkout_path.clone(),
-            expected_head_sha: worktree.head_sha.clone(),
-            expected_branch: worktree.branch.clone(),
             protected_base_branch,
-            branch: worktree.branch,
-            delete_branch: payload.delete_branch && worktree.deletion_gate.can_delete_branch,
-            phase: "closing".to_owned(),
-            message: None,
-        });
+            worktree,
+            &payload,
+        );
         crate::diagnostic!(serde_json::json!({
             "component": "worktree_removal",
             "kind": "close_requested",
@@ -973,6 +954,66 @@ impl Runtime {
             self.ingest_worktree_close_result(id, &[], Err(message));
         }
         true
+    }
+
+    /// The gate at the moment of confirmation: the main worktree is refused,
+    /// and a folder whose loss the operator did not accept is refused with
+    /// what changed, since the confirmation they saw may be older than the row.
+    fn worktree_removal_allowed(
+        &mut self,
+        worktree: &crate::model::WorktreeSnapshot,
+        payload: &RemoveWorktreePayload,
+    ) -> bool {
+        if let Some(reason) = worktree.deletion_gate.blocked_reason.as_ref() {
+            self.set_error("worktree.remove_blocked", reason.clone(), true);
+            return false;
+        }
+        if let Some(label) = worktree.deletion_gate.discard_label.as_ref()
+            && !payload.discard_changes
+        {
+            self.set_error(
+                "worktree.remove_unaccepted",
+                format!("Not deleted: deleting it would lose work. Tick \"{label}\" to delete it anyway."),
+                true,
+            );
+            return false;
+        }
+        true
+    }
+
+    /// Records the confirmed removal the close worker then carries out, with
+    /// the operator's choices as the gate allowed them.
+    fn begin_worktree_removal(
+        &mut self,
+        device: Option<&str>,
+        repository_root: String,
+        protected_base_branch: Option<String>,
+        worktree: crate::model::WorktreeSnapshot,
+        payload: &RemoveWorktreePayload,
+    ) -> u64 {
+        let gate = &worktree.deletion_gate;
+        let delete_branch = payload.delete_branch && gate.can_delete_branch;
+        self.next_worktree_removal_id = self.next_worktree_removal_id.wrapping_add(1).max(1);
+        let id = self.next_worktree_removal_id;
+        self.snapshot.worktree_removal = Some(crate::model::WorktreeRemovalSnapshot {
+            id,
+            device_id: device.map(str::to_owned),
+            repository_root,
+            checkout_path: payload.checkout_path.clone(),
+            expected_head_sha: worktree.head_sha.clone(),
+            expected_branch: worktree.branch.clone(),
+            // A worktree already on the base was confirmed with that warning;
+            // the recheck guards only against the branch becoming the base.
+            protected_base_branch: protected_base_branch
+                .filter(|base| worktree.branch.as_deref() != Some(base.as_str())),
+            delete_branch,
+            force_delete_branch: delete_branch && gate.branch_warning.is_some(),
+            discard_changes: payload.discard_changes && gate.discard_label.is_some(),
+            branch: worktree.branch,
+            phase: "closing".to_owned(),
+            message: None,
+        });
+        id
     }
 
     /// One local registration choice; no filesystem or Herdr work under the lock.
@@ -1663,6 +1704,8 @@ impl Runtime {
                     .delete_branch
                     .then(|| removal.branch.clone())
                     .flatten(),
+                force_delete_branch: removal.force_delete_branch,
+                discard_changes: removal.discard_changes,
             }
         })
     }

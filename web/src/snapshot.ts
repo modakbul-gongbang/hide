@@ -235,10 +235,15 @@ export type StripTab = {
 
 /** The removal gate the core computed for a linked worktree (`WorktreeDeletionGateSnapshot`). */
 export type DeletionGate = {
+  /** Only the main worktree, which offers no deletion. */
   blocked_reason: string | null;
   warnings: string[];
   button_label: string;
   can_delete_branch: boolean;
+  /** What deleting the branch loses; present means the core deletes it with `git branch -D`. */
+  branch_warning: string | null;
+  /** The checkbox that accepts losing the folder's changes; present means deletion waits for it. */
+  discard_label: string | null;
 };
 
 /** The parts of the core's worktree row the removal confirmation reads. */
@@ -738,6 +743,8 @@ export type WorktreeRemoval = {
   checkout_path: string;
   branch: string | null;
   delete_branch: boolean;
+  force_delete_branch?: boolean;
+  discard_changes?: boolean;
   phase: string;
   message: string | null;
 };

@@ -475,7 +475,6 @@ pub(crate) fn apply_worktrees(
             &worktree,
             worktree.branch == listed.base_branch && listed.base_branch.is_some(),
             worktree.pane_count,
-            0,
         );
         row.is_worktree = !worktree.is_main;
         row.exists = !worktree.missing;

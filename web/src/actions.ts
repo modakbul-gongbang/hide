@@ -1097,8 +1097,9 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "set_checkout_purpose", payload: { checkout_id: checkoutId, text } });
     },
 
-    removeWorktree(deviceId: string, checkoutPath: string, deleteBranch: boolean) {
-      dispatch({ schema_version: 2, kind: "remove_worktree", payload: { device_id: deviceId, checkout_path: checkoutPath, delete_branch: deleteBranch } });
+    /** `discardChanges`: the operator ticked the discard the core's gate offered, accepting the folder's uncommitted work is lost. */
+    removeWorktree(deviceId: string, checkoutPath: string, deleteBranch: boolean, discardChanges: boolean) {
+      dispatch({ schema_version: 2, kind: "remove_worktree", payload: { device_id: deviceId, checkout_path: checkoutPath, delete_branch: deleteBranch, discard_changes: discardChanges } });
     },
 
     retryTaskAgent(id: number) {

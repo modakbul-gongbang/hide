@@ -294,7 +294,7 @@ pub fn spawn(
             };
             let mut answer = if let Some(selected) = selected {
                 confirm(&review, &selected, refresh, |path| {
-                    remove_worktree(&root, Path::new(path))
+                    remove_worktree(&root, Path::new(path), false)
                 })
             } else {
                 match refresh() {
@@ -458,6 +458,8 @@ mod tests {
             protected_base_branch: Some("main".into()),
             delete_branch: delete_branch
                 .then(|| worktree.file_name().unwrap().to_string_lossy().into_owned()),
+            force_delete_branch: false,
+            discard_changes: false,
         }
     }
 
@@ -476,7 +478,14 @@ mod tests {
         std::fs::write(worktree.join("tracked"), "dirty").unwrap();
 
         let refused = remove_confirmed(&request).unwrap_err();
-        assert!(refused.contains("became dirty"), "{refused}");
+        assert!(
+            refused.starts_with("Not deleted: 1 file changed after you confirmed"),
+            "{refused}"
+        );
+        assert!(
+            refused.contains("panes already closed stay closed"),
+            "{refused}"
+        );
         assert!(worktree.exists());
 
         std::fs::write(worktree.join("tracked"), "keep").unwrap();
@@ -484,6 +493,65 @@ mod tests {
         assert!(removed.contains("local branch was kept"), "{removed}");
         assert!(!worktree.exists());
         assert!(branch_exists(&f, "linked"));
+    }
+
+    /// The operator ticked both boxes: the dirty folder goes with `--force`
+    /// and the unmerged branch with `-D`, exactly as chosen.
+    #[test]
+    fn an_accepted_discard_removes_a_dirty_worktree_and_force_deletes_its_unmerged_branch() {
+        let f = Fixture::new();
+        let worktree = f.add("linked");
+        commit(&worktree, "not merged anywhere");
+        let mut request = confirmed(&f, &worktree, true);
+        request.discard_changes = true;
+        request.force_delete_branch = true;
+        std::fs::write(worktree.join("tracked"), "dirty").unwrap();
+        std::fs::write(worktree.join("untracked"), "new").unwrap();
+        std::fs::create_dir_all(worktree.join("target/clone/.git")).unwrap();
+
+        let removed = remove_confirmed(&request).unwrap();
+        assert!(removed.contains("and local branch linked"), "{removed}");
+        assert!(!worktree.exists());
+        assert!(!branch_exists(&f, "linked"));
+    }
+
+    /// Discard accepted but the branch deletion left safe: the folder goes,
+    /// and the unmerged branch survives `-d` with Git's reason.
+    #[test]
+    fn an_accepted_discard_still_keeps_an_unmerged_branch_under_safe_deletion() {
+        let f = Fixture::new();
+        let worktree = f.add("linked");
+        commit(&worktree, "not merged anywhere");
+        let mut request = confirmed(&f, &worktree, true);
+        request.discard_changes = true;
+        std::fs::write(worktree.join("tracked"), "dirty").unwrap();
+
+        let removed = remove_confirmed(&request).unwrap();
+        assert!(removed.contains("branch linked remains"), "{removed}");
+        assert!(!worktree.exists());
+        assert!(branch_exists(&f, "linked"));
+    }
+
+    /// A worktree inside the one being deleted is lost with it, so only an
+    /// accepted discard lets the removal through.
+    #[test]
+    fn a_worktree_inside_is_removed_only_with_an_accepted_discard() {
+        let f = Fixture::new();
+        let outer = f.add("outer");
+        let inner = outer.join("inner");
+        git(
+            &f.main,
+            &["worktree", "add", "--detach", inner.to_str().unwrap()],
+        )
+        .unwrap();
+        let mut request = confirmed(&f, &outer, false);
+        let refused = remove_confirmed(&request).unwrap_err();
+        assert!(refused.contains("nested worktree"), "{refused}");
+        assert!(inner.exists());
+
+        request.discard_changes = true;
+        remove_confirmed(&request).unwrap();
+        assert!(!outer.exists());
     }
 
     #[test]
@@ -741,7 +809,7 @@ mod tests {
             &review,
             &selected,
             || Ok(f.review(&f.main, Ok(Vec::new()))),
-            |path| remove_worktree(&f.main, Path::new(path)),
+            |path| remove_worktree(&f.main, Path::new(path), false),
         );
 
         assert!(!clean.exists());

@@ -222,25 +222,81 @@ fn a_device_worktree_is_deleted_by_its_helper_whatever_this_machine_lists_at_tha
 }
 
 /// B29: a device worktree with uncommitted changes is refused on the
-/// device's own facts before any pane closes.
+/// device's own facts before any pane closes, unless the operator ticked the
+/// discard the gate offered; then the device's helper removes it with force
+/// and deletes its unmerged branch with `-D`, as that checkbox said.
 #[test]
-fn a_dirty_device_worktree_is_refused_before_anything_closes() {
+fn a_dirty_device_worktree_is_deleted_only_once_the_operator_accepts_the_loss() {
     let repo = repo();
+    git(
+        &repo.linked,
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "unmerged",
+        ],
+    );
     std::fs::write(Path::new(&repo.linked).join("draft.txt"), "wip\n").unwrap();
     let shared = device_runtime(&repo);
+    {
+        let runtime = shared.lock().unwrap();
+        let row = runtime.device_worktrees[DEVICE].projects[&repo.root]
+            .worktrees
+            .iter()
+            .find(|row| row.path == repo.linked)
+            .unwrap();
+        assert!(row.deletion_gate.blocked_reason.is_none());
+        assert_eq!(
+            row.deletion_gate.discard_label.as_deref(),
+            Some("Discard 1 changed file")
+        );
+        assert_eq!(
+            row.deletion_gate.branch_warning.as_deref(),
+            Some("1 commit not on main is lost with it")
+        );
+    }
 
     dispatch(
         &shared,
         "remove_worktree",
         serde_json::json!({"device_id": DEVICE, "checkout_path": repo.linked, "delete_branch": true}),
     );
-
     assert_eq!(
         last_error(&shared).as_deref(),
-        Some("worktree.remove_blocked")
+        Some("worktree.remove_unaccepted")
     );
     assert!(shared.lock().unwrap().snapshot.worktree_removal.is_none());
     assert!(Path::new(&repo.linked).exists());
+
+    dispatch(
+        &shared,
+        "remove_worktree",
+        serde_json::json!({"device_id": DEVICE, "checkout_path": repo.linked, "delete_branch": true, "discard_changes": true}),
+    );
+    wait(&shared, "the device removal to finish", |runtime| {
+        runtime
+            .snapshot
+            .worktree_removal
+            .as_ref()
+            .is_some_and(|removal| removal.phase != "closing" && removal.phase != "removing")
+    });
+    let removal = shared
+        .lock()
+        .unwrap()
+        .snapshot
+        .worktree_removal
+        .clone()
+        .unwrap();
+    assert_eq!(removal.phase, "finished", "{:?}", removal.message);
+    assert!(removal.discard_changes && removal.force_delete_branch);
+    assert!(!Path::new(&repo.linked).exists());
+    assert_eq!(git(&repo.root, &["branch", "--list", "feature"]), "");
 }
 
 /// B28: a new worktree's branch is checked by the device's helper, so a
