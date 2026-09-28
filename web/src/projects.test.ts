@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cardSingleValue, checkoutCard, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, overviewRowSelected, checkoutPresentation, projectMarks, projectRows, pullRequestBadge, relativeActivity, shownPullRequest } from "./projects";
+import { cardSingleValue, checkoutCard, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, overviewRowSelected, projectRowExpansion, checkoutPresentation, projectMarks, projectRows, pullRequestBadge, relativeActivity, shownPullRequest } from "./projects";
 import type { AgentRow, Checkout, GithubStatus, PullRequest, Workspace } from "./snapshot";
 
 function workspace(id: string, extra: Partial<Workspace> = {}): Workspace {
@@ -312,6 +312,15 @@ describe("sidebar row activation", () => {
     expect(checkoutRowExpansion(true, false, true)).toBe(true);
     expect(checkoutRowExpansion(true, true, true)).toBe(false);
     expect(checkoutRowExpansion(false, true, true)).toBeUndefined();
+  });
+
+  it("unfolds a project row unless its own Overview is open and it is unfolded", () => {
+    expect(projectRowExpansion(workspace("repo", { expanded: false }), null, true)).toBe(true);
+    expect(projectRowExpansion(workspace("repo", { expanded: false }), "repo", true)).toBe(true);
+    expect(projectRowExpansion(workspace("repo", { expanded: true }), "other", true)).toBe(true);
+    expect(projectRowExpansion(workspace("repo", { expanded: true }), "repo", true)).toBe(false);
+    expect(projectRowExpansion(workspace("repo", {}), "repo", true)).toBe(false);
+    expect(projectRowExpansion(workspace("repo", { expanded: true }), "repo", false)).toBeUndefined();
   });
 
   it("selects the Git project's Overview child only for its own Overview", () => {

@@ -389,7 +389,23 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await open(page, daemon);
     await expect(projectToggle).toHaveAttribute("aria-expanded", "false");
     await expect(project.locator("[data-checkout]")).toHaveCount(0);
-    await projectToggle.click();
+    // The project row takes the checkout rule: it opens the Overview and
+    // unfolds the project with one fold event; a second click on the open,
+    // unfolded project folds it and the Overview stays.
+    const projectRow = project.locator("[data-project-row]");
+    const beforeRow = new Map(sent);
+    await projectRow.click();
+    await expect(page.locator("[data-overview-screen]")).toBeVisible();
+    await expect(projectToggle).toHaveAttribute("aria-expanded", "true");
+    await expect(overview).toHaveAttribute("aria-current", "page");
+    expect((sent.get("ui_state_update") ?? 0) - (beforeRow.get("ui_state_update") ?? 0)).toBe(1);
+    expect(last.get("ui_state_update")?.collapsed_workspace_ids).not.toContain(await project.getAttribute("data-project"));
+    expect(sent.get("focus_checkout") ?? 0).toBe(beforeRow.get("focus_checkout") ?? 0);
+    await projectRow.click();
+    await expect(projectToggle).toHaveAttribute("aria-expanded", "false");
+    await expect(project.locator("[data-checkout]")).toHaveCount(0);
+    await expect(page.locator("[data-overview-screen]")).toBeVisible();
+    await projectRow.click();
     await expect(featureToggle).toHaveAttribute("aria-expanded", "true");
     await expect(primaryToggle).toHaveAttribute("aria-expanded", "true");
     // The lineage fold is the core's too: left unfolded above, it is still unfolded.
