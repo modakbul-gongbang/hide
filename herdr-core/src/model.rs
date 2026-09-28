@@ -852,8 +852,7 @@ impl ProjectDiskSnapshot {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct WorkspaceRemovalGateSnapshot {
     pub pane_count: usize,
-    /// Panes whose agent is currently working, the same definition
-    /// `WorktreeDeletionGateSnapshot` warns with.
+    /// Panes whose agent is currently working.
     pub running_agent_count: usize,
 }
 
@@ -2576,7 +2575,6 @@ pub struct WorktreeSnapshot {
     pub last_fetch_at_unix_ms: Option<u64>,
     pub measured_at_unix_ms: Option<u64>,
     pub pane_count: usize,
-    pub running_agent_count: usize,
     /// Who is working in this worktree and on what (PRD B34, B35, D-32,
     /// D-55). Overview's own value is width, so this is one line rather than
     /// a new area.
@@ -2629,10 +2627,21 @@ pub struct WorktreeAgentLineSnapshot {
 /// One policy shared by all worktree deletion surfaces.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct WorktreeDeletionGateSnapshot {
+    /// Why nothing can be deleted: only ever the main worktree.
     pub blocked_reason: Option<String>,
+    /// What the operator should know before deleting, in the order shown.
     pub warnings: Vec<String>,
     pub button_label: String,
+    /// The branch may go with the folder: it is named, is not the base, and
+    /// the worktree is on disk.
     pub can_delete_branch: bool,
+    /// What deleting the branch loses: commits the base does not have, or an
+    /// answer Git could not give. Present means `git branch -D`.
+    pub branch_warning: Option<String>,
+    /// The checkbox that accepts losing what the folder holds (uncommitted
+    /// files, a worktree inside it, or a status Git could not read). Present
+    /// means deletion waits for it and then runs `git worktree remove --force`.
+    pub discard_label: Option<String>,
 }
 
 /// Shell authorization issued only after Herdr confirms every pane is gone.
@@ -2649,6 +2658,12 @@ pub struct WorktreeRemovalSnapshot {
     pub protected_base_branch: Option<String>,
     pub branch: Option<String>,
     pub delete_branch: bool,
+    /// The branch goes with `git branch -D`: the operator was told it holds
+    /// commits the base does not.
+    pub force_delete_branch: bool,
+    /// The operator accepted losing the folder's changes, so the recheck
+    /// lets dirt through and Git removes with `--force`.
+    pub discard_changes: bool,
     pub phase: String,
     pub message: Option<String>,
 }

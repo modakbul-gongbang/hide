@@ -1,7 +1,8 @@
 //! One repository's worktrees on the machine that holds it: what Git says
 //! about each (the facts the projects tree, the Overview and the deletion
 //! gate read), the check a new branch passes before anything is created, and
-//! the confirmed, non-force removal of one linked worktree (PRD S5.5 B27-B29).
+//! the confirmed removal of one linked worktree (PRD S5.5 B27-B29), forced
+//! only as far as the operator accepted.
 //!
 //! The core calls these in process for this machine; a device's helper
 //! answers the same functions (`Call::Worktrees`, `Call::BranchCheck`,
@@ -1001,14 +1002,23 @@ pub fn registered(root: &Path) -> Result<Vec<Registered>, String> {
 }
 
 /// Removes the worktree folder and its registration, keeping the branch.
+/// `force` removes it with uncommitted changes too, which the operator must
+/// have accepted.
 ///
 /// Every build cache the checkout owns lives inside it (`target/`,
 /// `web/dist/`), so this one Git command is the whole cleanup.
-pub fn remove_worktree(repository_root: &Path, checkout: &Path) -> Result<String, String> {
-    let answer = git(
-        repository_root,
-        &["worktree", "remove", "--", &checkout.to_string_lossy()],
-    );
+pub fn remove_worktree(
+    repository_root: &Path,
+    checkout: &Path,
+    force: bool,
+) -> Result<String, String> {
+    let checkout_arg = checkout.to_string_lossy();
+    let mut arguments = vec!["worktree", "remove"];
+    if force {
+        arguments.push("--force");
+    }
+    arguments.extend(["--", &checkout_arg]);
+    let answer = git(repository_root, &arguments);
     // What is on disk decides, so an answer cut short (a held pipe) after
     // Git removed the folder still reads as removed, and a failure whose
     // readback also fails keeps Git's own reason.
@@ -1042,9 +1052,19 @@ pub struct ConfirmedRemoval {
     pub expected_head_sha: Option<String>,
     pub expected_branch: Option<String>,
     pub protected_base_branch: Option<String>,
-    /// The branch to delete with `git branch -d` after the folder is gone;
-    /// `None` keeps it.
+    /// The branch to delete after the folder is gone; `None` keeps it.
     pub delete_branch: Option<String>,
+    /// Delete the branch with `git branch -D`: the operator was told it
+    /// holds commits the base does not. Otherwise `-d`, which keeps an
+    /// unmerged branch. Absent from an older sender, which means `-d`.
+    #[serde(default)]
+    pub force_delete_branch: bool,
+    /// The operator accepted losing the folder's changes: dirt, a worktree
+    /// inside it and an ignored repository no longer stop the removal, and
+    /// Git removes with `--force`. Absent from an older sender, which means
+    /// none of that is accepted.
+    #[serde(default)]
+    pub discard_changes: bool,
 }
 
 /// What a confirmed removal did, as the helper answers it: a stopped
@@ -1071,14 +1091,17 @@ impl From<Result<String, String>> for RemovalOutcome {
     }
 }
 
-/// Rechecks the confirmed target against Git's registration and removes it
-/// without force. The recheck is the last line between a confirmation the
-/// operator gave minutes ago and the folder as it is now: a moved HEAD, a
-/// branch that became the protected base, a nested worktree or a new dirty
-/// file each stop the removal and leave the folder where it is.
+/// Rechecks the confirmed target against Git's registration and removes it.
+/// The recheck is the last line between a confirmation the operator gave
+/// minutes ago and the folder as it is now: a moved HEAD or a branch that
+/// became the protected base stops the removal and leaves the folder where it
+/// is. A nested worktree, a dirty file or an ignored repository stops it too,
+/// unless the operator accepted discarding them, in which case Git removes
+/// with `--force`.
 ///
-/// The branch is deleted only with `-d`, so an unmerged branch survives and
-/// the reason is reported; the folder's removal still stands.
+/// The branch is deleted with `-d` unless the operator was told it is
+/// unmerged (`-D`); a `-d` that Git refuses keeps the branch and reports
+/// why, and the folder's removal still stands.
 pub fn remove_confirmed(request: &ConfirmedRemoval) -> Result<String, String> {
     let root = Path::new(&request.repository_root);
     let target = Path::new(&request.checkout_path);
@@ -1111,26 +1134,39 @@ pub fn remove_confirmed(request: &ConfirmedRemoval) -> Result<String, String> {
             "the worktree now holds the protected base branch".into(),
         ));
     }
-    if rows
-        .iter()
-        .any(|row| Path::new(&row.path) != target && Path::new(&row.path).starts_with(target))
+    if !request.discard_changes
+        && rows
+            .iter()
+            .any(|row| Path::new(&row.path) != target && Path::new(&row.path).starts_with(target))
     {
         return Err(stopped(
             "the worktree now contains a nested worktree".into(),
         ));
     }
-    if target
-        .try_exists()
-        .map_err(|error| stopped(error.to_string()))?
+    if !request.discard_changes
+        && target
+            .try_exists()
+            .map_err(|error| stopped(error.to_string()))?
     {
         let status = git(
             target,
             &["status", "--porcelain=v1", "--untracked-files=all"],
         )
         .map_err(|error| stopped(format!("could not recheck the worktree state: {error}")))?;
-        if !status.trim().is_empty() {
-            return Err(stopped(
-                "the worktree became dirty after confirmation".into(),
+        let changed = status
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .count();
+        if changed > 0 {
+            return Err(format!(
+                "Not deleted: {} changed after you confirmed, likely written by an agent as it stopped. \
+                 The worktree and its files are kept; the panes already closed stay closed. \
+                 Delete again and tick Discard to remove it anyway.",
+                if changed == 1 {
+                    "1 file".to_owned()
+                } else {
+                    format!("{changed} files")
+                }
             ));
         }
         // Git leaves ignored folders out of the status above, and removing
@@ -1144,14 +1180,19 @@ pub fn remove_confirmed(request: &ConfirmedRemoval) -> Result<String, String> {
             )));
         }
     }
-    remove_worktree(root, target).map_err(|error| {
+    remove_worktree(root, target, request.discard_changes).map_err(|error| {
         format!("git worktree remove failed: {error}. The worktree remains; panes already closed stay closed.")
     })?;
     let path = target.display();
     let Some(branch) = request.delete_branch.as_deref() else {
         return Ok(format!("Deleted {path}. Its local branch was kept."));
     };
-    match git(root, &["branch", "-d", "--", branch]) {
+    let flag = if request.force_delete_branch {
+        "-D"
+    } else {
+        "-d"
+    };
+    match git(root, &["branch", flag, "--", branch]) {
         Ok(_) => Ok(format!("Deleted {path} and local branch {branch}.")),
         Err(detail) => Ok(format!("Deleted {path}; branch {branch} remains: {detail}")),
     }

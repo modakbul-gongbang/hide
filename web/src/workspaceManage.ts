@@ -227,16 +227,9 @@ export function checkoutMenu(workspace: Workspace, checkout: Checkout, host: Men
     { id: "copy_path", label: "Copy path", unavailable: null },
     ...revealItem(workspace, host, false),
   );
-  if (checkout.is_worktree) {
-    const gate = checkout.worktree?.deletion_gate;
-    items.push({
-      id: "delete_worktree",
-      label: "Delete worktree…",
-      unavailable: onDevice(workspace) ? ON_ANOTHER_DEVICE : !checkout.worktree ? "The worktree row has not been read yet." : (gate?.blocked_reason ?? null),
-      separated: true,
-      destructive: true,
-    });
-  }
+  // Never disabled: what deleting would lose is the dialog's to say, with
+  // the choice beside it, on any device and before Git has been read.
+  if (checkout.is_worktree) items.push({ id: "delete_worktree", label: "Delete worktree…", unavailable: null, separated: true, destructive: true });
   return items;
 }
 
@@ -264,14 +257,19 @@ export function agentMenu(agent: AgentRow, showChord: string): AgentMenuItem[] {
   ];
 }
 
-/** The deletion consequences the confirmation spells out, from the core's row and gate. */
+/** The agents deleting a checkout stops: every pane an agent runs in, by the name and state the sidebar shows. */
+export function stoppedAgents(checkout: Checkout): string[] {
+  return checkout.tabs.flatMap((tab) => tab.panes).flatMap((pane) => (pane.identity_label ? [`${pane.identity_label} (${pane.status_label})`] : []));
+}
+
+/** The deletion consequences the confirmation spells out, from the checkout's panes and the core's gate. */
 export function deletionConsequences(checkout: Checkout, paneCount: number): string[] {
-  const row = checkout.worktree;
   const lines: string[] = [];
   lines.push(`The folder ${checkout.path} is removed from disk. This cannot be undone.`);
   if (paneCount > 0) lines.push(`${paneCount === 1 ? "1 pane in this worktree closes" : `${paneCount} panes in this worktree close`} first, stopping whatever runs there.`);
-  if (row && row.running_agent_count > 0) lines.push(`${row.running_agent_count} running agent${row.running_agent_count === 1 ? "" : "s"} will be stopped.`);
-  for (const warning of row?.deletion_gate.warnings ?? []) lines.push(warning);
+  const agents = stoppedAgents(checkout);
+  if (agents.length > 0) lines.push(`Stops ${agents.length === 1 ? "1 agent" : `${agents.length} agents`}: ${agents.join(", ")}.`);
+  for (const warning of checkout.worktree?.deletion_gate.warnings ?? []) lines.push(warning);
   return lines;
 }
 
