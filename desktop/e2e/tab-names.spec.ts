@@ -13,7 +13,7 @@ test("native tab composition and Korean inline naming", async () => {
   try {
     const title = "한글 작업 이름 · focused session";
     execFileSync(herdr.bin, ["pane", "report-metadata", herdr.panes[0], "--source", "tab-names", "--token", `task=${title}`], { env: herdr.env });
-    const launched = await launch(run.env, { switches: ["--disable-backgrounding-occluded-windows"] });
+    const launched = await launch(run.env);
     app = launched.app;
     const page = launched.page;
     const cdp = await page.context().newCDPSession(page);

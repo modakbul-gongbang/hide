@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { HerdrFixture } from "../../web/e2e/herdr-fixture";
+import { SHOW_INACTIVE_SWITCH } from "../src/main/launchSwitches";
 
 export const DESKTOP_DIR = path.resolve(__dirname, "..");
 export const REPO = path.resolve(DESKTOP_DIR, "..");
@@ -72,15 +73,28 @@ function assertIsolated(env: Record<string, string>): void {
 }
 
 /**
- * `switches` are Chromium command-line switches for this launch only;
- * `appDir` is the app folder to run, the desktop package unless a test copies it.
+ * Every launch runs beside the operator's own work (issue 232): the host shows
+ * its window without activating the app, so a run never takes the screen's
+ * keyboard or the frontmost app, and an occluded window keeps painting, so a
+ * capture by window id is current.
  */
+export const BACKGROUND_SWITCHES = [`--${SHOW_INACTIVE_SWITCH}`, "--disable-backgrounding-occluded-windows"];
+
+/**
+ * The tag of a test that needs the key window or native input (a pinch, a
+ * native drag, a keystroke only the app menu sees). Such a test brings its
+ * window to the front itself, so it takes the keyboard while it runs;
+ * `--grep-invert @needs-focus` leaves it out.
+ */
+export const NEEDS_FOCUS = "@needs-focus";
+
+/** `appDir` is the app folder to run, the desktop package unless a test copies it. */
 export async function launch(
   env: Record<string, string>,
-  { switches = [], appDir = DESKTOP_DIR }: { switches?: string[]; appDir?: string } = {},
+  { appDir = DESKTOP_DIR }: { appDir?: string } = {},
 ): Promise<{ app: ElectronApplication; page: Page }> {
   assertIsolated(env);
-  const app = await electron.launch({ args: [appDir, ...switches], cwd: appDir, env });
+  const app = await electron.launch({ args: [appDir, ...BACKGROUND_SWITCHES], cwd: appDir, env });
   const page = await app.firstWindow();
   return { app, page };
 }
@@ -94,9 +108,9 @@ export async function launch(
  * (checked by reading the window through the main process when Playwright's
  * page did not). The main process sees the window as the operator does.
  */
-export async function relaunch(env: Record<string, string>, { appDir = DESKTOP_DIR, switches = [] }: { appDir?: string; switches?: string[] } = {}): Promise<ElectronApplication> {
+export async function relaunch(env: Record<string, string>, { appDir = DESKTOP_DIR }: { appDir?: string } = {}): Promise<ElectronApplication> {
   assertIsolated(env);
-  const app = await electron.launch({ args: [appDir, ...switches], cwd: appDir, env });
+  const app = await electron.launch({ args: [appDir, ...BACKGROUND_SWITCHES], cwd: appDir, env });
   await expect
     .poll(
       () =>

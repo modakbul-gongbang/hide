@@ -76,5 +76,10 @@ Electron downloads its runtime into `desktop/node_modules/electron/dist/` on the
 
 The app attaches to whatever daemon the environment names: without `HIDE_STATE_DIR` it is the operator's own at `~/.local/state/hide`.
 For QA, set `HIDE_STATE_DIR`, `HOME`, `HERDR_SOCKET_PATH` and `HIDE_DESKTOP_USER_DATA_DIR` to private paths, as `desktop/e2e/fixture.ts` does and refuses to launch without.
+
+The desktop e2e runs beside the operator's own work on the same Mac (issue 232).
+Every launch through `desktop/e2e/fixture.ts` passes `--hide-show-inactive`, so the host shows its window without activating the app and a second launch never focuses it, and `--disable-backgrounding-occluded-windows`, so a window behind the operator's keeps painting and a capture by window id is current.
+A test window may still appear above other windows when it first shows, but it never takes the keyboard or becomes the frontmost app.
+A spec that needs the key window or native input (a pinch, a real keystroke through the app menu, a native drag) carries the `@needs-focus` tag (`NEEDS_FOCUS` in the fixture) and focuses the window itself; `pnpm --dir desktop e2e --grep-invert @needs-focus` runs everything that leaves the operator's keyboard alone, and CI runs the whole suite.
 A packaged app does not need `hide` on `PATH`: it ships its own CLI and Herdr, and only falls back to a login-shell PATH search and the well-known install directories when its own bundled CLI is somehow missing (see `docs/ARCHITECTURE.md`, The desktop host).
 macOS may refuse the unsigned app's first launch until it is opened once with Open from the context menu.

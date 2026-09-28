@@ -9,7 +9,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import "../../web/src/host";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
-import { detachedApp, DESKTOP_DIR, HIDE_CLI, hostLog, isolate, launch, relaunch, screenshot, type Isolated } from "./fixture";
+import { BACKGROUND_SWITCHES, detachedApp, DESKTOP_DIR, HIDE_CLI, hostLog, isolate, launch, relaunch, screenshot, type Isolated } from "./fixture";
 
 let herdr: HerdrFixture;
 let run: Isolated;
@@ -122,14 +122,20 @@ test("lifetime: a second launch focuses the first, closing the window keeps the 
   await shellShown(page);
   const pid = run.daemonPid();
   expect(pid).not.toBeNull();
+  // Issue 232: an e2e launch never makes its app the active one, so no window holds the keyboard.
+  const keyWindow = () => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getFocusedWindow() !== null);
+  expect(hostLog(run.env).find((line) => line.event === "host.start")?.show_inactive).toBe(true);
+  expect(await keyWindow()).toBe(false);
 
-  // B6: a second launch on the same profile exits and the first comes forward.
+  // B6: a second launch on the same profile exits and the first comes forward
+  // (under e2e, shown again without taking the keyboard).
   const electronBinary = fs.readFileSync(path.join(DESKTOP_DIR, "node_modules", "electron", "path.txt"), "utf8");
-  const second = spawn(path.join(DESKTOP_DIR, "node_modules", "electron", "dist", electronBinary), [DESKTOP_DIR], { env: run.env, stdio: "ignore" });
+  const second = spawn(path.join(DESKTOP_DIR, "node_modules", "electron", "dist", electronBinary), [DESKTOP_DIR, ...BACKGROUND_SWITCHES], { env: run.env, stdio: "ignore" });
   const code = await new Promise<number | null>((resolve) => second.once("exit", resolve));
   expect(code).toBe(0);
   await expect.poll(() => hostLog(run.env).some((line) => line.event === "host.reopen" && line.trigger === "second-instance")).toBe(true);
   expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
+  expect(await keyWindow()).toBe(false);
 
   // B7: closing the last window keeps the app; a Dock click (activate) brings a window back.
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());

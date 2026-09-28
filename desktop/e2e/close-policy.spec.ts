@@ -13,7 +13,7 @@ test("Command W closes the keyboard's display or pane, never its tab", async () 
   try {
     fs.writeFileSync(path.join(herdr.root, "fixture", "notes.md"), "# Notes\n\n한글과 English\n");
     fs.writeFileSync(path.join(herdr.root, "fixture", "page.html"), '<!doctype html><meta charset="utf-8"><title>Close page</title><h1>Browser keyboard owner</h1><input aria-label="Page input">');
-    const launched = await launch(run.env, { switches: ["--disable-backgrounding-occluded-windows"] });
+    const launched = await launch(run.env);
     app = launched.app;
     const page = launched.page;
     const identity = await app.evaluate(({ BrowserWindow }) => {

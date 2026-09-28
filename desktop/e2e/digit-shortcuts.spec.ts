@@ -92,7 +92,7 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
   ]) as { result: { tab: { tab_id: string } } };
   tabs.push(made.result.tab.tab_id);
   try {
-    ({ app } = await launch(run.env, { switches: ["--disable-backgrounding-occluded-windows"] }));
+    ({ app } = await launch(run.env));
     const page = await app.firstWindow();
     const cdp = await page.context().newCDPSession(page);
     await cdp.send("Emulation.setFocusEmulationEnabled", { enabled: true });
