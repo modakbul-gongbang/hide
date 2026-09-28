@@ -50,9 +50,10 @@ mod worktree_control;
 pub use worktree_control::{
     CheckoutTabRequest, IssueWriteFailure, PurposeMirror, PurposeTaskOutcome, PurposeTaskRequest,
     TaskAgentOutcome, WorktreeTarget, WorktreeTaskOutcome, WorktreeTaskRequest,
-    spawn_branch_migration, spawn_checkout_tab_create, spawn_issue_write, spawn_local_issue_write,
-    spawn_purpose_write, spawn_remote_purpose_write, spawn_task_agent_start, spawn_workspace_close,
-    spawn_worktree_close, spawn_worktree_create, spawn_worktree_open,
+    spawn_branch_migration, spawn_checkout_tab_create, spawn_existing_branch_worktree,
+    spawn_issue_write, spawn_local_issue_write, spawn_purpose_write, spawn_remote_purpose_write,
+    spawn_task_agent_start, spawn_workspace_close, spawn_worktree_close, spawn_worktree_create,
+    spawn_worktree_open,
 };
 
 /// Everything a terminal session spawn needs from the live configuration.
@@ -1741,8 +1742,9 @@ fn start_or_degrade_agent(
 /// Herdr can reuse the just-closed pane id while its old PTY is still alive.
 /// A layout-only restore then surfaces that old process in the new tab before
 /// `agent.start` can apply the explicit resume arguments. Closing the process
-/// here returns the restored pane to its shell prompt; `agent.start` waits for
-/// that prompt and remains the single owner of session resumption.
+/// here returns the restored pane to its shell prompt; the start waits for
+/// that prompt (`agent_start`) and `agent.start` remains the single owner of
+/// session resumption.
 fn interrupt_reused_agent(
     connector: &dyn ApiConnector,
     key: &str,
@@ -1791,12 +1793,17 @@ fn start_agent(
     kind: &str,
     args: Vec<String>,
 ) -> Result<String, String> {
-    reopen_request(
+    crate::agent_start::start_at_shell(
         connector,
         request_id,
-        "agent.start",
+        pane_id,
         wire::agent_start_params(pane_id, name, kind, args)?,
+        Duration::from_secs(5),
     )
+    .map_err(|error| match error {
+        crate::agent_start::StartError::NotStarted(message) => message,
+        crate::agent_start::StartError::Herdr(error) => format!("agent.start failed: {error}"),
+    })
     .and_then(wire::started_agent)
 }
 
@@ -3657,6 +3664,10 @@ mod tests {
                 "workspace_id": "w1", "tab_id": "w1:t1", "focused": true,
                 "agent_status": "idle", "revision": 1
             }}),
+            "pane.process_info" => json!({"type": "pane_process_info", "process_info": {
+                "pane_id": "child-pane", "shell_pid": 42, "foreground_process_group_id": 42,
+                "foreground_processes": [{"pid": 42, "name": "zsh"}]
+            }}),
             "agent.start" => json!({"type": "agent_started", "argv": [], "agent": {
                 "pane_id": "child-pane", "terminal_id": "child-terminal",
                 "workspace_id": "w1", "tab_id": "w1:t1", "focused": true,
@@ -3688,7 +3699,10 @@ mod tests {
         .expect("lineage failure does not turn a working fork into a failure");
 
         assert_eq!(pane_id, "child-pane");
-        assert_eq!(herdr.methods(), ["pane.split", "agent.start"]);
+        assert_eq!(
+            herdr.methods(),
+            ["pane.split", "pane.process_info", "agent.start"]
+        );
         assert!(
             started.elapsed() < Duration::from_secs(5),
             "the fork worker must settle promptly"

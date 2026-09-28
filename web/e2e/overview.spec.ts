@@ -22,7 +22,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { agentsIn, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 
@@ -166,6 +166,9 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
   try {
+    // Panes created from here on find the fixture's `claude` first, so the
+    // agent an issue starts is the shim, never a real one.
+    fs.writeFileSync(path.join(herdr.root, "home", ".zshenv"), `export PATH="${path.join(herdr.root, "bin")}:$PATH"\n`);
     // A repository with an origin, as a real one has: the core measures each
     // branch against origin's default. Two worktrees carry commits of their
     // own (one also uncommitted work), one was merged into main.
@@ -272,7 +275,8 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     // them the operator's turn, the bar by bucket; Issues two open, the bar
     // by stage; Sessions today's count once the history is read (B1-B5).
     const tile = (id: string) => overview.locator(`[data-lens-tile="${id}"]`);
-    await expect(overview.locator("[data-lens-tile]")).toHaveCount(3);
+    await expect(overview.locator("[data-lens-tile]")).toHaveCount(4);
+    expect(await overview.locator("[data-lens-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-lens-tile")))).toEqual(["agents", "issues", "prs", "sessions"]);
     await expect(overview.locator("[data-overview-tab], [data-inbox-group], [data-waiting-band]")).toHaveCount(0);
     await expect(tile("agents")).toHaveAttribute("data-selected", "true");
     await expect(tile("agents").locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "4", { timeout: 20_000 });
@@ -595,22 +599,23 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
 
     // A line of work with no issue (B4): the worktree line's popover says
     // where it goes and names them, its click is Agents › 체크아웃; the pull
-    // request line unfolds in place, a line of it opening GitHub.
+    // request line's is the PRs tab, where each has an issue cell to link
+    // (overview-lenses-prs B21).
     const looseWorktrees = column("working").locator("[data-loose-worktrees]");
     await looseWorktrees.hover();
     await expect(page.getByRole("tooltip")).toContainText("Agents › 체크아웃에서 보기");
     await expect(page.getByRole("tooltip")).toContainText("prd/asking");
-    await column("review").locator("[data-loose-prs]").click();
-    const loosePr = column("review").locator('[data-loose-pr="12"]');
-    await expect(loosePr).toContainText("이슈 없는 정리");
-    await page.context().route("https://github.com/**", (route) => route.fulfill({ body: "" }));
-    const popup = page.waitForEvent("popup");
-    await loosePr.click();
-    expect((await popup).url()).toBe("https://github.com/acme/repo/pull/12");
-    await (await popup).close();
     await looseWorktrees.click();
     await expect(overview).toHaveAttribute("data-overview-view", "agents");
     await expect(overview).toHaveAttribute("data-agents-mode", "checkouts");
+    await tile("issues").locator("[data-lens-tile-button]").click();
+    const loosePrs = column("review").locator("[data-loose-prs]");
+    await loosePrs.hover();
+    await expect(page.getByRole("tooltip")).toContainText("PRs 탭에서 보기");
+    await expect(page.getByRole("tooltip")).toContainText("#12");
+    await loosePrs.click();
+    await expect(overview).toHaveAttribute("data-overview-view", "prs");
+    await expect(overview.locator('[data-pr="12"] [data-pr-issue="none"]')).toBeVisible();
     await tile("issues").locator("[data-lens-tile-button]").click();
 
     // The filter at the facts line's right end, beside the mode control
@@ -800,15 +805,21 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await expect(start).toBeVisible();
     await expect(start.locator("[data-start-name]")).toHaveValue(/^3-/);
     await start.locator("[data-start-name]").fill("3-graph-view");
-    await start.locator('[data-start-agent="terminal"]').click();
+    await start.locator('[data-start-agent="claude"]').click();
     await start.locator('[data-start-submit="start"]').click();
     await expect(start).toHaveCount(0, { timeout: 30_000 });
     await expect(workspace).toBeVisible({ timeout: 30_000 });
     await expect(page.locator(`[data-checkout][aria-label^="3-graph-view"]`)).toHaveAttribute("aria-current", "true");
+    // The agent really runs in the new worktree's pane: Herdr lists it
+    // there, and the start never turned into a failure banner.
+    const started = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: repo, encoding: "utf8" }).split("\n\n").find((entry) => entry.includes("branch refs/heads/3-graph-view"))?.match(/^worktree (.+)$/m)?.[1];
+    expect(started).toBeTruthy();
+    await expect.poll(() => agentsIn(herdr, started as string), { timeout: 60_000 }).toContain("claude");
+    await expect(page.locator('[data-task-agent="failed"]')).toHaveCount(0);
     await page.keyboard.press("Meta+Shift+KeyH");
     await expect(overview).toHaveAttribute("data-overview-view", "agents");
     await expect(lane("3-graph-view")).toHaveAttribute("data-selected", "true");
-    await expect(emptyFold).toHaveAttribute("aria-expanded", "true");
+    await expect(lane("3-graph-view").locator("[data-lens-node]")).toHaveCount(1);
     await tile("issues").locator("[data-lens-tile-button]").click();
     await expect(column("backlog").locator("[data-overview-card]")).toHaveCount(0, { timeout: 30_000 });
     await expect(column("working").locator('[data-overview-card][data-task-key="github:acme/repo#3"]')).toContainText("3-graph-view", { timeout: 30_000 });

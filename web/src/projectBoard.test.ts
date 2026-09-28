@@ -4,7 +4,7 @@
 // agents per card, and both scopes.
 
 import { describe, expect, it } from "vitest";
-import { allProjectsStats, buildDependencies, buildTasks, filterActive, filterBoard, formatBytes, NO_FILTER, projectStats, shownAgents, stageCards, stageOf, type BoardProject } from "./projectBoard";
+import { allProjectsStats, buildDependencies, buildPullRequests, buildTasks, filterActive, filterBoard, formatBytes, NO_FILTER, projectStats, shownAgents, stageCards, stageOf, type BoardProject } from "./projectBoard";
 import type { AgentRow, Checkout, PullRequest, Task, Workspace } from "./snapshot";
 
 const NOW = 1_800_000_000_000;
@@ -116,7 +116,7 @@ describe("the Issues board", () => {
     );
     expect(board.cards).toEqual([]);
     expect(board.loose.worktrees.map((value) => value.branch)).toEqual(["loose"]);
-    expect(board.loose.pullRequests.map((value) => [value.number, value.title, value.tone])).toEqual([[7, "PR", "open"]]);
+    expect(board.loose.pullRequests.map((value) => value.number)).toEqual([7]);
   });
 
   it("puts an issue in review when its open pull request reaches it by the branch's link or by a closing reference, and shows that pull request on each (B3)", () => {
@@ -368,5 +368,102 @@ describe("the facts line", () => {
     expect(formatBytes(512)).toBe("512 B");
     expect(formatBytes(812 * 1024 * 1024)).toBe("812 MB");
     expect(formatBytes(1_503_238_553)).toBe("1.4 GB");
+  });
+});
+
+describe("the PRs tab", () => {
+  const answered = { failure_category: null, available: true, loading: false, stale: false, last_success_at_unix_ms: NOW - 2 * 60_000, unavailable_reason: null };
+  function listed(number: number, branch: string, extra: Partial<PullRequest> = {}): PullRequest {
+    return { number, title: `PR ${number}`, url: `https://github.com/acme/project/pull/${number}`, badge: "open", review: "review_required", is_draft: false, checks: "passing", head_branch: branch, updated_at_unix_ms: NOW - number * 1000, ...extra };
+  }
+  function repo(checkouts: Checkout[], pullRequests: PullRequest[], options: { tasks?: Task[]; github?: Checkout["github"] } = {}): Workspace {
+    const main = { ...checkout("main", { worktree: false }), github: options.github ?? answered };
+    return { ...workspace([main, ...checkouts], { tasks: options.tasks ?? [] }), pull_requests: pullRequests };
+  }
+  const groups = (board: ReturnType<typeof buildPullRequests>) => board.groups.map((entry) => [entry.group, entry.rows.map((row) => row.number)]);
+
+  it("groups by whose move it is: merged, then an agent working on the branch, then failed checks or a change request, and the operator's turn for the rest (D-32, B2)", () => {
+    const project = repo(
+      [checkout("fixing", { panes: ["w"] }), checkout("waiting", { panes: ["parent"] }), checkout("finished", { panes: ["d"] })],
+      [
+        listed(1, "gone", { badge: "merged", merged_at_unix_ms: NOW - 60_000 }),
+        listed(2, "fixing", { checks: "failed" }),
+        listed(3, "waiting", { checks: "failed" }),
+        listed(4, "blocked", { review: "changes_requested" }),
+        listed(5, "red", { checks: "failed" }),
+        listed(6, "asks"),
+        listed(7, "finished", { review: "approved" }),
+        listed(8, "draft", { is_draft: true }),
+      ],
+    );
+    const agents = [agent("w", "working"), agent("parent", "seen", { activity: "idle", waiting_on_descendants: true }), agent("d", "done")];
+    const board = buildPullRequests({ workspace: project, agents, device: null }, NOW);
+    expect(groups(board)).toEqual([
+      ["turn", [6, 7, 8]],
+      ["fixing", [2, 3]],
+      ["blocked", [4, 5]],
+      ["merged", [1]],
+    ]);
+    expect(board.open).toBe(7);
+    const rows = board.groups.flatMap((entry) => entry.rows);
+    const row = (number: number) => rows.find((value) => value.number === number)!;
+    expect(row(4)).toMatchObject({ delegate: true, review: "changes_requested" });
+    expect(row(2)).toMatchObject({ delegate: false, agents: [expect.objectContaining({ pane_id: "w" })] });
+    expect(row(7)).toMatchObject({ needsLook: true, group: "turn" });
+    expect(row(8)).toMatchObject({ tone: "draft", needsLook: false });
+    expect(row(1).review).toBeNull();
+  });
+
+  it("draws no header for an empty group", () => {
+    const board = buildPullRequests({ workspace: repo([], [listed(6, "asks")]), agents: [], device: null }, NOW);
+    expect(groups(board)).toEqual([["turn", [6]]]);
+  });
+
+  it("lists recent merges newest first and offers 정리 for the worktree still here, or for its record once its folder is gone (B19, B20)", () => {
+    const gone = { ...checkout("old"), exists: false };
+    const project = repo(
+      [checkout("kept"), gone],
+      [
+        listed(10, "kept", { badge: "merged", merged_at_unix_ms: NOW - 3 * 86_400_000 }),
+        listed(11, "old", { badge: "merged", merged_at_unix_ms: NOW - 86_400_000 }),
+        listed(12, "nowhere", { badge: "merged", merged_at_unix_ms: NOW - 2 * 86_400_000 }),
+      ],
+    );
+    const merged = buildPullRequests({ workspace: project, agents: [], device: null }, NOW).groups[0]!;
+    expect(merged.rows.map((row) => [row.number, row.cleanup])).toEqual([
+      [11, "record"],
+      [12, null],
+      [10, "worktree"],
+    ]);
+  });
+
+  it("fills the issue cell from the branch's link, else the issue the body closes, and offers 이슈 잇기 only on an open one without (B3, B7, D-34)", () => {
+    const project = repo(
+      [checkout("linked", { task: task(21).key })],
+      [listed(1, "linked"), listed(2, "closing", { closing_issues: [{ repository: "acme/project", number: 22 }] }), listed(3, "elsewhere", { closing_issues: [{ repository: "acme/other", number: 5 }] }), listed(4, "bare"), listed(5, "done", { badge: "merged" })],
+      { tasks: [task(21), task(22)] },
+    );
+    const rows = buildPullRequests({ workspace: project, agents: [], device: null }, NOW).groups.flatMap((entry) => entry.rows);
+    const row = (number: number) => rows.find((value) => value.number === number)!;
+    expect(row(1).issue).toMatchObject({ key: "github:acme/project#21", label: "#21" });
+    expect(row(2).issue).toMatchObject({ key: "github:acme/project#22", label: "#22" });
+    expect(row(3).issue).toMatchObject({ label: "acme/other#5", task: null, url: "https://github.com/acme/other/issues/5" });
+    expect(rows.filter((value) => value.linkable).map((value) => value.number)).toEqual([4]);
+  });
+
+  it("links a Local source's issue only where the branch has a worktree, since the link lives in it (D-34)", () => {
+    const base = repo([checkout("here")], [listed(1, "here"), listed(2, "remote-only")]);
+    const local = { ...base, tasks: { ...base.tasks!, source: { ...base.tasks!.source!, kind: "local" as const } } };
+    const rows = buildPullRequests({ workspace: local, agents: [], device: null }, NOW).groups.flatMap((entry) => entry.rows);
+    expect(rows.filter((value) => value.linkable).map((value) => value.number)).toEqual([1]);
+  });
+
+  it("reads until GitHub answers, keeps the last pull requests with the value's age when a read fails, and counts none for a repository with no GitHub remote (B22)", () => {
+    const reading = buildPullRequests({ workspace: repo([], [], { github: { ...answered, last_success_at_unix_ms: null, loading: true } }), agents: [], device: null }, NOW);
+    expect(reading).toMatchObject({ open: null, reading: true, failure: null });
+    const failed = buildPullRequests({ workspace: repo([], [listed(6, "asks")], { github: { ...answered, stale: true, last_success_at_unix_ms: NOW - 3 * 60_000 } }), agents: [], device: null }, NOW);
+    expect(failed).toMatchObject({ open: 1, reading: false, failure: "GitHub 읽기 실패 · 3분 전 값 · 이유는 로그에" });
+    const none = buildPullRequests({ workspace: repo([], [], { github: { ...answered, last_success_at_unix_ms: null, available: false, failure_category: "no GitHub remote", unavailable_reason: "no remote" } }), agents: [], device: null }, NOW);
+    expect(none).toMatchObject({ open: 0, reading: false, failure: null });
   });
 });

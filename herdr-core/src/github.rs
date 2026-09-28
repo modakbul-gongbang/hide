@@ -546,9 +546,10 @@ pub(crate) fn read_linked_issue(
         .ok_or_else(|| "GitHub issue was not found".to_owned())
 }
 
-/// Creates an issue in the repository `root` belongs to, the one write Hide
-/// makes to GitHub (Overview › 새 이슈). `gh issue create` prints the new
-/// issue's URL, which names it.
+/// Creates an issue in the repository `root` belongs to (Overview › 새 이슈,
+/// and a pull request's 새 이슈 만들기), one of Hide's two writes to GitHub
+/// with `write_closing_line`. `gh issue create` prints the new issue's URL,
+/// which names it.
 pub(crate) fn create_issue(
     root: &Path,
     title: &str,
@@ -680,6 +681,170 @@ fn parse_issue_detail(output: &str) -> Result<crate::tasks::TaskDetail, String> 
             })
             .collect(),
     })
+}
+
+/// The fields `pr_feedback` asks `gh pr view` for, and the only ones
+/// `run_gh` lets it ask for.
+const PR_FEEDBACK_FIELDS: &str = "body,statusCheckRollup,reviews";
+
+/// What a pull request says for the work handed on from it (PRD
+/// overview-lenses-prs): its body, which a new issue made from it starts
+/// with (B12), and its failed checks and the reviews still asking for
+/// changes, which an agent it is handed to starts from (D-46).
+#[derive(Debug)]
+pub(crate) struct PrFeedback {
+    pub(crate) body: String,
+    pub(crate) failed_checks: Vec<crate::model::PrFailedCheck>,
+    pub(crate) change_requests: Vec<crate::model::PrChangeRequest>,
+}
+
+/// `PrFeedback`, in one `gh pr view` on the caller's worker.
+pub(crate) fn pr_feedback(root: &Path, number: u32) -> Result<PrFeedback, String> {
+    let number = number.to_string();
+    let output = gh(
+        Some(root),
+        &["pr", "view", &number, "--json", PR_FEEDBACK_FIELDS],
+    )
+    .map_err(|error| error.reason)?;
+    parse_pr_feedback(&output)
+}
+
+fn parse_pr_feedback(output: &str) -> Result<PrFeedback, String> {
+    #[derive(serde::Deserialize)]
+    struct Person {
+        login: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Review {
+        #[serde(default)]
+        author: Option<Person>,
+        #[serde(default)]
+        state: String,
+        #[serde(default)]
+        body: String,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Viewed {
+        // All three are what was asked for: an answer without them is no
+        // answer, never a pull request with nothing failing.
+        body: String,
+        status_check_rollup: Vec<GhCheck>,
+        reviews: Vec<Review>,
+    }
+    let viewed = serde_json::from_str::<Viewed>(output)
+        .map_err(|error| format!("gh pr view returned output Hide could not read: {error}"))?;
+    let failed = viewed
+        .status_check_rollup
+        .iter()
+        .filter_map(GhCheck::failure)
+        .collect();
+    // A reviewer's change request stands until that reviewer's next review
+    // approves or dismisses it; a comment-only review leaves it standing, as
+    // GitHub's own review decision reads it. Reviews come oldest first.
+    let mut standing: Vec<(Option<String>, Review)> = Vec::new();
+    for review in viewed.reviews {
+        let author = review.author.as_ref().map(|person| person.login.clone());
+        match review.state.as_str() {
+            "CHANGES_REQUESTED" => {
+                standing.retain(|(known, _)| *known != author);
+                standing.push((author, review));
+            }
+            "APPROVED" | "DISMISSED" => standing.retain(|(known, _)| *known != author),
+            _ => {}
+        }
+    }
+    let requests = standing
+        .into_iter()
+        .map(|(author, review)| crate::model::PrChangeRequest {
+            author,
+            body: review.body.trim().to_owned(),
+        })
+        .collect();
+    Ok(PrFeedback {
+        body: viewed.body,
+        failed_checks: failed,
+        change_requests: requests,
+    })
+}
+
+/// Writes `Closes #issue` at the end of pull request `number`'s body so
+/// GitHub closes the issue when it merges (PRD overview-lenses-prs D-13,
+/// D-47): the body is read first, and a body that already closes the issue
+/// is left as it is, so a retry never adds a second line. This is Hide's one
+/// write to a pull request.
+pub(crate) fn write_closing_line(root: &Path, number: u32, issue: u32) -> Result<bool, String> {
+    write_closing_line_with(|arguments| gh(Some(root), arguments), number, issue)
+}
+
+/// `write_closing_line` through `gh`, which a test answers with a fixture.
+fn write_closing_line_with(
+    gh: impl Fn(&[&str]) -> Result<String, GhFailure>,
+    number: u32,
+    issue: u32,
+) -> Result<bool, String> {
+    let number = number.to_string();
+    let output = gh(&["pr", "view", &number, "--json", "body"]).map_err(|error| error.reason)?;
+    #[derive(serde::Deserialize)]
+    struct Viewed {
+        #[serde(default)]
+        body: String,
+    }
+    let body = serde_json::from_str::<Viewed>(&output)
+        .map_err(|error| format!("gh pr view returned output Hide could not read: {error}"))?
+        .body;
+    if closes_issue(&body, issue) {
+        return Ok(false);
+    }
+    let next = with_closing_line(&body, issue);
+    gh(&["pr", "edit", &number, "--body", &next]).map_err(|error| error.reason)?;
+    Ok(true)
+}
+
+/// The keywords GitHub reads as closing an issue from a pull request's body.
+const CLOSING_KEYWORDS: [&str; 9] = [
+    "close", "closes", "closed", "fix", "fixes", "fixed", "resolve", "resolves", "resolved",
+];
+
+/// Whether `body` already closes issue `issue` of the pull request's own
+/// repository: a closing keyword followed by `#N`, `owner/repo#N` or the
+/// issue's URL. GitHub's own rule is prose, so this reads it word by word at
+/// this one boundary.
+pub(crate) fn closes_issue(body: &str, issue: u32) -> bool {
+    let words: Vec<&str> = body.split_whitespace().collect();
+    words.windows(2).any(|pair| {
+        let keyword = pair[0].trim_end_matches(':').to_ascii_lowercase();
+        CLOSING_KEYWORDS.contains(&keyword.as_str()) && referenced_issue(pair[1]) == Some(issue)
+    })
+}
+
+/// The issue number a word names: `#12`, `owner/repo#12` or
+/// `https://github.com/owner/repo/issues/12`, trailing punctuation aside.
+fn referenced_issue(word: &str) -> Option<u32> {
+    let word = word.trim_end_matches(['.', ',', ';', ':', ')', '!', '?']);
+    let number = if let Some(rest) = word.strip_prefix("https://github.com/") {
+        rest.split_once("/issues/")?.1
+    } else {
+        let (repository, number) = word.rsplit_once('#')?;
+        if !(repository.is_empty() || repository.split('/').count() == 2) {
+            return None;
+        }
+        number
+    };
+    if !is_number(number) {
+        return None;
+    }
+    number.parse().ok()
+}
+
+/// `body` with `Closes #issue` on its own line after a blank line.
+fn with_closing_line(body: &str, issue: u32) -> String {
+    let body = body.trim_end();
+    if body.is_empty() {
+        format!("Closes #{issue}")
+    } else {
+        format!("{body}\n\nCloses #{issue}")
+    }
 }
 
 fn read_linked_issues(
@@ -858,12 +1023,64 @@ enum GhCheck {
     CheckRun {
         status: String,
         conclusion: Option<String>,
+        #[serde(default)]
+        name: Option<String>,
+        #[serde(default, rename = "detailsUrl")]
+        details_url: Option<String>,
     },
     StatusContext {
         state: String,
+        #[serde(default)]
+        context: Option<String>,
+        #[serde(default, rename = "targetUrl")]
+        target_url: Option<String>,
     },
     #[serde(other)]
     Unknown,
+}
+
+/// A finished check run that did not pass.
+const FAILED_CONCLUSIONS: [&str; 6] = [
+    "FAILURE",
+    "TIMED_OUT",
+    "CANCELLED",
+    "ACTION_REQUIRED",
+    "STARTUP_FAILURE",
+    "STALE",
+];
+
+/// A commit status that did not pass.
+const FAILED_STATES: [&str; 2] = ["FAILURE", "ERROR"];
+
+impl GhCheck {
+    /// The check by the name GitHub shows and the page that says why, when
+    /// it failed; `None` for any other check.
+    fn failure(&self) -> Option<crate::model::PrFailedCheck> {
+        let (name, url) = match self {
+            GhCheck::CheckRun {
+                status,
+                conclusion,
+                name,
+                details_url,
+            } if status == "COMPLETED"
+                && conclusion
+                    .as_deref()
+                    .is_some_and(|value| FAILED_CONCLUSIONS.contains(&value)) =>
+            {
+                (name, details_url)
+            }
+            GhCheck::StatusContext {
+                state,
+                context,
+                target_url,
+            } if FAILED_STATES.contains(&state.as_str()) => (context, target_url),
+            _ => return None,
+        };
+        Some(crate::model::PrFailedCheck {
+            name: name.clone().unwrap_or_else(|| "이름 없는 검사".to_owned()),
+            url: url.clone().filter(|url| url.starts_with("https://")),
+        })
+    }
 }
 
 fn rollup_checks(checks: Option<&[GhCheck]>) -> PullRequestChecks {
@@ -877,16 +1094,15 @@ fn rollup_checks(checks: Option<&[GhCheck]>) -> PullRequestChecks {
     let mut unknown = false;
     for check in checks {
         match check {
-            GhCheck::CheckRun { status, conclusion } if status == "COMPLETED" => {
-                match conclusion.as_deref() {
-                    Some("SUCCESS" | "NEUTRAL" | "SKIPPED") => {}
-                    Some(
-                        "FAILURE" | "TIMED_OUT" | "CANCELLED" | "ACTION_REQUIRED"
-                        | "STARTUP_FAILURE" | "STALE",
-                    ) => return PullRequestChecks::Failed,
-                    _ => unknown = true,
+            GhCheck::CheckRun {
+                status, conclusion, ..
+            } if status == "COMPLETED" => match conclusion.as_deref() {
+                Some("SUCCESS" | "NEUTRAL" | "SKIPPED") => {}
+                Some(value) if FAILED_CONCLUSIONS.contains(&value) => {
+                    return PullRequestChecks::Failed;
                 }
-            }
+                _ => unknown = true,
+            },
             GhCheck::CheckRun { status, .. }
                 if matches!(
                     status.as_str(),
@@ -895,9 +1111,9 @@ fn rollup_checks(checks: Option<&[GhCheck]>) -> PullRequestChecks {
             {
                 pending = true
             }
-            GhCheck::StatusContext { state } => match state.as_str() {
+            GhCheck::StatusContext { state, .. } => match state.as_str() {
                 "SUCCESS" => {}
-                "FAILURE" | "ERROR" => return PullRequestChecks::Failed,
+                value if FAILED_STATES.contains(&value) => return PullRequestChecks::Failed,
                 "PENDING" | "EXPECTED" => pending = true,
                 _ => unknown = true,
             },
@@ -1107,6 +1323,11 @@ fn gh(cwd: Option<&Path>, arguments: &[&str]) -> Result<String, GhFailure> {
     run_gh(Path::new("gh"), cwd, arguments, COMMAND_TIMEOUT)
 }
 
+/// A pull request or issue number as `gh` takes it.
+fn is_number(argument: &str) -> bool {
+    !argument.is_empty() && argument.bytes().all(|byte| byte.is_ascii_digit())
+}
+
 fn run_gh(
     binary: &Path,
     cwd: Option<&Path>,
@@ -1117,10 +1338,20 @@ fn run_gh(
         || arguments.starts_with(&["pr", "list"])
         || arguments.starts_with(&["issue", "list"])
         || arguments == ["repo", "view", "--json", "nameWithOwner"]
-        // The one write: a new issue with a title and a body, nothing else.
+        // The two writes (docs/ARCHITECTURE.md): a new issue with a title and
+        // a body, and a pull request's body, nothing else of either.
         || (arguments.len() == 6
             && arguments[..3] == ["issue", "create", "--title"]
             && arguments[4] == "--body")
+        || (arguments.len() == 5
+            && arguments[..2] == ["pr", "edit"]
+            && is_number(arguments[2])
+            && arguments[3] == "--body")
+        || (arguments.len() == 5
+            && arguments[..2] == ["pr", "view"]
+            && is_number(arguments[2])
+            && arguments[3] == "--json"
+            && (arguments[4] == "body" || arguments[4] == PR_FEEDBACK_FIELDS))
         || (arguments.len() == 7
             && arguments[..2] == ["issue", "view"]
             && arguments[3] == "--repo"
@@ -1336,6 +1567,129 @@ esac"#,
         assert!(viewed(ISSUE_DETAIL_FIELDS).is_ok());
         assert!(viewed("body,title").is_err());
         assert!(!fixture.root.join("forbidden").exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_closing_line_is_written_once_however_often_it_is_asked_for() {
+        // `gh` over a body kept in a file: `pr view` prints it, `pr edit` replaces it.
+        let fixture = GhFixture::new(
+            r#"
+body="$(dirname "$0")/body"
+case "$1 $2 $4" in
+  "pr view --json") python3 -c 'import json,sys; print(json.dumps({"body": open(sys.argv[1]).read()}))' "$body";;
+  "pr edit --body") printf '%s' "$5" > "$body"; echo "https://github.com/acme/app/pull/$3";;
+  *) exit 91;;
+esac"#,
+        );
+        let body = fixture.root.join("body");
+        std::fs::write(&body, "Moves the reader off the lock.\n").unwrap();
+        let gh = |arguments: &[&str]| {
+            run_gh(
+                &fixture.binary,
+                Some(&fixture.root),
+                arguments,
+                Duration::from_secs(5),
+            )
+        };
+        assert_eq!(write_closing_line_with(gh, 12, 7), Ok(true));
+        assert_eq!(
+            std::fs::read_to_string(&body).unwrap(),
+            "Moves the reader off the lock.\n\nCloses #7"
+        );
+        // The retry finds the line and writes nothing (D-47, B14).
+        assert_eq!(write_closing_line_with(gh, 12, 7), Ok(false));
+        assert_eq!(
+            std::fs::read_to_string(&body).unwrap(),
+            "Moves the reader off the lock.\n\nCloses #7"
+        );
+    }
+
+    #[test]
+    fn a_body_closes_an_issue_only_by_a_closing_keyword_and_its_number() {
+        assert!(closes_issue("Fixes #7.", 7));
+        assert!(closes_issue("resolves: acme/app#7", 7));
+        assert!(closes_issue(
+            "closed https://github.com/acme/app/issues/7",
+            7
+        ));
+        assert!(!closes_issue("Closes #70", 7));
+        assert!(!closes_issue("See #7", 7));
+        assert!(!closes_issue("Closes a/b/c#7", 7));
+        assert_eq!(with_closing_line("  \n", 3), "Closes #3");
+    }
+
+    #[test]
+    fn feedback_names_the_failed_checks_and_the_change_requests_still_standing() {
+        let output = r#"{
+            "body": "Reads the remote primary.",
+            "statusCheckRollup": [
+                {"__typename":"CheckRun","name":"verify","status":"COMPLETED","conclusion":"FAILURE","detailsUrl":"https://github.com/acme/app/actions/runs/1"},
+                {"__typename":"CheckRun","name":"lint","status":"COMPLETED","conclusion":"SUCCESS"},
+                {"__typename":"StatusContext","context":"ci/legacy","state":"ERROR","targetUrl":"javascript:alert(1)"}
+            ],
+            "reviews": [
+                {"author":{"login":"ana"},"state":"CHANGES_REQUESTED","body":"old ask"},
+                {"author":{"login":"ana"},"state":"COMMENTED","body":"note"},
+                {"author":{"login":"ana"},"state":"CHANGES_REQUESTED","body":" Split the reader. "},
+                {"author":{"login":"bo"},"state":"CHANGES_REQUESTED","body":"rename"},
+                {"author":{"login":"bo"},"state":"APPROVED","body":""}
+            ]
+        }"#;
+        let feedback = parse_pr_feedback(output).unwrap();
+        assert_eq!(feedback.body, "Reads the remote primary.");
+        assert_eq!(
+            feedback.failed_checks,
+            vec![
+                crate::model::PrFailedCheck {
+                    name: "verify".into(),
+                    url: Some("https://github.com/acme/app/actions/runs/1".into()),
+                },
+                crate::model::PrFailedCheck {
+                    name: "ci/legacy".into(),
+                    url: None,
+                },
+            ]
+        );
+        assert_eq!(
+            feedback.change_requests,
+            vec![crate::model::PrChangeRequest {
+                author: Some("ana".into()),
+                body: "Split the reader.".into(),
+            }]
+        );
+        assert!(parse_pr_feedback("{}").is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_pull_request_takes_only_its_body_write_and_its_two_reads() {
+        let fixture = GhFixture::new(r#"printf 'ok'"#);
+        let allowed = |arguments: &[&str]| {
+            run_gh(
+                &fixture.binary,
+                Some(&fixture.root),
+                arguments,
+                Duration::from_secs(5),
+            )
+            .is_ok()
+        };
+        assert!(allowed(&["pr", "view", "12", "--json", "body"]));
+        assert!(allowed(&["pr", "view", "12", "--json", PR_FEEDBACK_FIELDS]));
+        assert!(allowed(&["pr", "edit", "12", "--body", "Closes #7"]));
+        for refused in [
+            &["pr", "edit", "12", "--title", "x"][..],
+            &["pr", "edit", "12", "--add-label", "x"],
+            &["pr", "edit", "x12", "--body", "y"],
+            &["pr", "edit", "12", "--body", "y", "--title", "z"],
+            &["pr", "view", "12", "--json", "body,title"],
+            &["pr", "merge", "12"],
+            &["pr", "comment", "12", "--body", "y"],
+            &["pr", "review", "12", "--approve"],
+            &["pr", "close", "12"],
+        ] {
+            assert!(!allowed(refused), "{refused:?} must be refused");
+        }
     }
 
     #[test]

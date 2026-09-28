@@ -228,8 +228,9 @@ describe("Recent Panels over the every-project Overview and each Project's Overv
     const rest = session("c-main", "t1");
     show(rest, overview("w-notes"));
     // The lens changed on the Overview is the visit Recent Panels brings back (PRD overview-lenses-tiles-agents B11),
-    // the issue panel and the filter with it (PRD overview-lenses-issues D-08).
-    const left: OverviewLens = { tab: "issues", agentsMode: "lineage", tasksMode: "list", lane: "c-notes", folds: ["cleanup"], focusTask: null, panel: "local:/notes#3", filter: { query: "sigterm", turn: true } };
+    // the issue panel and the filter with it (PRD overview-lenses-issues D-08), and the PRs tab's unfolded rows
+    // (PRD overview-lenses-prs B23: ^Tab brings the PRs tab back as it was left).
+    const left: OverviewLens = { tab: "prs", agentsMode: "lineage", tasksMode: "list", lane: "c-notes", folds: ["cleanup"], focusTask: null, panel: "local:/notes#3", filter: { query: "sigterm", turn: true }, prs: { open: [218], focus: 218, merged: true } };
     show(rest, overview("w-notes", left));
     show(rest, { kind: "workspace" });
     // A commit still on its way does not keep the Overview from being the visit.

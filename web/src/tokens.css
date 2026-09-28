@@ -206,6 +206,11 @@
   --size-agent-children-popover: 280px;
   --size-usage-popover: 250px;
   --size-pr-popover: 360px;
+  --size-pr-number: 38px;
+  --size-pr-review: 70px;
+  --size-pr-slot: 72px;
+  --size-pr-branch-max: 190px;
+  --size-pr-indent: 60px;
   --size-relationship-list-max: 360px;
   --text-git-row: 12px;
   --text-git-detail: 11px;

@@ -75,6 +75,27 @@ export function herdrBinary(): string {
   );
 }
 
+/**
+ * The agent kinds Herdr lists in panes whose cwd is `dir`: what an agent
+ * start really left running, not what the start's answer said.
+ */
+export function agentsIn(fixture: HerdrFixture, dir: string): string[] {
+  const real = fs.realpathSync(dir);
+  const kinds: string[] = [];
+  const visit = (value: unknown): void => {
+    if (Array.isArray(value)) value.forEach(visit);
+    else if (value && typeof value === "object") {
+      const row = value as Record<string, unknown>;
+      if (typeof row.pane_id === "string" && typeof row.agent === "string" && typeof row.cwd === "string" && fs.existsSync(row.cwd) && fs.realpathSync(row.cwd) === real) {
+        kinds.push(row.agent);
+      }
+      Object.values(row).forEach(visit);
+    }
+  };
+  visit(fixture.run(["agent", "list"]));
+  return kinds;
+}
+
 function herdr(env: NodeJS.ProcessEnv, bin: string, args: string[]): unknown {
   const out = execFileSync(bin, args, { env, encoding: "utf8", timeout: 30_000 });
   return JSON.parse(out) as unknown;

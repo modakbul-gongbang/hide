@@ -24,7 +24,7 @@ import { closeDecision, statusUnknownNotice } from "./close";
 import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./settings";
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
-import { overviewScreen, type OpenTarget } from "./navigation";
+import { overviewScreen, pullRequestScreen, type OpenTarget } from "./navigation";
 import { expectSurface, type Surface } from "./recent";
 import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, inPlace as inPlaceEvent, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
 import {
@@ -1033,6 +1033,31 @@ export function createActions(dispatch: DispatchFn) {
     /** A Local issue's title and body, edited in its panel; answered in `issue_work.update` by `requestId`. */
     updateLocalIssue(requestId: string, taskKey: string, title: string, body: string) {
       dispatch({ schema_version: 2, kind: "local_issue_update", payload: { request_id: requestId, task_key: taskKey, title, body } });
+    },
+
+    /**
+     * Links a pull request to an issue of its project, one the source has or
+     * a new one (PRD overview-lenses-prs D-13, D-31, D-34); a retry sends the
+     * same issue again. Answered in `pr_work.link` by `requestId`.
+     */
+    linkPullRequestIssue(requestId: string, workspaceId: string, prNumber: number, issue: { key: string } | { title: string; body: string }) {
+      const target = "key" in issue ? { issue_key: issue.key } : { new_issue: { title: issue.title, body: issue.body } };
+      dispatch({ schema_version: 2, kind: "pr_link_issue", payload: { request_id: requestId, workspace_id: workspaceId, pr_number: prNumber, ...target } });
+    },
+
+    /** A pull request's failed checks and change requests, for an agent's first prompt (D-46); answered in `pr_work.feedback`. */
+    readPullRequestFeedback(requestId: string, workspaceId: string, prNumber: number) {
+      dispatch({ schema_version: 2, kind: "pr_feedback_read", payload: { request_id: requestId, workspace_id: workspaceId, pr_number: prNumber } });
+    },
+
+    /** An agent started on a pull request's branch with `prompt` (D-12); it reports through `task_operation`. */
+    delegatePullRequest(workspaceId: string, prNumber: number, provider: "claude" | "codex", prompt: string) {
+      dispatch({ schema_version: 2, kind: "pr_delegate", payload: { workspace_id: workspaceId, pr_number: prNumber, provider, prompt } });
+    },
+
+    /** A pull request's row on its Project's PRs tab, unfolded (PRD overview-lenses-prs B21); ⌘-click stays GitHub's. */
+    openPullRequestRow(projectId: string, number: number | null) {
+      ui().setScreen(pullRequestScreen(ui().screen, rest(), projectId, number));
     },
 
     /** Closes or reopens a Local issue; a GitHub one closes on GitHub. */

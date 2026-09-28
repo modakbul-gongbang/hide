@@ -6,7 +6,7 @@
 // order, the node order and the yellow nodes carry that instead (D-03).
 
 import type { DeviceAvailability } from "./navigation";
-import { stageOf, type BoardProject, type TasksBoard } from "./projectBoard";
+import { stageOf, type BoardProject, type PrBoard, type TasksBoard } from "./projectBoard";
 import type { AgentRow, Checkout, ProjectSessions, Task, Workspace } from "./snapshot";
 import { primaryCheckout } from "./workspaceManage";
 
@@ -91,7 +91,7 @@ export function scopeAgents(projects: readonly BoardProject[]): LensAgent[] {
 /** One stretch of a tile's bar, with the name and count its legend reads. */
 export type TileSegment = { key: string; label: string; count: number };
 
-export type TileId = "agents" | "issues" | "sessions";
+export type TileId = "agents" | "issues" | "prs" | "sessions";
 
 /**
  * A lens tile (D-02): its name, the big number and its unit, the yellow
@@ -163,6 +163,41 @@ export function issuesTile(board: TasksBoard, now: number, lastReadAt: number | 
             { key: "review", label: "리뷰", count: stage("review") },
           ],
     failure,
+  };
+}
+
+/**
+ * The PRs tile (PRD overview-lenses-prs B1): the open pull requests once
+ * GitHub has answered, the badge of the ones waiting on the operator split
+ * into review, drafts and finished agents to look at, and the bar of the
+ * operator's turn, an agent fixing and the blocked ones. A failed read keeps
+ * the last value and says so by the name (B22).
+ */
+export function prsTile(board: PrBoard): Tile {
+  const rows = (group: string) => board.groups.find((entry) => entry.group === group)?.rows ?? [];
+  const turn = rows("turn");
+  const look = turn.filter((row) => row.needsLook).length;
+  const drafts = turn.filter((row) => !row.needsLook && row.tone === "draft").length;
+  const parts = [
+    { key: "review", label: "리뷰", count: turn.length - look - drafts },
+    { key: "draft", label: "초안", count: drafts },
+    { key: "look", label: "끝난 에이전트 확인", count: look },
+  ].filter((part) => part.count > 0);
+  return {
+    id: "prs",
+    label: "PRs",
+    value: board.open,
+    unit: "열림",
+    badge: board.open !== null && turn.length > 0 ? { count: turn.length, parts } : null,
+    bar:
+      board.open === null
+        ? null
+        : [
+            { key: "turn", label: "내 차례", count: turn.length },
+            { key: "fixing", label: "에이전트가 고치는 중", count: rows("fixing").length },
+            { key: "blocked", label: "CI 실패 · 맡은 에이전트 없음", count: rows("blocked").length },
+          ],
+    failure: board.failure,
   };
 }
 

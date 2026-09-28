@@ -5,6 +5,8 @@ use std::path::Path;
 use std::process::Command;
 use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
 
+use crate::agent_start::StartError;
+
 const CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 const CONFIRM_POLL: Duration = Duration::from_millis(100);
 /// A host's Git checks answer in seconds; a removal deletes a whole folder.
@@ -562,15 +564,55 @@ pub fn spawn_worktree_create(
     context: WorktreeTarget,
     request: WorktreeTaskRequest,
 ) -> Result<(), String> {
+    spawn_worktree_task(context, request, |context, request| {
+        check_new_branch(
+            context.host.as_ref(),
+            &request.repository_root,
+            &request.branch,
+        )
+    })
+}
+
+/// A worktree on a branch that already exists, a pull request's (PRD
+/// overview-lenses-prs D-46): Herdr checks out an existing local branch, and
+/// a branch only `origin` has is fetched first and made from its
+/// remote-tracking ref, which git sets as the new branch's upstream. No other
+/// branch name is ever made. This machine's repositories only.
+pub fn spawn_existing_branch_worktree(
+    context: WorktreeTarget,
+    request: WorktreeTaskRequest,
+) -> Result<(), String> {
+    spawn_worktree_task(context, request, |_, request| {
+        request.base_branch = existing_branch_base(&request.repository_root, &request.branch)?;
+        Ok(())
+    })
+}
+
+/// `None` when `branch` is a local branch, else `origin/<branch>` once it
+/// has been fetched from `origin`.
+fn existing_branch_base(repository_root: &str, branch: &str) -> Result<Option<String>, String> {
+    let root = Path::new(repository_root);
+    let local = format!("refs/heads/{branch}");
+    if hide_host::worktrees::git(root, &["show-ref", "--verify", "--quiet", &local]).is_ok() {
+        return Ok(None);
+    }
+    let refspec = format!("+refs/heads/{branch}:refs/remotes/origin/{branch}");
+    hide_host::worktrees::git(root, &["fetch", "--no-tags", "origin", &refspec])
+        .map_err(|error| format!("fetch {branch} from origin: {error}"))?;
+    Ok(Some(format!("origin/{branch}")))
+}
+
+fn spawn_worktree_task(
+    context: WorktreeTarget,
+    mut request: WorktreeTaskRequest,
+    prepare: impl FnOnce(&WorktreeTarget, &mut WorktreeTaskRequest) -> Result<(), String>
+    + Send
+    + 'static,
+) -> Result<(), String> {
     thread::Builder::new()
         .name("herdr-core-worktree-create".into())
         .spawn(move || {
-            let result = check_new_branch(
-                context.host.as_ref(),
-                &request.repository_root,
-                &request.branch,
-            )
-            .and_then(|()| {
+            let result = prepare(&context, &mut request).and_then(|()| {
                 create_worktree_observing_purpose(
                     context.connector.as_ref(),
                     context.host.as_ref(),
@@ -887,15 +929,15 @@ fn launch_agent(
             "{kind} is not installed on the daemon's PATH. Install it, then retry."
         ));
     }
-    let params = match wire::agent_start_params(pane_id, &format!("hide-{kind}"), kind, Vec::new())
-    {
+    let name = crate::fork::task_agent_name(kind, pane_id);
+    let params = match wire::agent_start_params(pane_id, &name, kind, Vec::new()) {
         Ok(params) => params,
         Err(message) => return TaskAgentOutcome::Failed(message),
     };
-    match request_with_correlation_id(
+    match crate::agent_start::start_at_shell(
         connector,
         &format!("herdr-core:task:{id}:agent"),
-        "agent.start",
+        pane_id,
         params,
         Duration::from_millis(AGENT_START_TIMEOUT_MS + 5_000),
     ) {
@@ -905,10 +947,11 @@ fn launch_agent(
                 "Herdr answered the agent start in an unexpected shape ({message}). Check the pane before retrying."
             )),
         },
-        Err(ApiError::Remote { code, message }) => {
+        Err(StartError::NotStarted(message)) => TaskAgentOutcome::Failed(message),
+        Err(StartError::Herdr(ApiError::Remote { code, message })) => {
             TaskAgentOutcome::Failed(format!("Agent could not start: {code}: {message}"))
         }
-        Err(error) => TaskAgentOutcome::Unknown(format!(
+        Err(StartError::Herdr(error)) => TaskAgentOutcome::Unknown(format!(
             "Herdr did not confirm the agent start ({error}). Check the pane before retrying."
         )),
     }
@@ -1695,6 +1738,7 @@ mod tests {
         let (mut mirror, receiver) = PurposeMirror::recording();
         let mut project = WorkspaceSnapshot {
             home_issues: Default::default(),
+            pull_requests: Vec::new(),
             tasks: Default::default(),
             id: "project".to_owned(),
             label: "Fixture".to_owned(),
@@ -1909,6 +1953,7 @@ mod tests {
         };
         let checkout = WorkspaceSnapshot {
             home_issues: Default::default(),
+            pull_requests: Vec::new(),
             tasks: Default::default(),
             id: "project".to_owned(),
             label: "Fixture".to_owned(),
@@ -2026,6 +2071,7 @@ mod tests {
         ];
         let project = WorkspaceSnapshot {
             home_issues: Default::default(),
+            pull_requests: Vec::new(),
             tasks: Default::default(),
             id: "outer".to_owned(),
             label: "Outer".to_owned(),
@@ -2084,6 +2130,7 @@ mod tests {
         };
         let mut project = WorkspaceSnapshot {
             home_issues: Default::default(),
+            pull_requests: Vec::new(),
             tasks: Default::default(),
             id: "project".to_owned(),
             label: "Fixture".to_owned(),

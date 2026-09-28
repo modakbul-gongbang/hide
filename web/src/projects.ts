@@ -280,11 +280,7 @@ export function checkoutCard(workspace: Workspace, checkout: Checkout, nowMs: nu
     return { header: { kind: "missing", label: "Folder missing" }, rows };
   }
   const pr = shownPullRequest(checkout);
-  if (pr) {
-    if (pr.review) rows.push({ key: "review", label: "Review", ...REVIEW_WORD[pr.review] });
-    const checks = pr.checks ? CHECKS_WORD[pr.checks] : undefined;
-    if (checks) rows.push({ key: "checks", label: "Checks", ...checks });
-  }
+  if (pr) rows.push(...pullRequestRows(pr));
   const worktree = checkout.worktree;
   if (workspace.is_git && worktree) {
     if (worktree.branch) rows.push({ key: "branch", label: "Branch", value: worktree.branch });
@@ -297,9 +293,33 @@ export function checkoutCard(workspace: Workspace, checkout: Checkout, nowMs: nu
   if (age) rows.push({ key: "commit", label: "Commit", value: age === "now" ? "now" : `${age} ago` });
   rows.push({ key: "path", label: "Path", value: checkout.path });
   return {
-    header: pr ? { kind: "pull_request", badge: pullRequestBadge(pr), glyph: pullRequestKind(pr), number: pr.number, url: pr.url, title: pr.title } : null,
+    header: pr ? pullRequestHeader(pr) : null,
     rows,
   };
+}
+
+/**
+ * The PR card of a pull request on its own, for a PRs tab row whose branch
+ * has no checkout here (PRD overview-lenses-prs B7): the same header and
+ * Review and Checks rows the checkout card draws, and the branch.
+ */
+export function pullRequestCard(pr: PullRequest): CheckoutCard {
+  const rows = pullRequestRows(pr);
+  if (pr.head_branch) rows.push({ key: "branch", label: "Branch", value: pr.head_branch });
+  return { header: pullRequestHeader(pr), rows };
+}
+
+function pullRequestHeader(pr: PullRequest): NonNullable<CheckoutCard["header"]> {
+  return { kind: "pull_request", badge: pullRequestBadge(pr), glyph: pullRequestKind(pr), number: pr.number, url: pr.url, title: pr.title };
+}
+
+/** A pull request's Review and Checks rows, each once GitHub has answered it. */
+function pullRequestRows(pr: PullRequest): CheckoutCardRow[] {
+  const rows: CheckoutCardRow[] = [];
+  if (pr.review) rows.push({ key: "review", label: "Review", ...REVIEW_WORD[pr.review] });
+  const checks = pr.checks ? CHECKS_WORD[pr.checks] : undefined;
+  if (checks) rows.push({ key: "checks", label: "Checks", ...checks });
+  return rows;
 }
 
 /** `↑N ↓N`, each part only above zero; empty when the branch is even with both. */

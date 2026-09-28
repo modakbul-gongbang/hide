@@ -32,6 +32,8 @@ mod memory;
 mod project_sessions;
 #[path = "tests/projects.rs"]
 mod projects;
+#[path = "tests/pull_requests.rs"]
+mod pull_requests;
 #[path = "tests/session_navigation.rs"]
 mod session_navigation;
 #[path = "tests/shortcut_import.rs"]
@@ -536,6 +538,7 @@ fn workspace(
 ) -> WorkspaceSnapshot {
     WorkspaceSnapshot {
         home_issues: Default::default(),
+        pull_requests: Vec::new(),
         tasks: Default::default(),
         id: id.to_owned(),
         label: label.to_owned(),

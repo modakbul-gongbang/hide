@@ -10,8 +10,9 @@ import { FACT, FACTS_LINE, OpeningStatus, UnavailableNotice } from "./MainScreen
 import { overviewProject } from "./navigation";
 import { useNewIssueShortcut } from "./IssueDialogs";
 import { AgentsLens, AgentsModeToggle, LensTiles, lensHandlers } from "./OverviewLenses";
-import { agentsTile, buildLanes, buildLineages, issuesTile, lastIssueRead, scopeAgents, sessionsTile } from "./overviewLens";
-import { buildTasks, formatBytes, projectStats, type BoardProject, type BoardStats, type TaskCard } from "./projectBoard";
+import { agentsTile, buildLanes, buildLineages, issuesTile, lastIssueRead, prsTile, scopeAgents, sessionsTile } from "./overviewLens";
+import { buildPullRequests, buildTasks, formatBytes, projectStats, type BoardProject, type BoardStats, type TaskCard } from "./projectBoard";
+import { PullRequestsView } from "./PullRequestsView";
 import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
 import type { Workspace } from "./snapshot";
 import { useShellStore } from "./store";
@@ -23,7 +24,7 @@ import { toggledFold, useUiStore, type OverviewLens } from "./ui";
 // issue-first rework and overview-lenses-tiles-agents): the Project scope the
 // sidebar's project row opens. Under its title sits one line of repository
 // facts with the chosen tile's mode control at its right end, then the lens
-// tiles, Agents, Issues and Sessions, where the tab row was. Every way in
+// tiles, Agents, Issues, PRs and Sessions, where the tab row was. Every way in
 // opens Agents › checkouts with the lane in front selected; the lens rides
 // on the screen, so only Recent Panels brings back one as it was left
 // (`OverviewLens`). Issues is the issue-first Tasks board under its new name;
@@ -51,9 +52,13 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   const lanes = useMemo(() => buildLanes(projects, lensAgents, "project"), [projects, lensAgents]);
   const lineages = useMemo(() => buildLineages(lensAgents), [lensAgents]);
   const stats = useMemo(() => (workspace ? projectStats(workspace) : null), [workspace]);
+  const pullRequests = useMemo(() => (projects[0] ? buildPullRequests(projects[0], Date.now()) : null), [projects]);
   const tiles = useMemo(
-    () => (tasks && workspace && found ? [agentsTile(lensAgents, found.availability), issuesTile(tasks, Date.now(), lastIssueRead(workspace)), sessionsTile(sessions, workspace.id, Date.now())] : []),
-    [tasks, workspace, found, lensAgents, sessions],
+    () =>
+      tasks && workspace && found && pullRequests
+        ? [agentsTile(lensAgents, found.availability), issuesTile(tasks, Date.now(), lastIssueRead(workspace)), prsTile(pullRequests), sessionsTile(sessions, workspace.id, Date.now())]
+        : [],
+    [tasks, workspace, found, lensAgents, sessions, pullRequests],
   );
   // A local Git project's size is measured each time its Overview opens, and
   // its tasks are read from its source; every Project's session history is
@@ -80,7 +85,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
     if (canIssue && workspace) useUiStore.getState().setWorkspaceDialog({ kind: "new_issue", workspaceId: workspace.id });
   };
   useNewIssueShortcut(canIssue ? newIssue : null);
-  if (!found || !tasks || !stats) {
+  if (!found || !tasks || !stats || !pullRequests) {
     return (
       <section className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-caption text-muted-foreground" data-overview-missing={projectId}>
         <p>This project is no longer in the catalog.</p>
@@ -115,7 +120,8 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   const view = lens.tab;
   // With the issue panel open the board and the panel scroll on their own, under a header that stays (D-43).
   const split = view === "issues" && panelCard(tasks, lens.panel) !== null;
-  const state = view === "issues" ? (tasks.cards.length === 0 ? "empty" : "board") : view === "agents" ? (lensAgents.length === 0 ? "empty" : "board") : "sessions";
+  const state =
+    view === "issues" ? (tasks.cards.length === 0 ? "empty" : "board") : view === "agents" ? (lensAgents.length === 0 ? "empty" : "board") : view === "prs" ? (pullRequests.groups.length === 0 ? "empty" : "board") : "sessions";
   const sessionsView = view === "sessions";
   return (
     <section
@@ -164,7 +170,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
             </span>
           ) : null}
         </div>
-        <LensTiles tiles={tiles} selected={view} onSelect={(tab) => setLens({ tab, focusTask: null, panel: null })} />
+        <LensTiles tiles={tiles} selected={view} onSelect={(tab) => setLens({ tab, focusTask: null, panel: null, prs: { ...lens.prs, focus: null } })} />
       </header>
       <OpeningStatus actions={actions} />
       {device ? <UnavailableNotice device={device} availability={availability} actions={actions} /> : null}
@@ -179,6 +185,8 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
           {/* Keyed by the Project, so another Project starts with its own filters and asks for itself. */}
           <ProjectSessions key={`${project.device_id}:${project.id}`} workspace={project} actions={actions} />
         </div>
+      ) : view === "prs" ? (
+        <PullRequestsView board={pullRequests} project={project} lens={lens.prs} onLens={(prs) => setLens({ prs: { ...lens.prs, ...prs } })} handlers={lensActions} now={now} />
       ) : view === "agents" ? (
         <AgentsLens mode={lens.agentsMode} lanes={lanes} lineages={lineages} scope="project" selectedLane={lens.lane} folds={lens.folds} handlers={lensActions} now={now} />
       ) : (

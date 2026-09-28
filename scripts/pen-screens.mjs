@@ -590,6 +590,7 @@ function overviewHeader(tokens, id, suffix, {project, facts, view, width, mode})
 const HERDR_TILES = [
   {id: 'agents', label: 'Agents', value: '11', badge: '2', bar: [['$--warning', 2], ['$--success', 2], ['$--agent-working', 2], ['$--muted-foreground', 5]]},
   {id: 'issues', label: 'Issues', value: '22', unit: '열림', bar: [['$--muted-foreground', 18], ['$--warning', 2], ['$--success', 2]]},
+  {id: 'prs', label: 'PRs', value: '9', unit: '열림', badge: '4', bar: [['$--warning', 4], ['$--agent-working', 1], ['$--destructive', 4]]},
   {id: 'sessions', label: 'Sessions', value: '14', unit: '오늘', bar: [['$--file-orange', 9], ['$--agent-working', 5]]},
 ];
 function lensTiles(tokens, id, view, width) {
@@ -639,6 +640,14 @@ const ATTENTION = new Set(['ask', 'done', 'error']);
 // no library master draws a task card; a card's agent row is the library's
 // Sidebar agent row, as agent-row.tsx is on the web, and every chip, button,
 // keycap and toggle is a library ref.
+// A pull request's CI mark once read: passing, failed or still running
+// (web/src/TaskBoards.tsx ChecksMark); nothing before GitHub answers.
+function ciMark(tokens, id, checks) {
+  if (checks === 'passing') return icon(id, 'check', {size: 12, fill: '$--success'});
+  if (checks === 'failed') return icon(id, 'x', {size: 12, fill: '$--destructive'});
+  return checks === 'pending' ? screenStatusMark(tokens, id, '●', '$--muted-foreground') : null;
+}
+
 function issueBoardParts(tokens) {
   const column = num(tokens, '--home-column-width');
   const inner = column - 2 * num(tokens, '--spacing-sm');
@@ -669,9 +678,7 @@ function issueBoardParts(tokens) {
   // the CI mark once read, and on a card the review GitHub asks for.
   function prChip(id, {number, tone = 'open', checks, review}) {
     const fill = PR_TONE[tone];
-    const ci = checks === 'passing' ? icon(`${id}-ci`, 'check', {size: 12, fill: '$--success'})
-      : checks === 'failed' ? icon(`${id}-ci`, 'x', {size: 12, fill: '$--destructive'})
-        : checks === 'pending' ? screenStatusMark(tokens, `${id}-ci`, '●', '$--muted-foreground') : null;
+    const ci = ciMark(tokens, `${id}-ci`, checks);
     return frame(id, `PR #${number}`, {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
       themedXref(`${id}-b`, 'eHAjc', `#${number}`, BADGE_VARIANTS.outline.overrides, {xXuNa: {enabled: true, icon: 'git-pull-request', fill}, n8L5dm: {content: `#${number}`, fill}}),
       ...(ci ? [ci] : []),
@@ -1129,7 +1136,7 @@ const LOCAL_5 = {task: local(5), project: 'creator', title: '소프트웨어 팩
 
 const MAIN_SPEC = 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx, TaskBoards.tsx, projectBoard.ts: Overview, the scope the sidebar’s global Overview row opens and marks. Its title carries Add project and 새 이슈 as the primary action (C); its facts line the project count, the open issues once every source has answered, and the open-PR and merged totals only when every project can give its part; its Tasks · Agents · Projects tabs the count of agents waiting on the operator on Agents, whose view is the Project Overview’s checkout lanes or lineage over every project with the project’s name above each lane head. Every project’s issues share one board, 백로그 · 진행 중 · 리뷰 · 완료, each card an issue with its project beside its id (a Local issue as L-N): 시작 on a backlog card under the pointer, the operator’s-turn cards in the warning border, the worktrees with no issue folded into one line at the foot of 진행 중, and 완료 folded to one line per project with its count. Every project has an issue source, so no project is set apart as unconnected. Its Dependencies mode draws an arrow that crosses projects, the blocker named with its repository on the lock line. The Projects view is the project list grouped by device.';
 
-const OVERVIEW_SPEC = 'web/src/ProjectOverview.tsx, OverviewLenses.tsx, overviewLens.ts, TaskBoards.tsx, projectBoard.ts: a project’s Overview (PRD overview-lenses-tiles-agents). The header carries the path back, New agent as the quiet action and 새 이슈 as the primary one (C), the facts line of worktrees, disk, main behind and N merged → 정리 with the chosen view’s mode control at its right end, then the tiles Agents · Issues · Sessions where the tab row was: the name, the yellow badge of the operator’s turn, the large number and its unit, one bar; the chosen tile outlined. Every entry opens Agents › 체크아웃 with the front checkout’s lane outlined. A lane is a checkout: its head (the glyph in its PR’s colour and the branch, the purpose, the issue chip, PR chip, ↑N ↓N and the files in warning; main the house and 에이전트 N; a merged worktree dimmed with 정리) and its agents to the right. main is pinned on top, then the operator’s turn, working, resting. A delegation runs down across lanes in its Observer’s column or right within a lane, and no line crosses a node. A node reads mark, provider, title and age, then the core’s line; only the operator’s turn is yellow, a resting node is dimmed with no line. The worktrees with no agent and the ones to clean up fold into one line each. Beside it the lineage mode: Observer · Implementor · 하위 에이전트 columns, a row per lineage with the asking one first, each node’s chips (checkout, issue, PR), resting lineages folded. The Issues tile opens a board of issues only (PRD overview-lenses-issues): a card is the glyph, id and at most two labels, the title, the lock line, the checkout chip and the PR chip with its CI and review word, and at most two agents; its buttons fill the id line’s slot under the pointer (시작 S, Workspace O, the PR icon, a Local issue’s edit, ⋯); only the operator’s turn is outlined in warning. The worktrees and pull requests with no issue are one line each under 진행 중 and 리뷰, and 완료 is folded to one line per issue with the pull request that closed it. The facts line’s right end carries the filter and Board · List · Dependencies. A card opens the issue panel beside the board: the head (glyph, id, source, Open, ×), the title, the action line, the properties, 이 이슈로 한 일, the Markdown body and a GitHub issue’s latest comments; a Local issue edits in place, and a failed read is one line with 재시도.';
+const OVERVIEW_SPEC = 'web/src/ProjectOverview.tsx, OverviewLenses.tsx, overviewLens.ts, TaskBoards.tsx, projectBoard.ts: a project’s Overview (PRD overview-lenses-tiles-agents). The header carries the path back, New agent as the quiet action and 새 이슈 as the primary one (C), the facts line of worktrees, disk, main behind and N merged → 정리 with the chosen view’s mode control at its right end, then the tiles Agents · Issues · PRs · Sessions where the tab row was: the name, the yellow badge of the operator’s turn, the large number and its unit, one bar; the chosen tile outlined. Every entry opens Agents › 체크아웃 with the front checkout’s lane outlined. A lane is a checkout: its head (the glyph in its PR’s colour and the branch, the purpose, the issue chip, PR chip, ↑N ↓N and the files in warning; main the house and 에이전트 N; a merged worktree dimmed with 정리) and its agents to the right. main is pinned on top, then the operator’s turn, working, resting. A delegation runs down across lanes in its Observer’s column or right within a lane, and no line crosses a node. A node reads mark, provider, title and age, then the core’s line; only the operator’s turn is yellow, a resting node is dimmed with no line. The worktrees with no agent and the ones to clean up fold into one line each. Beside it the lineage mode: Observer · Implementor · 하위 에이전트 columns, a row per lineage with the asking one first, each node’s chips (checkout, issue, PR), resting lineages folded. The Issues tile opens a board of issues only (PRD overview-lenses-issues): a card is the glyph, id and at most two labels, the title, the lock line, the checkout chip and the PR chip with its CI and review word, and at most two agents; its buttons fill the id line’s slot under the pointer (시작 S, Workspace O, the PR icon, a Local issue’s edit, ⋯); only the operator’s turn is outlined in warning. The worktrees and pull requests with no issue are one line each under 진행 중 and 리뷰, and 완료 is folded to one line per issue with the pull request that closed it. The facts line’s right end carries the filter and Board · List · Dependencies. A card opens the issue panel beside the board: the head (glyph, id, source, Open, ×), the title, the action line, the properties, 이 이슈로 한 일, the Markdown body and a GitHub issue’s latest comments; a Local issue edits in place, and a failed read is one line with 재시도. The PRs tile opens the project’s pull requests grouped 내 차례, 에이전트가 고치는 중, CI 실패 · 맡은 에이전트 없음 and 최근 머지 (folded) (PRD overview-lenses-prs): a row is ▸, the state glyph, the number, the title, the issue cell (a dotted circle when empty, the 이슈 잇기 icon under the pointer), 확인, the agents’ marks, the branch, CI, the review word and the time, whose fixed slot holds GitHub and ⋯, ▷ 맡기기 or 정리 under the pointer; an unfolded row shows the branch’s agents and GitHub, Workspace and 이슈 잇기. 이슈 잇기 on a GitHub issue asks once, 그만두기 first, before it writes Closes #N into the body.';
 
 // -- Screen / Main ------------------------------------------------------------
 
@@ -1212,6 +1219,78 @@ function buildMain(tokens) {
   return screenSheet('screen-main', 'Screen / Main', MAIN_SPEC, build, build);
 }
 
+// -- the PRs view (PullRequestsView.tsx over projectBoard.ts) --------------------
+
+// A group and its rows (PRD overview-lenses-prs B2-B6), authored on local
+// tokens like the task card, since no library master draws a pull request row.
+// A row is ▸, the state glyph, the number, the title, the issue cell, `확인`,
+// then the marks, the branch, CI, the review word and the fixed time slot,
+// which holds the buttons under the pointer so nothing moves.
+function prParts(tokens) {
+  const {taskId, agentRow, caption, spacer} = issueBoardParts(tokens);
+  const small = num(tokens, '--size-control-sm');
+  const slot = num(tokens, '--size-pr-slot');
+  const review = num(tokens, '--size-pr-review');
+  const numberWidth = num(tokens, '--size-pr-number');
+  const branchMax = num(tokens, '--size-pr-branch-max');
+  const indent = num(tokens, '--size-pr-indent');
+  const glyph = {open: 'git-pull-request', draft: 'git-pull-request-draft', merged: 'git-merge'};
+
+  function prGroup(id, label, count, tone, rows, {folded = false} = {}) {
+    return frame(id, label, {layout: 'vertical', gap: 0, width: 'fill_container'}, [
+      frame(`${id}-head`, 'Head', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', height: num(tokens, '--size-control')}, [
+        ...(folded ? [icon(`${id}-fold`, 'chevron-right', {size: num(tokens, '--size-icon'), fill: '$--muted-foreground'})] : []),
+        text(`${id}-label`, label, {size: '$--text-subhead', weight: '600', fill: tone ?? '$--foreground'}),
+        text(`${id}-count`, String(count), {size: '$--text-subhead', fill: '$--muted-foreground'}),
+      ]),
+      ...rows,
+    ]);
+  }
+
+  function prRow(id, pr) {
+    const tone = pr.tone ?? 'open';
+    const issue = pr.issue ? taskId(`${id}-issue`, pr.issue)
+      : pr.hover && pr.linkable ? icon(`${id}-issue`, 'link-2', {size: 12, fill: '$--foreground'})
+        : icon(`${id}-issue`, 'circle-dashed', {size: 12, fill: '$--muted-foreground'});
+    const marks = (pr.agents ?? []).slice(0, 3).map((agent, index) => screenStatusMark(tokens, `${id}-m${index}`, AGENT_MARK[agent.mark][0], AGENT_MARK[agent.mark][1]));
+    const ci = ciMark(tokens, `${id}-ci`, pr.checks);
+    const act = pr.hover === 'delegate' ? [screenButton(`${id}-take`, '맡기기', {variant: 'secondary', height: small, icon: 'play'})]
+      : pr.hover === 'default' ? [screenIconButton(`${id}-gh`, 'external-link', {size: small}), screenIconButton(`${id}-more`, 'ellipsis', {size: small})]
+        : [caption(`${id}-age`, pr.age, '$--muted-foreground', true)];
+    const row = frame(id, `PR #${pr.number}`, {
+      layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: 'fill_container', height: num(tokens, '--size-control-lg'),
+      padding: [0, '$--spacing-sm', 0, '$--spacing-xs'], cornerRadius: '$--radius-sm',
+      ...(pr.hover ? {fill: '$--accent'} : pr.open ? {fill: '$--secondary'} : {}),
+    }, [
+      icon(`${id}-fold`, pr.open ? 'chevron-down' : 'chevron-right', {size: 12, fill: '$--muted-foreground'}),
+      icon(`${id}-g`, glyph[tone], {size: num(tokens, '--size-pr-icon'), fill: PR_TONE[tone]}),
+      frame(`${id}-n`, 'Number', {layout: 'horizontal', width: numberWidth}, [caption(`${id}-nt`, `#${pr.number}`, '$--muted-foreground', true)]),
+      text(`${id}-t`, pr.title, {size: '$--text-subhead'}),
+      issue,
+      // The yellow `확인` (D-48): the outline Badge in the warning tone, as the web draws it.
+      ...(pr.look ? [frame(`${id}-look`, '확인', {layout: 'horizontal', padding: [0, '$--spacing-xs'], cornerRadius: '$--radius-sm', stroke: '$--warning', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [caption(`${id}-look-t`, '확인', '$--warning')])] : []),
+      spacer(`${id}-sp`),
+      ...(marks.length ? [frame(`${id}-marks`, 'Agents', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, marks)] : []),
+      caption(`${id}-br`, fitText(pr.branch, branchMax, 11, true), '$--muted-foreground', true),
+      frame(`${id}-cib`, 'Checks', {layout: 'horizontal', width: num(tokens, '--size-icon-sm')}, ci ? [ci] : []),
+      frame(`${id}-rvb`, 'Review', {layout: 'horizontal', width: review, justifyContent: 'end'}, pr.review ? [caption(`${id}-rv`, REVIEW_WORD[pr.review][0], REVIEW_WORD[pr.review][1])] : []),
+      frame(`${id}-slot`, 'Time or buttons', {layout: 'horizontal', gap: '$--spacing-xxs', width: slot, justifyContent: 'end', alignItems: 'center'}, act),
+    ]);
+    if (!pr.open) return [row];
+    const width = 460;
+    return [row, frame(`${id}-x`, 'Unfolded', {layout: 'vertical', gap: '$--spacing-xxs', padding: [0, 0, '$--spacing-sm', indent]}, [
+      ...(pr.agents ?? []).map((agent, index) => agentRow(`${id}-xa${index}`, agent, width)),
+      frame(`${id}-xb`, 'Buttons', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+        screenIconButton(`${id}-xgh`, 'external-link', {size: small}),
+        screenIconButton(`${id}-xws`, 'square-terminal', {size: small}),
+        ...(pr.issue ? [] : [screenIconButton(`${id}-xln`, 'link-2', {size: small})]),
+      ]),
+    ])];
+  }
+
+  return {prGroup, prRow};
+}
+
 // -- Screen / Project Overview -------------------------------------------------
 
 // The Overview (ProjectOverview.tsx, PRD overview-lenses-tiles-agents): the
@@ -1228,6 +1307,7 @@ const CODEX_REST = {mark: 'seen', title: '코덱스 구현 및 PR 머지', age: 
 
 function buildProjectOverview(tokens) {
   const {column, taskCard, stageColumn, doneColumn, foldLine, arrow, legend, chain, preview, issuePanel} = issueBoardParts(tokens);
+  const {prGroup, prRow} = prParts(tokens);
   const {lanes, lineage, chips, nodeWidth, headWidth, gap} = lensParts(tokens);
   const columns = 4;
   const width = headWidth + 1 + 2 * num(tokens, '--spacing-sm') + columns * nodeWidth + (columns - 1) * gap;
@@ -1384,10 +1464,41 @@ function buildProjectOverview(tokens) {
         card('d6', {task: gh(199), title: 'Read the remote primary checkout over device connections', word: '백로그'}),
       ]),
     ]);
+    // The PRs tile's view (PRD overview-lenses-prs B2-B6, B19): the groups by
+    // whose move it is, a row unfolded to its lineage and icon buttons, a row
+    // under the pointer with 맡기기 in the time slot, 최근 머지 folded; then
+    // 이슈 잇기's confirmation over it (B10).
+    const prsView = frame(`ov-prs-${suffix}`, 'Project Overview · PRs', {layout: 'vertical', gap: '$--spacing-md', width: boardWidth}, [
+      overviewHeader(tokens, 'ov-prhead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'prs', width: boardWidth}),
+      prGroup(`ov-prg1-${suffix}`, '내 차례', 4, '$--warning', [
+        ...prRow(`ov-pr222-${suffix}`, {number: 222, title: 'Start the bundled Herdr server when none answers on the socket', issue: gh(191), branch: '191-desktop-starts-herdr', checks: 'passing', review: 'review_required', age: '12m', agents: [{mark: 'done', title: 'Herdr 서버 시작 구현', line: 'PR 올림 · CI 통과', age: '12m'}], look: true, open: true}),
+        ...prRow(`ov-pr218-${suffix}`, {number: 218, title: 'Overview lenses: tiles and checkout lanes', branch: 'feat/overview-lenses', checks: 'passing', review: 'review_required', age: '1h', linkable: true}),
+        ...prRow(`ov-pr189-${suffix}`, {number: 189, title: 'Bump actions/upload-artifact from 4 to 7', branch: 'dependabot/github_actions/upload-artifact-7', checks: 'passing', review: 'approved', age: '1d'}),
+      ]),
+      prGroup(`ov-prg2-${suffix}`, '에이전트가 고치는 중', 1, null, [
+        ...prRow(`ov-pr221-${suffix}`, {number: 221, tone: 'draft', title: 'hided: stop AI children on SIGTERM before exit', issue: gh(192), branch: '192-hided-sigterm-handler', checks: 'failed', review: 'changes_requested', age: '4m', agents: [{mark: 'work'}, {mark: 'ask'}, {mark: 'seen'}]}),
+      ]),
+      prGroup(`ov-prg3-${suffix}`, 'CI 실패 · 맡은 에이전트 없음', 2, null, [
+        ...prRow(`ov-pr190-${suffix}`, {number: 190, title: 'Bump tokio-tungstenite from 0.26.2 to 0.29.0', branch: 'dependabot/cargo/tokio-tungstenite-0.29.0', checks: 'failed', age: '1d', hover: 'delegate'}),
+        ...prRow(`ov-pr138-${suffix}`, {number: 138, title: 'Bump sha2 from 0.10.9 to 0.11.0', branch: 'dependabot/cargo/sha2-0.11.0', checks: 'failed', age: '2d'}),
+      ]),
+      prGroup(`ov-prg4-${suffix}`, '최근 머지', 12, null, [], {folded: true}),
+    ]);
+    const prsConfirm = frame(`ov-prconfirm-${suffix}`, 'Project Overview · PRs › 이슈 잇기 확인', {layout: 'vertical', gap: '$--spacing-md', width: boardWidth}, [
+      prGroup(`ov-prcg-${suffix}`, '내 차례', 4, '$--warning', [
+        ...prRow(`ov-prc218-${suffix}`, {number: 218, title: 'Overview lenses: tiles and checkout lanes', branch: 'feat/overview-lenses', checks: 'passing', review: 'review_required', age: '1h', linkable: true, hover: 'default'}),
+      ]),
+      screenDialogSurface(`ov-prcd-${suffix}`, {
+        width: num(tokens, '--size-add-device-sheet-w'), title: 'PR #218을 #212에 잇기', prose: true,
+        description: 'PR #218 본문에 "Closes #212"을 씁니다. 머지되면 GitHub가 이슈를 닫습니다.',
+        actions: [screenButton(`ov-prcd-no-${suffix}`, '그만두기', {variant: 'secondary'}), screenButton(`ov-prcd-yes-${suffix}`, '본문에 쓰기')],
+      }),
+    ]);
     return [
       frame(`ov-agentside-${suffix}`, 'Agents', {layout: 'vertical', gap: '$--spacing-xl'}, [checkouts, lineages]),
       frame(`ov-issueside-${suffix}`, 'Issues', {layout: 'vertical', gap: '$--spacing-xl'}, [issues, states, dependencies]),
       frame(`ov-panelside-${suffix}`, 'Issue panel', {layout: 'vertical', gap: '$--spacing-xl'}, [github, localPanel, editing, failed]),
+      frame(`ov-prside-${suffix}`, 'PRs', {layout: 'vertical', gap: '$--spacing-xl'}, [prsView, prsConfirm]),
     ];
   }
   return screenSheet('screen-project-overview', 'Screen / Project Overview', OVERVIEW_SPEC, build, build);

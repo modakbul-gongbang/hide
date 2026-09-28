@@ -998,7 +998,12 @@ function CheckoutOpenButton({
   // Read on every render, like `view.detail`: a memo keyed on the checkout would keep the Commit age from the last change to this row.
   const card = checkoutCard(workspace, checkout, Date.now());
   return (
-    <CheckoutCardHint card={card} description={view.detail} onOpenPullRequest={(url, external) => actions.openPullRequest(url, workspace.device_id, external)}>
+    <CheckoutCardHint
+      card={card}
+      description={view.detail}
+      onOpenPullRequest={(url, external) => actions.openPullRequest(url, workspace.device_id, external)}
+      onShowPullRequestRow={workspace.is_git && !workspace.remote_target_id ? (number) => actions.openPullRequestRow(workspace.id, number) : undefined}
+    >
       <button
         type="button"
         data-checkout={checkout.id}

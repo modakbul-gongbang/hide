@@ -476,3 +476,15 @@ export function overviewScreen(rest: SnapshotRest | null, projectId: string): Ex
   const workspace = catalogWorkspaces(rest).find((row) => row.id === projectId);
   return { kind: "overview", projectId, lens: entryLens(entryLane(workspace, frontCheckout(rest)?.id), useUiStore.getState().tasksMode) };
 }
+
+/**
+ * A Project's Overview on its PRs tab with pull request `number`, when one
+ * is named, unfolded and in view (PRD overview-lenses-prs B21): where a PR chip, the Issues
+ * board's `이슈 없는 PR` line and the sidebar's PR card lead. A Project's
+ * Overview already on screen keeps the rest of its lens.
+ */
+export function pullRequestScreen(current: Screen | null, rest: SnapshotRest | null, projectId: string, number: number | null): Extract<Screen, { kind: "overview" }> {
+  const screen = current?.kind === "overview" && current.projectId === projectId ? current : overviewScreen(rest, projectId);
+  const open = number === null || screen.lens.prs.open.includes(number) ? screen.lens.prs.open : [...screen.lens.prs.open, number];
+  return { ...screen, lens: { ...screen.lens, tab: "prs", focusTask: null, panel: null, prs: { ...screen.lens.prs, open, focus: number } } };
+}

@@ -61,7 +61,7 @@ import {
   type TasksBoard,
 } from "./projectBoard";
 import { laneCheckoutCard, relativeActivity } from "./projects";
-import type { AgentRow, IssueDetail, IssueLabel, Task } from "./snapshot";
+import type { AgentRow, IssueDetail, IssueLabel, Task, Workspace } from "./snapshot";
 import type { TasksMode } from "./ui";
 
 // The Issues views (PRD task-agents-views, reworked issue-first on
@@ -73,7 +73,7 @@ import type { TasksMode } from "./ui";
 // hover shows its buttons in the id line's reserved slot, a half-second rest
 // on a part opens that part's card, and each part has one destination: the
 // card and its title the issue's panel, an agent row that agent's pane, the
-// checkout chip its Workspace, the PR chip the pull request, and ⌘-click
+// checkout chip its Workspace, the PR chip its row on the PRs tab, and ⌘-click
 // GitHub (D-09, D-10). Hover, focus and rest publish nothing (B22).
 
 /** A column shows this many cards, then the rest on request. */
@@ -106,10 +106,12 @@ export type BoardHandlers = {
   editIssue: (card: TaskCard) => void;
   /** The New issue dialog, for the page's Project or its default one. */
   newIssue: () => void;
-  /** A page on GitHub: the issue, a pull request (⌘-click, the GitHub control, a PR chip). */
+  /** A page on GitHub: the issue, a pull request (⌘-click, the GitHub control). */
   openGitHub: (url: string, deviceId: string) => void;
   /** `이슈 없는 워크트리 N`: Agents › 체크아웃 (B4). */
   showCheckouts: () => void;
+  /** A PR chip, or `이슈 없는 PR N` with no row: the pull request's row on its Project's PRs tab (PRD overview-lenses-prs B21). */
+  openPullRequestRow: (owner: Workspace, number: number | null) => void;
 };
 
 /** What 시작 and 편집 say on a card and in the panel (B7). */
@@ -222,17 +224,16 @@ function Count({ value }: { value: string | number }) {
 }
 
 /** A one-line button at a column's foot: `+N`, or the work with no issue folded. It passes a popover trigger's props through. */
-function FoldLine({ children, open, data, ...props }: Omit<ComponentProps<"button">, "type"> & { open?: boolean; data: Record<string, string> }) {
+function FoldLine({ children, data, ...props }: Omit<ComponentProps<"button">, "type"> & { data: Record<string, string> }) {
   return (
     <button
       {...props}
       type="button"
-      aria-expanded={open}
       className="flex w-full items-center gap-xs rounded-sm border border-border px-sm py-xxs text-left text-caption text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
       {...data}
     >
       <span className="min-w-0 flex-1 truncate">{children}</span>
-      {open ? <ChevronDownIcon aria-hidden="true" className="size-(--size-icon) shrink-0" /> : <ChevronRightIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />}
+      <ChevronRightIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
     </button>
   );
 }
@@ -320,39 +321,20 @@ function LooseWorktreesLine({ worktrees, onOpen }: { worktrees: readonly LooseWo
 }
 
 /**
- * `이슈 없는 PR N`: its popover names them; its click unfolds them in place,
- * one line each of the number and title, and a line's click opens that pull
- * request on GitHub (B4, D-44).
+ * `이슈 없는 PR N`: its popover names them and says where it goes; its
+ * click opens the PRs tab, where each has an issue cell to link (PRD
+ * overview-lenses-prs B21; on the Overview of every project, the first one's
+ * Project).
  */
 function LoosePullRequestsLine({ pullRequests, handlers }: { pullRequests: readonly LoosePullRequest[]; handlers: BoardHandlers }) {
-  const [open, setOpen] = useState(false);
-  if (pullRequests.length === 0) return null;
+  const first = pullRequests[0];
+  if (!first) return null;
   return (
-    <>
-      <Hint label={`누르면 이 자리에서 펼침\n${foldNames(pullRequests.map((value) => `#${value.number}`))}`}>
-        <FoldLine open={open} onClick={() => setOpen((value) => !value)} data={{ "data-loose-prs": String(pullRequests.length) }}>
-          이슈 없는 PR {pullRequests.length}
-        </FoldLine>
-      </Hint>
-      {open ? (
-        <ul className="flex flex-col" data-loose-pr-list="true">
-          {pullRequests.map((value) => (
-            <li key={`${value.place.projectId}:${value.number}`}>
-              <button
-                type="button"
-                className="flex w-full min-w-0 items-center gap-xs rounded-xs px-xs py-xxs text-left text-caption text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
-                onClick={() => handlers.openGitHub(value.url, value.owner.device_id)}
-                data-loose-pr={value.number}
-              >
-                <GitPullRequestIcon aria-hidden="true" className={cn("size-(--size-icon-sm) shrink-0", PR_TONE[value.tone])} />
-                <span className="shrink-0 font-mono">#{value.number}</span>
-                <span className="min-w-0 truncate">{value.title}</span>
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
-    </>
+    <Hint label={`PRs 탭에서 보기\n${foldNames(pullRequests.map((value) => `#${value.number}`))}`}>
+      <FoldLine onClick={() => handlers.openPullRequestRow(first.owner, null)} data={{ "data-loose-prs": String(pullRequests.length) }}>
+        이슈 없는 PR {pullRequests.length}
+      </FoldLine>
+    </Hint>
   );
 }
 
@@ -663,7 +645,7 @@ export function IssueCardView({ card, page, actions, handlers, graph }: { card: 
           {card.chip && checkout ? <CheckoutChipView card={card} handlers={handlers} /> : null}
           {card.pr && checkout ? (
             <span className="inline-flex items-center gap-xxs" onClick={(event) => event.stopPropagation()}>
-              <PullRequestChip project={owner} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, owner.device_id)} now={Date.now()} />
+              <PullRequestChip project={owner} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, owner.device_id)} onRow={(number) => handlers.openPullRequestRow(owner, number)} now={Date.now()} />
               {card.stage === "review" ? <ReviewMarks pr={card.pr} /> : null}
             </span>
           ) : null}
@@ -759,22 +741,27 @@ const CHECKS: Record<"passing" | "failed" | "pending", string> = {
   pending: "CI 진행 중",
 };
 
-const REVIEW: Record<NonNullable<PrChip["review"]>, { label: string; tone: string }> = {
+export const REVIEW: Record<NonNullable<PrChip["review"]>, { label: string; tone: string }> = {
   review_required: { label: "리뷰 필요", tone: "text-muted-foreground" },
   changes_requested: { label: "변경 요청", tone: "text-warning" },
   approved: { label: "승인됨", tone: "text-success" },
 };
+
+/** The CI mark once read: passing, failed or still running. */
+export function ChecksMark({ checks }: { checks: keyof typeof CHECKS }) {
+  return (
+    <span role="img" aria-label={CHECKS[checks]} className={checks === "passing" ? "text-success" : checks === "failed" ? "text-destructive" : "text-muted-foreground"} data-pr-checks={checks}>
+      {checks === "passing" ? <CheckIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : checks === "failed" ? <XIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <StatusMark symbol="●" className="size-(--size-icon-sm)" />}
+    </span>
+  );
+}
 
 /** A review card's CI mark once read and the one word of the review GitHub asks for (B2). */
 export function ReviewMarks({ pr, review = true }: { pr: PrChip; review?: boolean }) {
   const asked = review && pr.review ? REVIEW[pr.review] : null;
   return (
     <>
-      {pr.checks ? (
-        <span role="img" aria-label={CHECKS[pr.checks]} className={pr.checks === "passing" ? "text-success" : pr.checks === "failed" ? "text-destructive" : "text-muted-foreground"} data-pr-checks={pr.checks}>
-          {pr.checks === "passing" ? <CheckIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : pr.checks === "failed" ? <XIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <StatusMark symbol="●" className="size-(--size-icon-sm)" />}
-        </span>
-      ) : null}
+      {pr.checks ? <ChecksMark checks={pr.checks} /> : null}
       {asked ? (
         <span className={cn("font-sans", asked.tone)} data-pr-review={pr.review}>
           {asked.label}

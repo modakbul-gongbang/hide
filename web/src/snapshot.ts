@@ -114,6 +114,11 @@ export type PullRequest = {
   /** The CI rollup; unknown and absent checks never read as a pass (`PullRequestChecks`). */
   checks?: "unknown" | "none" | "pending" | "failed" | "passing";
   merged_at_unix_ms?: number | null;
+  updated_at_unix_ms?: number | null;
+  /** The branch the pull request comes from. */
+  head_branch?: string;
+  /** The issues its body closes when it merges, as GitHub reads the body. */
+  closing_issues?: IssueReference[];
 };
 
 /** How a repository's `gh` lookup is doing, apart from what it found (`GithubStatusSnapshot`). */
@@ -226,6 +231,37 @@ export type IssueWork = {
   /** The answer to a Local issue's edit, by the web's request id. */
   update?: { request_id: string; task_key: string; phase: "ready" | "failed"; message: string | null } | null;
 };
+
+/** A pull request linked to an issue (`PrLinkSnapshot`): the issue made, Hide's link, then `Closes #N` in the body. */
+export type PrLink = {
+  request_id: string;
+  workspace_id: string;
+  pr_number: number;
+  /** The step working now, or the one that failed. */
+  step: "create" | "link" | "body";
+  phase: "working" | "ready" | "failed";
+  issue_key: string | null;
+  /** The id the source shows for the issue (`#12`, `L-3`). */
+  issue_id: string | null;
+  /** This request made the issue. */
+  created: boolean;
+  message: string | null;
+};
+
+/** A pull request's body, failed checks and standing change requests, read for a new issue made from it or an agent's first prompt (`PrFeedbackSnapshot`). */
+export type PrFeedback = {
+  request_id: string;
+  pr_number: number;
+  phase: "reading" | "ready" | "failed";
+  /** The body once read. */
+  body: string | null;
+  failed_checks: { name: string; url: string | null }[];
+  change_requests: { author: string | null; body: string }[];
+  message: string | null;
+};
+
+/** The Overview's pull-request work in flight (`PrWorkSnapshot`), one slot each. */
+export type PrWork = { link: PrLink | null; feedback: PrFeedback | null };
 
 export type Purpose = { text: string; origin: string };
 
@@ -371,6 +407,13 @@ export type Workspace = {
   home_issues?: ProjectIssues;
   /** The project's tasks, the Overview's Tasks and Agents views read these. */
   tasks?: ProjectTasks;
+  /**
+   * The project's pull requests for the Overview's PRs tab, one per branch:
+   * every open one, and a merged one while its worktree is recorded here or
+   * for 14 days after it merged (PRD overview-lenses-prs D-52). A local Git
+   * project's only; absent while it has none.
+   */
+  pull_requests?: PullRequest[];
   /**
    * A local Git project's allocated disk, every worktree and the shared Git
    * directory counted once. Present once an Overview named the project for
@@ -880,6 +923,7 @@ export type SnapshotRest = {
   connection?: { kind: string; state: string; target_id: string | null };
   task_operation?: TaskOperation | null;
   issue_work?: IssueWork;
+  pr_work?: PrWork;
   worktree_removal?: WorktreeRemoval | null;
   tab?: Tab;
   zoomed?: string | null;
