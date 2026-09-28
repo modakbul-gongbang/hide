@@ -31,8 +31,8 @@ describe("Add a project", () => {
 
   it("puts a new project beside the most recently added one on this Mac, else in home", () => {
     expect(defaultProjectParent([])).toBe("~");
-    expect(defaultProjectParent([registration("/Users/me/work/a"), registration("/Users/me/side/b/"), registration("/home/me/x", "mini")])).toBe("/Users/me/side");
-    expect(defaultProjectParent([registration("/Users/me/a", "mini")])).toBe("~");
+    expect(defaultProjectParent([registration("/home/me/work/a"), registration("/home/me/side/b/"), registration("/home/me/x", "mini")])).toBe("/home/me/side");
+    expect(defaultProjectParent([registration("/home/me/a", "mini")])).toBe("~");
   });
 
   it("takes one folder name, and says why another is not one", () => {
@@ -45,7 +45,7 @@ describe("Add a project", () => {
   });
 
   it("previews the full path as the name is typed", () => {
-    expect(projectPath("/Users/me/work", "")).toBe("/Users/me/work/project-name");
-    expect(projectPath("/Users/me/work", "app")).toBe("/Users/me/work/app");
+    expect(projectPath("/home/me/work", "")).toBe("/home/me/work/project-name");
+    expect(projectPath("/home/me/work", "app")).toBe("/home/me/work/app");
   });
 });
