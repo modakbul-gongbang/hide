@@ -51,12 +51,11 @@ export function countSent(page: Page, last: Map<string, Record<string, unknown>>
 /**
  * A first run opens on Main (S6 D-11); a spec about the Workspace goes in
  * through its Project's Overview (the one named `project`, else the first)
- * to that Project's first Workspace: its first card's checkout, or, when the
- * board shows no card (no issue is worked on, web-project-overview B10, or
- * its only worktrees have no agent and are folded at the foot of 진행 중),
- * the first checkout in the sidebar's project list, with the sidebar put
- * back on the list it showed. A page that already shows a Workspace is left
- * where it is.
+ * to that Project's first Workspace: the Overview opens on the Agents lens,
+ * whose first lane head is a checkout's Workspace (overview-lenses B11, B17);
+ * a project whose only worktrees have no agent shows no lane, so it goes
+ * through the sidebar's project list, put back on the list it showed. A page
+ * that already shows a Workspace is left where it is.
  */
 export async function enterWorkspace(page: Page, project?: string): Promise<void> {
   const main = page.locator("[data-main-screen]");
@@ -66,13 +65,10 @@ export async function enterWorkspace(page: Page, project?: string): Promise<void
   await main.locator('[data-main-tab="projects"]').click();
   await main.locator("[data-main-project]:not([disabled])", project ? { hasText: project } : {}).first().click();
   const overview = page.locator("[data-overview-screen]");
-  const card = overview.locator("[data-overview-workspace]").first();
-  // A project whose agents work on no issue has no card on Tasks (its
-  // agents are on the Agents inbox), so its board settles empty; one whose
-  // worktrees have no agent settles on their fold line with no card shown.
-  await expect(card.or(page.locator('[data-overview-screen][data-overview-state="empty"]')).or(overview.locator("[data-idle-fold]")).first()).toBeVisible();
-  if ((await card.count()) > 0) {
-    await card.click();
+  const head = overview.locator("[data-lens-lane] [data-lens-head-open]").first();
+  await expect(head.or(overview.locator("[data-lens-empty], [data-lens-fold]")).first()).toBeVisible();
+  if ((await head.count()) > 0) {
+    await head.click();
   } else {
     const id = await overview.getAttribute("data-overview-screen");
     const mode = await page.locator("[data-sidebar]").getAttribute("data-sidebar");

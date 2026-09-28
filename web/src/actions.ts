@@ -24,7 +24,7 @@ import { closeDecision, statusUnknownNotice } from "./close";
 import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./settings";
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
-import type { OpenTarget } from "./navigation";
+import { overviewScreen, type OpenTarget } from "./navigation";
 import { expectSurface, type Surface } from "./recent";
 import { REGISTERED_CHECKOUT, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, inPlace as inPlaceEvent, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
 import {
@@ -1385,7 +1385,7 @@ export function createActions(dispatch: DispatchFn) {
      * sent only when the fold changes.
      */
     openProject(workspace: Workspace, expanded: boolean | undefined) {
-      ui().setScreen({ kind: "overview", projectId: workspace.id });
+      ui().setScreen(overviewScreen(rest(), workspace.id));
       if (expanded !== undefined && expanded !== (workspace.expanded !== false)) setProjectExpanded(workspace, expanded);
     },
 
@@ -1481,7 +1481,7 @@ export function createActions(dispatch: DispatchFn) {
       const front = frontCheckout(rest());
       const project = front ? catalogWorkspaces(rest()).find((row) => row.checkouts.some((checkout) => checkout.id === front.id)) : null;
       if (!project) return diagnostic("project overview: no checkout is in front");
-      ui().setScreen({ kind: "overview", projectId: project.id });
+      ui().setScreen(overviewScreen(rest(), project.id));
     },
 
     /** Back from an Overview to the pane grid in front, or to All projects when no Workspace is in front (B1). */

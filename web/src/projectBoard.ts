@@ -1,4 +1,4 @@
-// The Overview's Tasks and Agents views (PRD task-agents-views, reworked by
+// The Overview's Tasks view (PRD task-agents-views, reworked by
 // the issue-first Overview of 2026-09-28) as pure functions over the
 // snapshot, for one Project or for All projects. Work starts from an issue:
 // a card is an issue with the checkout and agents working on it and the pull
@@ -111,45 +111,6 @@ export type TaskCard = {
 
 export type Blocker = { key: string; label: string };
 
-/**
- * The Agents view's groups, top to bottom: the ones waiting on the operator
- * first, and last the resting ones whose worktree is merged, which are there
- * only to be closed.
- */
-export type AgentGroup = "needs" | "working" | "resting" | "cleanup";
-
-export const INBOX_GROUPS: readonly { group: AgentGroup; label: string }[] = [
-  { group: "needs", label: "내 차례" },
-  { group: "working", label: "실행 중" },
-  { group: "resting", label: "쉬는 중" },
-  { group: "cleanup", label: "정리할 것" },
-];
-
-/** The group a lineage sits in, by its root. */
-function inboxGroup(root: AgentCard): AgentGroup {
-  const group = root.agent.group;
-  if (group === "needs_you" || group === "done") return "needs";
-  if (group === "working") return "working";
-  const checkout = root.checkout;
-  return checkout?.is_worktree && stageOf(checkout) === "done" ? "cleanup" : "resting";
-}
-
-/** One agent on the Agents view (D-12). */
-export type AgentCard = {
-  agent: AgentRow;
-  /** 0 for a root, one more per delegation step; a delegated agent sits under its parent. */
-  depth: number;
-  place: BoardPlace;
-  /** The SSH device the agent runs on, or null for this machine. */
-  device: string | null;
-  checkout: Checkout | null;
-  /** The checkout, and on All projects its Project before it. */
-  where: string | null;
-  task: Task | null;
-  /** The task chip's tooltip: title, branch, and the pull request. */
-  taskHelp: string | null;
-};
-
 /** A Project the board reads: its catalog row, every agent its device reported, and the device's name when it is not this machine. */
 export type BoardProject = { workspace: Workspace; agents: AgentRow[]; device: string | null };
 
@@ -173,8 +134,6 @@ export type TasksBoard = {
   overflow: boolean;
   source: SourceState;
 };
-
-export type AgentsBoard = { cards: AgentCard[] };
 
 /** How much an agent needs the operator; lower first. */
 function attention(agent: AgentRow): number {
@@ -202,13 +161,14 @@ function prioritized<T extends { needsYou: boolean }>(cards: T[]): T[] {
 }
 
 /**
- * Which checkout owns each pane, and a lineage walker over `agents`: a list
- * of agents drawn with their whole lineage, root first, whatever is folded;
- * the Projects sidebar drops a folded row's descendants itself
- * (`unfoldedRows`). A row's branch chip is the Agents list's rule
- * (`branchChip`), a checkout that differs from its parent's.
+ * Each checkout's agent rows by checkout id, the rows the sidebar draws under
+ * an opened checkout and a task card lists. `agents` is every agent of the
+ * project's device. A checkout's rows are its agents, each drawn with its
+ * whole lineage from the first ancestor that is not also working here, root
+ * first, whatever is folded; the Projects sidebar drops a folded row's
+ * descendants itself (`unfoldedRows`).
  */
-function lineage(workspace: Workspace, agents: AgentRow[]) {
+export function checkoutAgentRows(workspace: Workspace, agents: AgentRow[]): Map<string, BoardRow[]> {
   const owners = new Map<string, Checkout>();
   for (const checkout of workspace.checkouts) {
     for (const tab of checkout.tabs) for (const pane of tab.panes) if (!owners.has(pane.id)) owners.set(pane.id, checkout);
@@ -230,22 +190,11 @@ function lineage(workspace: Workspace, agents: AgentRow[]) {
     for (const root of roots) append(root, 0);
     return rows;
   };
-  // A checkout's rows: its agents, each lineage from the first ancestor that
-  // is not also working here.
   const checkoutRows = (checkout: Checkout): BoardRow[] => {
     const local = agents.filter((agent) => owners.get(agent.pane_id)?.id === checkout.id);
     const localIds = new Set(local.map((agent) => agent.pane_id));
     return treeRows(local.filter((agent) => !agent.lineage_parent_pane_id || !localIds.has(agent.lineage_parent_pane_id)));
   };
-  return { owners, byPane, treeRows, checkoutRows };
-}
-
-/**
- * Each checkout's agent rows by checkout id, the rows the sidebar draws under
- * an opened checkout. `agents` is every agent of the project's device.
- */
-export function checkoutAgentRows(workspace: Workspace, agents: AgentRow[]): Map<string, BoardRow[]> {
-  const { checkoutRows } = lineage(workspace, agents);
   return new Map(workspace.checkouts.map((checkout) => [checkout.id, checkoutRows(checkout)]));
 }
 
@@ -329,7 +278,7 @@ export function buildTasks(projects: readonly BoardProject[], scope: BoardScope,
   const labels = new Set<string>();
   const titles = new Map<string, string>();
   for (const { workspace, agents } of projects) {
-    const { checkoutRows } = lineage(workspace, agents);
+    const rowsByCheckout = checkoutAgentRows(workspace, agents);
     for (const task of workspace.tasks?.tasks ?? []) titles.set(task.key, task.title);
     const source = workspace.tasks?.source ?? null;
     if (source) {
@@ -342,7 +291,7 @@ export function buildTasks(projects: readonly BoardProject[], scope: BoardScope,
     const git = workspace.is_git === true;
     const worked = new Set<string>();
     for (const checkout of workspace.checkouts) {
-      const rows = checkoutRows(checkout);
+      const rows = rowsByCheckout.get(checkout.id) ?? [];
       const task = checkout.task_key ? (tasks.get(checkout.task_key) ?? null) : null;
       if (task) worked.add(task.key);
       if (!(checkout.is_worktree && git)) {
@@ -451,66 +400,6 @@ export function buildDependencies(board: TasksBoard): DependencyGraph {
   }
   const forward = edges.filter((edge) => (depth.get(edge.from) ?? 0) < (depth.get(edge.to) ?? 0));
   return { layers: dense, edges: forward, unrelated: nodes.filter((value) => !related.has(value.id)) };
-}
-
-/**
- * The Agents board (D-12): every agent of the scope, a delegated one right
- * under its parent, one step in, in its root's column. `agents` is every
- * agent of each Project's device, since a descendant may work in another
- * Project's checkout; only the Project's own panes decide where a root sits.
- */
-export function buildAgents(projects: readonly BoardProject[], scope: BoardScope): AgentsBoard {
-  const cards: AgentCard[] = [];
-  for (const { workspace, agents, device } of projects) {
-    const { owners, byPane, treeRows } = lineage(workspace, agents);
-    const tasks = new Map((workspace.tasks?.tasks ?? []).map((task) => [task.key, task]));
-    const roots = agents.filter((agent) => {
-      const parent = agent.lineage_parent_pane_id;
-      if (parent && byPane.has(parent)) return false;
-      return owners.has(agent.pane_id);
-    });
-    for (const row of treeRows(roots)) {
-      const checkout = owners.get(row.agent.pane_id) ?? null;
-      const branch = checkout?.branch ?? checkout?.label ?? null;
-      const task = checkout?.task_key ? (tasks.get(checkout.task_key) ?? null) : null;
-      const pr = checkout?.pull_request ?? null;
-      cards.push({
-        agent: row.agent,
-        depth: row.depth,
-        place: place(workspace),
-        device,
-        checkout,
-        where: scope === "all" ? [workspace.label, branch].filter(Boolean).join(" · ") : branch,
-        task,
-        taskHelp: task ? [task.title, branch, pr ? `PR #${pr.number}` : null].filter(Boolean).join(" · ") : null,
-      });
-    }
-  }
-  return { cards };
-}
-
-/**
- * The agents of one Agents group: each root by its own group, and its
- * descendants with it, since a delegated agent is only ever Working or Seen
- * and reads under the parent it answers to.
- */
-export function agentGroupCards(board: AgentsBoard, group: AgentGroup): AgentCard[] {
-  const lineages: { root: AgentCard; cards: AgentCard[] }[] = [];
-  for (const value of board.cards) {
-    const last = lineages.at(-1);
-    if (value.depth === 0 || !last) lineages.push({ root: value, cards: [value] });
-    else last.cards.push(value);
-  }
-  return lineages
-    .filter(({ root }) => inboxGroup(root) === group)
-    .map((lineage, index) => ({ lineage, index }))
-    .sort((a, b) => attention(a.lineage.root.agent) - attention(b.lineage.root.agent) || a.index - b.index)
-    .flatMap(({ lineage }) => lineage.cards);
-}
-
-/** How many agents wait on the operator: the Agents tab's count. A delegated agent's parent is the one that waits. */
-export function waitingCount(board: AgentsBoard): number {
-  return board.cards.filter((value) => value.depth === 0 && (value.agent.group === "needs_you" || value.agent.group === "done")).length;
 }
 
 export type BoardStats = {

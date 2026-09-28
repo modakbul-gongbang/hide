@@ -324,7 +324,7 @@ function CenterScreen({ actions }: { actions: Actions }) {
       </div>
     );
   }
-  if (screen.kind === "overview") return <ProjectOverview projectId={screen.projectId} actions={actions} />;
+  if (screen.kind === "overview") return <ProjectOverview projectId={screen.projectId} lens={screen.lens} actions={actions} />;
   if (screen.kind === "workspace" && front && hasView) return <WorkspaceScreen actions={actions} />;
   return <MainScreen actions={actions} />;
 }

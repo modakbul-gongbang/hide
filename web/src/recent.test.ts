@@ -20,7 +20,7 @@ import { commitCycle, observeRecent, panelCycle, reconcileHeldCycle } from "./ke
 import { openingProgress } from "./navigation";
 import type { AgentRow, Checkout, SnapshotRest, ViewDisplaySnapshot, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
-import { useUiStore, type Screen } from "./ui";
+import { entryLens, useUiStore, type OverviewLens, type Screen } from "./ui";
 
 // Two projects: "hide" with checkouts main (tabs t1, t2) and feature (tab t3,
 // labelled like its project so its place collapses), and "notes" (tab t4).
@@ -167,6 +167,8 @@ describe("Recent Panels over the every-project Overview and each Project's Overv
     useUiStore.setState({ screen: null, cycle: null, opening: null });
   });
 
+  const overview = (projectId: string, lens: OverviewLens = entryLens(null, "board")): Screen => ({ kind: "overview", projectId, lens });
+
   /** The page showing `screen` over `rest`, observed as the page observes a move. */
   function show(rest: SnapshotRest, screen: Screen) {
     useShellStore.setState({ rest });
@@ -179,7 +181,7 @@ describe("Recent Panels over the every-project Overview and each Project's Overv
   it("puts the Overview just left one chord back, and from the Overview the Workspace surface it was left from", () => {
     const rest = session("c-main", "t1");
     show(rest, { kind: "workspace" });
-    show(rest, { kind: "overview", projectId: "w-notes" });
+    show(rest, overview("w-notes"));
     expect(rows(rest).slice(0, 2)).toEqual(["overview notes (Overview)", "herdr Fix the build (hide · main · Terminal)"]);
     show(rest, { kind: "workspace" });
     expect(rows(rest).slice(0, 2)).toEqual(["herdr Fix the build (hide · main · Terminal)", "overview notes (Overview)"]);
@@ -188,10 +190,10 @@ describe("Recent Panels over the every-project Overview and each Project's Overv
   it("keeps one row per Overview, moves a revisited one to the front, and has the every-project Overview as its own row, read as its sidebar row", () => {
     const rest = session("c-main", "t1");
     show(rest, { kind: "main" });
-    show(rest, { kind: "overview", projectId: "w-notes" });
+    show(rest, overview("w-notes"));
     show(rest, { kind: "workspace" });
-    show(rest, { kind: "overview", projectId: "w-hide" });
-    show(rest, { kind: "overview", projectId: "w-notes" });
+    show(rest, overview("w-hide"));
+    show(rest, overview("w-notes"));
     expect(rows(rest)).toEqual([
       "overview notes (Overview)",
       "overview hide (Overview)",
@@ -207,7 +209,7 @@ describe("Recent Panels over the every-project Overview and each Project's Overv
 
   it("drops the Overview of a Project that left the catalog, from the order and from a held cycle", () => {
     const rest = session("c-main", "t1");
-    show(rest, { kind: "overview", projectId: "w-notes" });
+    show(rest, overview("w-notes"));
     show(rest, { kind: "workspace" });
     const held = { ...panelCycle(rest)!, index: 1 };
     expect(held.items[1]).toMatchObject({ kind: "overview", title: "notes" });
@@ -224,12 +226,15 @@ describe("Recent Panels over the every-project Overview and each Project's Overv
       return true;
     });
     const rest = session("c-main", "t1");
-    show(rest, { kind: "overview", projectId: "w-notes" });
+    show(rest, overview("w-notes"));
+    // The lens changed on the Overview is the visit Recent Panels brings back (PRD overview-lenses-tiles-agents B11).
+    const left: OverviewLens = { tab: "issues", agentsMode: "lineage", tasksMode: "list", lane: "c-notes", folds: ["cleanup"], focusTask: null };
+    show(rest, overview("w-notes", left));
     show(rest, { kind: "workspace" });
     // A commit still on its way does not keep the Overview from being the visit.
     expectSurface(displayKey("c-notes", "d9"));
     commitCycle({ ...panelCycle(rest)!, index: 1 }, actions);
-    expect(useUiStore.getState().screen).toEqual({ kind: "overview", projectId: "w-notes" });
+    expect(useUiStore.getState().screen).toEqual(overview("w-notes", left));
     expect(sent).toEqual([]);
     observeRecent(rest, true);
     expect(rows(rest)[0]).toBe("overview notes (Overview)");

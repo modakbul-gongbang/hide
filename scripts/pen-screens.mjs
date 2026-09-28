@@ -529,8 +529,8 @@ function newIssueButton(tokens, id) {
 
 // The view tabs under a scope's header: the Agents trigger carries, in
 // warning, how many agents wait on the operator - the only place outside the
-// cards that says so (ProjectOverview.tsx, MainScreen.tsx).
-function viewTabs(id, items, activeIndex, waiting = 0) {
+// cards that says so (MainScreen.tsx; a project has tiles instead).
+function viewTabs(id, items, activeIndex, waiting) {
   return frame(id, 'Tabs', {layout: 'horizontal', gap: '$--spacing-xxs', padding: '$--spacing-xxs', fill: '$--card', cornerRadius: '$--radius-sm'}, items.map((label, index) => {
     const active = index === activeIndex;
     const content = {'tab-t': {content: label, fill: active ? '$--foreground' : '$--subtle-foreground'}};
@@ -552,10 +552,15 @@ function viewRow(id, tabs, mode, width) {
   ]);
 }
 
-// A project's Overview header (ProjectOverview.tsx): the path back, New agent
-// as the quiet action and 새 이슈 as the primary one, the facts line, then the
-// view tabs with the chosen one `view` and the agents waiting on the operator.
-function overviewHeader(tokens, id, suffix, {project, facts, view, width, mode, waiting = 0}) {
+// A project's Overview header (ProjectOverview.tsx, PRD
+// overview-lenses-tiles-agents B1, B8, B9): the path back, New agent as the
+// quiet action and 새 이슈 as the primary one, the facts line with the chosen
+// view's mode control at its right end, then the tiles where the tab row was.
+const AGENTS_MODES = ['checkouts', 'lineage'];
+function overviewHeader(tokens, id, suffix, {project, facts, view, width, mode}) {
+  const control = view === 'agents'
+    ? [screenToggleGroup(`${id}-mode-${suffix}`, ['체크아웃', '계보'], AGENTS_MODES.indexOf(mode ?? 'checkouts'))]
+    : view === 'issues' ? [screenToggleGroup(`${id}-mode-${suffix}`, ['Board', 'List', 'Dependencies'], TASKS_MODES.indexOf(mode ?? 'board'))] : [];
   return frame(`${id}-${suffix}`, 'Header', {layout: 'vertical', gap: '$--spacing-sm', width}, [
     frame(`${id}-title-${suffix}`, 'Title row', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'center', width}, [
       frame(`${id}-crumb-${suffix}`, 'Path', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
@@ -567,16 +572,52 @@ function overviewHeader(tokens, id, suffix, {project, facts, view, width, mode, 
       screenButton(`${id}-new-${suffix}`, 'New agent', {variant: 'ghost', height: num(tokens, '--size-control'), icon: 'square-terminal'}),
       newIssueButton(tokens, `${id}-issue-${suffix}`),
     ]),
-    factsLine(`${id}-facts-${suffix}`, facts),
+    frame(`${id}-factsrow-${suffix}`, 'Facts row', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', width}, [
+      factsLine(`${id}-facts-${suffix}`, facts),
+      ...control,
+    ]),
+    lensTiles(tokens, `${id}-tiles-${suffix}`, view, width),
     frame(`${id}-rule-${suffix}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
-    viewRow(`${id}-row-${suffix}`, viewTabs(`${id}-tabs-${suffix}`, ['Tasks', 'Agents', 'Sessions'], ['tasks', 'agents', 'sessions'].indexOf(view), waiting), view === 'tasks' ? mode ?? 'board' : null, width),
   ]);
 }
 
+// The tiles (OverviewLenses.tsx LensTiles, B1-B5): one width each, the chosen
+// one outlined; the name, the yellow badge of the operator's turn, the large
+// number and its unit, and one bar whose parts carry the bar's tones.
+const HERDR_TILES = [
+  {id: 'agents', label: 'Agents', value: '11', badge: '2', bar: [['$--warning', 2], ['$--success', 2], ['$--agent-working', 2], ['$--muted-foreground', 5]]},
+  {id: 'issues', label: 'Issues', value: '22', unit: '열림', bar: [['$--muted-foreground', 18], ['$--warning', 2], ['$--success', 2]]},
+  {id: 'sessions', label: 'Sessions', value: '14', unit: '오늘', bar: [['$--file-orange', 9], ['$--agent-working', 5]]},
+];
+function lensTiles(tokens, id, view, width) {
+  const gap = num(tokens, '--spacing-md');
+  const tileWidth = Math.floor((width - gap * (HERDR_TILES.length - 1)) / HERDR_TILES.length);
+  const inner = tileWidth - 2 * num(tokens, '--spacing-sm');
+  const barGap = num(tokens, '--spacing-xxs');
+  return frame(id, 'Tiles', {layout: 'horizontal', gap: '$--spacing-md', width}, HERDR_TILES.map((tile) => {
+    const total = tile.bar.reduce((sum, [, count]) => sum + count, 0);
+    const room = inner - barGap * (tile.bar.length - 1);
+    return frame(`${id}-${tile.id}`, tile.label, {
+      layout: 'vertical', gap: '$--spacing-xs', padding: '$--spacing-sm', width: tileWidth, fill: '$--card', cornerRadius: '$--radius-md',
+      stroke: tile.id === view ? '$--primary' : '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
+    }, [
+      frame(`${id}-${tile.id}-name`, 'Name', {layout: 'horizontal', alignItems: 'center', width: inner}, [
+        text(`${id}-${tile.id}-label`, tile.label, {size: '$--text-body', weight: '500'}),
+        frame(`${id}-${tile.id}-sp`, 'Spacer', {width: 'fill_container', height: 1}, []),
+        ...(tile.badge ? [text(`${id}-${tile.id}-badge`, tile.badge, {size: '$--text-caption', fill: '$--warning', mono: true})] : []),
+      ]),
+      frame(`${id}-${tile.id}-value`, 'Value', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'end', height: num(tokens, '--size-control')}, [
+        text(`${id}-${tile.id}-n`, tile.value, {size: '$--text-headline', weight: '600', mono: true}),
+        ...(tile.unit ? [text(`${id}-${tile.id}-u`, tile.unit, {size: '$--text-caption', fill: '$--muted-foreground'})] : []),
+      ]),
+      frame(`${id}-${tile.id}-bar`, 'Bar', {layout: 'horizontal', gap: '$--spacing-xxs', width: inner, height: num(tokens, '--lens-bar-height')},
+        tile.bar.map(([fill, count], index) => frame(`${id}-${tile.id}-bar${index}`, 'Part', {width: Math.max(2, Math.round(room * count / total)), height: num(tokens, '--lens-bar-height'), fill, cornerRadius: num(tokens, '--lens-bar-height') / 2}, []))),
+    ]);
+  }));
+}
+
 const HERDR_FACTS = [
-  {glyph: 'circle-dot', label: '8 open issues', after: '· GitHub'},
   {glyph: 'folder-git-2', label: '20 worktrees'},
-  {glyph: 'git-pull-request', label: '3 open PRs'},
   {glyph: 'hard-drive', label: '37 GB'},
   {glyph: 'arrow-down', label: 'main ↓10 behind origin', fill: '$--warning'},
   {glyph: 'git-merge', label: '12 merged → 정리', fill: '$--pr-merged'},
@@ -590,7 +631,7 @@ const AGENT_MARK = {ask: ['?', '$--warning'], work: ['●', '$--agent-working'],
 // A row the operator has to look at: its title in foreground, medium weight on the web.
 const ATTENTION = new Set(['ask', 'done', 'error']);
 
-// The Tasks board, Dependencies mode and Agents inbox both scopes draw
+// The Tasks board and Dependencies mode both scopes draw
 // (TaskBoards.tsx over projectBoard.ts), authored here on local tokens since
 // no library master draws a task card; a card's agent row is the library's
 // Sidebar agent row, as agent-row.tsx is on the web, and every chip, button,
@@ -756,57 +797,172 @@ function issueBoardParts(tokens) {
     return frame(id, 'Chain', {layout: 'horizontal', alignItems: 'center'}, parts);
   }
 
-  // A group head of the Agents inbox (GroupHead): the chevron, the label and
-  // its count, 내 차례 in warning; 정리할 것 starts folded and says what it holds.
-  function groupHead(id, {label, count, width, tone, folded = false, detail}) {
-    return frame(id, label, {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width, height: num(tokens, '--size-control')}, [
-      icon(`${id}-g`, folded ? 'chevron-right' : 'chevron-down', {size: 14, fill: '$--muted-foreground'}),
-      text(`${id}-label`, label, {size: '$--text-subhead', weight: '600', fill: tone ?? '$--foreground'}),
-      text(`${id}-count`, String(count), {size: '$--text-subhead', fill: '$--muted-foreground'}),
-      ...(detail ? [spacer(`${id}-sp`), caption(`${id}-d`, detail)] : []),
-    ]);
-  }
+  return {column, taskCard, stageColumn, doneColumn, foldLine, arrow, legend, chain};
+}
 
-  // One inbox row (AgentInboxRow): the mark, provider and title, the line it
-  // asks or reports under it; on the right its issue id (else its checkout),
-  // the PR chip and its age. An attention root sits on the card fill; a
-  // delegated agent sits one lineage step in, under its parent.
-  function inboxRow(id, agent, width) {
+// -- the Agents lens (OverviewLenses.tsx over overviewLens.ts) -----------------
+
+// The checkout lanes and the lineage board (PRD overview-lenses-tiles-agents
+// D-05, D-06, B13-B25), authored on local tokens like the task card, since no
+// library master draws a lane or a node. A lane is a fixed height here so a
+// delegation line runs through the cells it crosses: the parent's cell draws
+// its node and the line down from it, a lane in between a line through the
+// column its line keeps free, the child's cell the line's end and its node.
+function lensParts(tokens) {
+  const nodeWidth = num(tokens, '--lens-node-width');
+  const headWidth = num(tokens, '--lens-lane-head');
+  const gap = num(tokens, '--spacing-xl');
+  const laneHeight = 84;
+  const top = num(tokens, '--spacing-sm');
+  const dimmed = num(tokens, '--opacity-secondary');
+  const nodeInner = nodeWidth - 2 * num(tokens, '--spacing-sm');
+  const caption = (id, content, fill = '$--muted-foreground', mono = false) => text(id, content, {size: '$--text-caption', fill, mono});
+  const spacer = (id, height) => frame(id, 'Spacer', {width: 1, height}, []);
+  const vertical = (id, height = 'fill_container') => ({type: 'line', id, name: 'Line', width: 0, height, stroke: '$--muted-foreground', strokeWidth: '$--size-hairline', strokeAlignment: 'center'});
+
+  // A node (AgentNode, B21): the mark, provider, title and age, then the
+  // core's line - the question in warning with a warning outline on the
+  // operator's turn, a result after ✓, the children's summary, the progress
+  // - and nothing, dimmed, for a resting agent; a lineage node adds its chips.
+  function node(id, agent, {chips} = {}) {
     const [symbol, color] = AGENT_MARK[agent.mark];
-    const attention = ATTENTION.has(agent.mark);
-    const depth = agent.depth ?? 0;
-    const inset = num(tokens, '--spacing-xs') + depth * num(tokens, '--size-lineage-indent');
-    const request = attention && agent.line;
+    const turn = agent.mark === 'ask' || agent.mark === 'done';
+    const rest = agent.mark === 'seen' && !agent.line;
     return frame(id, agent.title, {
-      layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'start', width, padding: ['$--spacing-xs', '$--spacing-xs', '$--spacing-xs', inset], cornerRadius: '$--radius-sm',
-      ...(attention && depth === 0 ? {fill: '$--card'} : {}),
+      layout: 'vertical', gap: '$--spacing-xxs', padding: ['$--spacing-xs', '$--spacing-sm'], width: nodeWidth, fill: '$--card', cornerRadius: '$--radius-md',
+      stroke: turn ? '$--warning' : '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner', ...(rest ? {opacity: dimmed} : {}),
     }, [
-      frame(`${id}-body`, 'Body', {layout: 'vertical', gap: '$--spacing-xxs', width: 'fill_container'}, [
-        frame(`${id}-l1`, 'Line 1', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-          screenStatusMark(tokens, `${id}-m`, symbol, color),
-          frame(`${id}-p`, 'Provider artwork', {width: 16, height: 16, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${agent.provider ?? 'claude'}.png`, mode: 'fit'}}, []),
-          text(`${id}-t`, agent.title, {size: '$--text-body', weight: attention ? '600' : '400'}),
-        ]),
-        ...(request ? [frame(`${id}-l2`, 'Line 2', {padding: [0, 0, 0, num(tokens, '--size-checkout-metadata-inset')]}, [
-          caption(`${id}-line`, agent.line, agent.tone === 'request' ? '$--warning' : '$--foreground'),
-        ])] : []),
+      frame(`${id}-l1`, 'Line 1', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: nodeInner}, [
+        screenStatusMark(tokens, `${id}-m`, symbol, color),
+        frame(`${id}-p`, 'Provider artwork', {width: 16, height: 16, fill: {type: 'image', enabled: true, url: `../web/src/assets/agent-${agent.provider ?? 'claude'}.png`, mode: 'fit'}}, []),
+        text(`${id}-t`, fitText(agent.title, nodeInner - 80, 13), {size: '$--text-body', weight: turn ? '600' : '400'}),
+        frame(`${id}-sp`, 'Spacer', {width: 'fill_container', height: 1}, []),
+        caption(`${id}-age`, agent.age, '$--muted-foreground', true),
       ]),
-      frame(`${id}-right`, 'Properties', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: ['$--spacing-xxs', 0, 0, 0]}, [
-        ...(agent.task ? [taskId(`${id}-task`, agent.task)] : agent.where ? [caption(`${id}-where`, fitText(agent.where, num(tokens, '--home-collapsed-width'), 11, true), '$--muted-foreground', true)] : []),
-        ...(agent.pr ? [prChip(`${id}-pr`, agent.pr)] : []),
-        frame(`${id}-agebox`, 'Age', {layout: 'horizontal', justifyContent: 'end', width: num(tokens, '--size-control-compact')}, [caption(`${id}-age`, agent.age, '$--muted-foreground', true)]),
-      ]),
+      ...(agent.line ? [caption(`${id}-line`, fitText(agent.line, nodeInner, 11), agent.mark === 'ask' ? '$--warning' : agent.mark === 'done' ? '$--foreground' : '$--muted-foreground')] : []),
+      ...(chips ? [frame(`${id}-chips`, 'Chips', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, chips)] : []),
     ]);
   }
 
-  function inbox(id, groups, width) {
-    return frame(id, 'Agents inbox', {layout: 'vertical', gap: '$--spacing-md', width}, groups.map((group, index) => frame(`${id}-g${index}`, group.label, {layout: 'vertical', gap: 0, width}, [
-      groupHead(`${id}-g${index}-h`, {...group, width}),
-      ...(group.folded ? [] : group.rows.map((agent, rowIndex) => inboxRow(`${id}-g${index}-r${rowIndex}`, agent, width))),
-    ])));
+  // A lane cell: a node, the line through a lane between parent and child,
+  // or nothing; `down` draws the line on from a parent, `from` ends one at a child.
+  function cell(id, {agent, down = false, from = false, through = false}) {
+    const parts = through ? [vertical(`${id}-v`)]
+      : agent ? [
+          ...(from ? [vertical(`${id}-in`, top - 6), icon(`${id}-head`, 'chevron-down', {size: 8, fill: '$--muted-foreground'})] : [spacer(`${id}-top`, top)]),
+          node(`${id}-n`, agent),
+          ...(down ? [vertical(`${id}-out`)] : []),
+        ]
+        : [];
+    return frame(id, 'Cell', {layout: 'vertical', alignItems: 'center', width: nodeWidth, height: laneHeight}, parts);
   }
 
-  return {column, taskCard, stageColumn, doneColumn, foldLine, arrow, legend, chain, inbox};
+  // A right arrow between two nodes of one lane or one lineage (B14, B23).
+  function across(id, drawn) {
+    return frame(id, drawn ? 'Delegates' : 'Gap', {layout: 'horizontal', alignItems: 'center', width: gap, height: drawn === 'lineage' ? 'fit_content' : laneHeight, padding: drawn === 'lineage' ? 0 : [top + 12, 0, 0, 0]}, drawn ? [
+      {type: 'line', id: `${id}-l`, name: 'Line', width: 'fill_container', height: 0, stroke: '$--muted-foreground', strokeWidth: '$--size-hairline', strokeAlignment: 'center'},
+      icon(`${id}-g`, 'chevron-right', {size: 10, fill: '$--muted-foreground'}),
+    ] : []);
+  }
+
+  // A lane head (LaneHead, B15, B18): the glyph in its PR's colour and the
+  // branch, the purpose, then the issue chip, PR chip, ↑N ↓N and the files;
+  // main's head the house, main, the purpose and its agent count; a merged
+  // lane dimmed with the merge glyph and 정리.
+  function head(id, lane) {
+    const inner = headWidth - 2 * num(tokens, '--spacing-sm');
+    const glyph = lane.primary ? 'house' : lane.cleanup ? 'git-merge' : lane.pr ? 'git-pull-request' : 'git-branch';
+    const tone = lane.cleanup ? '$--pr-merged' : lane.pr ? PR_TONE[lane.pr.tone ?? 'open'] : '$--muted-foreground';
+    const facts = lane.primary ? [caption(`${id}-agents`, `에이전트 ${lane.agents}`, '$--muted-foreground', true)] : [
+      ...(lane.task ? [frame(`${id}-task`, 'Issue chip', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
+        icon(`${id}-task-g`, 'circle-dot', {size: 12, fill: '$--muted-foreground'}), caption(`${id}-task-t`, lane.task, '$--muted-foreground', true),
+      ])] : []),
+      ...(lane.pr ? [themedXref(`${id}-pr`, 'eHAjc', `#${lane.pr.number}`, BADGE_VARIANTS.outline.overrides, {xXuNa: {enabled: true, icon: 'git-pull-request', fill: PR_TONE[lane.pr.tone ?? 'open']}, n8L5dm: {content: `#${lane.pr.number}`, fill: PR_TONE[lane.pr.tone ?? 'open']}})] : []),
+      ...(lane.distance ? [caption(`${id}-dist`, lane.distance, '$--muted-foreground', true)] : []),
+      ...(lane.files ? [caption(`${id}-files`, `${lane.files} files`, '$--warning', true)] : []),
+    ];
+    return frame(id, 'Lane head', {
+      layout: 'vertical', gap: '$--spacing-xxs', padding: '$--spacing-sm', width: headWidth, height: laneHeight, ...(lane.cleanup ? {opacity: dimmed} : {}),
+    }, [
+      ...(lane.project ? [text(`${id}-proj`, lane.project, {size: '$--text-micro', fill: '$--muted-foreground'})] : []),
+      frame(`${id}-l1`, 'Branch', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: inner}, [
+        icon(`${id}-g`, glyph, {size: 14, fill: tone}),
+        text(`${id}-b`, fitText(lane.branch, inner - 60, 13, true), {size: '$--text-body', mono: true}),
+        frame(`${id}-sp`, 'Spacer', {width: 'fill_container', height: 1}, []),
+        ...(lane.cleanup ? [caption(`${id}-clean`, '정리', '$--subtle-foreground')] : []),
+      ]),
+      ...(lane.purpose ? [caption(`${id}-purpose`, fitText(lane.purpose, inner, 11))] : []),
+      frame(`${id}-l3`, 'Facts', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, facts),
+    ]);
+  }
+
+  // One lane (LaneRow): the head, a rule, then the cells and the gaps between them.
+  function lane(id, value, columns, {selected = false} = {}) {
+    const cells = [];
+    for (let index = 0; index < columns; index += 1) {
+      if (index > 0) cells.push(across(`${id}-g${index}`, value.arrows?.includes(index) ? 'lane' : null));
+      cells.push(cell(`${id}-c${index}`, value.cells[index] ?? {}));
+    }
+    return frame(id, value.branch, {
+      layout: 'horizontal', alignItems: 'start', height: laneHeight, cornerRadius: '$--radius-sm',
+      ...(selected ? {stroke: '$--primary', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'} : {}),
+    }, [
+      head(`${id}-head`, value),
+      frame(`${id}-rule`, 'Rule', {width: 1, height: laneHeight, fill: '$--border'}, []),
+      frame(`${id}-cells`, 'Agents', {layout: 'horizontal', alignItems: 'start', padding: [0, '$--spacing-sm']}, cells),
+    ]);
+  }
+
+  // A folded line (FoldLine, B20, B25): its words and count, and the chevron.
+  function fold(id, label, width, open = false) {
+    return frame(id, label, {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width, padding: ['$--spacing-xs', '$--spacing-sm'], cornerRadius: '$--radius-sm', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
+      caption(`${id}-t`, label, '$--subtle-foreground'),
+      frame(`${id}-sp`, 'Spacer', {width: 'fill_container', height: 1}, []),
+      icon(`${id}-g`, open ? 'chevron-down' : 'chevron-right', {size: 14, fill: '$--muted-foreground'}),
+    ]);
+  }
+
+  // The checkout mode (CheckoutLanes): the column heads, the lanes separated
+  // by rules, then the two folded lines.
+  function lanes(id, rows, {columns, width, selected, folds}) {
+    const rule = key => frame(`${id}-r${key}`, 'Rule', {width, height: 1, fill: '$--border'}, []);
+    return frame(id, 'Checkout lanes', {layout: 'vertical', gap: 0, width}, [
+      frame(`${id}-cols`, 'Column heads', {layout: 'horizontal', width}, [
+        frame(`${id}-ch1`, '체크아웃', {width: headWidth + 1, padding: ['$--spacing-xs', '$--spacing-sm']}, [caption(`${id}-ch1-t`, '체크아웃')]),
+        frame(`${id}-ch2`, '에이전트', {padding: ['$--spacing-xs', '$--spacing-sm']}, [caption(`${id}-ch2-t`, '에이전트')]),
+      ]),
+      ...rows.flatMap((row, index) => [lane(`${id}-l${index}`, row, columns, {selected: index === selected}), rule(index)]),
+      frame(`${id}-folds`, 'Folds', {layout: 'vertical', gap: '$--spacing-sm', width, padding: ['$--spacing-sm', 0, 0, 0]}, folds.map((label, index) => fold(`${id}-f${index}`, label, width))),
+    ]);
+  }
+
+  // The lineage mode (LineageLens): the column names, then a row per lineage,
+  // each node beside its parent with an arrow, its chips on a third line.
+  function lineage(id, rows, {width, names, folds}) {
+    return frame(id, 'Lineage', {layout: 'vertical', gap: '$--spacing-md', width}, [
+      frame(`${id}-cols`, 'Column heads', {layout: 'horizontal', gap}, names.map((name, index) => frame(`${id}-ch${index}`, name, {width: nodeWidth, padding: ['$--spacing-xs', 0]}, [caption(`${id}-ch${index}-t`, name)]))),
+      ...rows.map((row, index) => frame(`${id}-row${index}`, `Lineage ${index + 1}`, {layout: 'horizontal', alignItems: 'center'}, row.flatMap((agent, depth) => [
+        ...(depth > 0 ? [across(`${id}-row${index}-a${depth}`, 'lineage')] : []),
+        node(`${id}-row${index}-n${depth}`, agent, {chips: agent.chips}),
+      ]))),
+      frame(`${id}-folds`, 'Folds', {layout: 'vertical', gap: '$--spacing-sm', width}, folds.map((label, index) => fold(`${id}-f${index}`, label, width))),
+    ]);
+  }
+
+  // A lineage node's chips (B24): the checkout, the issue and the PR.
+  function chips(id, {branch, primary = false, task, pr}) {
+    return [
+      frame(`${id}-co`, 'Checkout chip', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
+        icon(`${id}-co-g`, primary ? 'house' : 'git-branch', {size: 12, fill: '$--muted-foreground'}), caption(`${id}-co-t`, fitText(branch, 110, 11, true), '$--muted-foreground', true),
+      ]),
+      ...(task ? [frame(`${id}-task`, 'Issue chip', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
+        icon(`${id}-task-g`, 'circle-dot', {size: 12, fill: '$--muted-foreground'}), caption(`${id}-task-t`, task, '$--muted-foreground', true),
+      ])] : []),
+      ...(pr ? [themedXref(`${id}-pr`, 'eHAjc', `#${pr}`, BADGE_VARIANTS.outline.overrides, {xXuNa: {enabled: true, icon: 'git-pull-request', fill: '$--pr-open'}, n8L5dm: {content: `#${pr}`, fill: '$--pr-open'}})] : []),
+    ];
+  }
+
+  return {lanes, lineage, chips, nodeWidth, headWidth, gap};
 }
 
 const gh = number => ({source: 'github', label: `#${number}`});
@@ -829,9 +985,9 @@ const AGENT_TAB_GROUPS = {branch: 'prd/agent-tab-groups', title: 'Agent tab grou
   {mark: 'work', provider: 'codex', title: '세션초기화작업대기', age: '14m'},
 ]};
 
-const MAIN_SPEC = 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx, TaskBoards.tsx, projectBoard.ts: Overview, the scope the sidebar’s global Overview row opens and marks. Its title carries Add project and 새 이슈 as the primary action (C); its facts line the project count, the open issues once every source has answered, and the open-PR and merged totals only when every project can give its part; its Tasks · Agents · Projects tabs the count of agents waiting on the operator on Agents. Every project’s issues and worktrees share one board, 백로그 · 진행 중 · 리뷰 · 완료, each card with its project beside its id (a Local issue as L-N, a primary checkout as a house): 시작 on a backlog card under the pointer, the needs-you cards in the warning border, the idle worktrees folded at the foot of 진행 중, and 완료 folded to one line per project with its count. Every project has an issue source, so no project is set apart as unconnected. Its Dependencies mode draws an arrow that crosses projects, the blocker named with its repository on the lock line. The Projects view is the project list grouped by device.';
+const MAIN_SPEC = 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx, TaskBoards.tsx, projectBoard.ts: Overview, the scope the sidebar’s global Overview row opens and marks. Its title carries Add project and 새 이슈 as the primary action (C); its facts line the project count, the open issues once every source has answered, and the open-PR and merged totals only when every project can give its part; its Tasks · Agents · Projects tabs the count of agents waiting on the operator on Agents, whose view is the Project Overview’s checkout lanes or lineage over every project with the project’s name above each lane head. Every project’s issues and worktrees share one board, 백로그 · 진행 중 · 리뷰 · 완료, each card with its project beside its id (a Local issue as L-N, a primary checkout as a house): 시작 on a backlog card under the pointer, the needs-you cards in the warning border, the idle worktrees folded at the foot of 진행 중, and 완료 folded to one line per project with its count. Every project has an issue source, so no project is set apart as unconnected. Its Dependencies mode draws an arrow that crosses projects, the blocker named with its repository on the lock line. The Projects view is the project list grouped by device.';
 
-const OVERVIEW_SPEC = 'web/src/ProjectOverview.tsx, TaskBoards.tsx, projectBoard.ts, components/agent-row.tsx: a project’s Overview, issue first. The header carries the path back, New agent as the quiet action and 새 이슈 as the primary one (C), the facts line starting with the open issues and their source, and the Tasks · Agents · Sessions tabs with the count of agents waiting on the operator in warning on Agents; there is no waiting band. The Tasks board is four columns, 백로그 · 진행 중 · 리뷰 · 완료, on a page that scrolls as one. 백로그 always stands with + in its head, and a backlog card offers 시작 S under the pointer. A card reads its source glyph and id (or, with no issue, its branch), the title in at most two lines, the lock line, then the PR chip with its CI mark and review word, the branch, ↑N and N files, then at most two agents on the sidebar agent row and +N 에이전트. A needs-you card wears the warning border; a worktree with no issue leads with its branch and offers 이슈 연결 and ⋯ under the pointer; the worktrees with no issue and no agent fold into one line at the foot of 진행 중; 완료 starts folded to branch names. Beside it, the Dependencies mode (the same cards with a stage word, blockers left of what they block, a blocked card dimmed, unrelated tasks below) and the Agents inbox, rows grouped 내 차례 · 실행 중 · 쉬는 중 · 정리할 것: the mark, provider and title, the line an agent asks or reports, and on the right its issue id or checkout, its PR chip and its age, a delegated agent one step in under its parent.';
+const OVERVIEW_SPEC = 'web/src/ProjectOverview.tsx, OverviewLenses.tsx, overviewLens.ts, TaskBoards.tsx, projectBoard.ts: a project’s Overview (PRD overview-lenses-tiles-agents). The header carries the path back, New agent as the quiet action and 새 이슈 as the primary one (C), the facts line of worktrees, disk, main behind and N merged → 정리 with the chosen view’s mode control at its right end, then the tiles Agents · Issues · Sessions where the tab row was: the name, the yellow badge of the operator’s turn, the large number and its unit, one bar; the chosen tile outlined. Every entry opens Agents › 체크아웃 with the front checkout’s lane outlined. A lane is a checkout: its head (the glyph in its PR’s colour and the branch, the purpose, the issue chip, PR chip, ↑N ↓N and the files in warning; main the house and 에이전트 N; a merged worktree dimmed with 정리) and its agents to the right. main is pinned on top, then the operator’s turn, working, resting. A delegation runs down across lanes in its Observer’s column or right within a lane, and no line crosses a node. A node reads mark, provider, title and age, then the core’s line; only the operator’s turn is yellow, a resting node is dimmed with no line. The worktrees with no agent and the ones to clean up fold into one line each. Beside it the lineage mode: Observer · Implementor · 하위 에이전트 columns, a row per lineage with the asking one first, each node’s chips (checkout, issue, PR), resting lineages folded. The Issues tile opens #218’s board renamed (Board, List, Dependencies).';
 
 // -- Screen / Main ------------------------------------------------------------
 
@@ -919,21 +1075,60 @@ function buildMain(tokens) {
 
 // -- Screen / Project Overview -------------------------------------------------
 
-// The Overview (ProjectOverview.tsx, PRD task-agents-views reworked issue
-// first on 2026-09-28): the title row with New agent and 새 이슈, the facts
-// line starting with the open issues and their source, the tabs with the
-// waiting count on Agents, then the Tasks board - 백로그 with + and a card
-// offering 시작 on hover, 진행 중 with a needs-you card and a worktree with no
-// issue offering 이슈 연결, and the idle worktrees folded at its foot, 리뷰
-// with the pull requests, 완료 folded to branch names - beside it the
-// Dependencies mode and the Agents inbox.
+// The Overview (ProjectOverview.tsx, PRD overview-lenses-tiles-agents): the
+// header with the tiles, Agents › 체크아웃 as every entry opens it (efs2), the
+// lineage mode (efs6), and the Issues tile's board and Dependencies mode,
+// #218's Tasks board under its new name.
+const SIGTERM_OBSERVER = {mark: 'seen', title: 'SIGTERM 정리 오케스트레이션', line: '일하는 중 1 · 물음 1', age: '20m'};
+const SIGTERM_ASK = {mark: 'ask', provider: 'codex', title: 'SIGTERM 처리와 자식 정리', line: '기존 stdin 종료 경로도 남길까요?', age: '4m'};
+const SIGTERM_REVIEW = {mark: 'work', title: '리뷰: 종료 경로 회귀', line: '회귀 테스트 3개 중 2개 통과', age: '2m'};
+const OVERVIEW_WORK = {mark: 'work', title: 'Overview 진입 흐름', line: 'Pen 보드 작성 중', age: '1m'};
+const TAB_GROUPS_OBSERVER = {mark: 'done', title: 'agent-tab-groups', line: 'Implementor 끝남 · CI 통과, 머지 대기', age: '8m'};
+const TAB_GROUPS_IMPL = {mark: 'seen', provider: 'codex', title: 'Agent tab groups 구현', age: '8m'};
+const CODEX_REST = {mark: 'seen', title: '코덱스 구현 및 PR 머지', age: '2h'};
+
 function buildProjectOverview(tokens) {
-  const {column, taskCard, stageColumn, doneColumn, foldLine, arrow, legend, chain, inbox} = issueBoardParts(tokens);
-  const width = 4 * column + 3 * num(tokens, '--spacing-md');
+  const {column, taskCard, stageColumn, doneColumn, foldLine, arrow, legend, chain} = issueBoardParts(tokens);
+  const {lanes, lineage, chips, nodeWidth, headWidth, gap} = lensParts(tokens);
+  const columns = 4;
+  const width = headWidth + 1 + 2 * num(tokens, '--spacing-sm') + columns * nodeWidth + (columns - 1) * gap;
+  const boardWidth = 4 * column + 3 * num(tokens, '--spacing-md');
   function build(suffix) {
     const card = (id, value) => taskCard(`ov-${id}-${suffix}`, value);
-    const tasks = frame(`ov-tasks-${suffix}`, 'Project Overview · Tasks › Board', {layout: 'vertical', gap: '$--spacing-md', width}, [
-      overviewHeader(tokens, 'ov-head', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'tasks', width, waiting: 2}),
+    const checkouts = frame(`ov-agents-${suffix}`, 'Project Overview · Agents › 체크아웃', {layout: 'vertical', gap: '$--spacing-md', width}, [
+      overviewHeader(tokens, 'ov-ahead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'agents', mode: 'checkouts', width}),
+      lanes(`ov-lanes-${suffix}`, [
+        {primary: true, branch: 'main', purpose: 'Observer · 계획과 위임', agents: 4, cells: [
+          {agent: SIGTERM_OBSERVER, down: true}, {agent: OVERVIEW_WORK}, {agent: TAB_GROUPS_OBSERVER, down: true}, {agent: CODEX_REST, down: true},
+        ]},
+        {branch: '192-hided-sigterm-handler', purpose: '#192 SIGTERM 정리', task: '#192', pr: {number: 221, tone: 'draft'}, distance: '↑3', files: 4, arrows: [1], cells: [
+          {agent: SIGTERM_ASK, from: true}, {agent: SIGTERM_REVIEW}, {through: true}, {through: true},
+        ]},
+        {branch: 'prd/agent-tab-groups', purpose: 'Agent tab groups', pr: {number: 217, tone: 'open'}, distance: '↑39 ↓17', cells: [
+          {}, {}, {agent: TAB_GROUPS_IMPL, from: true}, {through: true},
+        ]},
+        {branch: 'fix/checkout-capability-follow-up', purpose: '체크아웃 권한 후속', cleanup: true, pr: {number: 216, tone: 'merged'}, cells: [
+          {}, {}, {}, {agent: {...CODEX_REST, title: '체크아웃 기능 구현 및 정리'}, from: true},
+        ]},
+      ], {columns, width, selected: 1, folds: ['에이전트 없는 워크트리 14', '정리할 것 5']}),
+    ]);
+    const lineages = frame(`ov-lineage-${suffix}`, 'Project Overview · Agents › 계보', {layout: 'vertical', gap: '$--spacing-md', width}, [
+      overviewHeader(tokens, 'ov-lhead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'agents', mode: 'lineage', width}),
+      lineage(`ov-lin-${suffix}`, [
+        [
+          {...SIGTERM_OBSERVER, chips: chips(`ov-lc0-${suffix}`, {branch: 'main', primary: true})},
+          {...SIGTERM_ASK, chips: chips(`ov-lc1-${suffix}`, {branch: '192-hided-sigterm-handler', task: '#192', pr: 221})},
+          {...SIGTERM_REVIEW, chips: chips(`ov-lc2-${suffix}`, {branch: '192-hided-sigterm-handler', task: '#192'})},
+        ],
+        [
+          {...TAB_GROUPS_OBSERVER, chips: chips(`ov-lc3-${suffix}`, {branch: 'main', primary: true})},
+          {...TAB_GROUPS_IMPL, chips: chips(`ov-lc4-${suffix}`, {branch: 'prd/agent-tab-groups', pr: 217})},
+        ],
+        [{...OVERVIEW_WORK, chips: chips(`ov-lc5-${suffix}`, {branch: 'main', primary: true})}],
+      ], {width, names: ['Observer · 보통 main', 'Implementor · 워크트리', '하위 에이전트'], folds: ['쉬는 에이전트 3', '정리할 것 5']}),
+    ]);
+    const issues = frame(`ov-tasks-${suffix}`, 'Project Overview · Issues › Board', {layout: 'vertical', gap: '$--spacing-md', width: boardWidth}, [
+      overviewHeader(tokens, 'ov-head', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'issues', mode: 'board', width: boardWidth}),
       frame(`ov-cols-${suffix}`, 'Columns', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
         stageColumn(`ov-backlog-${suffix}`, '백로그', 5, [
           card('b1', {task: gh(201), title: 'Add Workspace design reference and visual review coverage', hover: 'start'}),
@@ -959,8 +1154,8 @@ function buildProjectOverview(tokens) {
         ], 6),
       ]),
     ]);
-    const dependencies = frame(`ov-deps-${suffix}`, 'Project Overview · Tasks › Dependencies', {layout: 'vertical', gap: '$--spacing-lg', width}, [
-      overviewHeader(tokens, 'ov-dhead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'tasks', mode: 'dependencies', width, waiting: 2}),
+    const dependencies = frame(`ov-deps-${suffix}`, 'Project Overview · Issues › Dependencies', {layout: 'vertical', gap: '$--spacing-lg', width: boardWidth}, [
+      overviewHeader(tokens, 'ov-dhead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'issues', mode: 'dependencies', width: boardWidth}),
       legend(`ov-dlegend-${suffix}`),
       chain(`ov-dchain-${suffix}`, [
         card('d1', {...ISSUE_192, word: '진행 중'}),
@@ -976,28 +1171,10 @@ function buildProjectOverview(tokens) {
         card('d6', {task: gh(199), title: 'Read the remote primary checkout over device connections', word: '백로그'}),
       ]),
     ]);
-    const pr208 = {number: 208, checks: 'passing'};
-    const agents = frame(`ov-agents-${suffix}`, 'Project Overview · Agents', {layout: 'vertical', gap: '$--spacing-md', width}, [
-      overviewHeader(tokens, 'ov-ahead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'agents', width, waiting: 2}),
-      inbox(`ov-inbox-${suffix}`, [
-        {label: '내 차례', count: 2, tone: '$--warning', rows: [
-          {mark: 'ask', provider: 'codex', title: 'SIGTERM 처리와 자식 정리 순서', line: '기존 stdin 종료 경로도 남길까요?', tone: 'request', task: gh(192), age: '4m'},
-          {mark: 'work', depth: 1, title: '종료 경로 테스트 작성', task: gh(192), age: '2m'},
-          {mark: 'done', title: 'observer-sidebar-typography', line: 'Implementor가 PR #208 준비 완료', tone: 'news', task: gh(186), pr: pr208, age: '1m'},
-          {mark: 'seen', depth: 1, title: '사이드바 타이포그래피 구현', task: gh(186), pr: pr208, age: '26m'},
-        ]},
-        {label: '실행 중', count: 2, rows: [
-          {mark: 'work', provider: 'codex', title: '리뷰 반영', task: gh(184), pr: {number: 207, checks: 'pending'}, age: '3m'},
-          {mark: 'work', provider: 'codex', title: '세션초기화작업대기', where: 'prd/agent-tab-groups', age: '14m'},
-        ]},
-        {label: '쉬는 중', count: 2, rows: [
-          {mark: 'seen', title: 'Agent탭 그룹 시각화 구조 개선', where: 'main', age: '3m'},
-          {mark: 'seen', provider: 'codex', title: '코덱스 데이터 구조 조사', where: 'main', age: '1h'},
-        ]},
-        {label: '정리할 것', count: 4, folded: true, detail: '머지된 워크트리에서 쉬는 에이전트'},
-      ], width),
-    ]);
-    return [tasks, frame(`ov-side-${suffix}`, 'Dependencies and Agents', {layout: 'vertical', gap: '$--spacing-xl'}, [dependencies, agents])];
+    return [
+      frame(`ov-agentside-${suffix}`, 'Agents', {layout: 'vertical', gap: '$--spacing-xl'}, [checkouts, lineages]),
+      frame(`ov-issueside-${suffix}`, 'Issues', {layout: 'vertical', gap: '$--spacing-xl'}, [issues, dependencies]),
+    ];
   }
   return screenSheet('screen-project-overview', 'Screen / Project Overview', OVERVIEW_SPEC, build, build);
 }
@@ -1223,12 +1400,11 @@ function buildWorkspace(tokens) {
 
 // -- Screen / Project Sessions --------------------------------------------------
 
-// The Overview on its Sessions tab: the same header as the Tasks board, then
+// The Overview on its Sessions tile: the same header as the Issues board, then
 // the Project's session list and the read-only detail beside it.
 function buildSessions(tokens) {
   function build(suffix) {
     const header = overviewHeader(tokens, 'ss-head', suffix, {project: 'fixture', facts: [
-      {glyph: 'circle-dot', label: '3 open issues', after: '· Local'},
       {glyph: 'folder-git-2', label: '2 worktrees'},
       {glyph: 'hard-drive', label: '812 MB'},
     ], view: 'sessions', width: 820});

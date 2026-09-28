@@ -658,6 +658,13 @@ pub struct SidebarAgentSnapshot {
     /// Derived: the row's second line, chosen by the group from the three
     /// sentences above (PRD D-06). `None` draws no sentence.
     pub detail: Option<String>,
+    /// Everything the agent last said through its hooks, uncut: the request
+    /// it waits on (`expected_reply`), then what it did (`progress`), one per
+    /// line. `detail` is the row's one chosen sentence cut to the row; this is
+    /// the whole of both, which the Overview's node popover shows (PRD
+    /// overview-lenses-tiles-agents D-50). Absent when neither was reported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
     /// Derived: whether the row draws its status word. It leaves working and
     /// read rows, where the mark already says it, and stays on rows that
     /// still concern the operator.

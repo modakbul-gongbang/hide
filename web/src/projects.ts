@@ -221,7 +221,7 @@ export function checkoutPresentation(workspace: Workspace, checkout: Checkout, n
 /** One line of the checkout card: a label and its value in a tone; the Agents row carries marks instead of a word. */
 export type CheckoutCardRow =
   | { key: "review" | "checks"; label: string; value: string; tone: string }
-  | { key: "branch" | "commit"; label: string; value: string }
+  | { key: "branch" | "commit" | "base" | "changes"; label: string; value: string }
   | { key: "path"; label: string; value: string }
   | { key: "agents"; label: string; marks: MarkCounts };
 
@@ -276,6 +276,40 @@ export function checkoutCard(workspace: Workspace, checkout: Checkout, nowMs: nu
     header: pr ? { kind: "pull_request", badge: pullRequestBadge(pr), glyph: pullRequestKind(pr), number: pr.number, url: pr.url, title: pr.title } : null,
     rows,
   };
+}
+
+/** `↑N ↓N`, each part only above zero; empty when the branch is even with both. */
+export function distanceText(ahead: number, behind: number): string {
+  return [ahead > 0 ? `↑${ahead}` : null, behind > 0 ? `↓${behind}` : null].filter(Boolean).join(" ");
+}
+
+/** `1 file`, `N files`. */
+export function filesText(count: number): string {
+  return `${count} ${count === 1 ? "file" : "files"}`;
+}
+
+/**
+ * The card an Overview lane head opens (PRD overview-lenses-tiles-agents
+ * B16): the checkout card with where the branch stands against its base
+ * (`↑` commits of its own, `↓` behind its upstream) and how many files it
+ * changed, each only once Git has said so. Lines added and removed are not
+ * in the snapshot, so the card does not draw them (design 10).
+ */
+export function laneCheckoutCard(workspace: Workspace, checkout: Checkout, nowMs: number): CheckoutCard {
+  const card = checkoutCard(workspace, checkout, nowMs);
+  const worktree = checkout.worktree;
+  if (!checkout.exists || !workspace.is_git || !worktree) return card;
+  const extra: CheckoutCardRow[] = [];
+  const ahead = checkout.ahead ?? 0;
+  const behind = worktree.behind_upstream ?? 0;
+  if (checkout.is_worktree && checkout.is_primary !== true && workspace.default_branch) {
+    extra.push({ key: "base", label: "Base", value: [workspace.default_branch, distanceText(ahead, behind)].filter(Boolean).join(" ") });
+  }
+  extra.push({ key: "changes", label: "Changes", value: worktree.changed_file_count === 0 ? "Clean" : filesText(worktree.changed_file_count) });
+  const at = card.rows.findIndex((row) => row.key === "branch");
+  const rows = [...card.rows];
+  rows.splice(at < 0 ? 0 : at + 1, 0, ...extra);
+  return { ...card, rows };
 }
 
 /** A card with one value and no header is the plain text tooltip instead (D-09): that one value, never an empty card. */

@@ -8,6 +8,7 @@ import { RemotePaneCanvas } from "./PaneGrid";
 import { remoteView } from "./remote";
 import { canRetryDevice, deviceLine } from "./settings";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, type Checkout } from "./snapshot";
+import { overviewScreen } from "./navigation";
 import { useShellStore } from "./store";
 import { focusTerminal } from "./terminals";
 import { AgentAreas } from "./AgentAreas";
@@ -198,7 +199,7 @@ function WorkspaceToolbar({ checkout, view, panelShown, actions }: { checkout: C
     if (id.startsWith("panel:")) return actions.setPanel(id.slice("panel:".length) as PanelState);
     if (id === "pin") return actions.setPanelPinned(!view.pinned);
     if (id === "copy_path") return void navigator.clipboard?.writeText(checkout.path).catch(() => undefined);
-    if (id === "overview" && project) setScreen({ kind: "overview", projectId: project.id });
+    if (id === "overview" && project) setScreen(overviewScreen(useShellStore.getState().rest, project.id));
   };
   return (
     <EntryContextMenu label={`Workspace ${name}`} items={menuItems} onSelect={select} className="shrink-0" data-workspace-menu="true">
@@ -214,7 +215,7 @@ function WorkspaceToolbar({ checkout, view, panelShown, actions }: { checkout: C
                 type="button"
                 className="min-w-0 max-w-[var(--size-recent-location-max)] shrink truncate rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
                 data-go-overview={project.id}
-                onClick={() => setScreen({ kind: "overview", projectId: project.id })}
+                onClick={() => setScreen(overviewScreen(useShellStore.getState().rest, project.id))}
               >
                 {project.label}
               </button>
