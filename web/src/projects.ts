@@ -1,22 +1,46 @@
-// The Projects list as the sidebar draws it: pinned rows
-// under their own header, then the activity rows with a per-device fold of
-// inactive projects, and per project a fold of inactive checkouts. The
-// split only reads flags the core set; no age or merge rule is repeated.
+// The Projects list as the sidebar draws it: the raised Needs You and Done
+// agents, then pinned rows under their own header, then the activity rows
+// with a per-device fold of inactive projects, and per project a fold of
+// inactive checkouts. The split only reads flags and groups the core set; no
+// age, merge or attention rule is repeated.
 
+import { AGENT_GROUPS, type ListedAgent } from "./navigation";
 import type { Checkout, InactiveProjectGroup, MarkCounts, PullRequest, Workspace } from "./snapshot";
 
 export type ProjectRow =
   | { kind: "header"; title: string; count: number }
+  | { kind: "raised"; group: string; title: string; agents: ListedAgent[] }
   | { kind: "workspace"; workspace: Workspace; level: "root" | "child" }
   | { kind: "inactive_projects"; group: InactiveProjectGroup; count: number };
 
 export const PINNED_TITLE = "Pinned";
 export const RECENT_TITLE = "Projects · Recent activity";
 
-export function projectRows(workspaces: Workspace[], groups: InactiveProjectGroup[]): ProjectRow[] {
+/** The groups the Projects list raises above its tree (docs/status-model.md). */
+const RAISED_GROUPS = new Set(["needs_you", "done"]);
+
+/**
+ * `listed` is every agent the Agents list shows. A raised section holds, in
+ * the core's order, the Needs You or Done agents whose pane a drawn project's
+ * checkout owns, so every raised agent is also in the tree below; an empty
+ * section is left out, and a raised row never unfolds, so it is handed on
+ * folded (docs/status-model.md, The descendant badge).
+ */
+export function projectRows(workspaces: Workspace[], groups: InactiveProjectGroup[], listed: ListedAgent[]): ProjectRow[] {
+  const rows: ProjectRow[] = [];
+  const drawnPanes = new Set<string>();
+  for (const workspace of workspaces) {
+    for (const checkout of workspace.checkouts) for (const tab of checkout.tabs) for (const pane of tab.panes) drawnPanes.add(pane.id);
+  }
+  for (const { group, label } of AGENT_GROUPS) {
+    if (!RAISED_GROUPS.has(group)) continue;
+    const raised = listed.filter((row) => row.agent.group === group && drawnPanes.has(row.agent.pane_id));
+    if (raised.length === 0) continue;
+    const agents = raised.map((row) => (row.agent.lineage_collapsed === false ? { ...row, agent: { ...row.agent, lineage_collapsed: true } } : row));
+    rows.push({ kind: "raised", group, title: label, agents });
+  }
   const pinned = workspaces.filter((row) => row.pinned);
   const recent = workspaces.filter((row) => !row.pinned);
-  const rows: ProjectRow[] = [];
   if (pinned.length > 0) {
     rows.push({ kind: "header", title: PINNED_TITLE, count: pinned.length });
     for (const workspace of pinned) rows.push({ kind: "workspace", workspace, level: "root" });
