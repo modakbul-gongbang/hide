@@ -35722,6 +35722,22 @@
     "--size-sidebar-line-detail": {
       "type": "number",
       "value": 16
+    },
+    "--lens-bar-height": {
+      "type": "number",
+      "value": 4
+    },
+    "--lens-lane-head": {
+      "type": "number",
+      "value": 296
+    },
+    "--lens-node-width": {
+      "type": "number",
+      "value": 232
+    },
+    "--lens-tile-min": {
+      "type": "number",
+      "value": 208
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4",
