@@ -546,9 +546,10 @@ pub(crate) fn read_linked_issue(
         .ok_or_else(|| "GitHub issue was not found".to_owned())
 }
 
-/// Creates an issue in the repository `root` belongs to, the one write Hide
-/// makes to GitHub (Overview › 새 이슈). `gh issue create` prints the new
-/// issue's URL, which names it.
+/// Creates an issue in the repository `root` belongs to (Overview › 새 이슈,
+/// and a pull request's 새 이슈 만들기), one of Hide's two writes to GitHub
+/// with `write_closing_line`. `gh issue create` prints the new issue's URL,
+/// which names it.
 pub(crate) fn create_issue(
     root: &Path,
     title: &str,
