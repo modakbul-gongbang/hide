@@ -133,6 +133,7 @@ node scripts/pen-transplant.mjs --from <branch-file> --into <main-file> --sheet 
 `design/hide-screens.pen` draws every area the web shell shows today, one `Screen / <Area>` sheet per area, imported from `design/hide-ui.lib.pen` the same way a `Component /` sheet is drawn from `System /` masters.
 Each sheet carries a `Light` and a `Dark` frame and uses realistic content, including Korean labels and a long path, to show real wrapping and truncation rather than an abstract state.
 `scripts/check-hide-screens.mjs` enforces the shape (`Screen / ` naming, both theme frames, every reference resolving against the library, every cross-library color restated locally, and local variables matching `design/tokens.json`) and `scripts/gen-screens.mjs` regenerates the file from `scripts/pen-screens.mjs`.
+Because the file is generated and several megabytes of JSON, `.gitattributes` marks it `-diff linguist-generated=true`: `git diff` reports only that it changed and GitHub folds it in a pull request, so review reads `scripts/pen-screens.mjs`; `git diff --text` still shows its lines when they are needed.
 
 The Overview of every project is `Screen / Main`, named after its web file and screen kind.
 It draws the agent and project sidebar beside the Overview, the sidebar's Overview row marked: its title with Add project and `새 이슈` as the primary action, its facts line with the open issues, and the `Tasks · Agents · Projects` tabs with the waiting count on Agents, whose view is the Project Overview's lanes or lineage over every project.
