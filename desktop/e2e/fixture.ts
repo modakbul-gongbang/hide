@@ -81,8 +81,8 @@ function assertIsolated(env: Record<string, string>): void {
 export const BACKGROUND_SWITCHES = [`--${SHOW_INACTIVE_SWITCH}`, "--disable-backgrounding-occluded-windows"];
 
 /**
- * The tag of a test that needs the key window or native input (a pinch, a
- * native drag, a keystroke only the app menu sees). Such a test brings its
+ * The tag of a test that needs the key window or native input (a page
+ * holding the keyboard, a pinch, a native drag). Such a test brings its
  * window to the front itself, so it takes the keyboard while it runs;
  * `--grep-invert @needs-focus` leaves it out.
  */
