@@ -572,12 +572,6 @@ impl ViewFocusSlot {
     }
 }
 
-fn remote_workspace_source_id<'a>(target_id: &str, projected_id: &'a str) -> Option<&'a str> {
-    projected_id
-        .strip_prefix(&format!("remote:{target_id}:workspace:"))
-        .filter(|workspace_id| !workspace_id.trim().is_empty())
-}
-
 fn remote_tab_source_id<'a>(target_id: &str, projected_id: &'a str) -> Option<&'a str> {
     projected_id
         .strip_prefix(&format!("remote:{target_id}:tab:"))

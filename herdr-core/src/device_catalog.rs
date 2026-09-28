@@ -14,13 +14,12 @@
 //!
 //! Ids stay scoped to the device. A project is
 //! `remote:<device>:project:<sha256(device, root)>`, so the same path or the
-//! same repository on two devices is two projects. The checkout that holds a
-//! Herdr workspace's own directory keeps that workspace's checkout id
-//! (`remote:<device>:checkout:<workspace>`), so a file tab or a focus that
-//! names it survives the grouping; a second checkout a tab of that workspace
-//! sits in is `…:checkout:<workspace>#<hash of its root>`. Either way the
-//! checkout id names exactly one Herdr workspace, which is what a command sent
-//! to that host needs (`remote_checkout_source_id`).
+//! same repository on two devices is two projects. A checkout is keyed by its
+//! folder like this machine's (`remote:<device>:checkout:<hash of its root>`,
+//! PRD checkout-workspace-binding D-10): every Herdr workspace whose tabs sit
+//! in one folder is one row, and the id names no Herdr workspace. What a
+//! command needs from the host is carried beside it instead: the checkout's
+//! owner workspace (`checkout_owner`), and each tab's own id.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -122,15 +121,54 @@ pub(crate) fn project_id(target: &str, root: &Path) -> String {
     format!("remote:{target}:{}", hide_project::project_id(target, root))
 }
 
-/// The Herdr workspace a device checkout id names.
-pub(crate) fn remote_checkout_source_id<'a>(target: &str, checkout_id: &'a str) -> Option<&'a str> {
-    checkout_id
-        .strip_prefix(&format!("remote:{target}:checkout:"))
-        .map(|rest| {
-            rest.split_once('#')
-                .map_or(rest, |(workspace, _)| workspace)
-        })
-        .filter(|workspace| !workspace.trim().is_empty())
+/// The id of the checkout at `path` on `target`: its folder, never a Herdr
+/// workspace, so it survives every workspace that opens or closes there.
+pub(crate) fn checkout_id(target: &str, path: &str) -> String {
+    format!(
+        "remote:{target}:checkout:{:016x}",
+        crate::workspace::fnv1a(path.trim_end_matches('/').as_bytes())
+    )
+}
+
+/// The Herdr workspace behind `raw` that owns the checkout at `root`: a
+/// worktree workspace Herdr binds to that folder, or a workspace carrying
+/// Hide's mark for it.
+fn raw_owner(
+    target: &str,
+    raw_workspace: &WorkspaceSnapshot,
+    raw: &CheckoutSnapshot,
+    root: &str,
+) -> Option<String> {
+    let facts = crate::checkout_owner::WorkspaceFacts {
+        workspace_id: raw_workspace.session_workspace_ids.first()?,
+        bound_path: raw.owner_workspace_id.as_ref().map(|_| raw.path.as_str()),
+        mark: raw.owner_mark.as_deref(),
+    };
+    let git = crate::checkout_owner::owner_of(target, root, true, [facts]);
+    let folder = crate::checkout_owner::owner_of(target, root, false, [facts]);
+    git.or(folder).map(str::to_owned)
+}
+
+/// One checkout's part from one Herdr workspace, folded into the row its
+/// folder already has in `project`, or added as that row.
+fn merge_checkout(project: &mut WorkspaceSnapshot, part: CheckoutSnapshot) {
+    let Some(row) = project
+        .checkouts
+        .iter_mut()
+        .find(|checkout| checkout.id == part.id)
+    else {
+        project.checkouts.push(part);
+        return;
+    };
+    row.tabs.extend(part.tabs);
+    row.strip.extend(part.strip);
+    row.has_panes |= part.has_panes;
+    if row.owner_workspace_id.is_none() {
+        row.owner_workspace_id = part.owner_workspace_id;
+    }
+    if row.purpose.is_none() {
+        row.purpose = part.purpose;
+    }
 }
 
 /// The session as the device's facts group it. See the module comment.
@@ -140,17 +178,82 @@ pub(crate) fn group(
     facts: &DeviceFacts,
 ) -> RemoteSessionSnapshot {
     let mut projects: Vec<WorkspaceSnapshot> = Vec::new();
-    let mut active_tab_ids = BTreeMap::new();
+    // Each checkout's candidates for the tab it brings forward: the active
+    // tab of every Herdr workspace with a tab there, by that workspace.
+    let mut actives: BTreeMap<String, Vec<(String, String)>> = BTreeMap::new();
+    let mut grouped_ids = BTreeMap::new();
     for raw_workspace in &raw.workspaces {
         let Some(raw_checkout) = raw_workspace.checkouts.first() else {
             projects.push(raw_workspace.clone());
             continue;
         };
+        let herdr_workspace = raw_workspace
+            .session_workspace_ids
+            .first()
+            .cloned()
+            .unwrap_or_default();
+        let raw_active = raw.active_tab_ids.get(&raw_checkout.id);
         let Some(primary) = facts.known(&raw_checkout.path) else {
-            // Unconfirmed: the Herdr workspace stays a row of its own.
-            projects.push(raw_workspace.clone());
-            if let Some(tab) = raw.active_tab_ids.get(&raw_checkout.id) {
-                active_tab_ids.insert(raw_checkout.id.clone(), tab.clone());
+            // Unconfirmed: the folder is a row of its own, named by the
+            // folder, never grouped by a guess.
+            let id = checkout_id(target, &raw_checkout.path);
+            grouped_ids.insert(raw_checkout.id.clone(), id.clone());
+            if let Some(tab) = raw_active {
+                actives
+                    .entry(id.clone())
+                    .or_default()
+                    .push((herdr_workspace.clone(), tab.clone()));
+            }
+            let name = crate::workspace::checkout_row_label(None, Path::new(&raw_checkout.path));
+            let part = CheckoutSnapshot {
+                id: id.clone(),
+                label: name.clone(),
+                owner_workspace_id: raw_owner(
+                    target,
+                    raw_workspace,
+                    raw_checkout,
+                    &raw_checkout.path,
+                ),
+                owner_mark: None,
+                unconfirmed: true,
+                tabs: raw_checkout
+                    .tabs
+                    .iter()
+                    .map(|tab| TabSnapshot {
+                        checkout_id: Some(id.clone()),
+                        ..tab.clone()
+                    })
+                    .collect(),
+                ..raw_checkout.clone()
+            };
+            match projects
+                .iter_mut()
+                .find(|project| project.checkouts.iter().any(|checkout| checkout.id == id))
+            {
+                Some(project) => {
+                    let part = CheckoutSnapshot {
+                        workspace_id: project.id.clone(),
+                        tabs: part
+                            .tabs
+                            .into_iter()
+                            .map(|tab| TabSnapshot {
+                                workspace_id: Some(project.id.clone()),
+                                ..tab
+                            })
+                            .collect(),
+                        ..part
+                    };
+                    if !project.session_workspace_ids.contains(&herdr_workspace) {
+                        project.session_workspace_ids.push(herdr_workspace.clone());
+                    }
+                    merge_checkout(project, part);
+                }
+                None => projects.push(WorkspaceSnapshot {
+                    label: name.clone(),
+                    repo_name: name,
+                    checkouts: vec![part],
+                    ..raw_workspace.clone()
+                }),
             }
             continue;
         };
@@ -172,15 +275,10 @@ pub(crate) fn group(
         for (index, (facts, tabs)) in parts.into_iter().enumerate() {
             let project_id = project_id(target, &facts.root);
             let checkout_root = facts.checkout_root.to_string_lossy().into_owned();
-            let checkout_id = if index == 0 {
-                raw_checkout.id.clone()
-            } else {
-                format!(
-                    "{}#{:016x}",
-                    raw_checkout.id,
-                    crate::workspace::fnv1a(checkout_root.as_bytes())
-                )
-            };
+            let checkout_id = checkout_id(target, &checkout_root);
+            if index == 0 {
+                grouped_ids.insert(raw_checkout.id.clone(), checkout_id.clone());
+            }
             let tabs = tabs
                 .into_iter()
                 .map(|tab| TabSnapshot {
@@ -189,24 +287,14 @@ pub(crate) fn group(
                     ..tab.clone()
                 })
                 .collect::<Vec<_>>();
-            let active_tab_id = raw_checkout
-                .active_tab_id
-                .clone()
-                .filter(|active| tabs.iter().any(|tab| tab.id.as_ref() == Some(active)));
-            let herdr_active = raw
-                .active_tab_ids
-                .get(&raw_checkout.id)
-                .filter(|active| tabs.iter().any(|tab| tab.id.as_ref() == Some(*active)))
-                .cloned()
-                .or_else(|| tabs.first().and_then(|tab| tab.id.clone()));
-            if let Some(tab) = herdr_active {
-                active_tab_ids.insert(checkout_id.clone(), tab);
+            if let Some(tab) =
+                raw_active.filter(|active| tabs.iter().any(|tab| tab.id.as_ref() == Some(*active)))
+            {
+                actives
+                    .entry(checkout_id.clone())
+                    .or_default()
+                    .push((herdr_workspace.clone(), tab.clone()));
             }
-            let label = if index == 0 {
-                raw_checkout.label.clone()
-            } else {
-                crate::workspace::checkout_row_label(facts.branch.as_deref(), &facts.checkout_root)
-            };
             // The Herdr entries of this checkout's tabs; the runtime adds the
             // file tabs (`place_device_strips`).
             let strip = raw_checkout
@@ -223,8 +311,11 @@ pub(crate) fn group(
             let checkout = CheckoutSnapshot {
                 id: checkout_id,
                 workspace_id: project_id.clone(),
-                label,
-                path: checkout_root,
+                label: crate::workspace::checkout_row_label(
+                    facts.branch.as_deref(),
+                    &facts.checkout_root,
+                ),
+                path: checkout_root.clone(),
                 branch: facts.branch.clone(),
                 is_worktree: facts.linked_worktree,
                 is_primary: !facts.linked_worktree && facts.kind == ProjectKind::Git,
@@ -235,7 +326,13 @@ pub(crate) fn group(
                 } else {
                     None
                 },
-                active_tab_id,
+                owner_workspace_id: if index == 0 {
+                    raw_owner(target, raw_workspace, raw_checkout, &checkout_root)
+                } else {
+                    None
+                },
+                owner_mark: None,
+                active_tab_id: None,
                 strip,
                 tabs,
                 ..raw_checkout.clone()
@@ -248,7 +345,7 @@ pub(crate) fn group(
                         .root
                         .file_name()
                         .map(|name| name.to_string_lossy().into_owned())
-                        .unwrap_or_else(|| raw_workspace.label.clone());
+                        .unwrap_or_else(|| root.clone());
                     projects.push(WorkspaceSnapshot {
                         id: project_id.clone(),
                         label: name.clone(),
@@ -272,7 +369,38 @@ pub(crate) fn group(
             if facts.checkout_root == facts.root {
                 project.default_branch = facts.branch.clone();
             }
-            project.checkouts.push(checkout);
+            merge_checkout(project, checkout);
+        }
+    }
+    // The tab a merged checkout brings forward (D-13): Herdr's focused tab
+    // when it is there, else its owner's active tab, else the first
+    // workspace's.
+    let mut active_tab_ids = BTreeMap::new();
+    for project in &mut projects {
+        for checkout in &mut project.checkouts {
+            let candidates = actives.get(&checkout.id).map_or(&[][..], Vec::as_slice);
+            let focused = raw.focused_tab_id.as_ref().filter(|focused| {
+                checkout
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.id.as_ref() == Some(*focused))
+            });
+            let owner = checkout.owner_workspace_id.as_ref().and_then(|owner| {
+                candidates
+                    .iter()
+                    .find(|(workspace, _)| workspace == owner)
+                    .map(|(_, tab)| tab)
+            });
+            let chosen = focused
+                .or(owner)
+                .or_else(|| candidates.first().map(|(_, tab)| tab))
+                .cloned();
+            checkout.active_tab_id = chosen.clone();
+            if let Some(tab) =
+                chosen.or_else(|| checkout.tabs.first().and_then(|tab| tab.id.clone()))
+            {
+                active_tab_ids.insert(checkout.id.clone(), tab);
+            }
         }
     }
     // The main worktree leads, as on this machine.
@@ -314,7 +442,12 @@ pub(crate) fn group(
         .focused_tab_id
         .as_deref()
         .and_then(find_tab)
-        .or_else(|| raw.focused_checkout_id.as_deref().and_then(find_checkout));
+        .or_else(|| {
+            raw.focused_checkout_id
+                .as_ref()
+                .and_then(|raw_id| grouped_ids.get(raw_id))
+                .and_then(|id| find_checkout(id))
+        });
     RemoteSessionSnapshot {
         workspaces: projects,
         agents: raw.agents.clone(),
@@ -327,15 +460,11 @@ pub(crate) fn group(
     }
 }
 
-/// The suffix of a registered project's checkout id while Herdr has no
-/// workspace in it; the id names no Herdr workspace.
-pub(crate) const REGISTERED_CHECKOUT: &str = "#registered";
-
 /// A device's registrations carried onto its grouped session (B3, B23-B25).
 ///
 /// A registered project keeps its row while Herdr has no workspace in it: its
-/// main checkout is listed without tabs, under a checkout id that names no
-/// Herdr workspace, so nothing is sent to the host for it by mistake. A
+/// main checkout is listed without tabs under its folder's checkout id, the
+/// same id the row keeps once a Herdr workspace opens there (D-10). A
 /// registered row carries its pin, and every row what `Remove project…`
 /// would close, counted from the device's own session: a row without a
 /// registration offers the removal too (PRD sidebar-context-menus D-14).
@@ -385,7 +514,7 @@ pub(crate) fn apply_registrations(
             last_activity_unix_ms: None,
             pinned: registration.pinned,
             checkouts: vec![CheckoutSnapshot {
-                id: format!("{}{REGISTERED_CHECKOUT}", registration.id),
+                id: checkout_id(target, &registration.path),
                 next_tab_label: crate::model::next_tab_label(std::iter::empty()),
                 workspace_id: registration.id.clone(),
                 label: crate::workspace::checkout_row_label(
@@ -397,6 +526,7 @@ pub(crate) fn apply_registrations(
                 exists: true,
                 is_primary: known
                     .is_some_and(|facts| facts.kind == ProjectKind::Git && !facts.linked_worktree),
+                unconfirmed: known.is_none(),
                 ..CheckoutSnapshot::default()
             }],
             inactive_checkouts: Default::default(),

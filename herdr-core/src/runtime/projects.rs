@@ -2228,11 +2228,10 @@ impl Runtime {
                 );
             }
         }
-        // A device checkout names the one Herdr workspace that holds it; its
-        // project can hold several (`device_catalog`).
-        let session_workspace_id = if let Some(target_id) = remote_target_id.as_deref() {
-            crate::device_catalog::remote_checkout_source_id(target_id, &checkout.id)
-                .map(str::to_owned)
+        // A device checkout's purpose goes to its owner workspace; its other
+        // workspaces only hold tabs there (D-10).
+        let session_workspace_id = if remote_target_id.is_some() {
+            checkout.owner_workspace_id.clone()
         } else {
             workspace::authoritative_session_space(
                 &self.last_session_spaces,
@@ -2587,21 +2586,6 @@ impl Runtime {
     }
 }
 
-#[cfg(test)]
-mod purpose_version_tests {
-    use super::*;
-
-    #[test]
-    fn remote_purpose_requires_the_pinned_minimum_version() {
-        assert!(!herdr_version_supports_purpose(None));
-        assert!(!herdr_version_supports_purpose(Some("0.9.0")));
-        assert!(herdr_version_supports_purpose(Some("0.9.1")));
-        assert!(herdr_version_supports_purpose(Some("v0.10.0")));
-        assert!(herdr_version_supports_purpose(Some("1.0.0-beta.1")));
-        assert!(!herdr_version_supports_purpose(Some("unknown")));
-    }
-}
-
 /// Where a new tab in `checkout` of `project` on `device_id` goes: the owner
 /// the session names, else the owner to open.
 pub(super) fn tab_host(
@@ -2629,4 +2613,19 @@ pub(super) fn owner_open(
         &project.label
     };
     OwnerOpen::for_checkout(device_id, &checkout.path, project.is_git, label)
+}
+
+#[cfg(test)]
+mod purpose_version_tests {
+    use super::*;
+
+    #[test]
+    fn remote_purpose_requires_the_pinned_minimum_version() {
+        assert!(!herdr_version_supports_purpose(None));
+        assert!(!herdr_version_supports_purpose(Some("0.9.0")));
+        assert!(herdr_version_supports_purpose(Some("0.9.1")));
+        assert!(herdr_version_supports_purpose(Some("v0.10.0")));
+        assert!(herdr_version_supports_purpose(Some("1.0.0-beta.1")));
+        assert!(!herdr_version_supports_purpose(Some("unknown")));
+    }
 }

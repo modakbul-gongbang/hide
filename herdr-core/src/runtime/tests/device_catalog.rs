@@ -2,9 +2,10 @@
 //! one repository is one project whatever Herdr workspaces sit in it, a
 //! workspace whose tabs sit in two repositories is split between them, the
 //! same place on two devices is two projects, and a directory the helper has
-//! not answered for is shown unconfirmed rather than guessed.
+//! not answered for is shown unconfirmed rather than guessed. A checkout is
+//! its folder: every workspace with tabs there is one row (PRD
+//! checkout-workspace-binding B8).
 
-use super::agents::remote_herdr_workspace;
 use super::documents::FakeDevice;
 use super::*;
 use crate::device_catalog::{self, DeviceFacts, Fact};
@@ -173,10 +174,7 @@ fn a_devices_workspaces_are_grouped_into_its_repositories_by_its_helper_facts() 
             ),
             (
                 t.other.clone(),
-                vec![
-                    (t.other.clone(), vec!["t2".to_owned()]),
-                    (t.other.clone(), vec!["t4".to_owned()]),
-                ]
+                vec![(t.other.clone(), vec!["t2".to_owned(), "t4".to_owned()])]
             ),
         ]
     );
@@ -188,24 +186,19 @@ fn a_devices_workspaces_are_grouped_into_its_repositories_by_its_helper_facts() 
     assert!(main.id.starts_with("remote:mini:project:"));
     assert!(main.checkouts[1].is_worktree);
     assert_eq!(main.checkouts[1].branch.as_deref(), Some("feature"));
-    // The checkout holding a workspace's own directory keeps its id, and
-    // every checkout still names exactly one Herdr workspace.
-    assert_eq!(main.checkouts[0].id, "remote:mini:checkout:w1");
-    let split = grouped
+    // A checkout is keyed by its folder, whichever workspaces hold its tabs.
+    assert_eq!(
+        main.checkouts[0].id,
+        device_catalog::checkout_id(TARGET, &t.main)
+    );
+    let other = grouped
         .workspaces
         .iter()
-        .flat_map(|project| &project.checkouts)
-        .find(|checkout| {
-            checkout
-                .tabs
-                .iter()
-                .any(|tab| tab.label.as_deref() == Some("t2"))
-        })
+        .find(|project| project.path == t.other)
         .unwrap();
-    assert!(split.id.starts_with("remote:mini:checkout:w1#"));
     assert_eq!(
-        device_catalog::remote_checkout_source_id(TARGET, &split.id),
-        Some("w1")
+        other.checkouts[0].id,
+        device_catalog::checkout_id(TARGET, &t.other)
     );
     for project in &grouped.workspaces {
         for checkout in &project.checkouts {
@@ -216,16 +209,6 @@ fn a_devices_workspaces_are_grouped_into_its_repositories_by_its_helper_facts() 
             }
         }
     }
-    assert_eq!(
-        remote_herdr_workspace(&grouped, TARGET, &main.id, Some("remote:mini:checkout:w2"))
-            .as_deref(),
-        Some("w2")
-    );
-    assert_eq!(
-        remote_herdr_workspace(&grouped, TARGET, &main.id, None),
-        None,
-        "a project of several workspaces needs the checkout to name one"
-    );
 
     // B2: the same place on another device is another project.
     let elsewhere = session(vec![herdr_workspace(
@@ -494,10 +477,11 @@ fn a_device_registration_is_listed_without_panes_pinned_and_removed_on_that_devi
     assert_eq!(registered.checkouts.len(), 1);
     assert!(registered.checkouts[0].tabs.is_empty());
     assert_eq!(
-        device_catalog::remote_checkout_source_id(TARGET, &registered.checkouts[0].id),
-        None,
-        "a registration-only checkout names no Herdr workspace"
+        registered.checkouts[0].id,
+        device_catalog::checkout_id(TARGET, &t.other),
+        "a registration-only checkout is keyed by its folder, as it stays once opened"
     );
+    assert_eq!(registered.checkouts[0].owner_workspace_id, None);
     assert_eq!(rows(&runtime).len(), 2);
 
     dispatch(
@@ -575,9 +559,9 @@ fn a_new_project_folder_on_a_device_is_refused_before_the_helper() {
     assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
 }
 
-/// B23: a new tab in a device project Herdr has no workspace in creates one
-/// at the registered folder on that device; a registration-only checkout
-/// id for a project that is not registered there names nothing.
+/// B23, B12: a new tab in a device project Herdr has no workspace in opens
+/// its owner at the registered folder on that device; a project that is not
+/// registered there names nothing.
 #[test]
 fn a_tab_in_a_device_registration_without_a_workspace_creates_one_there() {
     let t = tree();
@@ -631,7 +615,7 @@ fn a_tab_in_a_device_registration_without_a_workspace_creates_one_there() {
             in_place: false,
             request: RemoteControlRequest::CreateTab {
                 workspace_id: workspace_id.to_owned(),
-                checkout_id: Some(format!("{workspace_id}#registered")),
+                checkout_id: Some(device_catalog::checkout_id(TARGET, &t.other)),
                 cwd: "/elsewhere".to_owned(),
                 label: "Tab 1".to_owned(),
             },
@@ -751,7 +735,7 @@ fn a_device_tab_moves_on_its_own_herdr_and_a_file_tab_keeps_the_slot_it_was_drop
         ChangeNotifier::noop(),
     ));
     let workspace_id = format!("remote:{TARGET}:workspace:w1");
-    let checkout_id = format!("remote:{TARGET}:checkout:w1");
+    let checkout_id = device_catalog::checkout_id(TARGET, &t.main);
     runtime.snapshot.editor.tabs.push(EditorTabSnapshot {
         id: "file:device".to_owned(),
         workspace_id: workspace_id.clone(),
@@ -1061,7 +1045,7 @@ fn a_device_agent_opened_over_an_expanded_panel_uncovers_its_own_workspace() {
         in_place: false,
         request: RemoteControlRequest::FocusWorkspace {
             workspace_id: format!("remote:{TARGET}:workspace:w1"),
-            checkout_id: Some(format!("remote:{TARGET}:checkout:w1")),
+            checkout_id: Some(device_catalog::checkout_id(TARGET, &t.main)),
         },
     });
     assert_eq!(runtime.snapshot.status.last_error, None);
@@ -1079,7 +1063,7 @@ fn a_device_agent_opened_over_an_expanded_panel_uncovers_its_own_workspace() {
         in_place: false,
         request: RemoteControlRequest::FocusWorkspace {
             workspace_id: format!("remote:{TARGET}:workspace:w2"),
-            checkout_id: Some(format!("remote:{TARGET}:checkout:w2")),
+            checkout_id: Some(device_catalog::checkout_id(TARGET, &t.linked)),
         },
     });
     runtime.ingest_remote_control_result(
@@ -1104,7 +1088,7 @@ fn a_device_agent_opened_over_an_expanded_panel_uncovers_its_own_workspace() {
         in_place: false,
         request: RemoteControlRequest::FocusWorkspace {
             workspace_id: format!("remote:{TARGET}:workspace:w2"),
-            checkout_id: Some(format!("remote:{TARGET}:checkout:w2")),
+            checkout_id: Some(device_catalog::checkout_id(TARGET, &t.linked)),
         },
     });
     runtime.ingest_remote_control_result_with_generation(
@@ -1129,7 +1113,7 @@ fn a_device_agent_opened_over_an_expanded_panel_uncovers_its_own_workspace() {
         in_place: false,
         request: RemoteControlRequest::FocusWorkspace {
             workspace_id: format!("remote:{TARGET}:workspace:w1"),
-            checkout_id: Some(format!("remote:{TARGET}:checkout:w1")),
+            checkout_id: Some(device_catalog::checkout_id(TARGET, &t.main)),
         },
     });
     runtime.forget_device_views(TARGET);
@@ -1246,4 +1230,196 @@ fn a_device_pane_carries_its_children_and_its_path_to_the_parent() {
             .collect::<Vec<_>>(),
         [parent.as_str(), child.as_str()]
     );
+}
+
+/// Records what a device's Herdr is asked, one connection per request.
+fn recording_device(runtime: &mut Runtime) -> Arc<Mutex<Vec<serde_json::Value>>> {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    runtime.install_remote_control(RemoteControlContext::new(
+        TARGET,
+        Arc::new(RecordingHerdr {
+            requests: requests.clone(),
+        }),
+        Weak::new(),
+        ChangeNotifier::noop(),
+    ));
+    requests
+}
+
+fn next_request(requests: &Mutex<Vec<serde_json::Value>>, seen: usize) -> serde_json::Value {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while requests.lock().unwrap().len() <= seen {
+        assert!(
+            Instant::now() < deadline,
+            "the device's Herdr was not asked"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    requests.lock().unwrap()[seen].clone()
+}
+
+/// PRD checkout-workspace-binding B8, B9, D-13: the mini's shape, one folder
+/// held by the workspace Herdr binds to it (w5N) and by an unbound one
+/// (w5T), is one checkout row holding both workspaces' tabs, whether or not
+/// the helper has answered for the folder. A new tab there goes to w5N,
+/// opening the row brings a tab forward without making anything, and a
+/// folder with no owner open gets one from `worktree.open`.
+#[test]
+fn one_device_folder_held_by_two_workspaces_is_one_row_whose_new_tabs_go_to_its_owner() {
+    let t = tree();
+    let raw = || {
+        let mut bound = herdr_workspace(TARGET, "w5N", &t.main, &[("a", &t.main)]);
+        bound.checkouts[0].owner_workspace_id = Some("w5N".to_owned());
+        session(vec![
+            bound,
+            herdr_workspace(TARGET, "w5T", &t.main, &[("b", &t.main), ("c", &t.main)]),
+        ])
+    };
+    let row = |grouped: &RemoteSessionSnapshot| {
+        assert_eq!(grouped.workspaces.len(), 1, "{:?}", layout(grouped));
+        assert_eq!(grouped.workspaces[0].checkouts.len(), 1);
+        grouped.workspaces[0].checkouts[0].clone()
+    };
+    for facts in [DeviceFacts::default(), answered(&[&t.main])] {
+        let checkout = row(&device_catalog::group(TARGET, &raw(), &facts));
+        assert_eq!(checkout.id, device_catalog::checkout_id(TARGET, &t.main));
+        assert_eq!(checkout.path, t.main);
+        assert_eq!(checkout.owner_workspace_id.as_deref(), Some("w5N"));
+        let tabs = checkout
+            .tabs
+            .iter()
+            .filter_map(|tab| tab.label.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(tabs, ["a", "b", "c"]);
+        assert!(
+            checkout.label != "w5T" && checkout.label != "w5N",
+            "a row is never named after a Herdr workspace"
+        );
+    }
+    // The tab brought forward: Herdr's focused tab when it is in the
+    // checkout, else the owner's active tab.
+    let grouped = device_catalog::group(TARGET, &raw(), &answered(&[&t.main]));
+    let id = device_catalog::checkout_id(TARGET, &t.main);
+    assert_eq!(
+        grouped.active_tab_ids.get(&id).map(String::as_str),
+        Some("remote:mini:tab:a")
+    );
+    let mut focused = raw();
+    focused.focused_tab_id = Some("remote:mini:tab:c".to_owned());
+    let grouped = device_catalog::group(TARGET, &focused, &answered(&[&t.main]));
+    assert_eq!(
+        grouped.active_tab_ids.get(&id).map(String::as_str),
+        Some("remote:mini:tab:c")
+    );
+
+    let mut runtime = runtime();
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: TARGET.to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: Some("0.9.1".to_owned()),
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    runtime.ingest_remote_session(TARGET, Ok(raw()));
+    let requests = recording_device(&mut runtime);
+    let project = runtime.snapshot.status.remote[0]
+        .session
+        .as_ref()
+        .unwrap()
+        .workspaces[0]
+        .id
+        .clone();
+    let send = |runtime: &mut Runtime, request_id: &str, request: RemoteControlRequest| {
+        runtime.request_remote_control(RemoteControlPayload {
+            target_id: TARGET.to_owned(),
+            request_id: request_id.to_owned(),
+            report_pane_focus_outcome: false,
+            focus_device: false,
+            in_place: false,
+            request,
+        });
+        assert_eq!(runtime.snapshot.status.last_error, None);
+    };
+    send(
+        &mut runtime,
+        "new-tab",
+        RemoteControlRequest::CreateTab {
+            workspace_id: project.clone(),
+            checkout_id: Some(id.clone()),
+            cwd: t.main.clone(),
+            label: "Tab 4".to_owned(),
+        },
+    );
+    let request = next_request(&requests, 0);
+    assert_eq!(request["method"], "tab.create");
+    assert_eq!(request["params"]["workspace_id"], "w5N");
+
+    send(
+        &mut runtime,
+        "open-row",
+        RemoteControlRequest::FocusWorkspace {
+            workspace_id: project.clone(),
+            checkout_id: Some(id.clone()),
+        },
+    );
+    let request = next_request(&requests, 1);
+    assert_eq!(request["method"], "tab.focus");
+    assert_eq!(request["params"]["tab_id"], "a");
+
+    // With the bound workspace closed, the next tab opens the owner rather
+    // than landing in w5T; while the folder is unconfirmed its kind is
+    // unknown, so nothing is opened on a guess.
+    let unbound = || {
+        session(vec![herdr_workspace(
+            TARGET,
+            "w5T",
+            &t.main,
+            &[("b", &t.main)],
+        )])
+    };
+    let new_tab = |runtime: &mut Runtime, request_id: &str| {
+        let project = runtime.snapshot.status.remote[0]
+            .session
+            .as_ref()
+            .unwrap()
+            .workspaces[0]
+            .id
+            .clone();
+        runtime.request_remote_control(RemoteControlPayload {
+            target_id: TARGET.to_owned(),
+            request_id: request_id.to_owned(),
+            report_pane_focus_outcome: false,
+            focus_device: false,
+            in_place: false,
+            request: RemoteControlRequest::CreateTab {
+                workspace_id: project,
+                checkout_id: Some(device_catalog::checkout_id(TARGET, &t.main)),
+                cwd: t.main.clone(),
+                label: "Tab 2".to_owned(),
+            },
+        });
+    };
+    runtime.ingest_remote_session(TARGET, Ok(unbound()));
+    new_tab(&mut runtime, "new-tab-unconfirmed");
+    assert_eq!(
+        runtime
+            .snapshot
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("remote.control.checkout_unconfirmed")
+    );
+    runtime.snapshot.status.last_error = None;
+    runtime
+        .device_facts
+        .insert(TARGET.to_owned(), answered(&[&t.main]));
+    runtime.ingest_remote_session(TARGET, Ok(unbound()));
+    new_tab(&mut runtime, "new-tab-2");
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    let request = next_request(&requests, 2);
+    assert_eq!(request["method"], "worktree.open");
+    assert_eq!(request["params"]["path"], t.main.as_str());
 }

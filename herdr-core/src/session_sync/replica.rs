@@ -481,6 +481,18 @@ impl SessionReplica {
                         active_tab_id,
                         strip,
                         next_tab_label,
+                        // A worktree workspace owns the checkout Herdr binds
+                        // it to, which is this row's path; a marked one is
+                        // checked against its folder once grouped.
+                        owner_workspace_id: workspace
+                            .worktree
+                            .is_some()
+                            .then(|| workspace.workspace_id.clone()),
+                        owner_mark: workspace
+                            .tokens
+                            .get(crate::checkout_owner::OWNER_TOKEN)
+                            .and_then(Value::as_str)
+                            .map(str::to_owned),
                         ..CheckoutSnapshot::default()
                     }],
                     pinned: false,

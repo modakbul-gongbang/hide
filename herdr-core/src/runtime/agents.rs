@@ -483,12 +483,9 @@ impl Runtime {
                 workspace_id,
                 checkout_id,
             } => {
-                let Some(source_id) = remote_herdr_workspace(
-                    &session,
-                    &target_id,
-                    &workspace_id,
-                    checkout_id.as_deref(),
-                ) else {
+                let Some((project, checkout)) =
+                    remote_checkout(&session, &workspace_id, checkout_id.as_deref())
+                else {
                     self.set_error(
                         "remote.control.workspace_not_found",
                         format!(
@@ -498,8 +495,32 @@ impl Runtime {
                     );
                     return true;
                 };
-                RemoteControlAction::FocusWorkspace {
-                    workspace_id: source_id.to_owned(),
+                // Opening a checkout brings its most recent tab forward from
+                // whichever Herdr workspace holds it; only a checkout with no
+                // tab opens its owner (D-13).
+                let tab = session
+                    .active_tab_ids
+                    .get(&checkout.id)
+                    .or_else(|| checkout.tabs.first().and_then(|tab| tab.id.as_ref()))
+                    .and_then(|tab| remote_tab_source_id(&target_id, tab));
+                match (tab, &checkout.owner_workspace_id) {
+                    (Some(tab), _) => RemoteControlAction::FocusTab {
+                        tab_id: tab.to_owned(),
+                    },
+                    (None, Some(owner)) => RemoteControlAction::FocusWorkspace {
+                        workspace_id: owner.clone(),
+                    },
+                    (None, None) if checkout.unconfirmed => {
+                        self.refuse_unconfirmed_owner(&target_id, checkout);
+                        return true;
+                    }
+                    (None, None) => RemoteControlAction::OpenOwner {
+                        owner: super::projects::owner_open(project, checkout, &target_id),
+                        cwd: checkout.path.clone(),
+                        label: checkout.next_tab_label.clone(),
+                        area_id: None,
+                        admission_id: None,
+                    },
                 }
             }
             RemoteControlRequest::FocusTab { tab_id } => {
@@ -538,76 +559,47 @@ impl Runtime {
                 cwd,
                 label,
             } => {
-                // A registered project Herdr has no workspace in yet is
-                // opened by creating one at its folder on the device, as
-                // this machine's `create_tab` does (B23 find-or-create).
-                let registered =
-                    checkout_id
-                        .as_deref()
-                        .filter(|checkout| {
-                            *checkout
-                                == format!(
-                                    "{workspace_id}{}",
-                                    crate::device_catalog::REGISTERED_CHECKOUT
-                                )
-                        })
-                        .and_then(|_| {
-                            self.snapshot.ui_state.workspace_registrations.iter().find(
-                                |registration| {
-                                    registration.id == workspace_id
-                                        && registration.device_id == target_id
-                                },
-                            )
-                        });
-                if let Some(registration) = registered {
-                    let is_git = session
-                        .workspaces
-                        .iter()
-                        .find(|project| project.id == registration.id)
-                        .is_some_and(|project| project.is_git);
-                    RemoteControlAction::OpenOwner {
-                        owner: OwnerOpen::for_checkout(
-                            &target_id,
-                            &registration.path,
-                            is_git,
-                            &registration.label,
-                        ),
-                        cwd: registration.path.clone(),
-                        label,
-                        area_id: None,
-                        admission_id: None,
-                    }
-                } else {
-                    let Some(source_id) = remote_herdr_workspace(
-                        &session,
-                        &target_id,
-                        &workspace_id,
-                        checkout_id.as_deref(),
-                    ) else {
-                        self.set_error(
+                let Some((project, checkout)) =
+                    remote_checkout(&session, &workspace_id, checkout_id.as_deref())
+                else {
+                    self.set_error(
                         "remote.control.workspace_not_found",
                         format!(
                             "Workspace {workspace_id} does not belong to remote target {target_id}"
                         ),
                         false,
                     );
-                        return true;
-                    };
-                    if cwd.trim().is_empty() || label.trim().is_empty() {
-                        self.set_error(
-                            "remote.control.invalid_tab",
-                            "Remote tab creation requires non-empty cwd and label",
-                            false,
-                        );
-                        return true;
-                    }
-                    RemoteControlAction::CreateTab {
-                        workspace_id: source_id.to_owned(),
+                    return true;
+                };
+                if cwd.trim().is_empty() || label.trim().is_empty() {
+                    self.set_error(
+                        "remote.control.invalid_tab",
+                        "Remote tab creation requires non-empty cwd and label",
+                        false,
+                    );
+                    return true;
+                }
+                // A new tab goes to the checkout's owner on the device, opened
+                // first when none is (D-07, D-10).
+                if checkout.owner_workspace_id.is_none() && checkout.unconfirmed {
+                    self.refuse_unconfirmed_owner(&target_id, checkout);
+                    return true;
+                }
+                match super::projects::tab_host(project, checkout, &target_id) {
+                    TabHost::Workspace(owner) => RemoteControlAction::CreateTab {
+                        workspace_id: owner,
                         cwd,
                         label,
                         area_id: None,
                         admission_id: None,
-                    }
+                    },
+                    TabHost::Open(owner) => RemoteControlAction::OpenOwner {
+                        cwd: owner.path().to_owned(),
+                        owner,
+                        label,
+                        area_id: None,
+                        admission_id: None,
+                    },
                 }
             }
             RemoteControlRequest::CloseTab { tab_id, confirmed } => {
@@ -2102,29 +2094,42 @@ impl Runtime {
     }
 }
 
-/// The Herdr workspace a remote focus or new tab goes to: the one the named
-/// checkout holds, checked to be a checkout of that project in the session;
-/// or, with no checkout, the project row that is itself one Herdr workspace.
-pub(super) fn remote_herdr_workspace(
-    session: &RemoteSessionSnapshot,
-    target_id: &str,
+impl Runtime {
+    /// A device folder the helper has not confirmed has no known kind, so
+    /// which owner it gets (a bound worktree workspace or a marked one) is
+    /// unknown; nothing is opened on a guess, and the device's catalog notice
+    /// says why it is unconfirmed.
+    fn refuse_unconfirmed_owner(&mut self, target_id: &str, checkout: &CheckoutSnapshot) {
+        self.set_error(
+            "remote.control.checkout_unconfirmed",
+            format!(
+                "{} on {target_id} is not confirmed yet; no tab was opened",
+                checkout.path
+            ),
+            true,
+        );
+    }
+}
+
+/// The checkout a device row names: the named checkout of that project, or
+/// with no checkout named, the project's first.
+pub(super) fn remote_checkout<'a>(
+    session: &'a RemoteSessionSnapshot,
     workspace_id: &str,
     checkout_id: Option<&str>,
-) -> Option<String> {
-    let workspace = session
+) -> Option<(&'a WorkspaceSnapshot, &'a CheckoutSnapshot)> {
+    let project = session
         .workspaces
         .iter()
         .find(|workspace| workspace.id == workspace_id)?;
-    match checkout_id {
-        Some(checkout_id) => workspace
+    let checkout = match checkout_id {
+        Some(checkout_id) => project
             .checkouts
             .iter()
-            .any(|checkout| checkout.id == checkout_id)
-            .then(|| crate::device_catalog::remote_checkout_source_id(target_id, checkout_id))
-            .flatten()
-            .map(str::to_owned),
-        None => remote_workspace_source_id(target_id, workspace_id).map(str::to_owned),
-    }
+            .find(|checkout| checkout.id == checkout_id)?,
+        None => project.checkouts.first()?,
+    };
+    Some((project, checkout))
 }
 
 /// A device pane's children and ancestors, from that device's own lineage,
