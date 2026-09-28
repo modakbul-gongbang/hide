@@ -237,7 +237,7 @@ test("editing a document marks it dirty, saves it, and a disk change asks how to
   try {
     const content = page.locator('[data-editor-codemirror] .cm-content');
     await content.click();
-    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.press("ControlOrMeta+KeyA");
     await page.keyboard.type("export const answer = 42;\n");
 
     // Each keystroke is a file_draft, so wait for the one that carries the
@@ -264,7 +264,7 @@ test("editing a document marks it dirty, saves it, and a disk change asks how to
     const ahead = new Date(Date.now() + 5_000);
     fs.utimesSync(file, ahead, ahead);
     await content.click();
-    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.press("ControlOrMeta+KeyA");
     await page.keyboard.type("export const answer = 43;\n");
     await page.keyboard.press("Meta+KeyS");
     await expect(page.locator("[data-editor-conflict]")).toBeVisible();
@@ -288,7 +288,7 @@ test("a refused save keeps the tab dirty and takes the saving mark off", async (
   try {
     const content = page.locator('[data-editor-codemirror] .cm-content');
     await content.click();
-    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.press("ControlOrMeta+KeyA");
     await page.keyboard.type("export const answer = 42;\n");
     await expect.poll(() => sent.get("file_save"), { timeout: 5_000 }).toBeGreaterThanOrEqual(1);
     await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 42;\n");
@@ -299,7 +299,7 @@ test("a refused save keeps the tab dirty and takes the saving mark off", async (
     fs.chmodSync(file, 0o444);
     const savesBefore = sent.get("file_save") ?? 0;
     await content.click();
-    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.press("ControlOrMeta+KeyA");
     await page.keyboard.type("export const answer = 43;\n");
     await expect.poll(() => sent.get("file_save"), { timeout: 5_000 }).toBeGreaterThan(savesBefore);
     const tab = page.locator('[data-tab-kind="file"]');
@@ -323,7 +323,7 @@ test("a draft that cannot be stored stays editable and holds other documents rea
     fs.chmodSync(file, 0o444);
     const content = page.locator("[data-editor-body] .cm-content");
     await content.click();
-    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.press("ControlOrMeta+KeyA");
     await page.keyboard.type("export const answer = 44;\n");
     await expect(page.locator('[data-editor-draft-hold="unstored"]')).toBeVisible();
     await expect(page.locator('[data-tab-kind="file"][data-tab-only="true"]')).toHaveCount(1);
@@ -370,7 +370,7 @@ test("a deleted open file reports a failed save without losing its draft", async
     fs.unlinkSync(file);
     const content = page.locator('[data-editor-codemirror] .cm-content');
     await content.click();
-    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.press("ControlOrMeta+KeyA");
     await page.keyboard.type("export const answer = 44;\n");
     await expect.poll(() => sent.get("file_save"), { timeout: 5_000 }).toBeGreaterThanOrEqual(1);
     await expect(page.locator('[data-tab-kind="file"]')).toHaveAttribute("data-saving", "false", { timeout: 10_000 });
@@ -402,7 +402,7 @@ test("leaving a dirty tab saves it and never writes it into the next file", asyn
   try {
     const content = page.locator('[data-editor-body] .cm-content');
     await content.click();
-    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.press("ControlOrMeta+KeyA");
     await page.keyboard.type("export const answer = 99;\n");
 
     // Leave within the idle window: the draft still reaches its own file, and
@@ -422,13 +422,13 @@ test("an undone edit is what the next save writes", async ({ page }) => {
   try {
     const content = page.locator('[data-editor-body] .cm-content');
     await content.click();
-    await page.keyboard.press("Meta+ArrowDown");
+    await page.keyboard.press("ControlOrMeta+End");
     await page.keyboard.type("X");
     await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe(`${SOURCE}X`);
 
     // Undo that keystroke: the core hears it, so the save that follows writes
     // the text the editor shows rather than the text that was undone (B4).
-    await page.keyboard.press("Meta+KeyZ");
+    await page.keyboard.press("ControlOrMeta+KeyZ");
     await expect(content).not.toContainText("X");
     const savesBefore = sent.get("file_save") ?? 0;
     await page.keyboard.press("Meta+KeyS");
@@ -467,7 +467,7 @@ test("closing a dirty tab saves the draft instead of dropping it", async ({ page
     // so the draft can only reach the disk through the close itself.
     const content = page.locator('[data-editor-body] .cm-content');
     await content.click();
-    await page.keyboard.press("Meta+ArrowDown");
+    await page.keyboard.press("ControlOrMeta+End");
     await page.keyboard.type("X");
 
     const tab = page.locator('[data-tab-kind="file"]');
@@ -489,7 +489,7 @@ test("a closed tab's draft is not written back when the file is reopened", async
   try {
     const content = page.locator('[data-editor-body] .cm-content');
     await content.click();
-    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.press("ControlOrMeta+KeyA");
     await page.keyboard.type("export const answer = 5;\n");
     const tab = page.locator('[data-tab-kind="file"]');
     await tab.hover();
@@ -520,7 +520,7 @@ test("a conflicted background tab is not closed away with its draft", async ({ p
     // conflicted one is no longer the showing document.
     const content = page.locator('[data-editor-body] .cm-content');
     await content.click();
-    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.press("ControlOrMeta+KeyA");
     await page.keyboard.type("export const answer = 8;\n");
     fs.writeFileSync(file, "export const answer = 0;\n");
     const ahead = new Date(Date.now() + 5_000);
@@ -610,7 +610,7 @@ test("Markdown opens in Live and toggles to source", async ({ page }) => {
     // The caret opens at the top; move it to the end so the first block is
     // not the touched one and its markup is hidden (B6).
     await content.click();
-    await page.keyboard.press("Meta+ArrowDown");
+    await page.keyboard.press("ControlOrMeta+End");
 
     // Live draws the heading and hides its hashes, draws the list bullets and
     // the task checkbox, styles the link text and the fenced code (B6).
@@ -1020,7 +1020,7 @@ test("an unsaved edit survives a socket drop and reconnect", async ({ page }) =>
     const content = page.locator('[data-editor-codemirror] .cm-content');
     await expect(content).toContainText("# Title");
     await content.click();
-    await page.keyboard.press("Meta+ArrowDown");
+    await page.keyboard.press("ControlOrMeta+End");
     await page.keyboard.type("edited across a reconnect\n");
     await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
 
@@ -1224,7 +1224,7 @@ test("a draft whose tab a daemon restart lost is kept for recovery and opens whe
     fs.chmodSync(file, 0o444);
     const content = page.locator('[data-editor-codemirror] .cm-content');
     await content.click();
-    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.press("ControlOrMeta+KeyA");
     await page.keyboard.type("export const answer = 77;\n");
     await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
     await expect.poll(async () => (await storedDrafts(page)).find((row) => row.path === file)?.contents, { timeout: 5_000 }).toBe("export const answer = 77;\n");
@@ -1275,7 +1275,7 @@ test("a View tab a daemon restart restores takes its unsaved draft back (S6 B19)
     fs.chmodSync(file, 0o444);
     const content = page.locator('[data-editor-codemirror] .cm-content');
     await content.click();
-    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.press("ControlOrMeta+KeyA");
     await page.keyboard.type("export const answer = 78;\n");
     await expect.poll(async () => (await storedDrafts(page)).find((row) => row.path === file)?.contents, { timeout: 5_000 }).toBe("export const answer = 78;\n");
 
@@ -1402,7 +1402,7 @@ test("a save refused at the daemon's boundary keeps the draft unsaved, across a 
   try {
     const content = page.locator('[data-editor-codemirror] .cm-content');
     await content.click();
-    await page.keyboard.press("Meta+KeyA");
+    await page.keyboard.press("ControlOrMeta+KeyA");
     await page.keyboard.type("export const answer = 55;\n");
     await page.keyboard.press("Meta+KeyS");
     await expect.poll(() => refused, { timeout: 10_000 }).toBeGreaterThanOrEqual(1);

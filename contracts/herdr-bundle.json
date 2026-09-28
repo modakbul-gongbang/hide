@@ -5,6 +5,11 @@
   "platform": "macos-aarch64",
   "source_url": "https://github.com/herdrdev/herdr/releases/download/v0.9.1/herdr-macos-aarch64",
   "sha256": "5fc7a7e7adfaca56fa80aa89dcb025693357268dab8285b9ce2d08a2313c89de",
-  "verification": "This file is the single source of the pin. scripts/fetch-herdr-runtime.sh downloads and verifies the asset against it for every app build and e2e run, and desktop/scripts/package.mjs ships that verified binary inside hide.app. contracts/herdr-api.schema.json is the schema this binary reports. Change both with scripts/bump-herdr.sh <release-tag>, never by hand.",
+  "linux_x86_64": {
+    "platform": "linux-x86_64",
+    "source_url": "https://github.com/herdrdev/herdr/releases/download/v0.9.1/herdr-linux-x86_64",
+    "sha256": "2a02fed16beb651ef006e1d43f048f652ca4dc58ad053cd2d44450563d5c54b7"
+  },
+  "verification": "This file is the single source of the pin. scripts/fetch-herdr-runtime.sh downloads and verifies the asset against it for every app build and e2e run, and desktop/scripts/package.mjs ships that verified binary inside hide.app. linux_x86_64 is the same release's Linux asset, which only the Linux checks lane runs for the schema comparison; its digest is recorded here for the same reason. contracts/herdr-api.schema.json is the schema this binary reports. Change all of it with scripts/bump-herdr.sh <release-tag>, never by hand.",
   "repo": "herdrdev/herdr"
 }

@@ -1,10 +1,15 @@
 #!/bin/zsh
 # Produces the pinned Herdr binary for an app build and prints its path.
 #
+# Usage: fetch-herdr-runtime.sh [--platform macos-aarch64|linux-x86_64]
+#
 # The asset is kept in a cache keyed by its digest, so the release build, the
 # development build and the bump script all read the same verified file and a
 # second build on the same machine downloads nothing. A cached file whose
 # digest no longer matches the pin is discarded rather than trusted.
+#
+# `--platform linux-x86_64` is the same release's Linux asset, whose digest the
+# manifest records under `linux_x86_64`; only the Linux CI checks lane asks for it.
 set -euo pipefail
 
 export LC_ALL=en_US.UTF-8
@@ -19,18 +24,46 @@ manifest=$project_root/contracts/herdr-bundle.json
   exit 1
 }
 
+platform=macos-aarch64
+while (( $# > 0 )); do
+  case "$1" in
+    --platform)
+      (( $# >= 2 )) || { print -u2 -- "usage: $0 [--platform macos-aarch64|linux-x86_64]"; exit 2; }
+      platform=$2
+      shift 2
+      ;;
+    *)
+      print -u2 -- "usage: $0 [--platform macos-aarch64|linux-x86_64]"
+      exit 2
+      ;;
+  esac
+done
+case "$platform" in
+  macos-aarch64) pin_path='' ;;
+  linux-x86_64) pin_path='.linux_x86_64' ;;
+  *)
+    print -u2 -- "error: unknown Herdr platform: $platform"
+    exit 2
+    ;;
+esac
+
 version=$(jq -er '.version' "$manifest")
 repo=$(jq -er '.repo | strings | select(test("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"))' "$manifest")
 tag=$(jq -er '.tag | strings | select(test("^[A-Za-z0-9][A-Za-z0-9._-]*$"))' "$manifest")
-source_url="https://github.com/${repo}/releases/download/${tag}/herdr-macos-aarch64"
-recorded_url=$(jq -er '.source_url' "$manifest")
+source_url="https://github.com/${repo}/releases/download/${tag}/herdr-${platform}"
+recorded_url=$(jq -er "${pin_path}.source_url" "$manifest")
 [[ "$source_url" == "$recorded_url" ]] || {
-  print -u2 -- "error: manifest source_url disagrees with repo and tag"
+  print -u2 -- "error: manifest source_url for $platform disagrees with repo and tag"
   exit 1
 }
-sha256=$(jq -er '.sha256' "$manifest")
+sha256=$(jq -er "${pin_path}.sha256" "$manifest")
 
-cache_root=${HIDE_HERDR_CACHE:-${XDG_CACHE_HOME:-$HOME/Library/Caches}/hide/herdr-runtime}
+if [[ "$OSTYPE" == darwin* ]]; then
+  default_cache=${XDG_CACHE_HOME:-$HOME/Library/Caches}
+else
+  default_cache=${XDG_CACHE_HOME:-$HOME/.cache}
+fi
+cache_root=${HIDE_HERDR_CACHE:-$default_cache/hide/herdr-runtime}
 cached=$cache_root/$sha256/herdr
 
 digest_of() {
