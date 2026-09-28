@@ -20,7 +20,11 @@ export type AgentRow = {
   group: string;
   status_label: string;
   detail?: string | null;
+  /** Everything the agent last said through its hooks, uncut: the request, then the progress, one per line; absent when it said nothing. */
+  message?: string | null;
   elapsed: string;
+  /** The core's ordering key: the label plugin's activity clock, else Herdr's state sequence, zero-padded so it sorts as text. */
+  last_activity?: string;
   emphasized: boolean;
   unread: boolean;
   requires_close_confirmation?: boolean;
