@@ -16,6 +16,12 @@ export type KeyboardOwner =
   | { kind: "none" };
 
 let owner: KeyboardOwner = { kind: "none" };
+// The shell element a native page took the keyboard from. To deliver a menu
+// command pressed in a page, the host hands the keyboard back to the shell,
+// and the browser announces focus on that element again; that is not the
+// operator moving the keyboard, so the page stays the owner until the
+// command has run (`noteCommandDelivered`) or the operator moves.
+let handedBack: Element | null = null;
 
 export function noteKeyboardOwner(next: KeyboardOwner): void {
   owner = next;
@@ -25,33 +31,39 @@ export function keyboardOwner(): KeyboardOwner {
   return owner;
 }
 
+/** The region an element belongs to, or null while a menu borrows the keyboard from its invoker. */
+function ownerOf(target: Element | null): KeyboardOwner | null {
+  if (target?.closest('[role="menu"]')) return null;
+  const workspace = target?.closest<HTMLElement>("[data-workspace-screen]")?.dataset.workspaceScreen;
+  if (!target || !workspace) return { kind: "none" };
+  const tool = target.closest("[data-workspace-tools]");
+  const areaId = target.closest<HTMLElement>("[data-view-area-id]")?.dataset.viewAreaId;
+  const paneId = target.closest<HTMLElement>("[data-pane-view]")?.dataset.paneView;
+  return tool ? { kind: "tool", workspace }
+    : areaId ? { kind: "view", workspace, areaId }
+    : paneId ? { kind: "pane", workspace, paneId }
+    : target.closest("[data-agent-areas]") ? { kind: "agent", workspace }
+    : { kind: "none" };
+}
+
+/**
+ * A menu command the host delivered has run. When it was pressed in a native
+ * page, the keyboard is the shell's again, so the owner follows the element
+ * holding it, and the next chord acts where the operator now types.
+ */
+export function noteCommandDelivered(): void {
+  if (!handedBack) return;
+  handedBack = null;
+  owner = ownerOf(document.activeElement) ?? owner;
+}
+
 /** One bounded value per page; no core events or per-key DOM reads. */
 export function installKeyboardOwner(): () => void {
-  // The shell element a native page took the keyboard from. When the host
-  // hands the keyboard back to the shell to deliver a menu command (Command T
-  // or Command W from a page), the browser announces focus on that element
-  // again; that is not the operator moving the keyboard, so the page keeps
-  // the keyboard until a pointer press or focus lands anywhere else.
-  let handedBack: Element | null = null;
   const record = (event: Event) => {
     const target = event.target instanceof Element ? event.target : null;
     if (event.type === "focusin" && target !== null && target === handedBack) return;
     handedBack = null;
-    // A menu temporarily borrows the keyboard from its invoker.
-    if (target?.closest('[role="menu"]')) return;
-    const workspace = target?.closest<HTMLElement>("[data-workspace-screen]")?.dataset.workspaceScreen;
-    if (!target || !workspace) {
-      owner = { kind: "none" };
-      return;
-    }
-    const tool = target.closest("[data-workspace-tools]");
-    const areaId = target.closest<HTMLElement>("[data-view-area-id]")?.dataset.viewAreaId;
-    const paneId = target.closest<HTMLElement>("[data-pane-view]")?.dataset.paneView;
-    owner = tool ? { kind: "tool", workspace }
-      : areaId ? { kind: "view", workspace, areaId }
-      : paneId ? { kind: "pane", workspace, paneId }
-      : target.closest("[data-agent-areas]") ? { kind: "agent", workspace }
-      : { kind: "none" };
+    owner = ownerOf(target) ?? owner;
   };
   // Native browser pages are outside the renderer DOM. Their host reports
   // the same ownership transition when the operator enters a page.

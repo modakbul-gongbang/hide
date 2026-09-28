@@ -67,7 +67,7 @@ A dirty view shows a warning-colored mark after its title.
 Closing a view is always called Close view, distinct from moving a file to the Trash and from closing a pane or tab.
 The close chord, ⌘W in the desktop app and ⌥W in a browser, closes the smallest unit that holds the keyboard: the focused View area's active display, or the focused terminal pane.
 The page records its last focused region as View area, pane, tools, or none from focus events, including native browser-page focus; the chord does not walk the active DOM element or choose a region from panel size.
-When the desktop app hands the keyboard back from a native page to deliver a menu command, the focus the shell's last element regains is not a move, so ⌘W and ⌘T pressed in a page act on that page's View area; a click or focus anywhere else in the shell is.
+When the desktop app hands the keyboard back from a native page to deliver a menu command, the focus the shell's last element regains is not a move while that command runs, so ⌘W and ⌘T pressed in a page act on that page's View area; once the command has run, the keyboard's owner is the shell element holding it, so after any other command from a page the next chord acts where the operator now types.
 With tools or nothing focused, nothing closes and a diagnostic states why.
 Tabs close only from their own close control or menu; closing a tab's only pane still removes its tab through Herdr.
 An unavailable or retired keyboard target never falls through to closing a different pane or a whole tab.

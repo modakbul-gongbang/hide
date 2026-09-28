@@ -14,12 +14,14 @@ const TITLE = "New tab page";
  * listener on that channel runs.
  */
 async function enterPage(app: ElectronApplication, page: Page) {
-  const heard = page.evaluate(() => new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error("the shell never heard the page take the keyboard")), 10_000);
-    const off = window.hideHost!.browser.onEvent((event) => {
-      if (event.kind === "focus") { clearTimeout(timer); off(); resolve(); }
+  type Counted = { pageFocus?: number; pageFocusOff?: () => void };
+  const before = await page.evaluate(() => {
+    const counted = window as unknown as Counted;
+    counted.pageFocusOff ??= window.hideHost!.browser.onEvent((event) => {
+      if (event.kind === "focus") counted.pageFocus = (counted.pageFocus ?? 0) + 1;
     });
-  }));
+    return counted.pageFocus ?? 0;
+  });
   await expect.poll(() => app.evaluate(({ app: electron, BrowserWindow }, title) => {
     const window = BrowserWindow.getAllWindows()[0]!;
     const view = window.contentView.children.find((child) =>
@@ -35,7 +37,7 @@ async function enterPage(app: ElectronApplication, page: Page) {
     (view as unknown as { webContents: Electron.WebContents }).webContents.focus();
     return true;
   }, TITLE)).toBe(true);
-  await heard;
+  await expect.poll(() => page.evaluate(() => (window as unknown as Counted).pageFocus ?? 0), { message: "the shell hears the page take the keyboard" }).toBeGreaterThan(before);
 }
 
 /**
@@ -56,7 +58,7 @@ async function handBack(page: Page) {
 const menuClick = (app: ElectronApplication, id: string) =>
   app.evaluate(({ Menu }, command) => Menu.getApplicationMenu()!.getMenuItemById(command)!.click(), id);
 
-test("Command T and Command W from a native page act on its View area, not the pane that had the keyboard before", async () => {
+test("Command T and Command W from a native page act on its View area, and after any other command on the terminal that has the keyboard", async () => {
   const herdr = await startHerdr({ agents: false });
   const run = isolate(herdr, "new-tab");
   let app: ElectronApplication | null = null;
@@ -98,11 +100,29 @@ test("Command T and Command W from a native page act on its View area, not the p
     await expect(viewTabs.filter({ hasText: TITLE })).toHaveCount(0);
     await expect(panes).toHaveCount(2);
 
-    // A click back into the terminal is the operator's move: Command T is an agent tab again.
+    // Any other command from the page hands the keyboard to the terminal for
+    // good once it has run, so the next Command W closes that pane, not the page.
+    await page.locator('[data-explorer-row$="/page.html"]').click({ button: "right" });
+    await page.locator('[data-explorer-menu] [data-menu-item="open-browser"]').click();
+    await expect(viewTabs.filter({ hasText: TITLE })).toHaveCount(1);
     await terminal.click();
+    await enterPage(app, page);
+    await handBack(page);
+    const sidebar = await page.locator("[data-sidebar]").count();
+    await menuClick(app, "toggle_left_sidebar");
+    await expect(page.locator("[data-sidebar]")).toHaveCount(sidebar === 0 ? 1 : 0);
+    await menuClick(app, "close_tab");
+    const confirm = page.getByRole("button", { name: "Stop work and close" });
+    await expect(page.locator(`[data-pane-view="${herdr.panes[0]}"]`).or(confirm).first()).toBeVisible();
+    if (await confirm.isVisible()) await confirm.click();
+    await expect(page.locator(`[data-pane-view="${herdr.panes[0]}"]`)).toHaveCount(0, { timeout: 15_000 });
+    await expect(panes).toHaveCount(1);
+    await expect(viewTabs.filter({ hasText: TITLE })).toHaveCount(1);
+
+    // A click back into a terminal is the operator's move: Command T is an agent tab again.
+    await page.locator(`[data-terminal-host="${herdr.panes[1]}"]`).click({ position: { x: 20, y: 20 } });
     await menuClick(app, "new_tab");
     await expect(agentTabs).toHaveCount(2);
-    await expect(viewTabs).toHaveCount(1);
   } finally {
     await app?.close().catch(() => undefined);
     run.cleanup();

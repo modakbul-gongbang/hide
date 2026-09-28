@@ -749,7 +749,7 @@ Signing with a real identity, notarization, auto-update, installers, a tray item
 The `⌘/` sheet is generated from the table.
 The close chord uses the page's recorded keyboard owner: the focused View display first, otherwise the owned visible pane, with tools, absent or retired owners producing a diagnostic and no close.
 The new tab chord reads the same owner (`newTabPolicy`): a drawn View area gets its New tab, an owned pane's Agent area gets an agent tab, and anything else the Agent active area.
-The recorder ignores the focus the shell's last element regains when the host hands the keyboard back from a native page to deliver a menu command (`installKeyboardOwner`), so a chord pressed in a page keeps the page's owner.
+The recorder ignores the focus the shell's last element regains when the host hands the keyboard back from a native page to deliver a menu command (`installKeyboardOwner`), so the command runs with the page's owner; once it has run, `noteCommandDelivered` gives the owner to the shell element that now holds the keyboard.
 It never closes a whole tab; tab controls and their menus name that intent explicitly.
 The explicit Close pane command still closes the core's focused pane through the same confirmation path.
 ⌘F follows where the operator works: inside a View area it opens the document's find, anywhere else the focused terminal pane's find bar, even with an editor open beside it; Escape and × end the pane search and give the keyboard back to that pane.

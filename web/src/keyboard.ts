@@ -28,7 +28,7 @@ import { editorFor, focusedCheckout, type AgentRow, type SnapshotRest } from "./
 import { useShellStore } from "./store";
 import { useUiStore, type Cycle } from "./ui";
 import { workspaceViewOf } from "./workspace";
-import { drawnViews, installKeyboardOwner, keyboardOwner } from "./viewFocus";
+import { drawnViews, installKeyboardOwner, keyboardOwner, noteCommandDelivered } from "./viewFocus";
 
 /**
  * Recent Panels: every surface this machine holds, most recent first, so
@@ -369,8 +369,10 @@ export function installKeyboard(actions: Actions): () => void {
   const bridge = hostBridge();
   const unsubscribeMenu = bridge?.onCommand((id) => {
     const command = REGISTRY.find((row) => row.id === id);
-    if (command) run(command.id, null);
-    else useShellStore.getState().noteDiagnostic(`menu command the shell does not know: ${id}`);
+    if (command) {
+      run(command.id, null);
+      noteCommandDelivered();
+    } else useShellStore.getState().noteDiagnostic(`menu command the shell does not know: ${id}`);
   });
   // The app menu's accelerators follow the stored macOS set: the host gets
   // it once now and again whenever its contents change, and resolves it with
