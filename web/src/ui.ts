@@ -74,6 +74,11 @@ export type OverviewLens = {
   focusTask: string | null;
 };
 
+/** `folds` with `fold` opened, or closed again when it was open. */
+export function toggledFold(folds: readonly LensFold[], fold: LensFold): LensFold[] {
+  return folds.includes(fold) ? folds.filter((open) => open !== fold) : [...folds, fold];
+}
+
 /**
  * Where every way into a Project's Overview lands (D-04, D-17): Agents ›
  * checkouts, the given lane selected. The Issues mode is the page's, the one

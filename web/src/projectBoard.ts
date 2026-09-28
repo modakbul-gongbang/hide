@@ -161,13 +161,14 @@ function prioritized<T extends { needsYou: boolean }>(cards: T[]): T[] {
 }
 
 /**
- * Which checkout owns each pane, and a lineage walker over `agents`: a list
- * of agents drawn with their whole lineage, root first, whatever is folded;
- * the Projects sidebar drops a folded row's descendants itself
- * (`unfoldedRows`). A row's branch chip is the Agents list's rule
- * (`branchChip`), a checkout that differs from its parent's.
+ * Each checkout's agent rows by checkout id, the rows the sidebar draws under
+ * an opened checkout and a task card lists. `agents` is every agent of the
+ * project's device. A checkout's rows are its agents, each drawn with its
+ * whole lineage from the first ancestor that is not also working here, root
+ * first, whatever is folded; the Projects sidebar drops a folded row's
+ * descendants itself (`unfoldedRows`).
  */
-function lineage(workspace: Workspace, agents: AgentRow[]) {
+export function checkoutAgentRows(workspace: Workspace, agents: AgentRow[]): Map<string, BoardRow[]> {
   const owners = new Map<string, Checkout>();
   for (const checkout of workspace.checkouts) {
     for (const tab of checkout.tabs) for (const pane of tab.panes) if (!owners.has(pane.id)) owners.set(pane.id, checkout);
@@ -189,22 +190,11 @@ function lineage(workspace: Workspace, agents: AgentRow[]) {
     for (const root of roots) append(root, 0);
     return rows;
   };
-  // A checkout's rows: its agents, each lineage from the first ancestor that
-  // is not also working here.
   const checkoutRows = (checkout: Checkout): BoardRow[] => {
     const local = agents.filter((agent) => owners.get(agent.pane_id)?.id === checkout.id);
     const localIds = new Set(local.map((agent) => agent.pane_id));
     return treeRows(local.filter((agent) => !agent.lineage_parent_pane_id || !localIds.has(agent.lineage_parent_pane_id)));
   };
-  return { checkoutRows };
-}
-
-/**
- * Each checkout's agent rows by checkout id, the rows the sidebar draws under
- * an opened checkout. `agents` is every agent of the project's device.
- */
-export function checkoutAgentRows(workspace: Workspace, agents: AgentRow[]): Map<string, BoardRow[]> {
-  const { checkoutRows } = lineage(workspace, agents);
   return new Map(workspace.checkouts.map((checkout) => [checkout.id, checkoutRows(checkout)]));
 }
 
@@ -288,7 +278,7 @@ export function buildTasks(projects: readonly BoardProject[], scope: BoardScope,
   const labels = new Set<string>();
   const titles = new Map<string, string>();
   for (const { workspace, agents } of projects) {
-    const { checkoutRows } = lineage(workspace, agents);
+    const rowsByCheckout = checkoutAgentRows(workspace, agents);
     for (const task of workspace.tasks?.tasks ?? []) titles.set(task.key, task.title);
     const source = workspace.tasks?.source ?? null;
     if (source) {
@@ -301,7 +291,7 @@ export function buildTasks(projects: readonly BoardProject[], scope: BoardScope,
     const git = workspace.is_git === true;
     const worked = new Set<string>();
     for (const checkout of workspace.checkouts) {
-      const rows = checkoutRows(checkout);
+      const rows = rowsByCheckout.get(checkout.id) ?? [];
       const task = checkout.task_key ? (tasks.get(checkout.task_key) ?? null) : null;
       if (task) worked.add(task.key);
       if (!(checkout.is_worktree && git)) {

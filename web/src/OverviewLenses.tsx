@@ -24,10 +24,11 @@ import {
   type TileSegment,
 } from "./overviewLens";
 import { prChip } from "./projectBoard";
-import { checkoutPresentation, laneCheckoutCard, shownPullRequest } from "./projects";
+import type { Actions } from "./actions";
+import { checkoutPresentation, distanceText, filesText, laneCheckoutCard, shownPullRequest } from "./projects";
 import type { Checkout, Task, Workspace } from "./snapshot";
 import { PR_TONE, TaskGlyph } from "./TaskBoards";
-import type { AgentsMode, LensFold, OverviewTab } from "./ui";
+import { useUiStore, type AgentsMode, type LensFold, type OverviewTab } from "./ui";
 
 // The Overview's lenses (PRD overview-lenses-tiles-agents): the tiles in the
 // tab row's place, and the Agents tab's checkout lanes and lineage. The rules
@@ -50,6 +51,17 @@ export type LensHandlers = {
   cleanup: (project: Workspace, checkout: Checkout) => void;
   toggleFold: (fold: LensFold) => void;
 };
+
+/** The handlers both scopes share, around the two that are each page's own: where an issue chip goes and how a fold opens. */
+export function lensHandlers(actions: Actions, page: Pick<LensHandlers, "openIssue" | "toggleFold">): LensHandlers {
+  return {
+    ...page,
+    openCheckout: (project, checkout) => actions.openWorkspace(project.device_id, checkout.workspace_id, checkout.id),
+    openAgent: actions.openAgent,
+    openGitHub: (url, deviceId) => actions.openPullRequest(url, deviceId, true),
+    cleanup: (project, checkout) => useUiStore.getState().setWorkspaceDialog({ kind: "delete_worktree", workspaceId: project.id, checkoutId: checkout.id }),
+  };
+}
 
 // --- tiles -------------------------------------------------------------------
 
@@ -548,7 +560,7 @@ function LaneHead({ lane, scope, handlers, now }: { lane: Lane; scope: "project"
             <PullRequestChip project={project} checkout={checkout} handlers={handlers} now={now} />
             {ahead > 0 || behind > 0 ? (
               <span className="pointer-events-none" data-lens-head-distance={`${ahead}:${behind}`}>
-                {[ahead > 0 ? `↑${ahead}` : null, behind > 0 ? `↓${behind}` : null].filter(Boolean).join(" ")}
+                {distanceText(ahead, behind)}
               </span>
             ) : null}
             {unread ? (
@@ -559,7 +571,7 @@ function LaneHead({ lane, scope, handlers, now }: { lane: Lane; scope: "project"
               </Hint>
             ) : files > 0 ? (
               <span className={cn("pointer-events-none", worktree?.dirty && "text-warning")} data-lens-head-files={files}>
-                {files} {files === 1 ? "file" : "files"}
+                {filesText(files)}
               </span>
             ) : null}
           </>
@@ -603,13 +615,12 @@ export function CheckoutLanes({ board, scope, selectedLane, folds, handlers, now
   // The selected lane's own fold opens with it, so ⌘⇧H always shows it (B12).
   if (selectedLane && board.empty.some((lane) => lane.id === selectedLane)) open.add("empty");
   if (selectedLane && board.cleanup.some((lane) => lane.id === selectedLane)) open.add("cleanup");
-  const shown = [...board.lanes, ...(open.has("cleanup") ? board.cleanup : [])];
   const paths = useDelegationPaths(box, board.delegations, (delegation) => delegation.within, [board, open.has("cleanup"), open.has("empty")]);
   useLayoutEffect(() => {
     if (!selectedLane) return;
     box.current?.querySelector(`[data-lens-lane="${CSS.escape(selectedLane)}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [selectedLane]);
-  if (shown.length === 0 && board.empty.length === 0 && board.cleanup.length === 0) {
+  if (board.lanes.length === 0 && board.empty.length === 0 && board.cleanup.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-lens-empty="true">
         <p>실행 중인 에이전트가 없습니다</p>
@@ -669,13 +680,8 @@ export function LineageLens({ board, folds, handlers, now }: { board: LineageBoa
   const box = useRef<HTMLDivElement>(null);
   const open = new Set<LensFold>(folds);
   const shown = [...board.lineages, ...(open.has("resting") ? board.resting : []), ...(open.has("cleanup") ? board.cleanup : [])];
-  const delegations: Delegation[] = shown.flatMap((lineage) =>
-    lineage.nodes.flatMap((node) => {
-      const parent = node.agent.lineage_parent_pane_id;
-      return parent && lineage.nodes.some((other) => other.agent.pane_id === parent) ? [{ from: parent, to: node.agent.pane_id, within: true }] : [];
-    }),
-  );
-  const paths = useDelegationPaths(box, delegations, () => true, [board, open.has("resting"), open.has("cleanup")]);
+  // A folded lineage draws no node, so its lines find no end and are not drawn.
+  const paths = useDelegationPaths(box, board.delegations, () => true, [board, open.has("resting"), open.has("cleanup")]);
   if (shown.length === 0 && board.resting.length === 0 && board.cleanup.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-lens-empty="true">

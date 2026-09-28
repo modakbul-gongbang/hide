@@ -278,6 +278,16 @@ export function checkoutCard(workspace: Workspace, checkout: Checkout, nowMs: nu
   };
 }
 
+/** `↑N ↓N`, each part only above zero; empty when the branch is even with both. */
+export function distanceText(ahead: number, behind: number): string {
+  return [ahead > 0 ? `↑${ahead}` : null, behind > 0 ? `↓${behind}` : null].filter(Boolean).join(" ");
+}
+
+/** `1 file`, `N files`. */
+export function filesText(count: number): string {
+  return `${count} ${count === 1 ? "file" : "files"}`;
+}
+
 /**
  * The card an Overview lane head opens (PRD overview-lenses-tiles-agents
  * B16): the checkout card with where the branch stands against its base
@@ -293,9 +303,9 @@ export function laneCheckoutCard(workspace: Workspace, checkout: Checkout, nowMs
   const ahead = checkout.ahead ?? 0;
   const behind = worktree.behind_upstream ?? 0;
   if (checkout.is_worktree && checkout.is_primary !== true && workspace.default_branch) {
-    extra.push({ key: "base", label: "Base", value: [workspace.default_branch, ahead > 0 ? `↑${ahead}` : null, behind > 0 ? `↓${behind}` : null].filter(Boolean).join(" ") });
+    extra.push({ key: "base", label: "Base", value: [workspace.default_branch, distanceText(ahead, behind)].filter(Boolean).join(" ") });
   }
-  extra.push({ key: "changes", label: "Changes", value: worktree.changed_file_count === 0 ? "Clean" : `${worktree.changed_file_count} ${worktree.changed_file_count === 1 ? "file" : "files"}` });
+  extra.push({ key: "changes", label: "Changes", value: worktree.changed_file_count === 0 ? "Clean" : filesText(worktree.changed_file_count) });
   const at = card.rows.findIndex((row) => row.key === "branch");
   const rows = [...card.rows];
   rows.splice(at < 0 ? 0 : at + 1, 0, ...extra);

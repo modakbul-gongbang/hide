@@ -8,13 +8,13 @@ import { Hint } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
 import { AGENT_GROUPS, boardProjects, mainSections, overviewScreen, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
 import { useNewIssueShortcut } from "./IssueDialogs";
-import { AgentsLens, AgentsModeToggle, type LensHandlers } from "./OverviewLenses";
+import { AgentsLens, AgentsModeToggle, lensHandlers } from "./OverviewLenses";
 import { agentsTile, buildLanes, buildLineages, scopeAgents } from "./overviewLens";
 import { allProjectsStats, buildTasks, type AllProjectsStats, type SourceState, type TaskCard } from "./projectBoard";
 import { frontCheckout, type Device } from "./snapshot";
 import { useShellStore } from "./store";
 import { DependenciesView, FocusedTask, TasksListView, TasksModeToggle, TasksView, type BoardHandlers } from "./TaskBoards";
-import { useUiStore, type LensFold, type MainView } from "./ui";
+import { toggledFold, useUiStore, type LensFold, type MainView } from "./ui";
 import { hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
 
@@ -53,9 +53,9 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const stats = useMemo(() => allProjectsStats(sections.flatMap((section) => section.projects.map((project) => project.workspace))), [sections]);
   const projects = useMemo(() => boardProjects(rest, agents), [rest, agents]);
   const tasks = useMemo(() => buildTasks(projects, "all", Date.now()), [projects]);
-  const lanes = useMemo(() => buildLanes(projects, "all"), [projects]);
-  const lineages = useMemo(() => buildLineages(projects), [projects]);
   const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
+  const lanes = useMemo(() => buildLanes(projects, lensAgents, "all"), [projects, lensAgents]);
+  const lineages = useMemo(() => buildLineages(lensAgents), [lensAgents]);
   // Every local Git project's tasks are read once the boards are on screen.
   const localGit = useMemo(() => projects.filter(({ workspace }) => workspace.is_git && !workspace.remote_target_id).map(({ workspace }) => workspace.id).join("\n"), [projects]);
   const boards = view !== "projects";
@@ -87,18 +87,14 @@ export function MainScreen({ actions }: { actions: Actions }) {
     newIssue,
   };
   // The Agents tab keeps the count of agents whose turn it is, the Agents tile's badge.
-  const waiting = agentsTile(lensAgents, true).badge?.count ?? 0;
-  const lensHandlers: LensHandlers = {
-    openCheckout: (owner, checkout) => actions.openWorkspace(owner.device_id, checkout.workspace_id, checkout.id),
-    openAgent: actions.openAgent,
+  const waiting = agentsTile(lensAgents, { state: "ready" }).badge?.count ?? 0;
+  const lensActions = lensHandlers(actions, {
     openIssue: (_owner, task) => {
       setView("tasks");
       setFocusTask(task.key);
     },
-    openGitHub: (url, deviceId) => actions.openPullRequest(url, deviceId, true),
-    cleanup: (owner, checkout) => useUiStore.getState().setWorkspaceDialog({ kind: "delete_worktree", workspaceId: owner.id, checkoutId: checkout.id }),
-    toggleFold: (fold) => setFolds((open) => (open.includes(fold) ? open.filter((value) => value !== fold) : [...open, fold])),
-  };
+    toggleFold: (fold) => setFolds((open) => toggledFold(open, fold)),
+  });
   const scrolls = view !== "projects";
   const unavailable = sections.filter((section) => section.availability.state !== "ready");
   return (
@@ -163,7 +159,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
           )}
         </FocusedTask.Provider>
       ) : view === "agents" ? (
-        <AgentsLens mode={agentsMode} lanes={lanes} lineages={lineages} scope="all" selectedLane={null} folds={folds} handlers={lensHandlers} now={Date.now()} />
+        <AgentsLens mode={agentsMode} lanes={lanes} lineages={lineages} scope="all" selectedLane={null} folds={folds} handlers={lensActions} now={Date.now()} />
       ) : total === 0 && sections.every((section) => section.availability.state === "ready") ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-main-empty="true">
           <p>No project is registered yet.</p>

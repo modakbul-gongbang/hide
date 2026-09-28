@@ -663,11 +663,11 @@ function StageGlyph({ stage }: { stage: Stage }) {
   );
 }
 
-/** A group head of the List and the Agents inbox: chevron, label and count, sticky while the page scrolls. */
-function GroupHead({ open, onToggle, label, count, tone, data, children }: { open: boolean; onToggle: () => void; label: string; count: number; tone?: string; data: Record<string, string>; children?: ReactNode }) {
+/** A group head of the List: chevron, label and count, sticky while the page scrolls. */
+function GroupHead({ open, onToggle, label, count, data, children }: { open: boolean; onToggle: () => void; label: string; count: number; data: Record<string, string>; children?: ReactNode }) {
   return (
     <h2 className="sticky top-0 z-10 flex h-(--size-control) items-center gap-xs bg-background text-subhead font-semibold">
-      <button type="button" aria-expanded={open} onClick={onToggle} className={cn("inline-flex items-center gap-xs rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring", tone ?? "text-foreground")} {...data}>
+      <button type="button" aria-expanded={open} onClick={onToggle} className="inline-flex items-center gap-xs rounded-xs text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring" {...data}>
         {open ? <ChevronDownIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" /> : <ChevronRightIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />}
         <span>{label}</span>
         <Count value={count} />

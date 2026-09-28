@@ -9,14 +9,14 @@ import { cn } from "./lib/utils";
 import { FACT, FACTS_LINE, OpeningStatus, UnavailableNotice } from "./MainScreen";
 import { overviewProject } from "./navigation";
 import { useNewIssueShortcut } from "./IssueDialogs";
-import { AgentsLens, AgentsModeToggle, LensTiles, type LensHandlers } from "./OverviewLenses";
+import { AgentsLens, AgentsModeToggle, LensTiles, lensHandlers } from "./OverviewLenses";
 import { agentsTile, buildLanes, buildLineages, issuesTile, lastIssueRead, scopeAgents, sessionsTile } from "./overviewLens";
 import { buildTasks, formatBytes, projectStats, type BoardProject, type BoardStats, type TaskCard } from "./projectBoard";
 import type { Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { ProjectSessions } from "./ProjectSessions";
 import { DependenciesView, FocusedTask, TasksListView, TasksModeToggle, TasksView, type BoardHandlers } from "./TaskBoards";
-import { useUiStore, type LensFold, type OverviewLens } from "./ui";
+import { toggledFold, useUiStore, type OverviewLens } from "./ui";
 
 // A Project's Overview (PRD web-project-overview, task-agents-views, the
 // issue-first rework and overview-lenses-tiles-agents): the Project scope the
@@ -46,14 +46,13 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   );
   const now = Date.now();
   const tasks = useMemo(() => (projects.length > 0 ? buildTasks(projects, "project", Date.now()) : null), [projects]);
-  const lanes = useMemo(() => buildLanes(projects, "project"), [projects]);
-  const lineages = useMemo(() => buildLineages(projects), [projects]);
   const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
+  const lanes = useMemo(() => buildLanes(projects, lensAgents, "project"), [projects, lensAgents]);
+  const lineages = useMemo(() => buildLineages(lensAgents), [lensAgents]);
   const stats = useMemo(() => (workspace ? projectStats(workspace) : null), [workspace]);
-  const known = found?.availability.state === "ready";
   const tiles = useMemo(
-    () => (tasks && workspace ? [agentsTile(lensAgents, known), issuesTile(tasks, Date.now(), lastIssueRead([workspace])), sessionsTile(sessions, workspace.id, Date.now())] : []),
-    [tasks, workspace, lensAgents, known, sessions],
+    () => (tasks && workspace && found ? [agentsTile(lensAgents, found.availability), issuesTile(tasks, Date.now(), lastIssueRead(workspace)), sessionsTile(sessions, workspace.id, Date.now())] : []),
+    [tasks, workspace, found, lensAgents, sessions],
   );
   // A local Git project's size is measured each time its Overview opens, and
   // its tasks are read from its source; every Project's session history is
@@ -100,7 +99,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
     if (card.checkout) actions.openWorkspace(project.device_id, card.checkout.workspace_id, card.checkout.id);
   };
   // `N merged → 정리` opens what is only there to be removed (B20).
-  const showCleanup = () => setLens({ tab: "agents", agentsMode: "checkouts", folds: [...lens.folds.filter((fold) => fold !== "cleanup"), "cleanup"] });
+  const showCleanup = () => setLens({ tab: "agents", agentsMode: "checkouts", folds: lens.folds.includes("cleanup") ? lens.folds : [...lens.folds, "cleanup"] });
   const handlers: BoardHandlers = {
     openCheckout,
     startIssue: (card) => {
@@ -108,14 +107,10 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
     },
     newIssue,
   };
-  const lensHandlers: LensHandlers = {
-    openCheckout: (owner, checkout) => actions.openWorkspace(owner.device_id, checkout.workspace_id, checkout.id),
-    openAgent: actions.openAgent,
+  const lensActions = lensHandlers(actions, {
     openIssue: (_owner, task) => setLens({ tab: "issues", focusTask: task.key }),
-    openGitHub: (url, deviceId) => actions.openPullRequest(url, deviceId, true),
-    cleanup: (owner, checkout) => useUiStore.getState().setWorkspaceDialog({ kind: "delete_worktree", workspaceId: owner.id, checkoutId: checkout.id }),
-    toggleFold: (fold: LensFold) => setLens({ folds: lens.folds.includes(fold) ? lens.folds.filter((open) => open !== fold) : [...lens.folds, fold] }),
-  };
+    toggleFold: (fold) => setLens({ folds: toggledFold(lens.folds, fold) }),
+  });
   const view = lens.tab;
   const state = view === "issues" ? (tasks.cards.length === 0 ? "empty" : "board") : view === "agents" ? (lensAgents.length === 0 ? "empty" : "board") : "sessions";
   const sessionsView = view === "sessions";
@@ -179,7 +174,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
           <ProjectSessions key={`${project.device_id}:${project.id}`} workspace={project} actions={actions} />
         </div>
       ) : view === "agents" ? (
-        <AgentsLens mode={lens.agentsMode} lanes={lanes} lineages={lineages} scope="project" selectedLane={lens.lane} folds={lens.folds} handlers={lensHandlers} now={now} />
+        <AgentsLens mode={lens.agentsMode} lanes={lanes} lineages={lineages} scope="project" selectedLane={lens.lane} folds={lens.folds} handlers={lensActions} now={now} />
       ) : (
         <FocusedTask.Provider value={lens.focusTask}>
           {lens.tasksMode === "dependencies" ? (

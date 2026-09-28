@@ -5,6 +5,7 @@
 // The inbox these replace grouped agents by what they wanted; here the lane
 // order, the node order and the yellow nodes carry that instead (D-03).
 
+import type { DeviceAvailability } from "./navigation";
 import { stageOf, type BoardProject, type TasksBoard } from "./projectBoard";
 import type { AgentRow, Checkout, ProjectSessions, Task, Workspace } from "./snapshot";
 import { primaryCheckout } from "./workspaceManage";
@@ -18,7 +19,7 @@ import { primaryCheckout } from "./workspaceManage";
  */
 export type AgentBucket = "turn" | "working" | "delegating" | "resting";
 
-export const BUCKETS: readonly { bucket: AgentBucket; label: string }[] = [
+const BUCKETS: readonly { bucket: AgentBucket; label: string }[] = [
   { bucket: "turn", label: "내 차례" },
   { bucket: "working", label: "일하는 중" },
   { bucket: "delegating", label: "자식 대기" },
@@ -37,6 +38,17 @@ export function bucketOf(agent: AgentRow): AgentBucket {
 /** The later of two activity keys; the core pads them so they sort as text. */
 function later(a: string, b: string): string {
   return a > b ? a : b;
+}
+
+/** The most recent activity among `nodes`. */
+function latestActivity(nodes: readonly LensAgent[]): string {
+  return nodes.reduce((best, node) => later(best, node.agent.last_activity ?? ""), "");
+}
+
+/** A lane's or a lineage's place: the operator's turn if any agent's, else working if any works or waits on children, else resting. */
+function rankOf(nodes: readonly LensAgent[]): "turn" | "working" | "resting" {
+  const buckets = new Set(nodes.map((node) => node.bucket));
+  return buckets.has("turn") ? "turn" : buckets.has("working") || buckets.has("delegating") ? "working" : "resting";
 }
 
 /** Turn first, then working, waiting on children, resting; the most recently active first inside one. */
@@ -103,7 +115,8 @@ export type Tile = {
  * questions, approvals, errors and finished ones, and the bar of the four
  * buckets. A device that has not answered has no count.
  */
-export function agentsTile(agents: readonly LensAgent[], known: boolean): Tile {
+export function agentsTile(agents: readonly LensAgent[], availability: DeviceAvailability): Tile {
+  const known = availability.state === "ready";
   const count = (bucket: AgentBucket) => agents.filter((value) => value.bucket === bucket).length;
   const demand = (kind: string) => agents.filter((value) => value.agent.group === "needs_you" && value.agent.demand === kind).length;
   const turn = count("turn");
@@ -120,7 +133,9 @@ export function agentsTile(agents: readonly LensAgent[], known: boolean): Tile {
     unit: null,
     badge: known && turn > 0 ? { count: turn, parts } : null,
     bar: known ? BUCKETS.map(({ bucket, label }) => ({ key: bucket, label, count: count(bucket) })) : null,
-    failure: null,
+    // The agents are the device's live rows, so a device that cannot answer
+    // has no last value to keep: the ⚠ says why (B6), and the count stays empty.
+    failure: availability.state === "unavailable" ? `에이전트를 읽지 못함 · ${availability.text}` : null,
   };
 }
 
@@ -151,10 +166,9 @@ export function issuesTile(board: TasksBoard, now: number, lastReadAt: number | 
   };
 }
 
-/** When the source was last read, the oldest of the scope's, for the failure's age. */
-export function lastIssueRead(workspaces: readonly Workspace[]): number | null {
-  const reads = workspaces.map((workspace) => workspace.tasks?.source?.last_read_at_unix_ms).filter((value): value is number => typeof value === "number");
-  return reads.length === 0 ? null : Math.min(...reads);
+/** When the project's issue source was last read, for a failure's age. */
+export function lastIssueRead(workspace: Workspace): number | null {
+  return workspace.tasks?.source?.last_read_at_unix_ms ?? null;
 }
 
 /** The start of the local day `now` falls in: "today" is this machine's date (B5). */
@@ -207,7 +221,7 @@ export function ageWords(ms: number): string {
 /** Why a worktree is only there to be removed: its work is merged, or its folder is gone. */
 export type Cleanup = "merged" | "missing";
 
-export function cleanupOf(workspace: Workspace, checkout: Checkout): Cleanup | null {
+function cleanupOf(workspace: Workspace, checkout: Checkout): Cleanup | null {
   if (!checkout.is_worktree || checkout.is_primary === true || workspace.is_git !== true) return null;
   if (!checkout.exists || checkout.worktree?.missing === true) return "missing";
   return stageOf(checkout) === "done" ? "merged" : null;
@@ -225,7 +239,6 @@ export type Lane = {
   project: Workspace;
   checkout: Checkout;
   primary: boolean;
-  device: string | null;
   rank: LaneRank;
   nodes: LaneNode[];
   cleanup: Cleanup | null;
@@ -248,10 +261,6 @@ export type LanesBoard = {
 
 const RANK_ORDER: Record<LaneRank, number> = { primary: 0, turn: 1, working: 2, resting: 3 };
 
-function laneActivity(lane: Lane): string {
-  return lane.nodes.reduce((best, node) => later(best, node.agent.last_activity ?? ""), "");
-}
-
 /**
  * The checkout lanes (D-05, D-38, B13, B14, B20). A lane is a checkout and
  * its agents; the primary checkout stands first, then lanes with an agent
@@ -265,27 +274,24 @@ function laneActivity(lane: Lane): string {
  * else leaves a gap. Worktrees with no agent, and merged or folder-less ones
  * whose agents all rest, fold into two lines.
  */
-export function buildLanes(projects: readonly BoardProject[], scope: "project" | "all"): LanesBoard {
-  const agents = scopeAgents(projects);
+export function buildLanes(projects: readonly BoardProject[], agents: readonly LensAgent[], scope: "project" | "all"): LanesBoard {
   const byCheckout = new Map<string, LensAgent[]>();
   for (const value of agents) byCheckout.set(value.checkout.id, [...(byCheckout.get(value.checkout.id) ?? []), value]);
   const lanes: Lane[] = [];
   const empty: Lane[] = [];
   const cleanup: Lane[] = [];
-  for (const { workspace, device } of projects) {
+  for (const { workspace } of projects) {
     const primaryId = primaryCheckout(workspace)?.id ?? null;
     const tasks = new Map((workspace.tasks?.tasks ?? []).map((task) => [task.key, task]));
     for (const checkout of workspace.checkouts) {
       const members = (byCheckout.get(checkout.id) ?? []).slice().sort((a, b) => byBucketThenActivity(a.agent, b.agent));
       const primary = checkout.id === primaryId;
-      const buckets = new Set(members.map((value) => value.bucket));
-      const rank: LaneRank = primary && scope === "project" ? "primary" : buckets.has("turn") ? "turn" : buckets.has("working") || buckets.has("delegating") ? "working" : "resting";
+      const rank: LaneRank = primary && scope === "project" ? "primary" : rankOf(members);
       const lane: Lane = {
         id: checkout.id,
         project: workspace,
         checkout,
         primary,
-        device,
         rank,
         nodes: members.map((value) => ({ ...value, column: 0 })),
         cleanup: cleanupOf(workspace, checkout),
@@ -296,7 +302,7 @@ export function buildLanes(projects: readonly BoardProject[], scope: "project" |
       else lanes.push(lane);
     }
   }
-  lanes.sort((a, b) => RANK_ORDER[a.rank] - RANK_ORDER[b.rank] || Number(b.primary) - Number(a.primary) || laneActivity(b).localeCompare(laneActivity(a)));
+  lanes.sort((a, b) => RANK_ORDER[a.rank] - RANK_ORDER[b.rank] || Number(b.primary) - Number(a.primary) || latestActivity(b.nodes).localeCompare(latestActivity(a.nodes)));
   // Columns over the lanes in the order they are drawn, the folded cleanup
   // lanes last, so a line stays straight once they are unfolded too. A line
   // down to a later lane keeps its column free in every lane it crosses, so
@@ -353,8 +359,6 @@ export type LineageNode = LensAgent & { depth: number; row: number };
 export type Lineage = {
   rootPaneId: string;
   nodes: LineageNode[];
-  /** How many rows the lineage takes: a node's first child shares its row, each further child takes the next free one. */
-  rows: number;
   rank: "turn" | "working" | "resting";
   cleanup: boolean;
 };
@@ -367,6 +371,8 @@ export type LineageBoard = {
   cleanup: Lineage[];
   /** How many columns the deepest lineage needs: Observer, Implementor, then each level below. */
   columns: number;
+  /** Parent to child inside one lineage, an arrow each (B23). */
+  delegations: Delegation[];
 };
 
 /** A fold's count: every agent in its lineages. */
@@ -383,8 +389,7 @@ export function lineageAgentCount(lineages: readonly Lineage[]): number {
  * `쉬는 에이전트` or, rooted in a worktree only there to be removed, into
  * `정리할 것`.
  */
-export function buildLineages(projects: readonly BoardProject[]): LineageBoard {
-  const agents = scopeAgents(projects);
+export function buildLineages(agents: readonly LensAgent[]): LineageBoard {
   const byPane = new Map(agents.map((value) => [value.agent.pane_id, value]));
   const cleanupCheckouts = new Set(agents.filter((value) => cleanupOf(value.project, value.checkout) !== null).map((value) => value.checkout.id));
   const all: Lineage[] = [];
@@ -394,6 +399,7 @@ export function buildLineages(projects: readonly BoardProject[]): LineageBoard {
     if (parent && byPane.has(parent)) continue;
     const nodes: LineageNode[] = [];
     const seen = new Set<string>();
+    // A node's first child shares its row; each further child takes the next free one.
     const place = (value: LensAgent, depth: number, row: number): number => {
       seen.add(value.agent.pane_id);
       nodes.push({ ...value, depth, row });
@@ -404,19 +410,24 @@ export function buildLineages(projects: readonly BoardProject[]): LineageBoard {
       for (const child of children) used += place(child, depth + 1, row + used);
       return Math.max(1, used);
     };
-    const rows = place(root, 0, 0);
-    const buckets = new Set(nodes.map((node) => node.bucket));
-    const rank = buckets.has("turn") ? "turn" : buckets.has("working") || buckets.has("delegating") ? "working" : "resting";
-    all.push({ rootPaneId: root.agent.pane_id, nodes, rows, rank, cleanup: cleanupCheckouts.has(root.checkout.id) });
+    place(root, 0, 0);
+    all.push({ rootPaneId: root.agent.pane_id, nodes, rank: rankOf(nodes), cleanup: cleanupCheckouts.has(root.checkout.id) });
   }
-  const activity = (lineage: Lineage) => lineage.nodes.reduce((best, node) => later(best, node.agent.last_activity ?? ""), "");
-  const order = { turn: 0, working: 1, resting: 2 };
-  all.sort((a, b) => order[a.rank] - order[b.rank] || activity(b).localeCompare(activity(a)));
+  all.sort((a, b) => RANK_ORDER[a.rank] - RANK_ORDER[b.rank] || latestActivity(b.nodes).localeCompare(latestActivity(a.nodes)));
+  const delegations: Delegation[] = [];
+  for (const lineage of all) {
+    const inLineage = new Set(lineage.nodes.map((node) => node.agent.pane_id));
+    for (const node of lineage.nodes) {
+      const parent = node.agent.lineage_parent_pane_id;
+      if (parent && inLineage.has(parent)) delegations.push({ from: parent, to: node.agent.pane_id, within: true });
+    }
+  }
   return {
     lineages: all.filter((lineage) => lineage.rank !== "resting"),
     resting: all.filter((lineage) => lineage.rank === "resting" && !lineage.cleanup),
     cleanup: all.filter((lineage) => lineage.rank === "resting" && lineage.cleanup),
     columns,
+    delegations,
   };
 }
 

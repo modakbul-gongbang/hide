@@ -329,6 +329,7 @@ Issues counts the open issues, `열림`, and its bar splits them into 백로그,
 Sessions counts the project's sessions updated today by this machine's date, `오늘`, and its bar splits them into Claude and Codex; opening the Overview reads the project's session history once to fill it.
 Resting on a bar shows its legend, each part's name and count, and resting on a badge its breakdown (`질문 1 · 승인 1 · 끝남 1`).
 A value not yet read leaves the number and the bar out, and zero is drawn as zero; when a source read fails, a ⚠ stands by the tile's name and resting on it says what failed and how old the value is, with the reason in the diagnostic log and no banner.
+The Agents tile's agents are the device's live rows, so it has no last value to age: while the device cannot answer, its ⚠ says why and the number stays empty.
 
 Every way into a project's Overview, the project row, its Overview row, the palette and ⌘⇧H, opens Agents in its checkout mode with the lane of the checkout in front selected (outlined and scrolled into view), or main's lane when the checkout in front is elsewhere.
 Only Recent Panels (`` ⌥` `` in a browser, `⌃Tab` in the desktop app) brings an Overview back as it was left, its tile, modes, selected lane and opened folds; the view lives on the screen, not in stored settings.

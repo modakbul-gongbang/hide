@@ -529,8 +529,8 @@ function newIssueButton(tokens, id) {
 
 // The view tabs under a scope's header: the Agents trigger carries, in
 // warning, how many agents wait on the operator - the only place outside the
-// cards that says so (ProjectOverview.tsx, MainScreen.tsx).
-function viewTabs(id, items, activeIndex, waiting = 0) {
+// cards that says so (MainScreen.tsx; a project has tiles instead).
+function viewTabs(id, items, activeIndex, waiting) {
   return frame(id, 'Tabs', {layout: 'horizontal', gap: '$--spacing-xxs', padding: '$--spacing-xxs', fill: '$--card', cornerRadius: '$--radius-sm'}, items.map((label, index) => {
     const active = index === activeIndex;
     const content = {'tab-t': {content: label, fill: active ? '$--foreground' : '$--subtle-foreground'}};

@@ -4,9 +4,12 @@
 // Behaviors, read against small fixtures.
 
 import { describe, expect, it } from "vitest";
-import { agentsTile, bucketOf, buildLanes, buildLineages, childSummary, entryLane, issuesTile, lineageAgentCount, sessionsTile, startOfDay } from "./overviewLens";
+import { agentsTile, bucketOf, buildLanes as lanesOf, buildLineages as lineagesOf, childSummary, entryLane, issuesTile, lineageAgentCount, scopeAgents, sessionsTile, startOfDay } from "./overviewLens";
 import { buildTasks, type BoardProject } from "./projectBoard";
 import type { AgentRow, Checkout, ProjectSessions, PullRequest, SessionRow, Task, Workspace } from "./snapshot";
+
+const buildLanes = (projects: BoardProject[], scope: "project" | "all") => lanesOf(projects, scopeAgents(projects), scope);
+const buildLineages = (projects: BoardProject[]) => lineagesOf(scopeAgents(projects));
 
 const NOW = new Date(2026, 8, 28, 15, 0, 0).getTime();
 
@@ -93,15 +96,16 @@ describe("the tiles", () => {
       agent("x", "working", { waiting_on_descendants: true }),
       agent("elsewhere", "needs_you"),
     ];
-    const tile = agentsTile(buildLanes(one(project, agents), "project").lanes.flatMap((lane) => lane.nodes), true);
+    const tile = agentsTile(buildLanes(one(project, agents), "project").lanes.flatMap((lane) => lane.nodes), { state: "ready" });
     expect(tile.value).toBe(5);
     expect(tile.badge).toEqual({ count: 2, parts: [{ key: "question", label: "질문", count: 1 }, { key: "done", label: "끝남", count: 1 }] });
     expect(tile.bar?.map((segment) => [segment.key, segment.count])).toEqual([["turn", 2], ["working", 1], ["delegating", 1], ["resting", 1]]);
   });
 
-  it("draws zero as zero with no badge, and nothing at all for a device that has not answered (B6)", () => {
-    expect(agentsTile([], true)).toMatchObject({ value: 0, badge: null, bar: [{ count: 0 }, { count: 0 }, { count: 0 }, { count: 0 }] });
-    expect(agentsTile([], false)).toMatchObject({ value: null, badge: null, bar: null });
+  it("draws zero as zero with no badge, nothing for a device that has not answered, and ⚠ with the reason for one that cannot (B6)", () => {
+    expect(agentsTile([], { state: "ready" })).toMatchObject({ value: 0, badge: null, bar: [{ count: 0 }, { count: 0 }, { count: 0 }, { count: 0 }], failure: null });
+    expect(agentsTile([], { state: "loading", text: "connecting" })).toMatchObject({ value: null, badge: null, bar: null, failure: null });
+    expect(agentsTile([], { state: "unavailable", text: "mini is unreachable", retry: "connect" })).toMatchObject({ value: null, bar: null, failure: "에이전트를 읽지 못함 · mini is unreachable" });
   });
 
   it("counts open issues once the source answered, bars backlog, in progress and review, and keeps the last value with its age when a read fails (B3, B6)", () => {
@@ -243,7 +247,6 @@ describe("the lineage mode", () => {
       ["sub-a", 2, 0],
       ["sub-b", 2, 1],
     ]);
-    expect(first.rows).toBe(2);
     expect(board.columns).toBe(3);
     expect(board.resting.map((lineage) => lineage.rootPaneId)).toEqual(["idle"]);
     expect(board.cleanup.map((lineage) => lineage.rootPaneId)).toEqual(["old"]);
