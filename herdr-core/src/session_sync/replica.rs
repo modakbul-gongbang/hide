@@ -737,7 +737,14 @@ impl SessionReplica {
         data: ReplicaEvent,
         mode: ApplyMode,
     ) -> Result<bool, SessionFetchError> {
-        if self.names_retired(&data) {
+        if let Some((event, id)) = self.names_retired(&data) {
+            crate::diagnostic!(json!({
+                "component": "session_sync",
+                "kind": "event.already_applied",
+                "event": event,
+                "retired_id": id,
+                "applied_events": self.applied_events,
+            }));
             // What a late event creates inside a retired scope is retired
             // with it, so the events that follow about it are no-ops too.
             match &data {
@@ -951,17 +958,7 @@ impl SessionReplica {
                         .remove(&input_tab.workspace_id);
                     self.record_creation_focus(&input_tab);
                 }
-                // A tab created in a workspace whose last tab closed means the
-                // workspace survived (a seed tab that `layout.apply` replaced),
-                // so it no longer waits for `workspace_closed`; its active tab
-                // is read from Herdr unless an event names it first.
-                if self
-                    .pending_workspace_closures
-                    .remove(&input_tab.workspace_id)
-                {
-                    self.pending_active_tab_focuses
-                        .insert(input_tab.workspace_id.clone());
-                }
+                self.cancel_workspace_closure(&input_tab.workspace_id);
                 self.pending_layouts.insert(input_tab.tab_id.clone());
                 self.state.tabs.push(input_tab);
             }
@@ -1090,6 +1087,10 @@ impl SessionReplica {
                     ));
                 }
                 workspace.active_tab_id = input_tab_id.clone();
+                // A focus Herdr applied after a held one supersedes it.
+                self.early_focuses.retain(|held| {
+                    !matches!(held, ReplicaEvent::TabFocused { workspace_id, .. } if workspace_id == &input_workspace_id)
+                });
                 self.state.tab_focus = Some(crate::sidebar::SessionTabFocus {
                     generation: self.generation,
                     workspace_id: input_workspace_id.clone(),
@@ -1224,6 +1225,8 @@ impl SessionReplica {
                     ));
                 }
                 self.state.focused_pane_id = Some(input_pane_id.clone());
+                self.early_focuses
+                    .retain(|held| !matches!(held, ReplicaEvent::PaneFocused { .. }));
                 self.state.focused_workspace_id = Some(input_workspace_id.clone());
                 if let Some(layout) = self.state.layouts.iter_mut().find(|layout| {
                     layout
@@ -1331,6 +1334,7 @@ impl SessionReplica {
         }
         if let Some(tab) = payload.created_tab {
             validate_tab_wire("pane_moved", &tab)?;
+            self.cancel_workspace_closure(&tab.workspace_id);
             self.pending_layouts.insert(tab.tab_id.clone());
             upsert_tab(&mut self.state.tabs, tab);
         }
@@ -1360,7 +1364,7 @@ impl SessionReplica {
     }
 
     /// Whether `event` is about an id an earlier event removed (`retired_ids`).
-    fn names_retired(&self, event: &ReplicaEvent) -> bool {
+    fn names_retired<'a>(&self, event: &'a ReplicaEvent) -> Option<(&'static str, &'a str)> {
         let workspace = |id: &String| self.retired_ids.contains(id) && !self.has_workspace(id);
         let tab = |id: &String| {
             self.retired_ids.contains(id) && !self.state.tabs.iter().any(|tab| &tab.tab_id == id)
@@ -1369,18 +1373,42 @@ impl SessionReplica {
             self.retired_ids.contains(id)
                 && !self.state.panes.iter().any(|pane| &pane.pane_id == id)
         };
-        match event {
-            ReplicaEvent::WorkspaceFocused { workspace_id } => workspace(workspace_id),
-            ReplicaEvent::TabCreated { tab: created, .. } => workspace(&created.workspace_id),
-            ReplicaEvent::TabClosed { tab_id, .. }
-            | ReplicaEvent::TabFocused { tab_id, .. }
-            | ReplicaEvent::TabRenamed { tab_id, .. } => tab(tab_id),
-            ReplicaEvent::PaneCreated { pane: created } => tab(&created.tab_id),
-            ReplicaEvent::PaneClosed { pane_id, .. }
-            | ReplicaEvent::PaneFocused { pane_id, .. } => pane(pane_id),
-            ReplicaEvent::PaneUpdated { pane: updated } => pane(&updated.pane_id),
-            ReplicaEvent::LayoutUpdated { layout } => tab(&layout.tab_id),
-            _ => false,
+        let (event, id, retired) = match event {
+            ReplicaEvent::WorkspaceFocused { workspace_id } => {
+                ("workspace_focused", workspace_id, workspace(workspace_id))
+            }
+            ReplicaEvent::TabCreated { tab: created, .. } => (
+                "tab_created",
+                &created.workspace_id,
+                workspace(&created.workspace_id),
+            ),
+            ReplicaEvent::TabClosed { tab_id, .. } => ("tab_closed", tab_id, tab(tab_id)),
+            ReplicaEvent::TabFocused { tab_id, .. } => ("tab_focused", tab_id, tab(tab_id)),
+            ReplicaEvent::TabRenamed { tab_id, .. } => ("tab_renamed", tab_id, tab(tab_id)),
+            ReplicaEvent::PaneCreated { pane: created } => {
+                ("pane_created", &created.tab_id, tab(&created.tab_id))
+            }
+            ReplicaEvent::PaneClosed { pane_id, .. } => ("pane_closed", pane_id, pane(pane_id)),
+            ReplicaEvent::PaneFocused { pane_id, .. } => ("pane_focused", pane_id, pane(pane_id)),
+            ReplicaEvent::PaneUpdated { pane: updated } => {
+                ("pane_updated", &updated.pane_id, pane(&updated.pane_id))
+            }
+            ReplicaEvent::LayoutUpdated { layout } => {
+                ("layout_updated", &layout.tab_id, tab(&layout.tab_id))
+            }
+            _ => return None,
+        };
+        retired.then_some((event, id.as_str()))
+    }
+
+    /// A tab created in a workspace whose last tab closed means the workspace
+    /// survived (a seed tab that `layout.apply` replaced), so it no longer
+    /// waits for `workspace_closed`; its active tab is read from Herdr unless
+    /// an event names it first.
+    fn cancel_workspace_closure(&mut self, workspace_id: &str) {
+        if self.pending_workspace_closures.remove(workspace_id) {
+            self.pending_active_tab_focuses
+                .insert(workspace_id.to_owned());
         }
     }
 
@@ -1523,8 +1551,10 @@ impl SessionReplica {
         for pane_id in &pane_ids {
             self.retire(pane_id);
         }
-        self.early_focuses.retain(|focus| {
-            !matches!(focus, ReplicaEvent::TabFocused { tab_id: held, .. } if held == tab_id)
+        self.early_focuses.retain(|focus| match focus {
+            ReplicaEvent::TabFocused { tab_id: held, .. } => held != tab_id,
+            ReplicaEvent::PaneFocused { pane_id: held, .. } => !pane_ids.contains(held),
+            _ => true,
         });
         self.state.tabs.retain(|tab| tab.tab_id != tab_id);
         self.state.panes.retain(|pane| pane.tab_id != tab_id);
@@ -1536,6 +1566,9 @@ impl SessionReplica {
 
     fn remove_pane(&mut self, pane_id: &str) {
         self.retire(pane_id);
+        self.early_focuses.retain(|focus| {
+            !matches!(focus, ReplicaEvent::PaneFocused { pane_id: held, .. } if held == pane_id)
+        });
         self.state.panes.retain(|pane| pane.pane_id != pane_id);
         self.state.agents.retain(|agent| agent.pane_id != pane_id);
         self.clear_missing_focus();

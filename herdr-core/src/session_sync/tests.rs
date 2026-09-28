@@ -1250,6 +1250,43 @@ fn a_focus_announced_before_its_tab_and_pane_applies_when_they_arrive() {
     assert_eq!(error.state(), "malformed");
 }
 
+/// A held focus is Herdr's focus of an earlier moment; a focus Herdr applies
+/// after it wins, so the held one never moves focus back when its pane lands.
+#[test]
+fn a_focus_applied_after_a_held_one_supersedes_it() {
+    let created = two_tab_snapshot();
+    let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+    let events = [
+        event(
+            "pane_focused",
+            json!({"type": "pane_focused", "workspace_id": "w1", "pane_id": "w1:p2"}),
+        ),
+        event(
+            "pane_focused",
+            json!({"type": "pane_focused", "workspace_id": "w1", "pane_id": "w1:p1"}),
+        ),
+        event(
+            "tab_created",
+            json!({"type": "tab_created", "tab": created["tabs"][1]}),
+        ),
+        event(
+            "pane_created",
+            json!({"type": "pane_created", "workspace_id": "w1", "tab_id": "w1:t2", "pane": created["panes"][1]}),
+        ),
+        event(
+            "layout_updated",
+            json!({"type": "layout_updated", "layout": created["layouts"][1]}),
+        ),
+    ];
+    for (index, next) in events.into_iter().enumerate() {
+        replica
+            .apply(next, ApplyMode::Strict)
+            .unwrap_or_else(|error| panic!("event {index}: {error:?}"));
+    }
+    assert!(replica.ready_to_publish());
+    assert_eq!(replica.project().focused_pane_id.as_deref(), Some("w1:p1"));
+}
+
 /// The event order Herdr 0.9.1 emits when Hide opens a workspace and
 /// `layout.apply` replaces its seed tab (the Reopen of a tab whose workspace
 /// closed with it): the seed tab is announced, closed, then focused, given a
