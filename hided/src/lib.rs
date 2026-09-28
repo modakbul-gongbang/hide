@@ -10,6 +10,7 @@ pub mod device_watch;
 pub mod env;
 pub mod file_url;
 pub mod index;
+pub mod mobile;
 pub mod opener;
 pub mod pane_auth;
 pub mod remote_bridge;
@@ -133,6 +134,7 @@ pub struct RunningDaemon {
     pane_bootstrap_socket: std::path::PathBuf,
     pane_bootstrap_record: std::path::PathBuf,
     remote_bridges: Arc<remote_bridge::Supervisor>,
+    pub mobile: Arc<mobile::Mobile>,
 }
 
 impl RunningDaemon {
@@ -164,10 +166,30 @@ impl Drop for RunningDaemon {
 pub async fn run_daemon(env: Env) -> Result<(), String> {
     let state_dir = env.state_dir.clone();
     let running = start_daemon(env).await?;
-    wait_shutdown(&running).await;
+    wait_shutdown_or_signal(&running).await;
+    // A graceful stop takes hide's `tailscale serve` entry with it; a crash
+    // leaves it to the next start's reconcile (PRD D-07).
+    running.mobile.shutdown().await;
     drop(running);
     remove_state(&state_dir);
     Ok(())
+}
+
+/// Waits for the daemon's own shutdown (idle) or for SIGTERM/SIGINT, which
+/// `hide stop` sends, and turns either into the same graceful stop.
+async fn wait_shutdown_or_signal(running: &RunningDaemon) {
+    use tokio::signal::unix::{SignalKind, signal};
+    let terminate = signal(SignalKind::terminate());
+    let interrupt = signal(SignalKind::interrupt());
+    let (Ok(mut terminate), Ok(mut interrupt)) = (terminate, interrupt) else {
+        wait_shutdown(running).await;
+        return;
+    };
+    tokio::select! {
+        _ = running.shutdown.notified() => {}
+        _ = terminate.recv() => running.shutdown.notify_waiters(),
+        _ = interrupt.recv() => running.shutdown.notify_waiters(),
+    }
 }
 
 pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
@@ -281,6 +303,19 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     let browser_routes = browser_routes::BrowserRoutes::new(Arc::clone(&core));
     let desktop_renderers = Arc::new(AtomicUsize::new(0));
     browser_routes.spawn_reaper(Arc::clone(&desktop_renderers), Arc::clone(&shutdown));
+    let renderers = Arc::new(AtomicUsize::new(0));
+    let mobile = mobile::Mobile::start(mobile::Config {
+        state_dir: env.state_dir.clone(),
+        port,
+        cli: mobile::tailscale::CliSource {
+            pinned: env.tailscale_bin.clone(),
+            search_path: env.search_path.clone(),
+        },
+        host_name: host_name(),
+        core: Arc::clone(&core),
+        herdr_socket: env.herdr_socket_path.as_ref().map(std::path::PathBuf::from),
+        renderers: Arc::clone(&renderers),
+    });
     let app = AppState {
         core: Arc::clone(&core),
         boundary,
@@ -295,7 +330,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         herdr_socket: env.herdr_socket_path.as_ref().map(std::path::PathBuf::from),
         allowed_origins: Arc::new(server::allowed_origins(port, env.vite_origin.as_deref())),
         clients: Arc::new(AtomicUsize::new(0)),
-        renderers: Arc::new(AtomicUsize::new(0)),
+        renderers,
         desktop_renderers,
         connections: Arc::new(AtomicU64::new(0)),
         last_client_gone: Arc::new(Mutex::new(Instant::now())),
@@ -323,6 +358,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
             "keep_alive": env.keep_alive,
             "idle_secs": env.idle_secs,
         })),
+        mobile: Arc::clone(&mobile),
     };
     let env_state_dir = env.state_dir.clone();
     // Seeded before the server accepts a client with the registrations the
@@ -359,6 +395,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         pane_bootstrap_socket,
         pane_bootstrap_record: pane_auth::bootstrap_socket_record(&env.state_dir),
         remote_bridges,
+        mobile,
     })
 }
 

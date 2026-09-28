@@ -1,0 +1,126 @@
+// What the phone app shows, as one store the socket writes and the screens
+// read (PRD mobile-companion D-08). The list survives a lost connection so it
+// can stay dimmed under the unreachable line (B23); the detail keeps the
+// agent it opened by id, never by name (D-17).
+
+import { create } from "zustand";
+import type { AgentGroup, AgentKey, Notifications, PairPayload, PushMode, Refusal, RowsState, ServerFrame } from "./protocol";
+import { sameKey } from "./protocol";
+
+export type Screen =
+  /** No code and no credential on this phone (B13). */
+  | "unpaired"
+  /** The QR opened this page: "<Mac>와 연결" and 연결 (B11). */
+  | "pair"
+  /** Paired, and the list or a detail is showing. */
+  | "app"
+  /** hided refused this phone for good: an expired code, the phone limit, a revoke. */
+  | "refused";
+
+export type Rows = { state: RowsState; text: string; lines: number; more: boolean };
+
+/** `moreAskedAt` is the line count when older rows were last asked for, so one pull asks once. */
+export type Detail = { key: AgentKey; rows: Rows | null; moreAskedAt: number | null };
+
+export type PendingInput = { requestId: string; kind: "text" | "key" };
+
+type PhoneState = {
+  screen: Screen;
+  pair: PairPayload | null;
+  refusal: Refusal | null;
+  /** A live, authenticated socket. */
+  connected: boolean;
+  /** At least one attempt failed and the socket is retrying (B23). */
+  unreachable: boolean;
+  macName: string;
+  otherPhones: number;
+  pushMode: PushMode;
+  notifications: Notifications;
+  vapidKey: string | null;
+  /** Null until the first list arrives; kept across a lost connection. */
+  groups: AgentGroup[] | null;
+  detail: Detail | null;
+  /** The deep link waiting for the first list (B32). */
+  pendingOpen: AgentKey | null;
+  pendingInput: PendingInput | null;
+  inputError: string | null;
+  /** Shown once after pairing: 공유 › 홈 화면에 추가 (B11). */
+  installHint: boolean;
+};
+
+const initial: PhoneState = {
+  screen: "unpaired",
+  pair: null,
+  refusal: null,
+  connected: false,
+  unreachable: false,
+  macName: "",
+  otherPhones: 0,
+  pushMode: "off",
+  notifications: "unasked",
+  vapidKey: null,
+  groups: null,
+  detail: null,
+  pendingOpen: null,
+  pendingInput: null,
+  inputError: null,
+  installHint: false,
+};
+
+export const usePhone = create<PhoneState>(() => initial);
+
+export function patch(next: Partial<PhoneState>): void {
+  usePhone.setState(next);
+}
+
+/** Applies one frame from hided; the socket owns what the frame asks it to do next. */
+export function applyFrame(frame: ServerFrame): void {
+  const state = usePhone.getState();
+  switch (frame.type) {
+    case "paired":
+      patch({ screen: "app", pair: null, installHint: true });
+      return;
+    case "hello":
+      patch({
+        screen: "app",
+        connected: true,
+        unreachable: false,
+        refusal: null,
+        macName: frame.mac_name,
+        vapidKey: frame.vapid_public_key,
+        notifications: frame.notifications,
+      });
+      return;
+    case "meta":
+      patch({ pushMode: frame.push_mode, otherPhones: frame.other_phones });
+      return;
+    case "agents":
+      patch({ groups: frame.groups });
+      return;
+    case "rows": {
+      const detail = state.detail;
+      if (!detail || !sameKey(detail.key, frame)) return;
+      const rows: Rows =
+        frame.state === "ok"
+          ? { state: "ok", text: frame.text ?? "", lines: frame.lines ?? 0, more: frame.more ?? false }
+          : { state: frame.state, text: detail.rows?.text ?? "", lines: detail.rows?.lines ?? 0, more: false };
+      patch({ detail: { ...detail, rows } });
+      return;
+    }
+    case "push_state":
+      patch({ notifications: frame.notifications === "on" ? "on" : state.notifications });
+      return;
+    default:
+      return;
+  }
+}
+
+/** The agent a detail shows, from the current list; null once it left the list. */
+export function agentOf(groups: AgentGroup[] | null, key: AgentKey | null) {
+  if (!groups || !key) return null;
+  for (const group of groups) {
+    const agent = group.agents.find((candidate) => sameKey(candidate, key));
+    if (agent) return agent;
+  }
+  return null;
+}

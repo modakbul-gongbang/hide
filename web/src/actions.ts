@@ -857,6 +857,23 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     /** Whether this page is looking at the Agents tab; the daemon owns the core's flag. */
+    /** Settings > Mobile's switch; hided runs tailscale serve (PRD mobile-companion D-06). */
+    setMobileEnabled(enabled: boolean) {
+      dispatch({ schema_version: 2, kind: "mobile_enable", payload: { enabled } });
+    },
+    /** Settings > Mobile open or closed: hided rechecks the checklist while it is open and issues a new code on open. */
+    observeMobile(observing: boolean) {
+      dispatch({ schema_version: 2, kind: "mobile_observe", payload: { observing } });
+    },
+    newMobileCode() {
+      dispatch({ schema_version: 2, kind: "mobile_new_code", payload: {} });
+    },
+    revokePhone(phoneId: string) {
+      dispatch({ schema_version: 2, kind: "mobile_revoke", payload: { phone_id: phoneId } });
+    },
+    setPushMode(mode: "off" | "app_closed" | "always") {
+      dispatch({ schema_version: 2, kind: "mobile_push_mode", payload: { mode } });
+    },
     observeAgents(observing: boolean) {
       dispatch({ schema_version: 2, kind: "ai_settings", payload: { observing } });
     },

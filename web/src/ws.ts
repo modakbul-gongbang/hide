@@ -99,7 +99,7 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
       // state: the connection turns live only with the snapshot, because
       // everything keyed to "live" (buffer reconciliation, terminal views)
       // reads the snapshot that has not arrived yet.
-      if (frame.type === "daemon") {
+      if (frame.type === "daemon" || frame.type === "mobile") {
         useShellStore.getState().applyFrame(frame);
         return;
       }

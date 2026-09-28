@@ -1,0 +1,14 @@
+{
+  "name": "hide",
+  "short_name": "hide",
+  "description": "이 맥의 hide 에이전트를 보고 답합니다.",
+  "scope": "/m/",
+  "display": "standalone",
+  "background_color": "#101112",
+  "theme_color": "#101112",
+  "icons": [
+    { "src": "/m/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/m/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/m/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

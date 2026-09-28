@@ -74,6 +74,8 @@
   --color-pr-draft: var(--pr-draft);
   --color-diff-added: var(--diff-added);
   --color-diff-removed: var(--diff-removed);
+  --color-qr-foreground: var(--qr-foreground);
+  --color-qr-background: var(--qr-background);
   --color-terminal-black: var(--terminal-black);
   --color-terminal-red: var(--terminal-red);
   --color-terminal-green: var(--terminal-green);
@@ -217,6 +219,11 @@
   --size-control: 28px;
   --size-control-sm: 24px;
   --size-control-lg: 32px;
+  --size-touch-target: 44px;
+  --size-mobile-qr: 168px;
+  --size-mobile-app-icon: 64px;
+  --size-mobile-copy: 320px;
+  --size-mobile-row-inset: 44px;
   --size-icon: 14px;
   --size-icon-sm: 12px;
   --size-icon-lg: 20px;
@@ -283,6 +290,8 @@
   --pr-draft: #6e7781;
   --diff-added: #15803d;
   --diff-removed: #d62323;
+  --qr-foreground: #000000;
+  --qr-background: #ffffff;
   --terminal-black: #24292f;
   --terminal-red: #cf222e;
   --terminal-green: #116329;
@@ -351,6 +360,8 @@
   --pr-draft: #9198a1;
   --diff-added: #5ee69e;
   --diff-removed: #ff595c;
+  --qr-foreground: #000000;
+  --qr-background: #ffffff;
   --terminal-black: #2e3436;
   --terminal-red: #cc0000;
   --terminal-green: #4e9a06;

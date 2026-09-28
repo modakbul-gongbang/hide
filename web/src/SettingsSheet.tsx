@@ -80,6 +80,7 @@ import {
 } from "./shortcuts";
 import type { AgentHookRuntime, Device } from "./snapshot";
 import { latestDraft } from "./editor/draft";
+import { MobileTab } from "./MobileTab";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { hostKind, type HostKind } from "./host";
@@ -137,6 +138,7 @@ function SettingsSheet({ actions }: { actions: Actions }) {
             {tab === "appearance" ? <AppearanceTab actions={actions} /> : null}
             {tab === "agents" ? <AgentsTab actions={actions} /> : null}
             {tab === "devices" ? <DevicesTab actions={actions} /> : null}
+            {tab === "mobile" ? <MobileTab actions={actions} /> : null}
             {tab === "performance" ? <PerformanceTab actions={actions} /> : null}
             {tab === "shortcuts" ? <ShortcutsTab actions={actions} /> : null}
           </TabsContent>
