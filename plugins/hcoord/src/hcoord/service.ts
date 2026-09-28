@@ -257,6 +257,16 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     event(state, at, `agent.spawn_initialization_${phase}`, record.parent, record.key, { pane: record.pane });
     return { changed: true, value: record };
   }
+  if (operation === "agent.spawn.started") {
+    const record = own(state.spawnIntents, required(args, "intent"));
+    if (!record || record.pane === null || record.status === "complete") throw new HcoordError("invalid_state", "spawn start has no active saved pane");
+    const instance = required(args, "instance"), session = optional(args, "session");
+    if ((record.observedInstance != null && record.observedInstance !== instance) || (session !== null && record.observedSession != null && record.observedSession !== session)) throw new HcoordError("identity_conflict", "spawn execution differs from its first observation");
+    record.observedInstance = instance;
+    if (session !== null) record.observedSession = session;
+    event(state, at, "agent.spawn_started", record.parent, record.key, { pane: record.pane });
+    return { changed: true, value: record };
+  }
   if (operation === "agent.spawn.identity") {
     const record = own(state.spawnIntents, required(args, "intent"));
     if (!record || record.pane === null || record.status === "complete") throw new HcoordError("invalid_state", "spawn has no active saved pane");

@@ -1,5 +1,5 @@
 import path from "node:path";
-import { CODEX_INITIALIZATION_PROMPT, getAgent, initializedCodex, prepareCodexFirstTurn, promptAgent, runHerdrCommand, startAgentWhenPaneReady } from "../implement/herdr";
+import { CODEX_INITIALIZATION_PROMPT, getAgent, herdrErrorCode, initializedCodex, prepareCodexFirstTurn, promptAgent, runHerdrCommand, startAgentWhenPaneReady } from "../implement/herdr";
 import { codexArgs, HcoordError, sameExecution, validateSpawnSpec, type Delivery, type Participant, type Request, type SpawnIntent, type Watch } from "./model";
 import { herdrRoute, isLocalMachine, requireRemoteHerdr } from "./remote";
 
@@ -191,6 +191,9 @@ export function inspectSpawnedAgent(record: SpawnIntent): SpawnInspection {
   if (found.kind === "absent") return { state: "absent" };
   if (found.kind !== "found") throw new HcoordError("spawn_uncertain", "Herdr cannot inspect the spawned pane; retain its ID and retry after reconnection", { intent: record.key, pane: record.pane, unfinishedStep: "inspect_agent" });
   if (found.agent.paneId === record.pane && found.agent.kind === record.kind && found.agent.name === null) {
+    if (startedExecution(record, found.agent)) throw new HcoordError("spawn_uncertain", "Herdr reports the started agent without its name; retry this intent to name it again", { intent: record.key, pane: record.pane, unfinishedStep: "name_agent" });
+    if (record.observedInstance != null) throw new HcoordError("identity_conflict", "spawn pane hosts an unnamed agent in another terminal or session than the one hcoord started; no binding was changed", { intent: record.key, pane: record.pane });
+    // An intent saved before hcoord recorded its started execution has nothing to match.
     throw new HcoordError("identity_conflict", `spawn pane hosts an unnamed ${record.kind} agent, and Herdr also clears a name when its agent exits or is replaced; if it is the agent this intent started, name it (herdr ${remotePrefix(record)}agent rename ${record.pane} ${record.name}) and retry this intent; no binding was changed`, { intent: record.key, pane: record.pane });
   }
   if (found.agent.paneId !== record.pane || found.agent.name !== record.name || found.agent.kind !== record.kind) throw new HcoordError("identity_conflict", "spawn pane hosts a different execution; no binding was changed", { intent: record.key, pane: record.pane });
@@ -222,24 +225,41 @@ export function startSpawnedAgent(record: SpawnIntent): void {
   validateSpawnSpec(record.name, record.kind, record.nativeArgs);
   const nativeArgs = record.kind === "codex" ? codexLaunchArgs(record.nativeArgs).startArgs : record.nativeArgs;
   const { result } = startAgentWhenPaneReady(["agent", "start", record.name, "--kind", record.kind, "--pane", record.pane, ...(nativeArgs.length ? ["--", ...nativeArgs] : [])], at(record));
-  if (result.status !== 0) throw new HcoordError("spawn_uncertain", `Herdr did not confirm agent start (${(result.stderr || result.stdout).trim().slice(0, 200) || "no diagnostic"}); inspect the saved pane before retry`, { intent: record.key, pane: record.pane, unfinishedStep: "agent_start" });
+  if (result.status !== 0) throw new HcoordError("spawn_uncertain", `Herdr did not confirm agent start (${(result.stderr || result.stdout).trim().slice(0, 200) || "no diagnostic"}); inspect the saved pane before retry`, { intent: record.key, pane: record.pane, unfinishedStep: "agent_start", herdrCode: herdrErrorCode(result.stderr) ?? herdrErrorCode(result.stdout) });
+}
+
+/** Whether the agent is the execution this intent recorded right after its own start. */
+function startedExecution(record: SpawnIntent, agent: { terminalId: string | null; sessionId: string | null }): boolean {
+  return record.observedInstance != null && agent.terminalId === record.observedInstance && (record.observedSession == null || agent.sessionId === record.observedSession);
 }
 
 /**
- * Herdr can report the agent hcoord has just started without the name it was
- * started under: all nine spawns on 2026-09-28 read `name: null` right after
- * a successful start, and the lineage step refused them (#236). Directly after
- * hcoord's own start in the pane this intent owns, an unnamed agent of the
- * intended kind is that start, so hcoord names it again. A later retry cannot
- * tell a lost name from a replaced agent, so `inspectSpawnedAgent` still
- * refuses an unnamed agent there. Returns whether a name was restored.
+ * The execution in the saved pane right after hcoord's own start, confirmed
+ * or not, so a later step or retry can tell it from a replacement.
  */
-export function nameStartedAgent(record: SpawnIntent): boolean {
+export function observeStartedAgent(record: SpawnIntent): { instance: string; session: string | null } | null {
   if (record.pane === null) throw new HcoordError("invalid_state", "spawn intent has no pane");
   const found = getAgent(record.pane, at(record), 2000);
-  if (found.kind !== "found" || found.agent.paneId !== record.pane || found.agent.kind !== record.kind || found.agent.name !== null) return false;
+  if (found.kind !== "found" || found.agent.paneId !== record.pane || found.agent.kind !== record.kind || found.agent.terminalId === null) return null;
+  return { instance: found.agent.terminalId, session: found.agent.sessionId };
+}
+
+/**
+ * Herdr can report the agent hcoord started without the name it was started
+ * under, and the lineage step then refused it (#236). A start Herdr does not
+ * confirm leaves it unnamed too: a Claude Code prompt passed as a native
+ * argument keeps the agent working past readiness, `agent start` times out,
+ * and the pane's agent has no name (observed 2026-09-28). Herdr also clears a
+ * name when its agent is replaced, so hcoord names an unnamed agent only when
+ * pane, kind, terminal and any reported session are the execution it recorded
+ * after its own start. Returns whether a name was restored.
+ */
+export function nameSpawnedAgent(record: SpawnIntent): boolean {
+  if (record.pane === null) throw new HcoordError("invalid_state", "spawn intent has no pane");
+  const found = getAgent(record.pane, at(record), 2000);
+  if (found.kind !== "found" || found.agent.paneId !== record.pane || found.agent.kind !== record.kind || found.agent.name !== null || !startedExecution(record, found.agent)) return false;
   const renamed = at(record).run!(["agent", "rename", record.pane, record.name], undefined, 2000);
-  if (renamed.status !== 0) throw new HcoordError("spawn_uncertain", `Herdr reports the started agent without its name and did not accept it again (${(renamed.stderr || renamed.stdout).trim().slice(0, 200) || "no diagnostic"}); inspect the saved pane before retry`, { intent: record.key, pane: record.pane, unfinishedStep: "name_agent" });
+  if (renamed.status !== 0) throw new HcoordError("spawn_uncertain", `Herdr reports the started agent without its name and did not accept it again (${(renamed.stderr || renamed.stdout).trim().slice(0, 200) || "no diagnostic"}); retry this intent to name it again`, { intent: record.key, pane: record.pane, unfinishedStep: "name_agent" });
   return true;
 }
 

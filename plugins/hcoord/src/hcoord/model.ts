@@ -3,9 +3,10 @@ export const API_VERSION = 1;
 export const MAX_AGENTS = 2048;
 export const MAX_REQUESTS = 10000;
 export const MAX_EVENTS = 20000;
-// A spawn can write six progress events; one extra slot records a rejected
+// A spawn can write seven progress events; one extra slot records a rejected
 // first-turn submission without stranding the saved intent at the event cap.
-export const SPAWN_EVENT_SLOTS = { reserve: 7, beforeExternalStart: 4, beforeFirstTurn: 4, beforeRegistration: 2 } as const;
+// `started` is the one event agent start itself adds, the observed execution.
+export const SPAWN_EVENT_SLOTS = { reserve: 8, started: 1, beforeExternalStart: 4, beforeFirstTurn: 4, beforeRegistration: 2 } as const;
 export const MAX_BODY_BYTES = 16 * 1024;
 /** A watch brief rides on every watch check, so it stays a few lines (D-21). */
 export const MAX_BRIEF_BYTES = 2 * 1024;
@@ -142,7 +143,8 @@ export function validateSpawnSpec(name: string, kind: string, nativeArgs: string
   if (!/^[a-z][a-z0-9_-]{0,31}$/.test(name)) throw new HcoordError("invalid_argument", "Herdr agent name must start with a lowercase letter and use lowercase letters, digits, _ or -, up to 32 characters");
   if (!(SPAWN_KINDS as readonly string[]).includes(kind)) throw new HcoordError("unsupported_runtime", "this Herdr agent kind has not been verified for coordinator spawn");
   const executable = nativeArgs[0];
-  if (executable !== undefined && (SPAWN_KINDS as readonly string[]).includes(executable)) {
+  // A lone word is a prompt or task; only an executable name followed by its flags is refused.
+  if (executable !== undefined && nativeArgs.length > 1 && (SPAWN_KINDS as readonly string[]).includes(executable)) {
     throw new HcoordError("invalid_argument", `arguments after -- go to the ${kind} executable itself, so drop the leading "${executable}"${executable === kind ? "" : ` and pass --kind ${executable} to start ${executable}`}; see hcoord agent spawn --help`);
   }
   if (kind === "codex") codexArgs(nativeArgs);
