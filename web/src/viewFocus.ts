@@ -27,8 +27,16 @@ export function keyboardOwner(): KeyboardOwner {
 
 /** One bounded value per page; no core events or per-key DOM reads. */
 export function installKeyboardOwner(): () => void {
+  // The shell element a native page took the keyboard from. When the host
+  // hands the keyboard back to the shell to deliver a menu command (Command T
+  // or Command W from a page), the browser announces focus on that element
+  // again; that is not the operator moving the keyboard, so the page keeps
+  // the keyboard until a pointer press or focus lands anywhere else.
+  let handedBack: Element | null = null;
   const record = (event: Event) => {
     const target = event.target instanceof Element ? event.target : null;
+    if (event.type === "focusin" && target !== null && target === handedBack) return;
+    handedBack = null;
     // A menu temporarily borrows the keyboard from its invoker.
     if (target?.closest('[role="menu"]')) return;
     const workspace = target?.closest<HTMLElement>("[data-workspace-screen]")?.dataset.workspaceScreen;
@@ -54,7 +62,9 @@ export function installKeyboardOwner(): () => void {
     const checkout = frontCheckout(rest);
     if (!view?.layout || !checkout || view.panel === "closed" || workspaceKey(view) !== event.workspace) return;
     const located = locateDisplay(view.layout.root, event.id);
-    if (located) noteKeyboardOwner({ kind: "view", workspace: checkout.id, areaId: located.area.id });
+    if (!located) return;
+    noteKeyboardOwner({ kind: "view", workspace: checkout.id, areaId: located.area.id });
+    handedBack = document.activeElement !== document.body ? document.activeElement : null;
   });
   window.addEventListener("focusin", record, true);
   window.addEventListener("pointerdown", record, true);
@@ -63,6 +73,7 @@ export function installKeyboardOwner(): () => void {
     window.removeEventListener("focusin", record, true);
     window.removeEventListener("pointerdown", record, true);
     owner = { kind: "none" };
+    handedBack = null;
   };
 }
 
