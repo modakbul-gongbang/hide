@@ -344,7 +344,6 @@ impl SessionReplica {
                                             .as_deref()
                                             .or(pane.terminal_title.as_deref()),
                                     ),
-                                    workspace_label: non_blank(Some(workspace.label.as_str())),
                                     cwd: pane.cwd.clone().unwrap_or_else(|| path.clone()),
                                     status_label: agent
                                         .map(|agent| agent.status_label.clone())

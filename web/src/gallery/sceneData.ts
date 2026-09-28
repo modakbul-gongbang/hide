@@ -141,7 +141,6 @@ function pane(id: string) {
     id,
     herdr_label: null,
     terminal_title: null,
-    workspace_label: null,
     cwd: ROOT,
     status_label: "idle",
     requires_close_confirmation: false,

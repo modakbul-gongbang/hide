@@ -7,7 +7,6 @@ function pane(id: string, extra: Partial<PaneRow> = {}): PaneRow {
     id,
     herdr_label: id,
     terminal_title: null,
-    workspace_label: null,
     cwd: "/",
     status_label: "Idle",
     requires_close_confirmation: false,

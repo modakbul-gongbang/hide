@@ -1842,7 +1842,6 @@ fn project_layout_panes(
                 id: pane.pane_id.clone(),
                 herdr_label: source.and_then(|source| source.label.clone()),
                 terminal_title: source.and_then(|source| source.terminal_title.clone()),
-                workspace_label: agent.map(|agent| agent.workspace_label.clone()),
                 cwd,
                 // This projection cannot see the read record ledger, so both
                 // read-dependent values are refilled from the navigator's

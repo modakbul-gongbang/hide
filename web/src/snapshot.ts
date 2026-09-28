@@ -200,7 +200,6 @@ export type PaneRow = {
   id: string;
   herdr_label: string | null;
   terminal_title: string | null;
-  workspace_label: string | null;
   cwd: string;
   status_label: string;
   requires_close_confirmation: boolean;

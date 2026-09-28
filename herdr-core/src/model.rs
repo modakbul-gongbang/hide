@@ -1274,7 +1274,6 @@ pub struct PaneSnapshot {
     /// the one that runs it stays testable in the shell.
     pub herdr_label: Option<String>,
     pub terminal_title: Option<String>,
-    pub workspace_label: Option<String>,
     pub cwd: String,
     /// The one short human word for the agent in this pane, from the same
     /// derivation the sidebar row uses.

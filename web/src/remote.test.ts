@@ -26,7 +26,6 @@ function tab(id: string, paneIds: string[], working: string[] = []): Tab {
       id: paneId,
       herdr_label: paneId,
       terminal_title: null,
-      workspace_label: null,
       cwd: "/home/remote/app",
       status_label: "idle",
       requires_close_confirmation: working.includes(paneId),

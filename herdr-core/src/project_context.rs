@@ -342,7 +342,6 @@ mod tests {
                         id: (*pane_id).to_owned(),
                         herdr_label: None,
                         terminal_title: None,
-                        workspace_label: None,
                         cwd: "/fixture".to_owned(),
                         status_label: "Unknown".to_owned(),
                         requires_close_confirmation: false,
