@@ -1,6 +1,7 @@
 // Add a project in the desktop app: the dialog's Browse folder asks the main
 // process for macOS's folder picker, which this spec replaces with a queue of
 // answers, so a pick, a cancel and a refused folder run with no native sheet.
+// Clone from URL clones a local bare repository through the same dialog.
 
 import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
@@ -121,6 +122,91 @@ test("Add a project picks a folder with the native picker, and a cancel or a ref
     await expect(alert).toHaveAttribute("data-registration-path", "~/projects/app");
     await expect(alert).toContainText("needs its connection");
     await captureWindow(app, page, "add-project-device");
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+  } finally {
+    await app?.close();
+    run.cleanup();
+    herdr.stop();
+  }
+});
+
+test("Clone from URL clones a repository into a folder under home and adds it as a project", async () => {
+  const herdr = await startHerdr();
+  const run = isolate(herdr, "clone-project");
+  let app: ElectronApplication | undefined;
+  try {
+    const home = run.env.HOME!;
+    // A local bare repository stands in for a remote one; its folder name is `origin`.
+    const work = path.join(run.root, "work");
+    fs.mkdirSync(work, { recursive: true });
+    const git = (cwd: string, args: string[]) =>
+      execFileSync("git", args, { cwd, env: { ...process.env, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@example.com", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@example.com" } });
+    git(work, ["init", "-q", "-b", "main"]);
+    fs.writeFileSync(path.join(work, "README.md"), "fixture\n");
+    git(work, ["add", "."]);
+    git(work, ["commit", "-q", "-m", "fixture"]);
+    const bare = path.join(run.root, "origin.git");
+    git(run.root, ["clone", "-q", "--bare", work, bare]);
+    const url = `file://${fs.realpathSync(bare)}`;
+    // `~/origin` is taken, so the default parent (home: nothing is registered yet) is refused.
+    fs.mkdirSync(path.join(home, "origin"));
+    const projects = fs.realpathSync(path.join(home, "projects"));
+
+    const launched = await launch(run.env, { switches: ["--disable-backgrounding-occluded-windows"] });
+    app = launched.app;
+    const page = launched.page;
+    await expect(page.locator("[data-main-screen], [data-workspace-screen]")).toBeVisible({ timeout: 30_000 });
+    await page.locator('[data-sidebar-mode="projects"]').click();
+    const dialog = page.locator("[data-add-project]");
+    await page.locator("[data-sidebar-new-workspace]").click();
+    await expect(dialog.locator("[data-add-project-other]")).toContainText("Other ways to add");
+    await dialog.locator('[data-add-project-way="clone"]').click();
+
+    // The sub-view: Back, its own title, the URL field holding the keyboard, and home as the parent.
+    await expect(dialog.getByRole("heading", { name: "Clone from URL" })).toBeVisible();
+    await expect(dialog.locator("[data-add-project-back]")).toBeVisible();
+    const field = dialog.locator("[data-clone-url]");
+    await expect(field).toBeFocused();
+    await expect(dialog.locator("[data-clone-parent]")).toHaveValue("~");
+    const submit = dialog.locator("[data-clone-submit]");
+    await expect(submit).toBeDisabled();
+
+    // What Git cannot clone is said at once, and Clone stays off.
+    await field.fill("not a url");
+    await expect(dialog.locator("[data-clone-url-reason]")).toBeVisible();
+    await expect(submit).toBeDisabled();
+
+    // The folder the URL names is shown; hided finds it taken under home.
+    await field.fill(url);
+    await expect(dialog.locator("[data-clone-target-reason]")).toHaveAttribute("data-clone-target-reason", "target_exists");
+    await expect(submit).toBeDisabled();
+
+    // Another parent from the folder picker frees it.
+    await stubPicker(app, [{ canceled: false, filePaths: [projects] }]);
+    await dialog.locator("[data-clone-browse]").click();
+    await expect(dialog.locator("[data-clone-parent]")).toHaveValue(projects);
+    await expect(dialog.locator("[data-clone-target]")).toHaveAttribute("data-clone-target", path.join(projects, "origin"));
+    await expect(submit).toBeEnabled();
+    await captureWindow(app, page, "clone-from-url-ready");
+
+    // Clone: the repository lands under the parent, and the dialog closes when the project appears.
+    await submit.click();
+    await expect(dialog).toHaveCount(0, { timeout: 30_000 });
+    await expect(page.locator("[data-project-list]")).toContainText("origin", { timeout: 20_000 });
+    expect(fs.readFileSync(path.join(projects, "origin", "README.md"), "utf8")).toBe("fixture\n");
+    expect(fs.readdirSync(projects)).toEqual(["origin"]);
+
+    // Opened again, the parent defaults beside the project just added, where the folder is now taken.
+    await page.keyboard.press("Meta+Shift+KeyN");
+    await dialog.locator('[data-add-project-way="clone"]').click();
+    await expect(dialog.locator("[data-clone-parent]")).toHaveValue(path.join(projects));
+    await dialog.locator("[data-clone-url]").fill(url);
+    await expect(dialog.locator("[data-clone-target-reason]")).toHaveAttribute("data-clone-target-reason", "target_exists");
+    await expect(dialog.locator("[data-clone-submit]")).toBeDisabled();
+    // Back returns to the first view.
+    await dialog.locator("[data-add-project-back]").click();
+    await expect(dialog.getByRole("heading", { name: "Add a project" })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
   } finally {

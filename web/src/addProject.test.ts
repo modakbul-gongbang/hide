@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { addProjectHosts, alreadyRegistered, initialHost, trimFolder } from "./addProject";
+import { addProjectHosts, alreadyRegistered, defaultCloneParent, initialHost, parseCloneUrl, trimFolder } from "./addProject";
 import type { Device, WorkspaceRegistration } from "./snapshot";
 
 const device = (id: string, label: string, kind = "remote") => ({ id, label, kind }) as Device;
@@ -27,5 +27,29 @@ describe("Add a project", () => {
     expect(alreadyRegistered("/home/me/hide", "mini", rows)).toBe(false);
     expect(alreadyRegistered(trimFolder("/home/me/app//"), "mini", rows)).toBe(true);
     expect(alreadyRegistered("/home/me/other", "local", rows)).toBe(false);
+  });
+
+  it("names the folder a clone lands in the way Git does", () => {
+    const named = (url: string) => {
+      const parsed = parseCloneUrl(url);
+      return parsed.ok ? [parsed.host, parsed.name] : parsed.reason;
+    };
+    expect(named("https://github.com/user/repo.git")).toEqual(["github.com", "repo"]);
+    expect(named("https://user:token@GitHub.com:8443/org/repo/")).toEqual(["github.com", "repo"]);
+    expect(named("git@github.com:user/repo.git")).toEqual(["github.com", "repo"]);
+    expect(named("github.com:user/.dotfiles")).toEqual(["github.com", ".dotfiles"]);
+    expect(named("ssh://git@example.com:2222/srv/repo.git")).toEqual(["example.com", "repo"]);
+    expect(named("file:///tmp/fixtures/origin.git")).toEqual(["localhost", "origin"]);
+  });
+
+  it("refuses what Git would not clone or would read as something else", () => {
+    for (const url of ["", "http://example.com/r.git", "git://example.com/r.git", "ext::sh -c id", "-uhttps://x/y", "https://github.com", "https://github.com/", "/home/me/repo", "repo", "git@github.com:", "git@github.com:.git", "file://relative/r"]) {
+      expect(parseCloneUrl(url).ok, url).toBe(false);
+    }
+  });
+
+  it("clones beside the most recently added project on this Mac, else into home", () => {
+    expect(defaultCloneParent([])).toBe("~");
+    expect(defaultCloneParent([registration("/home/me/code/a"), registration("/home/me/work/b/"), registration("/srv/c", "mini")])).toBe("/home/me/work");
   });
 });

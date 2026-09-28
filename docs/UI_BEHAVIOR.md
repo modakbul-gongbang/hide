@@ -609,6 +609,11 @@ The Host selector lists this Mac and every registered device, and starts on the 
 On this Mac the primary `Browse folder` row holds the keyboard, so Enter activates it; it opens macOS's own folder picker as a sheet on the window, which can also make a new folder, and a cancelled pick leaves the dialog as it was.
 The chosen folder is registered with one `create_workspace`; the dialog closes when the project appears, and says `Adding <folder>…` until then.
 A refusal stays inside the dialog as an alert naming the folder, and the dialog stays open for another pick: `already_registered` from the shell's own registrations, before anything is sent, and `outside_home`, `home_root`, `not_found`, `not_a_directory` or `invalid_path` from hided's `$HOME` line, or the core's own error.
+Under Browse folder, an `Other ways to add` group lists `Clone from URL`, on this Mac only.
+It opens a sub-view in the same dialog with `Back`, a `Git URL` field that holds the keyboard, and a `Parent folder` field with a button that opens the same native folder picker; the parent starts beside the most recently added local project, else at home (`~`).
+The folder the URL names is shown as `Clones into a new folder <name>`, and hided is asked whether it is free under that parent, so `Clone` is enabled only for an https, ssh (`git@host:path`, `ssh://`) or `file://` URL, a parent inside home, and a name nothing holds there yet; each refusal is shown inline under its field.
+While the clone runs the dialog shows Git's stage and percent with a progress bar and a `Cancel` button, and the fields and `Back` wait; closing the dialog leaves the clone running, and opening it again shows it.
+A finished clone is registered like a picked folder and the dialog closes when the project appears; a failure (authentication, a stalled transfer, a missing repository) stays inline in plain words with `Clone` enabled again, and a cancel says nothing was kept.
 A device's folders are not this Mac's to browse, so on a device the dialog shows a `~/` path field instead, sent to that device's helper through the same event, with its refusal shown the same way.
 
 ### Removing a project's registration

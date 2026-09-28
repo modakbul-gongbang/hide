@@ -32,6 +32,8 @@ mod memory;
 mod project_sessions;
 #[path = "tests/projects.rs"]
 mod projects;
+#[path = "tests/repository_clone.rs"]
+mod repository_clone;
 #[path = "tests/session_navigation.rs"]
 mod session_navigation;
 #[path = "tests/shortcut_import.rs"]

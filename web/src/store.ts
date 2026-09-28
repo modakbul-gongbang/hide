@@ -40,6 +40,8 @@ export type DirectoryList = {
 /** A device folder its helper could not list now (`directory_unavailable`); the reason is the helper's. */
 export type DirectoryUnavailable = { device_id: string; root_path: string; code: string; message: string };
 export type PathRefusal = { kind: string; path: string; reason: string };
+/** hided's answer to where a clone would land: `path` when it may, `reason` when it may not. */
+export type CloneTarget = { parent: string; name: string; path: string | null; reason: string | null };
 export type DirectoryChanged = { path: string };
 export type FileIndexEntry = { path: string; relative_path: string };
 export type FileIndexResult = {
@@ -71,6 +73,7 @@ export type Frame = {
   } & Partial<DirectoryList> &
     Partial<DirectoryUnavailable> &
     Partial<PathRefusal> &
+    Partial<CloneTarget> &
     Partial<DirectoryChanged> &
     Partial<FileIndexResult>;
 };
@@ -135,6 +138,8 @@ type Store = {
   listings: Record<string, DirectoryList>;
   /** The last path hided refused; Add a project clears it before it sends a folder. */
   pathRefusal: PathRefusal | null;
+  /** The last `clone_target` answer; Clone from URL reads the one for its own parent and name. */
+  cloneTarget: CloneTarget | null;
   /** The last device folder that could not be listed, until a listing for it arrives. */
   directoryUnavailable: DirectoryUnavailable | null;
   /** The ⌘P palette's last answer, keyed by the query it answered. */
@@ -239,6 +244,7 @@ export const useShellStore = create<Store>((set, get) => ({
   find: null,
   listings: {},
   pathRefusal: null,
+  cloneTarget: null,
   directoryUnavailable: null,
   fileIndex: null,
   attachmentRefusal: null,
@@ -356,6 +362,12 @@ export const useShellStore = create<Store>((set, get) => ({
     if (frame.type === "path_refused") {
       set({
         pathRefusal: { kind: payload.kind ?? "", path: payload.path ?? "", reason: payload.reason ?? "" },
+      });
+      return [];
+    }
+    if (frame.type === "clone_target") {
+      set({
+        cloneTarget: { parent: payload.parent ?? "", name: payload.name ?? "", path: payload.path ?? null, reason: payload.reason ?? null },
       });
       return [];
     }

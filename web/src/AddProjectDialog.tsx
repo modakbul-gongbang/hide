@@ -6,10 +6,13 @@
 // dialog, and a refusal (hided's `path_refused`, the core's error, or the one
 // the shell can see itself) stays inside it, naming the folder, so another can
 // be picked. A browser tab has no picker and never opens this dialog.
+// Under Browse folder, "Other ways to add" lists the sub-views this Mac also
+// offers (Clone from URL); each is its own component behind one `view`.
 
-import { CornerDownLeftIcon, FolderOpenIcon } from "lucide-react";
+import { ChevronRightIcon, CornerDownLeftIcon, FolderOpenIcon, LinkIcon, type LucideIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
+import { CloneFromUrl, cloneRunning } from "./CloneFromUrl";
 import { addProjectHosts, alreadyRegistered, folderLabel, initialHost, refusalText, trimFolder } from "./addProject";
 import { Status } from "./components/settings-rows";
 import { Button } from "./components/ui/button";
@@ -23,6 +26,11 @@ import { useUiStore } from "./ui";
 import { useErrorSince } from "./WorkspaceDialogs";
 
 const NO_REGISTRATIONS: WorkspaceRegistration[] = [];
+
+type View = "add" | "clone";
+
+/** The other ways this Mac adds a project, each opening its own sub-view. */
+const OTHER_WAYS: readonly { view: Exclude<View, "add">; label: string; icon: LucideIcon }[] = [{ view: "clone", label: "Clone from URL", icon: LinkIcon }];
 
 export function AddProjectDialog({ actions }: { actions: Actions }) {
   const open = useUiStore((s) => s.overlay === "add_project");
@@ -53,6 +61,8 @@ function AddProject({ actions }: { actions: Actions }) {
   const browseRef = useRef<HTMLButtonElement>(null);
   const fieldRef = useRef<HTMLInputElement>(null);
   const hostChanged = useRef(false);
+  // A clone still running when the dialog opens is shown where it started.
+  const [view, setView] = useState<View>(() => (cloneRunning(useShellStore.getState().rest?.repository_clone) ? "clone" : "add"));
   const added = sent !== null && registrations.some((row) => row.device_id === sent.device && !sent.known.has(row.id));
 
   const hidedReason = sent && pathRefusal?.kind === "create_workspace" && pathRefusal.path === sent.path ? pathRefusal.reason : null;
@@ -94,6 +104,18 @@ function AddProject({ actions }: { actions: Actions }) {
     if (pending || !path || path === "~") return;
     add(path);
   };
+
+  // A sub-view keeps the same dialog, so switching views never closes it.
+  const subview = view === "clone" ? <CloneFromUrl actions={actions} onBack={() => setView("add")} /> : null;
+  if (subview) {
+    return (
+      <Dialog open onOpenChange={(next) => { if (!next) close(); }}>
+        <DialogContent showCloseButton aria-describedby={undefined} data-add-project={host.id} data-add-project-view={view}>
+          {subview}
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   return (
     <Dialog open onOpenChange={(next) => { if (!next) close(); }}>
@@ -161,6 +183,25 @@ function AddProject({ actions }: { actions: Actions }) {
                 <CornerDownLeftIcon />
               </Kbd>
             </button>
+          ) : null}
+          {host.id === "local" ? (
+            <div className="flex flex-col gap-xs" data-add-project-other="true">
+              <span className="text-caption text-muted-foreground">Other ways to add</span>
+              {OTHER_WAYS.map(({ view: next, label, icon: Icon }) => (
+                <button
+                  key={next}
+                  type="button"
+                  disabled={pending}
+                  onClick={() => setView(next)}
+                  data-add-project-way={next}
+                  className="flex w-full items-center gap-md rounded-md px-md py-xs text-left text-subhead text-foreground outline-none transition-colors hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-(--opacity-disabled) [&_svg]:size-(--size-icon)"
+                >
+                  <Icon aria-hidden="true" className="text-subtle-foreground" />
+                  <span className="min-w-0 flex-1">{label}</span>
+                  <ChevronRightIcon aria-hidden="true" className="text-muted-foreground" />
+                </button>
+              ))}
+            </div>
           ) : (
             <div className="flex flex-col gap-xs">
               <div className="flex items-center gap-sm">

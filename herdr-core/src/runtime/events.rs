@@ -120,6 +120,22 @@ pub(super) struct CreateWorkspacePayload {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CloneRepositoryPayload {
+    pub(super) url: String,
+    /// The canonical folder hided's `$HOME` line checked.
+    pub(super) parent: String,
+    /// The folder the URL names, which hided found free under `parent`.
+    pub(super) name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CancelRepositoryClonePayload {
+    pub(super) id: u64,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct CreateTabPayload {
     #[serde(default)]
     pub(super) area_id: Option<String>,
@@ -965,6 +981,8 @@ pub(super) enum Event {
     MemoryOpenForTurn(MemoryOpenForTurnPayload),
     MemoryAction(MemoryActionPayload),
     RetryConnect(RetryConnectPayload),
+    CloneRepository(CloneRepositoryPayload),
+    CancelRepositoryClone(CancelRepositoryClonePayload),
     InstallAgentHooks(InstallAgentHooksPayload),
     AiSettings(AiSettingsPayload),
     TerminalResize(TerminalResizePayload),
@@ -1138,6 +1156,8 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "memory_open_for_turn" => decode!(MemoryOpenForTurnPayload, MemoryOpenForTurn),
         "memory_action" => decode!(MemoryActionPayload, MemoryAction),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
+        "clone_repository" => decode!(CloneRepositoryPayload, CloneRepository),
+        "cancel_repository_clone" => decode!(CancelRepositoryClonePayload, CancelRepositoryClone),
         "install_agent_hooks" => decode!(InstallAgentHooksPayload, InstallAgentHooks),
         "ai_settings" => decode!(AiSettingsPayload, AiSettings),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
@@ -1370,6 +1390,10 @@ impl Runtime {
             }
             Event::AiSettings(payload) => self.apply_ai_settings(payload),
             Event::RetryConnect(payload) => self.retry_remote_device(&payload.target_id),
+            Event::CloneRepository(payload) => {
+                self.clone_repository(&payload.url, &payload.parent, &payload.name)
+            }
+            Event::CancelRepositoryClone(payload) => self.cancel_repository_clone(payload.id),
             Event::CreateWorkspace(payload) => {
                 if let Some(device) = payload
                     .device_id

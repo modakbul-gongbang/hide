@@ -176,6 +176,8 @@ pub enum Refusal {
     NotAFile,
     /// Empty, relative, or otherwise not a path this daemon reads.
     InvalidPath,
+    /// Something is already at the folder a clone would create.
+    TargetExists,
 }
 
 impl Refusal {
@@ -189,6 +191,7 @@ impl Refusal {
             Self::NotADirectory => "not_a_directory",
             Self::NotAFile => "not_a_file",
             Self::InvalidPath => "invalid_path",
+            Self::TargetExists => "target_exists",
         }
     }
 }
@@ -828,6 +831,27 @@ impl Boundary {
             return Err(Refusal::HomeRoot);
         }
         Ok(real)
+    }
+
+    /// The canonical parent a clone may write `name` into: home or a folder
+    /// under it, and a plain folder name nothing holds there yet, not even a
+    /// dangling symlink. The folder the clone creates is therefore strictly
+    /// under home, which is what `create_workspace` then registers.
+    pub fn resolve_clone_target(&self, parent: &str, name: &str) -> Result<PathBuf, Refusal> {
+        let real = self.resolve_dir(parent)?;
+        let plain = !name.is_empty()
+            && name != "."
+            && name != ".."
+            && name.len() <= 255
+            && !name.contains(['/', '\0']);
+        if !plain {
+            return Err(Refusal::InvalidPath);
+        }
+        match fs::symlink_metadata(real.join(name)) {
+            Ok(_) => Err(Refusal::TargetExists),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(real),
+            Err(_) => Err(Refusal::InvalidPath),
+        }
     }
 
     /// The children of a folder inside a registered checkout: files and
@@ -1724,6 +1748,51 @@ mod tests {
         for name in ["", ".", "..", "a/b", "\0"] {
             assert!(!valid_name(name), "{name:?}");
         }
+    }
+
+    #[test]
+    fn a_clone_target_is_a_free_plain_name_in_a_folder_under_home() {
+        let f = fixture();
+        let projects = f.home.join("projects");
+        let real = projects.canonicalize().unwrap();
+        assert_eq!(
+            f.boundary.resolve_clone_target(&s(&projects), "gamma"),
+            Ok(real.clone())
+        );
+        assert_eq!(
+            f.boundary.resolve_clone_target("~/projects", "gamma"),
+            Ok(real)
+        );
+        // Home itself is a parent a clone may use; the folder is below it.
+        assert_eq!(
+            f.boundary.resolve_clone_target("~", "gamma"),
+            Ok(f.home.canonicalize().unwrap())
+        );
+        assert_eq!(
+            f.boundary.resolve_clone_target(&s(&projects), "alpha"),
+            Err(Refusal::TargetExists)
+        );
+        symlink(f.outside.join("nowhere"), projects.join("dangling")).unwrap();
+        assert_eq!(
+            f.boundary.resolve_clone_target(&s(&projects), "dangling"),
+            Err(Refusal::TargetExists)
+        );
+        for name in ["", ".", "..", "a/b", "../escape", "a\0b"] {
+            assert_eq!(
+                f.boundary.resolve_clone_target(&s(&projects), name),
+                Err(Refusal::InvalidPath),
+                "{name:?}"
+            );
+        }
+        assert_eq!(
+            f.boundary.resolve_clone_target(&s(&f.outside), "gamma"),
+            Err(Refusal::OutsideHome)
+        );
+        assert_eq!(
+            f.boundary
+                .resolve_clone_target(&s(&f.home.join("missing")), "gamma"),
+            Err(Refusal::NotFound)
+        );
     }
 }
 
