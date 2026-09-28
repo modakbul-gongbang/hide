@@ -22,10 +22,10 @@ describe("Add a project", () => {
   });
 
   it("sees a folder already registered on the same device, trailing slash or not", () => {
-    const rows = [registration("/Users/me/hide/"), registration("/home/me/app", "mini")];
-    expect(alreadyRegistered(trimFolder("/Users/me/hide/"), "local", rows)).toBe(true);
-    expect(alreadyRegistered("/Users/me/hide", "mini", rows)).toBe(false);
+    const rows = [registration("/home/me/hide/"), registration("/home/me/app", "mini")];
+    expect(alreadyRegistered(trimFolder("/home/me/hide/"), "local", rows)).toBe(true);
+    expect(alreadyRegistered("/home/me/hide", "mini", rows)).toBe(false);
     expect(alreadyRegistered(trimFolder("/home/me/app//"), "mini", rows)).toBe(true);
-    expect(alreadyRegistered("/Users/me/other", "local", rows)).toBe(false);
+    expect(alreadyRegistered("/home/me/other", "local", rows)).toBe(false);
   });
 });
