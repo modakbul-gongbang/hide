@@ -5,66 +5,87 @@ import {
   ChevronRightIcon,
   CircleDashedIcon,
   CircleDotIcon,
-  CircleHelpIcon,
   ContrastIcon,
   EllipsisIcon,
+  ExternalLinkIcon,
   FileTextIcon,
   GitBranchIcon,
   GitMergeIcon,
   GitPullRequestIcon,
   HouseIcon,
-  Link2Icon,
+  ListFilterIcon,
   LockIcon,
+  PencilIcon,
   PlayIcon,
   PlusIcon,
+  SquareTerminalIcon,
+  TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
-import { createContext, useContext, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { createContext, useContext, useId, useMemo, useRef, useState, type ComponentProps, type CSSProperties, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import type { Actions } from "./actions";
-import { markTone } from "./agentRow";
-import { useMeasuredPaths } from "./measuredPaths";
-import { AgentRowItem } from "./components/agent-row";
+import { AgentMark } from "./AgentMark";
+import { lineTone, markTone, rowAccessibleName, rowLine } from "./agentRow";
+import { CheckoutCardHint } from "./components/pr-card";
 import { StatusMark } from "./components/status-mark";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
+import { Input } from "./components/ui/input";
 import { Kbd } from "./components/ui/kbd";
+import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover";
+import { Switch } from "./components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
-import { Hint } from "./components/ui/tooltip";
-import { LinkIssuePopover } from "./IssueDialogs";
+import { Hint, Tooltip, TooltipContent, TooltipTrigger, useHintOpen } from "./components/ui/tooltip";
+import { typing } from "./IssueDialogs";
+import { previewRead, useCachedDetail } from "./issueDetails";
+import { markdownPlainText } from "./markdownPlain";
 import { cn } from "./lib/utils";
+import { useMeasuredPaths } from "./measuredPaths";
+import { AgentMessageHint, PullRequestChip } from "./OverviewLenses";
 import {
   STAGES,
   buildDependencies,
+  filterActive,
+  issueDate,
   stageCards,
+  type BoardRow,
   type BoardScope,
   type DependencyGraph,
+  type IssueFilter,
+  type LoosePullRequest,
+  type LooseWorktree,
   type PrChip,
   type Stage,
   type TaskCard,
   type TasksBoard,
 } from "./projectBoard";
-import { relativeActivity } from "./projects";
-import type { AgentRow, Task } from "./snapshot";
+import { laneCheckoutCard, relativeActivity } from "./projects";
+import type { AgentRow, IssueDetail, IssueLabel, Task } from "./snapshot";
 import type { TasksMode } from "./ui";
 
-// The Tasks views (PRD task-agents-views, reworked issue-first on
-// 2026-09-28), drawn the same for a Project and for All projects:
-// `buildTasks` and `buildDependencies` decide every card and
-// row, and this file only draws them and routes the clicks. A card's title
-// opens its checkout, an agent row its pane, the id its issue and the PR chip
-// its pull request; a backlog card starts work, a worktree with no issue
-// links one. The page scrolls as one; a column grows with its cards.
+// The Issues views (PRD task-agents-views, reworked issue-first on
+// 2026-09-28 and issues-only by PRD overview-lenses-issues), drawn the same
+// for a Project and for All projects: `buildTasks` and `buildDependencies`
+// decide every card and row, and this file only draws them and routes the
+// clicks. A card is an issue. At rest it says three things, the issue, where
+// its work is and who works on it, and only the operator's turn is coloured;
+// hover shows its buttons in the id line's reserved slot, a half-second rest
+// on a part opens that part's card, and each part has one destination: the
+// card and its title the issue's panel, an agent row that agent's pane, the
+// checkout chip its Workspace, the PR chip the pull request, and ⌘-click
+// GitHub (D-09, D-10). Hover, focus and rest publish nothing (B22).
 
 /** A column shows this many cards, then the rest on request. */
 const COLUMN_LIMIT = 20;
 /** The List's backlog shows this many rows, then the rest on request. */
 const LIST_BACKLOG_LIMIT = 8;
-/** Done folds to this many names before `+N`. */
+/** Done folds to this many lines before `+N`. */
 const DONE_NAMES = 6;
-
-/** A card draws its agents without their descendants' fold. */
-const NO_ROWS: AgentRow[] = [];
+/** A card's head shows at most this many labels (B1). */
+const CARD_LABELS = 2;
+/** A folded line's popover names this many items before `+N`. */
+const FOLD_NAMES = 6;
 
 /**
  * The issue an issue chip elsewhere on the Overview asked for (PRD
@@ -75,19 +96,62 @@ export const FocusedTask = createContext<string | null>(null);
 
 /** What a board's cards ask of the page around them. */
 export type BoardHandlers = {
+  /** A card, its title, a done line or a List row: the issue's panel (D-08). */
+  openPanel: (card: TaskCard) => void;
+  /** The checkout chip and `O`: that checkout's Workspace. */
   openCheckout: (card: TaskCard) => void;
-  /** Opens the Start dialog for a backlog issue. */
+  /** 시작 and `S`: the Start dialog for a backlog issue. */
   startIssue: (card: TaskCard) => void;
-  /** Opens the New issue dialog, for the page's Project or its default one. */
+  /** 편집 on a Local issue: its panel, the title and body editable (D-41). */
+  editIssue: (card: TaskCard) => void;
+  /** The New issue dialog, for the page's Project or its default one. */
   newIssue: () => void;
+  /** A page on GitHub: the issue, a pull request (⌘-click, the GitHub control, a PR chip). */
+  openGitHub: (url: string, deviceId: string) => void;
+  /** `이슈 없는 워크트리 N`: Agents › 체크아웃 (B4). */
+  showCheckouts: () => void;
 };
 
-/** `S` on a focused backlog card opens its Start dialog, as its button does. */
-function startsOnKey(event: KeyboardEvent, card: TaskCard, handlers: BoardHandlers) {
-  if (!card.canStart || event.key.toLowerCase() !== "s" || event.metaKey || event.ctrlKey || event.altKey) return;
-  if (event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement) return;
+/** What 시작 and 편집 say on a card and in the panel (B7). */
+export const START_HINT = "이 이슈로 워크트리와 에이전트를 만든다. 이름은 AI가 제안";
+export const EDIT_HINT = "Local 이슈만. 제목 · 본문을 그 자리에서 고친다";
+
+/** The board's page state its cards read: the open panel's issue, and the agent in front. */
+export type BoardPage = { panel: string | null; focusedPaneId: string | null };
+
+/** ⌘-click means GitHub wherever it lands (D-09). */
+function gitHubClick(event: MouseEvent, url: string | null | undefined, deviceId: string, handlers: BoardHandlers): boolean {
+  if (!event.metaKey || !url) return false;
   event.preventDefault();
-  handlers.startIssue(card);
+  event.stopPropagation();
+  handlers.openGitHub(url, deviceId);
+  return true;
+}
+
+/**
+ * The card the arrow keys move to (B20): ↑↓ the next or previous card of the
+ * same column, ←→ the card of the neighbouring column nearest the same
+ * height; at a column's end, or with no column that way, focus stays.
+ */
+export function neighbourCard(from: HTMLElement, key: string): HTMLElement | null {
+  const column = from.closest<HTMLElement>("[data-overview-column]");
+  const board = from.closest<HTMLElement>("[data-tasks-board]");
+  if (!column || !board) return null;
+  const cards = (scope: HTMLElement) => [...scope.querySelectorAll<HTMLElement>("[data-issue-card]")];
+  if (key === "ArrowUp" || key === "ArrowDown") {
+    const own = cards(column);
+    const at = own.indexOf(from);
+    return own[at + (key === "ArrowDown" ? 1 : -1)] ?? null;
+  }
+  const columns = [...board.querySelectorAll<HTMLElement>("[data-overview-column]")].filter((value) => cards(value).length > 0);
+  const next = columns[columns.indexOf(column) + (key === "ArrowRight" ? 1 : -1)];
+  if (!next) return null;
+  const middle = (value: HTMLElement) => {
+    const rect = value.getBoundingClientRect();
+    return rect.top + rect.height / 2;
+  };
+  const y = middle(from);
+  return cards(next).reduce<HTMLElement | null>((best, value) => (best === null || Math.abs(middle(value) - y) < Math.abs(middle(best) - y) ? value : best), null);
 }
 
 function toggled<T>(set: Set<T>, value: T): Set<T> {
@@ -100,38 +164,43 @@ function toggled<T>(set: Set<T>, value: T): Set<T> {
 export function TasksView({
   board,
   scope,
-  focusedPaneId,
+  page,
   actions,
   handlers,
   doneOpen,
   onToggleDone,
+  filtered,
+  onClearFilter,
 }: {
   board: TasksBoard;
   scope: BoardScope;
-  focusedPaneId: string | null;
+  page: BoardPage;
   actions: Actions;
   handlers: BoardHandlers;
   doneOpen: boolean;
   onToggleDone: () => void;
+  /** A filter hides cards; an empty board then offers to clear it rather than to add an issue. */
+  filtered: boolean;
+  onClearFilter: () => void;
 }) {
   // Backlog always stands, so a new issue has somewhere to go; another
-  // stage's column only while it holds a card. The tracks fill the page's
-  // width whatever the columns shown, so a column keeps its width as stages
-  // come and go, one column never spans the page, and a narrow page wraps
-  // the last column rather than clipping it.
-  const columns = STAGES.map(({ stage, label }) => ({ stage, label, cards: stageCards(board, stage) })).filter((column) => column.stage === "backlog" || column.cards.length > 0);
+  // stage's column only while it holds a card or a line of work with no
+  // issue. The tracks fill the page's width whatever the columns shown, so
+  // a column keeps its width as stages come and go.
+  const columns = STAGES.map(({ stage, label }) => ({ stage, label, cards: stageCards(board, stage) })).filter(
+    (column) =>
+      column.stage === "backlog" ||
+      column.cards.length > 0 ||
+      (column.stage === "working" && board.loose.worktrees.length > 0) ||
+      (column.stage === "review" && board.loose.pullRequests.length > 0),
+  );
   return (
-    <div
-      className="grid items-start gap-md px-lg pb-xl"
-      style={{ gridTemplateColumns: "repeat(auto-fill, minmax(var(--home-column-width), 1fr))" }}
-      data-tasks-board="true"
-      data-overview-columns="tasks"
-    >
+    <div className="grid items-start gap-md px-lg pb-xl" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(var(--home-column-width), 1fr))" }} data-tasks-board="true" data-overview-columns="tasks">
       {columns.map(({ stage, label, cards }) =>
         stage === "done" ? (
-          <DoneColumn key={stage} label={label} cards={cards} scope={scope} open={doneOpen} onToggle={onToggleDone} focusedPaneId={focusedPaneId} actions={actions} handlers={handlers} />
+          <DoneColumn key={stage} label={label} cards={cards} scope={scope} open={doneOpen} onToggle={onToggleDone} page={page} actions={actions} handlers={handlers} />
         ) : (
-          <StageColumn key={stage} stage={stage} label={label} board={board} cards={cards} focusedPaneId={focusedPaneId} actions={actions} handlers={handlers} />
+          <StageColumn key={stage} stage={stage} label={label} board={board} cards={cards} page={page} actions={actions} handlers={handlers} filtered={filtered} onClearFilter={onClearFilter} />
         ),
       )}
     </div>
@@ -152,12 +221,12 @@ function Count({ value }: { value: string | number }) {
   return <span className="font-normal text-muted-foreground">{value}</span>;
 }
 
-/** A one-line button at a column's foot: `+N`, or the idle worktrees' fold. */
-function FoldLine({ children, onClick, open, data }: { children: ReactNode; onClick: () => void; open?: boolean; data: Record<string, string> }) {
+/** A one-line button at a column's foot: `+N`, or the work with no issue folded. It passes a popover trigger's props through. */
+function FoldLine({ children, open, data, ...props }: Omit<ComponentProps<"button">, "type"> & { open?: boolean; data: Record<string, string> }) {
   return (
     <button
+      {...props}
       type="button"
-      onClick={onClick}
       aria-expanded={open}
       className="flex w-full items-center gap-xs rounded-sm border border-border px-sm py-xxs text-left text-caption text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
       {...data}
@@ -168,37 +237,43 @@ function FoldLine({ children, onClick, open, data }: { children: ReactNode; onCl
   );
 }
 
+/** The names a folded line's popover lists, the first few and `+N`. */
+function foldNames(names: readonly string[]): string {
+  const shown = names.slice(0, FOLD_NAMES).join(" · ");
+  return names.length > FOLD_NAMES ? `${shown} · +${names.length - FOLD_NAMES}` : shown;
+}
+
 /**
  * Backlog, In progress or Review. Past `COLUMN_LIMIT` the rest wait behind
- * `+N`; In progress folds its worktrees with no issue and no agent into one
- * line at its foot, since nothing on them needs a look.
+ * `+N`; In progress ends in `이슈 없는 워크트리 N` and Review in `이슈 없는
+ * PR N`, each only above zero (B4).
  */
 function StageColumn({
   stage,
   label,
   board,
   cards,
-  focusedPaneId,
+  page,
   actions,
   handlers,
+  filtered,
+  onClearFilter,
 }: {
   stage: Stage;
   label: string;
   board: TasksBoard;
   cards: TaskCard[];
-  focusedPaneId: string | null;
+  page: BoardPage;
   actions: Actions;
   handlers: BoardHandlers;
+  filtered: boolean;
+  onClearFilter: () => void;
 }) {
   const [all, setAll] = useState(false);
-  const [idleOpen, setIdleOpen] = useState(false);
-  const active = cards.filter((value) => !value.idle);
-  const idle = cards.filter((value) => value.idle);
-  const shown = all ? active : active.slice(0, COLUMN_LIMIT);
-  const hidden = active.length - shown.length;
+  const shown = all ? cards : cards.slice(0, COLUMN_LIMIT);
+  const hidden = cards.length - shown.length;
   const count = `${cards.length}${stage === "backlog" && board.overflow ? "+" : ""}`;
   const backlog = stage === "backlog";
-  const draw = (value: TaskCard) => <TaskCardView key={value.id} card={value} focusedPaneId={focusedPaneId} actions={actions} handlers={handlers} />;
   return (
     <section aria-label={label} data-overview-column={stage} className="flex min-w-0 flex-col gap-sm">
       <ColumnHead
@@ -216,23 +291,68 @@ function StageColumn({
         <Count value={count} />
         {backlog ? <BacklogSource board={board} /> : null}
       </ColumnHead>
-      {shown.map(draw)}
-      {backlog && cards.length === 0 ? <EmptyBacklog board={board} onNew={handlers.newIssue} /> : null}
+      {shown.map((value) => (
+        <IssueCardView key={value.id} card={value} page={page} actions={actions} handlers={handlers} />
+      ))}
+      {backlog && cards.length === 0 ? filtered ? <NoMatch onClear={onClearFilter} /> : <EmptyBacklog board={board} onNew={handlers.newIssue} /> : null}
       {hidden > 0 ? (
         <FoldLine onClick={() => setAll(true)} data={{ "data-column-more": stage }}>
           +{hidden}
           {backlog ? " · 최근 갱신 순" : ""}
         </FoldLine>
       ) : null}
-      {idle.length > 0 ? (
-        <>
-          <FoldLine open={idleOpen} onClick={() => setIdleOpen((open) => !open)} data={{ "data-idle-fold": String(idle.length) }}>
-            에이전트 없는 워크트리 {idle.length}
-          </FoldLine>
-          {idleOpen ? idle.map(draw) : null}
-        </>
-      ) : null}
+      {stage === "working" ? <LooseWorktreesLine worktrees={board.loose.worktrees} onOpen={handlers.showCheckouts} /> : null}
+      {stage === "review" ? <LoosePullRequestsLine pullRequests={board.loose.pullRequests} handlers={handlers} /> : null}
     </section>
+  );
+}
+
+/** `이슈 없는 워크트리 N`: its popover says where it goes and names them; its click opens Agents › 체크아웃 (B4). */
+function LooseWorktreesLine({ worktrees, onOpen }: { worktrees: readonly LooseWorktree[]; onOpen: () => void }) {
+  if (worktrees.length === 0) return null;
+  return (
+    <Hint label={`Agents › 체크아웃에서 보기\n${foldNames(worktrees.map((value) => value.branch))}`}>
+      <FoldLine onClick={onOpen} data={{ "data-loose-worktrees": String(worktrees.length) }}>
+        이슈 없는 워크트리 {worktrees.length}
+      </FoldLine>
+    </Hint>
+  );
+}
+
+/**
+ * `이슈 없는 PR N`: its popover names them; its click unfolds them in place,
+ * one line each of the number and title, and a line's click opens that pull
+ * request on GitHub (B4, D-44).
+ */
+function LoosePullRequestsLine({ pullRequests, handlers }: { pullRequests: readonly LoosePullRequest[]; handlers: BoardHandlers }) {
+  const [open, setOpen] = useState(false);
+  if (pullRequests.length === 0) return null;
+  return (
+    <>
+      <Hint label={`누르면 이 자리에서 펼침\n${foldNames(pullRequests.map((value) => `#${value.number}`))}`}>
+        <FoldLine open={open} onClick={() => setOpen((value) => !value)} data={{ "data-loose-prs": String(pullRequests.length) }}>
+          이슈 없는 PR {pullRequests.length}
+        </FoldLine>
+      </Hint>
+      {open ? (
+        <ul className="flex flex-col" data-loose-pr-list="true">
+          {pullRequests.map((value) => (
+            <li key={`${value.place.projectId}:${value.number}`}>
+              <button
+                type="button"
+                className="flex w-full min-w-0 items-center gap-xs rounded-xs px-xs py-xxs text-left text-caption text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                onClick={() => handlers.openGitHub(value.url, value.owner.device_id)}
+                data-loose-pr={value.number}
+              >
+                <GitPullRequestIcon aria-hidden="true" className={cn("size-(--size-icon-sm) shrink-0", PR_TONE[value.tone])} />
+                <span className="shrink-0 font-mono">#{value.number}</span>
+                <span className="min-w-0 truncate">{value.title}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </>
   );
 }
 
@@ -242,7 +362,7 @@ function BacklogSource({ board }: { board: TasksBoard }) {
     return (
       <Hint label={board.source.failure}>
         <span className="text-warning" tabIndex={0} data-backlog-source-failure="true">
-          <CircleHelpIcon aria-hidden="true" className="size-(--size-icon)" />
+          <TriangleAlertIcon aria-hidden="true" className="size-(--size-icon-sm)" />
         </span>
       </Hint>
     );
@@ -270,9 +390,23 @@ function EmptyBacklog({ board, onNew }: { board: TasksBoard; onNew: () => void }
   );
 }
 
+/** A filter that keeps nothing: it says so and offers to clear it (design 9). */
+function NoMatch({ onClear }: { onClear: () => void }) {
+  return (
+    <div className="flex flex-col items-start gap-xs rounded-md border border-dashed border-border p-sm text-caption text-muted-foreground" data-filter-empty="true">
+      <p>필터에 맞는 이슈 없음</p>
+      <Button variant="secondary" size="sm" onClick={onClear} data-filter-clear="true">
+        필터 지우기
+      </Button>
+    </div>
+  );
+}
+
 /**
- * Done starts folded to one line per card, its branch (on All projects, one
- * line per Project with its count); its head unfolds it into cards (D-03).
+ * Done starts folded to one line per issue, its id, title and the number of
+ * the pull request that closed it (on All projects, one line per Project with
+ * its count); resting on the number says when it merged, a line opens the
+ * issue's panel, and the head unfolds it into cards (B3).
  */
 function DoneColumn({
   label,
@@ -280,7 +414,7 @@ function DoneColumn({
   scope,
   open,
   onToggle,
-  focusedPaneId,
+  page,
   actions,
   handlers,
 }: {
@@ -289,7 +423,7 @@ function DoneColumn({
   scope: BoardScope;
   open: boolean;
   onToggle: () => void;
-  focusedPaneId: string | null;
+  page: BoardPage;
   actions: Actions;
   handlers: BoardHandlers;
 }) {
@@ -304,7 +438,7 @@ function DoneColumn({
     return [...counts.entries()];
   }, [cards]);
   const names = allNames ? cards : cards.slice(0, DONE_NAMES);
-  const nameLine = "flex w-full min-w-0 items-center gap-xs rounded-xs px-xs py-xxs text-left font-mono text-caption text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring";
+  const nameLine = "flex w-full min-w-0 items-center gap-xs rounded-xs px-xs py-xxs text-left text-caption text-subtle-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring";
   return (
     <section aria-label={label} data-overview-column="done" data-collapsed={open ? "false" : "true"} className="flex min-w-0 flex-col gap-sm">
       <ColumnHead>
@@ -315,12 +449,12 @@ function DoneColumn({
         </button>
       </ColumnHead>
       {open ? (
-        cards.map((value) => <TaskCardView key={value.id} card={value} focusedPaneId={focusedPaneId} actions={actions} handlers={handlers} />)
+        cards.map((value) => <IssueCardView key={value.id} card={value} page={page} actions={actions} handlers={handlers} />)
       ) : scope === "all" ? (
         <ul className="flex flex-col" data-overview-collapsed-names="done">
           {perProject.map(([id, row]) => (
             <li key={id}>
-              <button type="button" className={nameLine} onClick={onToggle} data-done-project={id}>
+              <button type="button" className={cn(nameLine, "font-mono")} onClick={onToggle} data-done-project={id}>
                 <GitMergeIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-pr-merged" />
                 <span className="min-w-0 truncate">{row.label}</span>
                 <span className="text-muted-foreground">· {row.count}</span>
@@ -331,11 +465,20 @@ function DoneColumn({
       ) : (
         <ul className="flex flex-col" data-overview-collapsed-names="done">
           {names.map((value) => (
-            <li key={value.id}>
-              <button type="button" className={nameLine} onClick={() => handlers.openCheckout(value)}>
-                <GitMergeIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 text-pr-merged" />
-                <span className="min-w-0 truncate">{value.branch ?? value.title}</span>
+            <li key={value.id} className="flex min-w-0 items-center">
+              <button type="button" className={cn(nameLine, page.panel === value.task.key && "bg-accent text-foreground")} onClick={() => handlers.openPanel(value)} data-done-line={value.task.key}>
+                <TaskGlyph task={value.task} className="text-pr-merged" />
+                <span className="shrink-0 font-mono">{value.task.id}</span>
+                <span className="min-w-0 flex-1 truncate">{value.title}</span>
               </button>
+              {value.pr ? (
+                <Hint label={[`PR #${value.pr.number} 머지`, value.mergedAt === null ? null : issueDate(value.mergedAt)].filter(Boolean).join(" · ")}>
+                  <span className="inline-flex shrink-0 items-center gap-xxs px-xs font-mono text-caption text-muted-foreground" tabIndex={0} data-done-pr={value.pr.number}>
+                    <GitMergeIcon aria-hidden="true" className="size-(--size-icon-sm)" />
+                    {value.pr.number}
+                  </span>
+                </Hint>
+              ) : null}
             </li>
           ))}
           {cards.length > names.length ? (
@@ -351,7 +494,7 @@ function DoneColumn({
   );
 }
 
-/** `Board | List | Dependencies`, a mode of the Tasks view rather than a tab (D-02): on the right of All projects' tab row, and of a Project's facts line while its Issues tile is chosen. */
+/** `Board | List | Dependencies`, a mode of the Issues view rather than a tab: at the right end of the facts line (B21), and on All projects' tab row. */
 export function TasksModeToggle({ mode, onChange }: { mode: TasksMode; onChange: (mode: TasksMode) => void }) {
   return (
     <ToggleGroup type="single" value={mode} onValueChange={(value) => value && onChange(value as TasksMode)} aria-label="Tasks mode" data-tasks-mode={mode}>
@@ -368,238 +511,238 @@ export function TasksModeToggle({ mode, onChange }: { mode: TasksMode; onChange:
   );
 }
 
+/**
+ * The Issues filter, left of the mode control (B21): words in an issue's id
+ * or title, and the operator's turn only. The icon is filled while a filter
+ * holds; it is page state and sends nothing.
+ */
+export function IssueFilterControl({ filter, onChange }: { filter: IssueFilter; onChange: (filter: IssueFilter) => void }) {
+  const active = filterActive(filter);
+  return (
+    <Popover>
+      <Hint label={active ? "필터 켜짐" : "필터"}>
+        <PopoverTrigger asChild>
+          <Button variant={active ? "secondary" : "ghost"} size="icon-sm" data-issue-filter={active ? "active" : "none"}>
+            <ListFilterIcon aria-hidden="true" className={cn(active && "text-primary")} />
+          </Button>
+        </PopoverTrigger>
+      </Hint>
+      <PopoverContent align="end" className="flex flex-col gap-sm" data-issue-filter-panel="true">
+        <Input autoFocus value={filter.query} placeholder="id 또는 제목" onChange={(event) => onChange({ ...filter, query: event.target.value })} data-issue-filter-query="true" />
+        <label className="flex items-center justify-between gap-sm text-caption text-foreground">
+          내 차례만
+          <Switch checked={filter.turn} onCheckedChange={(turn) => onChange({ ...filter, turn })} data-issue-filter-turn="true" />
+        </label>
+        {active ? (
+          <Button variant="ghost" size="sm" className="self-start" onClick={() => onChange({ query: "", turn: false })} data-issue-filter-reset="true">
+            필터 지우기
+          </Button>
+        ) : null}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 /** The mark a task's id carries: an issue's circle-dot, a local issue's page (D-06). */
 export function TaskGlyph({ task, className }: { task: Task; className?: string }) {
   const Glyph = task.source === "github" ? CircleDotIcon : FileTextIcon;
   return <Glyph aria-hidden="true" className={cn("size-(--size-icon-sm) shrink-0", className)} />;
 }
 
-/** Where a checkout is: its branch in mono for a worktree, a house for the primary checkout or a folder. */
-function Place({ card, className }: { card: TaskCard; className?: string }) {
-  const { checkout } = card;
-  if (!checkout || !card.branch) return null;
-  const Glyph = checkout.is_worktree ? GitBranchIcon : HouseIcon;
+/** One label as its source colours it: a dot in the label's colour and its name. */
+export function IssueLabelView({ label }: { label: IssueLabel }) {
+  // The colour is the source's data, not a design value, so it reaches the dot through a custom property.
+  const tint = label.color ? { "--issue-label": `#${label.color}` } : undefined;
   return (
-    <span className={cn("inline-flex min-w-0 items-center gap-xxs font-mono text-caption text-muted-foreground", className)} data-card-branch={card.branch}>
-      <Glyph aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
-      <span className="min-w-0 truncate">{card.branch}</span>
+    <span className="inline-flex min-w-0 items-center gap-xxs text-caption text-muted-foreground" data-issue-label={label.name}>
+      <span aria-hidden="true" className={cn("size-(--issue-label-dot) shrink-0 rounded-full", label.color ? "bg-(--issue-label)" : "bg-muted-foreground")} style={tint as CSSProperties} />
+      <span className="truncate">{label.name}</span>
     </span>
   );
 }
 
 /**
- * A task card, top to bottom as the work flows: the issue (its id and title;
- * a worktree with no issue leads with its branch), then where the work is
- * and what it delivered (the PR and its CI, the branch, ↑ahead, changed
- * files), then at most two agents and `+N`. A card waiting on the operator
- * wears a warning halo. Hover or focus offers the card's next step: 시작 on
- * a backlog issue, 이슈 연결 on a worktree with none; `⋯` holds the rest. In
- * Dependencies (`graph`) it also carries its stage word, and a blocked card
- * is dimmed like a done one (D-09, D-10).
+ * An issue card (B1, B2, B5-B9). The id line holds the source glyph, the id,
+ * at most two labels once the issue has been read, and at its end a slot
+ * whose buttons show only under the pointer or focus, so the card keeps its
+ * height. Under it the title in two lines, the lock line, then in progress
+ * and review the checkout and PR chips (review adds the CI mark and the
+ * review word), and at most two agents, the operator's turn first, and `+N`.
+ * Only the operator's turn is coloured; a done card is dimmed.
  */
-export function TaskCardView({
-  card,
-  focusedPaneId,
-  actions,
-  handlers,
-  graph,
-}: {
-  card: TaskCard;
-  focusedPaneId: string | null;
-  actions: Actions;
-  handlers: BoardHandlers;
-  graph?: { status: string | null };
-}) {
-  const { checkout, task, facts } = card;
+export function IssueCardView({ card, page, actions, handlers, graph }: { card: TaskCard; page: BoardPage; actions: Actions; handlers: BoardHandlers; graph?: { status: string | null } }) {
+  const { task, checkout, owner } = card;
   const focusedTask = useContext(FocusedTask);
-  const focused = focusedTask !== null && focusedTask === task?.key;
-  const halo = card.needsYou ? (card.error ? "border-destructive shadow-[0_0_var(--home-halo-radius)_var(--destructive)]" : "border-warning shadow-[0_0_var(--home-halo-radius)_var(--warning)]") : "border-border";
+  const cached = useCachedDetail(task.key);
+  const [previewPinned, setPreviewPinned] = useState(false);
+  const selected = page.panel === task.key || focusedTask === task.key;
   const blocked = card.blockedBy.length > 0;
-  const dimmed = card.stage === "done" || card.idle || (graph !== undefined && blocked);
-  const hasFacts = facts.files !== null || facts.ahead !== null || facts.pr !== null || facts.behind !== null || (task !== null && card.branch !== null);
+  const dimmed = card.stage === "done" || (graph !== undefined && blocked);
+  const chips = card.chip !== null || card.pr !== null;
+  const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    if (event.metaKey || event.ctrlKey || event.altKey || typing(event.target)) return;
+    const self = event.target === event.currentTarget;
+    if (event.key.startsWith("Arrow") && self) {
+      const next = neighbourCard(event.currentTarget, event.key);
+      event.preventDefault();
+      next?.focus();
+      return;
+    }
+    if (event.key === "Enter" && self) {
+      event.preventDefault();
+      handlers.openPanel(card);
+    } else if (event.key === " " && self) {
+      event.preventDefault();
+      setPreviewPinned((value) => !value);
+    } else if (event.key.toLowerCase() === "s" && card.first === "start") {
+      event.preventDefault();
+      handlers.startIssue(card);
+    } else if (event.key.toLowerCase() === "o" && card.first === "workspace") {
+      event.preventDefault();
+      handlers.openCheckout(card);
+    }
+  };
   return (
     <article
-      className={cn("group/card flex min-w-0 flex-col gap-xs rounded-md border bg-card p-sm outline-none focus-visible:ring-1 focus-visible:ring-ring", halo, dimmed && "opacity-(--opacity-secondary)", focused && "ring-1 ring-primary")}
-      data-focused-task={focused ? "true" : undefined}
+      className={cn(
+        "group/card flex min-w-0 cursor-pointer flex-col gap-xs rounded-md border bg-card p-sm outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring",
+        card.needsYou ? "border-warning" : selected ? "border-primary" : "border-border",
+        dimmed && "opacity-(--opacity-secondary)",
+      )}
+      tabIndex={0}
+      aria-label={[task.id, card.title].filter(Boolean).join(" ")}
+      data-issue-card={task.key}
       data-overview-card={card.id}
+      data-task-key={task.key}
       data-stage={card.stage}
+      data-selected={selected ? "true" : undefined}
+      data-focused-task={focusedTask === task.key ? "true" : undefined}
       data-needs-you={card.needsYou ? "true" : undefined}
-      data-task-key={task?.key}
       data-blocked={blocked ? "true" : undefined}
-      data-idle={card.idle ? "true" : undefined}
-      tabIndex={card.canStart ? 0 : undefined}
-      onKeyDown={(event) => startsOnKey(event, card, handlers)}
+      onClick={(event) => {
+        if (!gitHubClick(event, task.url, owner.device_id, handlers)) handlers.openPanel(card);
+      }}
+      onFocus={(event) => {
+        // With the panel open, the panel follows the card the keyboard moves to (B10, B20).
+        if (event.target === event.currentTarget && page.panel !== null && page.panel !== task.key) handlers.openPanel(card);
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setPreviewPinned(false);
+      }}
+      onKeyDown={onKeyDown}
     >
-      <div className="flex min-w-0 items-center gap-xs">
-        {task ? <TaskId task={task} help={card.idHelp} /> : <Place card={card} />}
+      <div className="flex h-(--size-control-sm) min-w-0 items-center gap-xs">
+        <IssueIdPreview card={card} detail={cached} pinned={previewPinned} actions={actions} handlers={handlers} />
+        {cached && cached.labels.length > 0 ? (
+          <span className="flex min-w-0 items-center gap-xs" data-card-labels="true">
+            {cached.labels.slice(0, CARD_LABELS).map((label) => (
+              <IssueLabelView key={label.name} label={label} />
+            ))}
+          </span>
+        ) : null}
         {card.project ? (
           <span className="min-w-0 truncate text-caption text-muted-foreground" data-card-project="true">
             {card.project}
           </span>
         ) : null}
         <span className="flex-1" />
-        {card.sourceFailure ? (
-          <Hint label={card.sourceFailure}>
-            <span className="shrink-0 text-warning" data-source-failure="true" tabIndex={0}>
-              <CircleHelpIcon aria-hidden="true" className="size-(--size-icon)" />
-            </span>
-          </Hint>
-        ) : null}
+        {card.sourceFailure ? <SourceFailureMark text={card.sourceFailure} /> : null}
         {graph?.status ? (
-          <span className="shrink-0 text-caption text-muted-foreground" data-card-status="true">
+          <span className="shrink-0 text-caption text-muted-foreground group-focus-within/card:hidden group-hover/card:hidden" data-card-status="true">
             {graph.status}
           </span>
         ) : null}
+        <CardActions card={card} actions={actions} handlers={handlers} />
       </div>
-      <p className="line-clamp-2 min-w-0 break-words text-title font-semibold text-foreground">
-        {checkout ? (
-          <button type="button" onClick={() => handlers.openCheckout(card)} data-overview-workspace={checkout.id} className="rounded-xs text-left outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring">
-            {card.title}
-          </button>
-        ) : (
-          <span>{card.title}</span>
-        )}
+      <p className="line-clamp-2 min-w-0 break-words text-title font-semibold text-foreground" data-card-title="true">
+        {card.title}
       </p>
-      {blocked ? (
-        <Hint label={`먼저 끝나야 하는 태스크: ${card.blockedBy.map((blocker) => blocker.label).join(", ")}`}>
-          <p className="flex w-fit min-w-0 items-center gap-xxs text-caption text-warning" data-blocked-by={card.blockedBy.map((blocker) => blocker.key).join(" ")} tabIndex={0}>
-            <LockIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
-            <span className="truncate">{card.blockedBy.map((blocker) => blocker.label).join(", ")}</span>
-          </p>
-        </Hint>
+      {blocked ? <BlockedLine card={card} /> : null}
+      {chips ? (
+        <div className="flex min-w-0 flex-wrap items-center gap-x-sm gap-y-xxs font-mono text-caption text-muted-foreground" data-card-chips="true">
+          {card.chip && checkout ? <CheckoutChipView card={card} handlers={handlers} /> : null}
+          {card.pr && checkout ? (
+            <span className="inline-flex items-center gap-xxs" onClick={(event) => event.stopPropagation()}>
+              <PullRequestChip project={owner} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, owner.device_id)} now={Date.now()} />
+              {card.stage === "review" ? <ReviewMarks pr={card.pr} /> : null}
+            </span>
+          ) : null}
+        </div>
       ) : null}
-      {hasFacts ? <CardFacts card={card} /> : null}
       {card.shown.length > 0 ? (
-        <ul className="-mx-sm flex flex-col" role="list" data-overview-rows="true">
+        <ul className="-mx-xs flex flex-col" role="list" data-overview-rows="true">
           {card.shown.map((agent) => (
-            <AgentRowItem
-              key={agent.pane_id}
-              agent={agent}
-              device={null}
-              depth={0}
-              descendants={0}
-              childRows={NO_ROWS}
-              selected={agent.pane_id === focusedPaneId}
-              onOpen={actions.openAgent}
-              onToggleTree={null}
-              inset="var(--spacing-sm)"
-            />
+            <CardAgentRow key={agent.pane_id} agent={agent} depth={0} place={card.chip?.branch ?? ""} selected={agent.pane_id === page.focusedPaneId} onOpen={actions.openAgent} />
           ))}
         </ul>
       ) : null}
       {card.more > 0 ? (
         <Hint label={card.rows.map((row) => row.agent.identity_label).join(", ")}>
-          <span className="w-fit text-caption text-muted-foreground" data-overview-more={card.more} tabIndex={0}>
-            +{card.more} 에이전트
+          <span className="w-fit text-caption text-muted-foreground" data-overview-more={card.more} tabIndex={0} onClick={(event) => event.stopPropagation()}>
+            +{card.more}
           </span>
         </Hint>
       ) : null}
-      <CardActions card={card} actions={actions} handlers={handlers} />
     </article>
   );
 }
 
-/** Where the work is and what it delivered: the PR and its CI, the branch under an issue, ↑ahead, changed files, ↓behind. */
-function CardFacts({ card }: { card: TaskCard }) {
-  const { facts, task } = card;
+/** A failed source read as one small ⚠ whose popover says what failed and how old the value is (B17). */
+function SourceFailureMark({ text }: { text: string }) {
   return (
-    <div className="flex min-w-0 flex-wrap items-center gap-x-sm gap-y-xxs font-mono text-caption text-muted-foreground" data-overview-facts="true">
-      {facts.pr ? <PrChipView pr={facts.pr} /> : null}
-      {task ? <Place card={card} className="max-w-(--home-collapsed-width)" /> : null}
-      {facts.ahead !== null ? <span data-fact="ahead">↑{facts.ahead}</span> : null}
-      {facts.files !== null ? (
-        <span className="text-warning" data-fact="files">
-          {facts.files} files
-        </span>
-      ) : null}
-      {facts.behind !== null ? (
-        <span className="text-warning" data-fact="behind">
-          ↓{facts.behind}
-        </span>
-      ) : null}
-    </div>
-  );
-}
-
-/**
- * The card's next step, shown on hover or focus (B7): 시작 on a backlog
- * issue (`S` while the card has focus), 이슈 연결 on a worktree with none;
- * `⋯` holds starting an agent in the checkout and closing a local issue.
- */
-function CardActions({ card, actions, handlers }: { card: TaskCard; actions: Actions; handlers: BoardHandlers }) {
-  const { checkout, task } = card;
-  const localTask = task !== null && task.source === "local";
-  const startable = checkout !== null && card.stage !== "done";
-  const menu = localTask || startable;
-  if (!card.canStart && !card.canLink && !menu) return null;
-  return (
-    <div className="hidden items-center gap-xs group-focus-within/card:flex group-hover/card:flex has-data-[state=open]:flex" data-card-actions="true">
-      {card.canStart ? (
-        <Button variant="secondary" size="sm" onClick={() => handlers.startIssue(card)} data-card-start="true">
-          <PlayIcon aria-hidden="true" />
-          시작
-          <Kbd>S</Kbd>
-        </Button>
-      ) : null}
-      {card.canLink && checkout ? (
-        <LinkIssuePopover workspaceId={card.place.projectId} checkout={checkout} actions={actions}>
-          <Button variant="secondary" size="sm" data-card-link="true">
-            <Link2Icon aria-hidden="true" />
-            이슈 연결
-          </Button>
-        </LinkIssuePopover>
-      ) : null}
-      <span className="flex-1" />
-      {menu ? (
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label="카드 동작" data-card-menu="true">
-              <EllipsisIcon aria-hidden="true" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end">
-            {startable && checkout ? (
-              <>
-                <DropdownMenuItem onSelect={() => actions.startAgent(checkout.path, "claude")}>Claude 시작</DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => actions.startAgent(checkout.path, "codex")}>Codex 시작</DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => actions.startAgent(checkout.path, "terminal")}>터미널만 열기</DropdownMenuItem>
-              </>
-            ) : null}
-            {startable && localTask ? <DropdownMenuSeparator /> : null}
-            {localTask && task ? (
-              <DropdownMenuItem onSelect={() => actions.setIssueOpen(task.key, !task.open)} data-card-issue-open={task.open ? "close" : "reopen"}>
-                {task.open ? "이슈 닫기" : "이슈 다시 열기"}
-              </DropdownMenuItem>
-            ) : null}
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ) : null}
-    </div>
-  );
-}
-
-/** A task's id, small and muted; it opens the issue, and its tooltip names the source and branch (D-05, D-06). */
-function TaskId({ task, help }: { task: Task; help: string }) {
-  if (!task.id) return null;
-  const content = (
-    <>
-      <TaskGlyph task={task} />
-      {task.id}
-    </>
-  );
-  const className = "inline-flex shrink-0 items-center gap-xxs rounded-xs font-mono text-caption text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring";
-  return (
-    <Hint label={[task.id, help].filter(Boolean).join(" · ")}>
-      {task.url ? (
-        <a href={task.url} target="_blank" rel="noopener noreferrer" className={className} data-task-id={task.id}>
-          {content}
-        </a>
-      ) : (
-        <span className={className} data-task-id={task.id} tabIndex={0}>
-          {content}
-        </span>
-      )}
+    <Hint label={text}>
+      <span className="shrink-0 text-warning" data-source-failure="true" tabIndex={0} onClick={(event) => event.stopPropagation()}>
+        <TriangleAlertIcon aria-hidden="true" className="size-(--size-icon-sm)" />
+      </span>
     </Hint>
+  );
+}
+
+/** The yellow lock and the ids of the issues that have to finish first; starting is still allowed (B5). */
+function BlockedLine({ card }: { card: TaskCard }) {
+  const names = card.blockedBy.map((blocker) => blocker.label).join(", ");
+  return (
+    <Hint label={`먼저 끝나야 함: ${names}`}>
+      <p className="flex w-fit min-w-0 items-center gap-xxs text-caption text-warning" data-blocked-by={card.blockedBy.map((blocker) => blocker.key).join(" ")} tabIndex={0}>
+        <LockIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
+        <span className="truncate">먼저 끝나야 함: {names}</span>
+      </p>
+    </Hint>
+  );
+}
+
+/** Where the issue's work is (B2): the branch, `↑N`, and `N files` in warning; it opens that Workspace, its half-second card is the checkout card (B8, B9). */
+function CheckoutChipView({ card, handlers }: { card: TaskCard; handlers: BoardHandlers }) {
+  const { chip, checkout, owner } = card;
+  if (!chip || !checkout) return null;
+  const Glyph = chip.primary ? HouseIcon : GitBranchIcon;
+  return (
+    <CheckoutCardHint
+      card={laneCheckoutCard(owner, checkout, Date.now())}
+      description={`${chip.branch} · ${checkout.path}`}
+      onOpenPullRequest={(url) => handlers.openGitHub(url, owner.device_id)}
+      onOpenWorkspace={() => handlers.openCheckout(card)}
+    >
+      <button
+        type="button"
+        aria-label={`Workspace ${chip.branch}`}
+        className="inline-flex min-w-0 max-w-full items-center gap-xxs rounded-xs outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+        data-card-checkout={checkout.id}
+        onClick={(event) => {
+          event.stopPropagation();
+          handlers.openCheckout(card);
+        }}
+      >
+        <Glyph aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
+        <span className="min-w-0 max-w-(--home-collapsed-width) truncate">{chip.branch}</span>
+        {chip.ahead !== null ? <span data-fact="ahead">↑{chip.ahead}</span> : null}
+        {chip.files !== null ? (
+          <span className="text-warning" data-fact="files">
+            {chip.files} files
+          </span>
+        ) : null}
+      </button>
+    </CheckoutCardHint>
   );
 }
 
@@ -622,18 +765,11 @@ const REVIEW: Record<NonNullable<PrChip["review"]>, { label: string; tone: strin
   approved: { label: "승인됨", tone: "text-success" },
 };
 
-/** The result: `#n` in its lifecycle colour, the CI mark once read, and the review GitHub asks for; the chip opens the pull request (D-06). */
-function PrChipView({ pr, review = true }: { pr: PrChip; review?: boolean }) {
+/** A review card's CI mark once read and the one word of the review GitHub asks for (B2). */
+export function ReviewMarks({ pr, review = true }: { pr: PrChip; review?: boolean }) {
   const asked = review && pr.review ? REVIEW[pr.review] : null;
   return (
-    <span className="inline-flex items-center gap-xxs">
-      <Hint label={`PR #${pr.number} · ${pr.tone}`}>
-        <a href={pr.url} target="_blank" rel="noopener noreferrer" className="rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring" data-pr-chip={pr.number} data-pr-tone={pr.tone}>
-          <Badge variant="outline" className={PR_TONE[pr.tone]}>
-            <GitPullRequestIcon aria-hidden="true" />#{pr.number}
-          </Badge>
-        </a>
-      </Hint>
+    <>
       {pr.checks ? (
         <span role="img" aria-label={CHECKS[pr.checks]} className={pr.checks === "passing" ? "text-success" : pr.checks === "failed" ? "text-destructive" : "text-muted-foreground"} data-pr-checks={pr.checks}>
           {pr.checks === "passing" ? <CheckIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : pr.checks === "failed" ? <XIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <StatusMark symbol="●" className="size-(--size-icon-sm)" />}
@@ -644,7 +780,195 @@ function PrChipView({ pr, review = true }: { pr: PrChip; review?: boolean }) {
           {asked.label}
         </span>
       ) : null}
+    </>
+  );
+}
+
+/**
+ * An agent on an issue card or in its panel: its mark, provider, title and
+ * age, then the core's line, the question in warning. The row opens that
+ * agent's pane; resting half a second on its line opens everything it last
+ * said (B8, B9). A delegated child is indented one step per level (B13).
+ */
+export function CardAgentRow({ agent, depth, place, selected, onOpen }: { agent: AgentRow; depth: number; place: string; selected: boolean; onOpen: (paneId: string) => void }) {
+  const said = rowLine(agent);
+  const turn = agent.group === "needs_you" || agent.unread;
+  const open = () => onOpen(agent.pane_id);
+  return (
+    <li
+      className={cn("relative flex min-w-0 flex-col gap-xxs rounded-sm py-xxs pr-xs hover:bg-muted", selected && "bg-secondary")}
+      style={{ paddingLeft: `calc(var(--spacing-xs) + ${depth} * var(--size-lineage-indent))` }}
+      data-card-agent={agent.pane_id}
+      data-depth={depth}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <button type="button" aria-label={rowAccessibleName(agent, null)} className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={open} data-agent-open={agent.pane_id} />
+      <span className="pointer-events-none relative flex min-w-0 items-center gap-xs">
+        <StatusMark symbol={agent.symbol} className={markTone(agent)} />
+        <AgentMark kind={agent.agent_kind} />
+        <span className={cn("min-w-0 flex-1 truncate text-body", turn ? "text-foreground" : "text-subtle-foreground")}>{agent.identity_label}</span>
+        <span className="shrink-0 font-mono text-caption text-muted-foreground">{agent.elapsed}</span>
+      </span>
+      {said ? (
+        <span className="relative pl-(--size-icon)">
+          <AgentMessageHint agent={agent} place={place} line={said.text} tone={lineTone(said, agent.demand)} onOpen={open} />
+        </span>
+      ) : null}
+    </li>
+  );
+}
+
+/**
+ * The issue's id at the head of its card: a click opens its panel, ⌘-click
+ * GitHub, and a half-second rest (or Space on the card) opens the preview
+ * card, the id, labels, state, title, the body's first three lines, the
+ * author, the date and the comment count (B8, D-42). The preview reads the
+ * issue once, and shows its body only once read.
+ */
+function IssueIdPreview({ card, detail, pinned, actions, handlers }: { card: TaskCard; detail: IssueDetail | null; pinned: boolean; actions: Actions; handlers: BoardHandlers }) {
+  const { open, onOpenChange, triggerProps } = useHintOpen();
+  const { task, owner } = card;
+  const shown = open || pinned;
+  const read = () => previewRead(task.key, () => actions.requestIssueDetail(card.place.projectId, task.key));
+  if (!task.id) return null;
+  return (
+    <Tooltip
+      open={shown}
+      onOpenChange={(next) => {
+        onOpenChange(next);
+        if (next) read();
+      }}
+      disableHoverableContent={false}
+    >
+      <TooltipTrigger asChild {...triggerProps}>
+        <button
+          type="button"
+          className="inline-flex shrink-0 items-center gap-xxs rounded-xs font-mono text-caption text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+          data-task-id={task.id}
+          aria-label={[task.id, card.idHelp].filter(Boolean).join(" · ")}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (!gitHubClick(event, task.url, owner.device_id, handlers)) handlers.openPanel(card);
+          }}
+          onFocus={() => {
+            if (pinned) read();
+          }}
+        >
+          <TaskGlyph task={task} />
+          {task.id}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" align="start" className="pointer-events-auto w-(--size-pr-popover) max-w-(--radix-tooltip-content-available-width) text-left text-wrap rounded-md p-md" data-issue-preview={task.key}>
+        <IssuePreviewBody card={card} detail={detail} />
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+function IssuePreviewBody({ card, detail }: { card: TaskCard; detail: IssueDetail | null }) {
+  const { task } = card;
+  const byline = [detail?.author ?? null, detail?.created_at_unix_ms != null ? issueDate(detail.created_at_unix_ms) : null, detail?.comment_count != null ? `댓글 ${detail.comment_count}` : null].filter(Boolean).join(" · ");
+  return (
+    <div className="flex flex-col gap-xs">
+      <span className="flex min-w-0 items-center gap-xs text-caption text-muted-foreground">
+        <TaskGlyph task={task} />
+        <span className="font-mono">{task.id}</span>
+        {(detail?.labels ?? []).slice(0, CARD_LABELS).map((label) => (
+          <IssueLabelView key={label.name} label={label} />
+        ))}
+        <span className="flex-1" />
+        <span className={task.open ? "text-success" : "text-muted-foreground"}>{task.open ? "Open" : "Closed"}</span>
+      </span>
+      <span className="line-clamp-2 text-body font-semibold text-foreground">{card.title}</span>
+      {detail?.body ? (
+        <p className="line-clamp-3 whitespace-pre-line break-words text-caption text-subtle-foreground" data-issue-preview-body="true">
+          {markdownPlainText(detail.body)}
+        </p>
+      ) : null}
+      {byline ? <span className="text-caption text-muted-foreground">{byline}</span> : null}
+    </div>
+  );
+}
+
+/**
+ * The card's buttons in the id line's reserved slot, shown under the pointer
+ * or focus (B6): the backlog's `▷ 시작` and `S`, the Workspace icon and `O`
+ * in progress, the PR icon in review, a Local issue's edit icon, and `⋯`
+ * with 시작, Workspace, GitHub, 편집 and a Local issue's close. Each has its
+ * popover (B7, D-10).
+ */
+function CardActions({ card, actions, handlers }: { card: TaskCard; actions: Actions; handlers: BoardHandlers }) {
+  const { owner } = card;
+  const reveal = "invisible group-focus-within/card:visible group-hover/card:visible has-data-[state=open]:visible";
+  const stop = (event: MouseEvent) => event.stopPropagation();
+  return (
+    <span className={cn("flex shrink-0 items-center gap-xxs", reveal)} data-card-actions="true" onClick={stop}>
+      {card.first === "start" ? (
+        <Hint label={START_HINT} shortcut={<Kbd>S</Kbd>}>
+          <Button variant="secondary" size="sm" onClick={() => handlers.startIssue(card)} data-card-start="true">
+            <PlayIcon aria-hidden="true" />
+            시작
+          </Button>
+        </Hint>
+      ) : null}
+      {card.first === "start" ? <Kbd>S</Kbd> : null}
+      {card.first === "workspace" ? (
+        <Hint label="Workspace 열기" shortcut={<Kbd>O</Kbd>}>
+          <Button variant="ghost" size="icon-sm" onClick={() => handlers.openCheckout(card)} data-card-workspace="true">
+            <SquareTerminalIcon aria-hidden="true" />
+          </Button>
+        </Hint>
+      ) : null}
+      {card.first === "workspace" ? <Kbd>O</Kbd> : null}
+      {card.first === "pull_request" && card.pr ? (
+        <Hint label={`PR #${card.pr.number} GitHub에서 열기`}>
+          <Button variant="ghost" size="icon-sm" onClick={() => handlers.openGitHub(card.pr!.url, owner.device_id)} data-card-pr="true">
+            <GitPullRequestIcon aria-hidden="true" />
+          </Button>
+        </Hint>
+      ) : null}
+      {card.editable ? (
+        <Hint label={EDIT_HINT}>
+          <Button variant="ghost" size="icon-sm" onClick={() => handlers.editIssue(card)} data-card-edit="true">
+            <PencilIcon aria-hidden="true" />
+          </Button>
+        </Hint>
+      ) : null}
+      <IssueMenu card={card} actions={actions} handlers={handlers} trigger={<EllipsisIcon aria-hidden="true" />} />
     </span>
+  );
+}
+
+/** `⋯` on a card or in its panel: 시작, Workspace, GitHub, 편집, and a Local issue's close or reopen. */
+export function IssueMenu({ card, actions, handlers, trigger }: { card: TaskCard; actions: Actions; handlers: BoardHandlers; trigger: ReactNode }) {
+  const { task, checkout, owner } = card;
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon-sm" aria-label="이슈 동작" data-card-menu="true">
+          {trigger}
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {card.canStart ? <DropdownMenuItem onSelect={() => handlers.startIssue(card)}>시작</DropdownMenuItem> : null}
+        {checkout ? <DropdownMenuItem onSelect={() => handlers.openCheckout(card)}>Workspace</DropdownMenuItem> : null}
+        {task.url ? (
+          <DropdownMenuItem onSelect={() => handlers.openGitHub(task.url as string, owner.device_id)}>
+            <ExternalLinkIcon aria-hidden="true" />
+            GitHub
+          </DropdownMenuItem>
+        ) : null}
+        {card.editable ? <DropdownMenuItem onSelect={() => handlers.editIssue(card)}>편집</DropdownMenuItem> : null}
+        {card.editable ? (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => actions.setIssueOpen(task.key, !task.open)} data-card-issue-open={task.open ? "close" : "reopen"}>
+              {task.open ? "이슈 닫기" : "이슈 다시 열기"}
+            </DropdownMenuItem>
+          </>
+        ) : null}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -678,29 +1002,17 @@ function GroupHead({ open, onToggle, label, count, data, children }: { open: boo
 }
 
 /**
- * The List mode: the same cards, one row each, grouped by stage with the
+ * The List mode: the same issues, one row each, grouped by stage with the
  * moving work first (In progress, Review, Backlog, Done). A row is its stage,
- * id and title with the values it has on the right; a row with agents
- * unfolds them under it, and a row waiting on the operator starts unfolded.
- * No column headers: the rows are read, not compared field by field.
+ * id and title with the values it has on the right, and opens the issue's
+ * panel like a card (B21); a row with agents unfolds them under it, and one
+ * waiting on the operator starts unfolded.
  */
-export function TasksListView({
-  board,
-  focusedPaneId,
-  actions,
-  handlers,
-}: {
-  board: TasksBoard;
-  focusedPaneId: string | null;
-  actions: Actions;
-  handlers: BoardHandlers;
-}) {
+export function TasksListView({ board, page, actions, handlers }: { board: TasksBoard; page: BoardPage; actions: Actions; handlers: BoardHandlers }) {
   const order: Stage[] = ["working", "review", "backlog", "done"];
   const [closed, setClosed] = useState<Set<Stage>>(() => new Set(["done"]));
   const [backlogAll, setBacklogAll] = useState(false);
-  const [idleOpen, setIdleOpen] = useState(false);
   const now = Date.now();
-  const row = (value: TaskCard) => <ListRow key={value.id} card={value} now={now} focusedPaneId={focusedPaneId} actions={actions} handlers={handlers} />;
   return (
     <div className="flex flex-col gap-md px-lg pb-xl" data-tasks-list="true">
       {order.map((stage) => {
@@ -708,9 +1020,7 @@ export function TasksListView({
         const cards = stageCards(board, stage);
         if (cards.length === 0 && stage !== "backlog") return null;
         const open = !closed.has(stage);
-        const active = cards.filter((value) => !value.idle);
-        const idle = cards.filter((value) => value.idle);
-        const shown = stage === "backlog" && !backlogAll ? active.slice(0, LIST_BACKLOG_LIMIT) : active;
+        const shown = stage === "backlog" && !backlogAll ? cards.slice(0, LIST_BACKLOG_LIMIT) : cards;
         return (
           <section key={stage} aria-label={label} data-list-group={stage} className="flex flex-col">
             <GroupHead open={open} onToggle={() => setClosed((current) => toggled(current, stage))} label={label} count={cards.length} data={{ "data-list-group-toggle": stage }}>
@@ -719,28 +1029,21 @@ export function TasksListView({
             </GroupHead>
             {open ? (
               <ul className="flex flex-col" role="list">
-                {shown.map(row)}
+                {shown.map((value) => (
+                  <ListRow key={value.id} card={value} now={now} page={page} actions={actions} handlers={handlers} />
+                ))}
                 {stage === "backlog" && cards.length === 0 && !board.source.reading ? (
                   <li className="px-xl py-xs text-caption text-muted-foreground" data-backlog-empty="true">
                     열린 이슈가 없습니다
                   </li>
                 ) : null}
-                {active.length > shown.length ? (
+                {cards.length > shown.length ? (
                   <li>
-                    <button type="button" className="px-xl py-xs text-caption text-muted-foreground hover:text-foreground" onClick={() => setBacklogAll(true)} data-list-more={active.length - shown.length}>
-                      +{active.length - shown.length}
+                    <button type="button" className="px-xl py-xs text-caption text-muted-foreground hover:text-foreground" onClick={() => setBacklogAll(true)} data-list-more={cards.length - shown.length}>
+                      +{cards.length - shown.length}
                     </button>
                   </li>
                 ) : null}
-                {idle.length > 0 ? (
-                  <li>
-                    <button type="button" aria-expanded={idleOpen} className="inline-flex items-center gap-xxs px-xl py-xs text-caption text-muted-foreground hover:text-foreground" onClick={() => setIdleOpen((value) => !value)} data-idle-fold={idle.length}>
-                      에이전트 없는 워크트리 {idle.length}
-                      {idleOpen ? <ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" />}
-                    </button>
-                  </li>
-                ) : null}
-                {idleOpen ? idle.map(row) : null}
               </ul>
             ) : null}
           </section>
@@ -756,55 +1059,52 @@ function turnWord(card: TaskCard): string | null {
   return card.rows.some((row) => row.agent.group === "needs_you") ? "질문" : "확인";
 }
 
-function ListRow({ card, now, focusedPaneId, actions, handlers }: { card: TaskCard; now: number; focusedPaneId: string | null; actions: Actions; handlers: BoardHandlers }) {
+function ListRow({ card, now, page, actions, handlers }: { card: TaskCard; now: number; page: BoardPage; actions: Actions; handlers: BoardHandlers }) {
   const [open, setOpen] = useState(card.needsYou);
-  const { task, facts } = card;
+  const { task } = card;
   const word = turnWord(card);
   const age = card.shown[0]?.elapsed ?? relativeActivity(card.updatedAt, now);
   const hasRows = card.rows.length > 0;
-  const reveal = "hidden group-focus-within/card:inline-flex group-hover/card:inline-flex";
+  const selected = page.panel === task.key;
   return (
-    <li className={cn("group/card flex flex-col rounded-sm", card.needsYou && "bg-warning/10", card.idle && "opacity-(--opacity-secondary)")} data-list-row={card.id} data-needs-you={card.needsYou ? "true" : undefined}>
-      <div className="flex min-h-(--size-control) min-w-0 items-center gap-sm px-xs outline-none focus-visible:ring-1 focus-visible:ring-ring" tabIndex={card.canStart ? 0 : undefined} onKeyDown={(event) => startsOnKey(event, card, handlers)}>
+    <li className={cn("group/card flex flex-col rounded-sm", card.needsYou && "bg-warning/10", selected && "bg-accent")} data-list-row={card.id} data-issue-row={task.key} data-needs-you={card.needsYou ? "true" : undefined}>
+      <div
+        className="flex min-h-(--size-control) min-w-0 cursor-pointer items-center gap-sm px-xs outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
+        tabIndex={0}
+        onClick={(event) => {
+          if (!gitHubClick(event, task.url, card.owner.device_id, handlers)) handlers.openPanel(card);
+        }}
+        onKeyDown={(event) => {
+          if (event.target !== event.currentTarget) return;
+          if (event.key === "Enter") handlers.openPanel(card);
+          else if (event.key.toLowerCase() === "s" && card.canStart) handlers.startIssue(card);
+        }}
+      >
         <button
           type="button"
           aria-label={open ? "에이전트 접기" : "에이전트 펼치기"}
           aria-expanded={hasRows ? open : undefined}
           disabled={!hasRows}
-          onClick={() => setOpen((value) => !value)}
+          onClick={(event) => {
+            event.stopPropagation();
+            setOpen((value) => !value);
+          }}
           className="inline-flex size-(--size-icon) shrink-0 items-center justify-center rounded-xs text-muted-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:invisible"
         >
           {open ? <ChevronDownIcon aria-hidden="true" className="size-(--size-icon)" /> : <ChevronRightIcon aria-hidden="true" className="size-(--size-icon)" />}
         </button>
         <StageGlyph stage={card.stage} />
-        <span className="flex min-w-(--size-tab-icon-identity) shrink-0">{task ? <TaskId task={task} help={card.idHelp} /> : <GitBranchIcon aria-hidden="true" className="size-(--size-icon-sm) text-muted-foreground" />}</span>
+        <span className="inline-flex min-w-(--size-tab-icon-identity) shrink-0 items-center gap-xxs font-mono text-caption text-muted-foreground">
+          <TaskGlyph task={task} />
+          {task.id}
+        </span>
         <span className="flex min-w-0 flex-1 items-center gap-xs">
-          {card.checkout ? (
-            <button type="button" onClick={() => handlers.openCheckout(card)} className="min-w-0 truncate rounded-xs text-left text-body text-foreground outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring" data-overview-workspace={card.checkout.id}>
-              {card.title}
-            </button>
-          ) : (
-            <span className="min-w-0 truncate text-body text-foreground">{card.title}</span>
-          )}
+          <span className="min-w-0 truncate text-body text-foreground">{card.title}</span>
           {card.project ? <span className="shrink-0 text-caption text-muted-foreground">{card.project}</span> : null}
           {word ? (
             <Badge variant="outline" className="shrink-0 border-warning text-warning" data-turn={word}>
               {word}
             </Badge>
-          ) : null}
-          {card.canStart ? (
-            <Button variant="ghost" size="sm" className={reveal} onClick={() => handlers.startIssue(card)} data-card-start="true">
-              <PlayIcon aria-hidden="true" />
-              시작
-            </Button>
-          ) : null}
-          {card.canLink && card.checkout ? (
-            <LinkIssuePopover workspaceId={card.place.projectId} checkout={card.checkout} actions={actions}>
-              <Button variant="ghost" size="sm" className={cn(reveal, "data-[state=open]:inline-flex")} data-card-link="true">
-                <Link2Icon aria-hidden="true" />
-                이슈 연결
-              </Button>
-            </LinkIssuePopover>
           ) : null}
         </span>
         <span className="flex shrink-0 items-center gap-sm font-mono text-caption text-muted-foreground">
@@ -816,26 +1116,20 @@ function ListRow({ card, now, focusedPaneId, actions, handlers }: { card: TaskCa
               {card.rows.length > 1 ? <span>{card.rows.length}</span> : null}
             </span>
           ) : null}
-          {facts.pr ? <PrChipView pr={facts.pr} review={false} /> : null}
-          {card.branch ? <Place card={card} className="max-w-(--home-collapsed-width)" /> : null}
-          {facts.ahead !== null ? <span>↑{facts.ahead}</span> : null}
+          {card.pr ? (
+            <span className={cn("inline-flex items-center gap-xxs", PR_TONE[card.pr.tone])} data-pr-chip={card.pr.number}>
+              <GitPullRequestIcon aria-hidden="true" className="size-(--size-icon-sm)" />#{card.pr.number}
+            </span>
+          ) : null}
+          {card.chip ? <span className="max-w-(--home-collapsed-width) truncate">{card.chip.branch}</span> : null}
+          {card.chip?.ahead != null ? <span>↑{card.chip.ahead}</span> : null}
           {age ? <span className="min-w-(--size-control-compact) text-right">{age}</span> : null}
         </span>
       </div>
       {open && hasRows ? (
         <ul className="flex flex-col pb-xs pl-xxxl" role="list">
-          {card.rows.map((entry) => (
-            <AgentRowItem
-              key={entry.agent.pane_id}
-              agent={entry.agent}
-              device={null}
-              depth={entry.depth}
-              descendants={0}
-              childRows={NO_ROWS}
-              selected={entry.agent.pane_id === focusedPaneId}
-              onOpen={actions.openAgent}
-              onToggleTree={null}
-            />
+          {card.rows.map((entry: BoardRow) => (
+            <CardAgentRow key={entry.agent.pane_id} agent={entry.agent} depth={entry.depth} place={card.chip?.branch ?? ""} selected={entry.agent.pane_id === page.focusedPaneId} onOpen={actions.openAgent} />
           ))}
         </ul>
       ) : null}
@@ -844,26 +1138,17 @@ function ListRow({ card, now, focusedPaneId, actions, handlers }: { card: TaskCa
 }
 
 /**
- * The Dependencies mode (D-09, D-10): the same task cards with a quiet stage
+ * The Dependencies mode (D-09, D-10): the same issue cards with a quiet stage
  * word, laid out left to right with an arrow from each blocker to what it
- * blocks, the tasks with no relation below. Arrows are measured from the
- * drawn cards, so a card that grows or a window that narrows redraws them.
+ * blocks, the issues with no relation below. A card opens the issue's panel
+ * as on the Board (B21). Arrows are measured from the drawn cards, so a card
+ * that grows or a window that narrows redraws them.
  */
-export function DependenciesView({
-  board,
-  focusedPaneId,
-  actions,
-  handlers,
-}: {
-  board: TasksBoard;
-  focusedPaneId: string | null;
-  actions: Actions;
-  handlers: BoardHandlers;
-}) {
+export function DependenciesView({ board, page, actions, handlers }: { board: TasksBoard; page: BoardPage; actions: Actions; handlers: BoardHandlers }) {
   const graph = useMemo(() => buildDependencies(board), [board]);
   const draw = (value: TaskCard) => (
     <div key={value.id} className="w-(--home-column-width)" data-dependency-node={value.id}>
-      <TaskCardView card={value} focusedPaneId={focusedPaneId} actions={actions} handlers={handlers} graph={{ status: STAGES.find((row) => row.stage === value.stage)?.label ?? null }} />
+      <IssueCardView card={value} page={page} actions={actions} handlers={handlers} graph={{ status: STAGES.find((row) => row.stage === value.stage)?.label ?? null }} />
     </div>
   );
   return (

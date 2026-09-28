@@ -142,6 +142,37 @@ impl LocalIssueStore {
         Ok(number)
     }
 
+    /// Rewrites an issue's title and body (PRD overview-lenses-issues D-41);
+    /// `Ok(false)` when they are already these.
+    pub fn update(
+        &mut self,
+        path: &str,
+        number: u32,
+        title: &str,
+        body: &str,
+        now_unix_ms: u64,
+    ) -> Result<bool, String> {
+        let title = validated_title(title)?;
+        let body = validated_body(body)?;
+        let issue = self
+            .projects
+            .get_mut(path)
+            .and_then(|project| {
+                project
+                    .issues
+                    .iter_mut()
+                    .find(|issue| issue.number == number)
+            })
+            .ok_or_else(|| format!("로컬 이슈 {}가 없습니다.", display_id(number)))?;
+        if issue.title == title && issue.body == body {
+            return Ok(false);
+        }
+        issue.title = title;
+        issue.body = body;
+        issue.updated_at_unix_ms = now_unix_ms;
+        Ok(true)
+    }
+
     /// Opens or closes an issue; `false` when there is no such issue or it
     /// already is in that state.
     pub fn set_open(&mut self, path: &str, number: u32, open: bool, now_unix_ms: u64) -> bool {

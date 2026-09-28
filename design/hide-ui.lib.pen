@@ -35049,10 +35049,6 @@
       "type": "number",
       "value": 288
     },
-    "--home-halo-radius": {
-      "type": "number",
-      "value": 6
-    },
     "--size-editor-memory-min": {
       "type": "number",
       "value": 160
@@ -35738,6 +35734,14 @@
     "--lens-tile-min": {
       "type": "number",
       "value": 208
+    },
+    "--issue-label-dot": {
+      "type": "number",
+      "value": 6
+    },
+    "--issue-panel-min-width": {
+      "type": "number",
+      "value": 360
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4",

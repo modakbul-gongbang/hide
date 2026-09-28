@@ -490,19 +490,23 @@ impl Runtime {
     }
 }
 
-/// A Local issue's title, body, open state and the project it belongs to, as
-/// the Start dialog asks for it.
-fn local_issue_body(
+/// A Local issue as its panel reads it: the body and when it was made, from
+/// the store the runtime already holds, so the read needs no worker.
+fn local_issue_detail(
     store: &Result<crate::local_issues::LocalIssueStore, String>,
     key: &str,
-) -> Result<String, String> {
+) -> Result<crate::tasks::TaskDetail, String> {
     let (path, number) =
         crate::tasks::parse_local_key(key).ok_or_else(|| format!("{key} is not a local issue"))?;
     match store {
         Err(reason) => Err(reason.clone()),
         Ok(store) => store
             .issue(path, number)
-            .map(|issue| issue.body.clone())
+            .map(|issue| crate::tasks::TaskDetail {
+                body: issue.body.clone(),
+                created_at_unix_ms: Some(issue.created_at_unix_ms),
+                ..Default::default()
+            })
             .ok_or_else(|| {
                 format!(
                     "로컬 이슈 {}가 없습니다.",
@@ -775,41 +779,43 @@ impl Runtime {
         self.settle_issue_create(id, Ok(key))
     }
 
-    /// `issue_detail_request`: an issue's body, for the Start dialog.
+    /// `issue_detail_request`: an issue's body, labels, author, assignees and
+    /// latest comments, for its panel and the Start dialog (PRD
+    /// overview-lenses-issues D-40). A Local issue is read from the store at
+    /// once; a GitHub one is one `gh issue view` on a worker, off the lock.
     pub(super) fn request_issue_detail(&mut self, payload: IssueDetailRequestPayload) -> bool {
         let Some(workspace) = self.local_project_by_id(&payload.workspace_id) else {
             return false;
         };
         let key = payload.task_key;
-        let settle = |body: Result<String, String>| crate::model::IssueDetailSnapshot {
-            task_key: key.clone(),
-            phase: if body.is_ok() { "ready" } else { "failed" }.into(),
-            message: body.as_ref().err().cloned(),
-            body: body.ok(),
-        };
         if key.starts_with("local:") {
+            let answer = local_issue_detail(&self.local_issues, &key);
             self.snapshot.issue_work.detail =
-                Some(settle(local_issue_body(&self.local_issues, &key)));
+                Some(crate::model::IssueDetailSnapshot::answered(key, answer));
             return true;
         }
         let Some(reference) = crate::tasks::parse_github_key(&key) else {
-            self.snapshot.issue_work.detail = Some(settle(Err(format!("{key} is not an issue"))));
+            let answer = Err(format!("{key} is not an issue"));
+            self.snapshot.issue_work.detail =
+                Some(crate::model::IssueDetailSnapshot::answered(key, answer));
             return true;
         };
-        self.snapshot.issue_work.detail = Some(crate::model::IssueDetailSnapshot {
-            task_key: key.clone(),
-            phase: "reading".into(),
-            body: None,
-            message: None,
-        });
+        crate::diagnostic!(serde_json::json!({
+            "component": "issues", "kind": "issue_detail.requested", "task": key,
+        }));
+        self.snapshot.issue_work.detail =
+            Some(crate::model::IssueDetailSnapshot::reading(key.clone()));
         let root = PathBuf::from(&workspace.path);
         let worker_key = key.clone();
         if let Err(message) = self.spawn_issue_worker(
             "issue-detail",
-            move || crate::github::issue_body(&root, &reference),
+            move || crate::github::issue_detail(&root, &reference),
             move |runtime, result| runtime.ingest_issue_detail(&worker_key, result),
         ) {
-            self.snapshot.issue_work.detail = Some(settle(Err(message)));
+            self.snapshot.issue_work.detail = Some(crate::model::IssueDetailSnapshot::answered(
+                key,
+                Err(message),
+            ));
         }
         true
     }
@@ -817,7 +823,7 @@ impl Runtime {
     pub(crate) fn ingest_issue_detail(
         &mut self,
         key: &str,
-        result: Result<String, String>,
+        result: Result<crate::tasks::TaskDetail, String>,
     ) -> bool {
         let Some(slot) = self
             .snapshot
@@ -828,16 +834,13 @@ impl Runtime {
         else {
             return false;
         };
-        match result {
-            Ok(body) => {
-                slot.phase = "ready".into();
-                slot.body = Some(body);
-            }
-            Err(message) => {
-                slot.phase = "failed".into();
-                slot.message = Some(message);
-            }
+        if let Err(reason) = &result {
+            crate::diagnostic!(serde_json::json!({
+                "component": "issues", "kind": "issue_detail.failed",
+                "task": key, "reason": reason,
+            }));
         }
+        *slot = crate::model::IssueDetailSnapshot::answered(key.to_owned(), result);
         true
     }
 
@@ -934,6 +937,42 @@ impl Runtime {
         }
         self.persist_local_issues();
         self.apply_pull_requests();
+        true
+    }
+
+    /// `local_issue_update`: a Local issue's title and body, edited in its
+    /// panel (PRD overview-lenses-issues D-41). The store changes under the
+    /// lock and is written by the save thread; the answer, or why it was
+    /// refused, is in `issue_work.update` for the web's request id. There is
+    /// no GitHub counterpart.
+    pub(super) fn update_local_issue(&mut self, payload: LocalIssueUpdatePayload) -> bool {
+        let now = unix_milliseconds();
+        let updated = match (
+            crate::tasks::parse_local_key(&payload.task_key),
+            self.local_issues.as_mut(),
+        ) {
+            (None, _) => Err("Only a local issue is edited in Hide".to_owned()),
+            (Some(_), Err(reason)) => Err(format!(
+                "로컬 이슈 파일을 읽지 못해 고칠 수 없습니다: {reason}"
+            )),
+            (Some((path, number)), Ok(store)) => {
+                store.update(path, number, &payload.title, &payload.body, now)
+            }
+        };
+        crate::diagnostic!(serde_json::json!({
+            "component": "issues", "kind": "local_issue.update",
+            "request": payload.request_id, "task": payload.task_key, "ok": updated.is_ok(),
+        }));
+        if updated == Ok(true) {
+            self.persist_local_issues();
+            self.apply_pull_requests();
+        }
+        self.snapshot.issue_work.update = Some(crate::model::IssueUpdateSnapshot {
+            request_id: payload.request_id,
+            task_key: payload.task_key,
+            phase: if updated.is_ok() { "ready" } else { "failed" }.into(),
+            message: updated.err(),
+        });
         true
     }
 

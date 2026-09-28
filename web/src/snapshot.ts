@@ -113,6 +113,7 @@ export type PullRequest = {
   is_draft: boolean;
   /** The CI rollup; unknown and absent checks never read as a pass (`PullRequestChecks`). */
   checks?: "unknown" | "none" | "pending" | "failed" | "passing";
+  merged_at_unix_ms?: number | null;
 };
 
 /** How a repository's `gh` lookup is doing, apart from what it found (`GithubStatusSnapshot`). */
@@ -193,11 +194,37 @@ export type IssueSettings = {
   closes_instruction: boolean;
 };
 
+/** A label as the issue's source colours it (`TaskLabel`); `color` is six hex digits. */
+export type IssueLabel = { name: string; color: string | null };
+
+export type IssueComment = { author: string | null; created_at_unix_ms: number | null; body: string };
+
+/**
+ * One issue as its panel and the Start dialog read it (`IssueDetailSnapshot`):
+ * the body, and for a GitHub issue its labels, author, assignees and latest
+ * comments. The fields past `message` are empty until `ready`.
+ */
+export type IssueDetail = {
+  task_key: string;
+  phase: "reading" | "ready" | "failed";
+  body: string | null;
+  message: string | null;
+  labels: IssueLabel[];
+  author: string | null;
+  created_at_unix_ms: number | null;
+  assignees: string[];
+  /** Absent for a source with no comments (Local). */
+  comment_count: number | null;
+  comments: IssueComment[];
+};
+
 /** The Overview's issue work in flight (`IssueWorkSnapshot`), one slot each. */
 export type IssueWork = {
   create: { id: number; workspace_id: string; phase: "working" | "ready" | "failed"; task_key: string | null; message: string | null } | null;
-  detail: { task_key: string; phase: "reading" | "ready" | "failed"; body: string | null; message: string | null } | null;
+  detail: IssueDetail | null;
   name: { request_id: string; phase: "working" | "ready" | "failed"; name: string | null; message: string | null } | null;
+  /** The answer to a Local issue's edit, by the web's request id. */
+  update?: { request_id: string; task_key: string; phase: "ready" | "failed"; message: string | null } | null;
 };
 
 export type Purpose = { text: string; origin: string };

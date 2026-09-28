@@ -581,15 +581,18 @@ pub(crate) fn create_issue(
     })
 }
 
-/// One issue's body, for the Start dialog's first prompt.
-pub(crate) fn issue_body(
+/// The fields `issue_detail` asks `gh issue view` for, and the only ones
+/// `run_gh` lets it ask for.
+const ISSUE_DETAIL_FIELDS: &str = "body,labels,author,assignees,comments,createdAt";
+
+/// One issue as its panel reads it when it opens (PRD overview-lenses-issues
+/// D-40), and the Start dialog's first prompt: the body, labels, author,
+/// assignees and the latest comments, in one `gh issue view` on the caller's
+/// worker.
+pub(crate) fn issue_detail(
     root: &Path,
     reference: &crate::issues::IssueReference,
-) -> Result<String, String> {
-    #[derive(serde::Deserialize)]
-    struct Viewed {
-        body: String,
-    }
+) -> Result<crate::tasks::TaskDetail, String> {
     let number = reference.number.to_string();
     let output = gh(
         Some(root),
@@ -600,13 +603,83 @@ pub(crate) fn issue_body(
             "--repo",
             &reference.repository,
             "--json",
-            "body",
+            ISSUE_DETAIL_FIELDS,
         ],
     )
     .map_err(|error| error.reason)?;
-    serde_json::from_str::<Viewed>(&output)
-        .map(|viewed| viewed.body)
-        .map_err(|error| format!("gh issue view returned output Hide could not read: {error}"))
+    parse_issue_detail(&output)
+}
+
+fn parse_issue_detail(output: &str) -> Result<crate::tasks::TaskDetail, String> {
+    #[derive(serde::Deserialize)]
+    struct Person {
+        login: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Label {
+        name: String,
+        #[serde(default)]
+        color: Option<String>,
+    }
+    #[derive(serde::Deserialize)]
+    struct Comment {
+        #[serde(default)]
+        author: Option<Person>,
+        #[serde(default, rename = "createdAt")]
+        created_at: Option<String>,
+        #[serde(default)]
+        body: String,
+    }
+    #[derive(serde::Deserialize)]
+    struct Viewed {
+        body: String,
+        #[serde(default)]
+        labels: Vec<Label>,
+        #[serde(default)]
+        author: Option<Person>,
+        #[serde(default)]
+        assignees: Vec<Person>,
+        #[serde(default)]
+        comments: Vec<Comment>,
+        #[serde(default, rename = "createdAt")]
+        created_at: Option<String>,
+    }
+    let viewed = serde_json::from_str::<Viewed>(output)
+        .map_err(|error| format!("gh issue view returned output Hide could not read: {error}"))?;
+    let count = viewed.comments.len();
+    let latest = count.saturating_sub(crate::tasks::DETAIL_COMMENTS);
+    Ok(crate::tasks::TaskDetail {
+        body: viewed.body,
+        labels: viewed
+            .labels
+            .into_iter()
+            .map(|label| crate::tasks::TaskLabel {
+                name: label.name,
+                // A colour is drawn from data, so only six hex digits pass.
+                color: label.color.filter(|color| {
+                    color.len() == 6 && color.bytes().all(|byte| byte.is_ascii_hexdigit())
+                }),
+            })
+            .collect(),
+        author: viewed.author.map(|person| person.login),
+        created_at_unix_ms: viewed.created_at.as_deref().and_then(parse_rfc3339_ms),
+        assignees: viewed
+            .assignees
+            .into_iter()
+            .map(|person| person.login)
+            .collect(),
+        comment_count: Some(u32::try_from(count).unwrap_or(u32::MAX)),
+        comments: viewed
+            .comments
+            .into_iter()
+            .skip(latest)
+            .map(|comment| crate::tasks::TaskComment {
+                author: comment.author.map(|person| person.login),
+                created_at_unix_ms: comment.created_at.as_deref().and_then(parse_rfc3339_ms),
+                body: crate::tasks::capped_comment(&comment.body),
+            })
+            .collect(),
+    })
 }
 
 fn read_linked_issues(
@@ -1051,7 +1124,7 @@ fn run_gh(
         || (arguments.len() == 7
             && arguments[..2] == ["issue", "view"]
             && arguments[3] == "--repo"
-            && arguments[5..] == ["--json", "body"])
+            && arguments[5..] == ["--json", ISSUE_DETAIL_FIELDS])
         || (arguments.len() == 4
             && arguments[..3] == ["api", "graphql", "-f"]
             && (arguments[3].starts_with("query=query HideLinkedIssues {")
@@ -1196,6 +1269,73 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.root);
         }
+    }
+
+    #[test]
+    fn an_issue_panel_read_keeps_the_latest_three_comments_and_drops_a_colour_that_is_not_hex() {
+        let comment = |n: u32| {
+            format!(
+                r#"{{"author":{{"login":"c{n}"}},"createdAt":"2026-09-2{n}T00:00:00Z","body":" note {n} "}}"#
+            )
+        };
+        let comments: Vec<String> = (1..=5).map(comment).collect();
+        let output = format!(
+            r#"{{"body":"본문","labels":[{{"name":"bug","color":"d73a4a"}},{{"name":"odd","color":"red;x"}}],"author":{{"login":"yansfil","name":""}},"assignees":[{{"login":"a1"}}],"comments":[{}],"createdAt":"2026-09-27T00:00:00Z"}}"#,
+            comments.join(",")
+        );
+        let detail = parse_issue_detail(&output).unwrap();
+        assert_eq!(detail.body, "본문");
+        assert_eq!(
+            detail
+                .labels
+                .iter()
+                .map(|label| (label.name.as_str(), label.color.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![("bug", Some("d73a4a")), ("odd", None)]
+        );
+        assert_eq!(detail.author.as_deref(), Some("yansfil"));
+        assert_eq!(detail.assignees, vec!["a1".to_owned()]);
+        assert_eq!(
+            detail.created_at_unix_ms,
+            parse_rfc3339_ms("2026-09-27T00:00:00Z")
+        );
+        assert_eq!(detail.comment_count, Some(5));
+        assert_eq!(
+            detail
+                .comments
+                .iter()
+                .map(|comment| (comment.author.as_deref(), comment.body.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                (Some("c3"), "note 3"),
+                (Some("c4"), "note 4"),
+                (Some("c5"), "note 5")
+            ]
+        );
+        assert!(parse_issue_detail("{}").is_err(), "a body is required");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn an_issue_panel_reads_only_its_fields_and_nothing_else_passes_issue_view() {
+        let fixture = GhFixture::new(
+            r#"
+case "$1 $2 $6 $7" in
+  "issue view --json body,labels,author,assignees,comments,createdAt") printf '{"body":"b","comments":[]}';;
+  *) touch forbidden; exit 91;;
+esac"#,
+        );
+        let viewed = |fields: &str| {
+            run_gh(
+                &fixture.binary,
+                Some(&fixture.root),
+                &["issue", "view", "7", "--repo", "acme/app", "--json", fields],
+                Duration::from_secs(1),
+            )
+        };
+        assert!(viewed(ISSUE_DETAIL_FIELDS).is_ok());
+        assert!(viewed("body,title").is_err());
+        assert!(!fixture.root.join("forbidden").exists());
     }
 
     #[test]

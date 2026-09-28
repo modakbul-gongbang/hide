@@ -12,10 +12,11 @@ import { useNewIssueShortcut } from "./IssueDialogs";
 import { AgentsLens, AgentsModeToggle, LensTiles, lensHandlers } from "./OverviewLenses";
 import { agentsTile, buildLanes, buildLineages, issuesTile, lastIssueRead, scopeAgents, sessionsTile } from "./overviewLens";
 import { buildTasks, formatBytes, projectStats, type BoardProject, type BoardStats, type TaskCard } from "./projectBoard";
+import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
 import type { Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { ProjectSessions } from "./ProjectSessions";
-import { DependenciesView, FocusedTask, TasksListView, TasksModeToggle, TasksView, type BoardHandlers } from "./TaskBoards";
+import { IssueFilterControl, TasksModeToggle } from "./TaskBoards";
 import { toggledFold, useUiStore, type OverviewLens } from "./ui";
 
 // A Project's Overview (PRD web-project-overview, task-agents-views, the
@@ -100,23 +101,25 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   };
   // `N merged → 정리` opens what is only there to be removed (B20).
   const showCleanup = () => setLens({ tab: "agents", agentsMode: "checkouts", folds: lens.folds.includes("cleanup") ? lens.folds : [...lens.folds, "cleanup"] });
-  const handlers: BoardHandlers = {
+  const page: IssuesPage = {
     openCheckout,
-    startIssue: (card) => {
-      if (card.task) useUiStore.getState().setWorkspaceDialog({ kind: "start_issue", workspaceId: card.place.projectId, taskKey: card.task.key });
-    },
+    startIssue: (card) => useUiStore.getState().setWorkspaceDialog({ kind: "start_issue", workspaceId: card.place.projectId, taskKey: card.task.key }),
     newIssue,
+    showCheckouts: () => setLens({ tab: "agents", agentsMode: "checkouts", panel: null }),
   };
+  // An issue chip opens the Issues tile at its card with the issue's panel open.
   const lensActions = lensHandlers(actions, {
-    openIssue: (_owner, task) => setLens({ tab: "issues", focusTask: task.key }),
+    openIssue: (_owner, task) => setLens({ tab: "issues", focusTask: task.key, panel: task.key }),
     toggleFold: (fold) => setLens({ folds: toggledFold(lens.folds, fold) }),
   });
   const view = lens.tab;
+  // With the issue panel open the board and the panel scroll on their own, under a header that stays (D-43).
+  const split = view === "issues" && panelCard(tasks, lens.panel) !== null;
   const state = view === "issues" ? (tasks.cards.length === 0 ? "empty" : "board") : view === "agents" ? (lensAgents.length === 0 ? "empty" : "board") : "sessions";
   const sessionsView = view === "sessions";
   return (
     <section
-      className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-background", !sessionsView && "overflow-y-auto")}
+      className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-background", !sessionsView && !split && "overflow-y-auto")}
       aria-label={`Project ${project.label}`}
       data-overview-screen={project.id}
       data-overview-state={state}
@@ -155,10 +158,13 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
           {view === "agents" ? (
             <AgentsModeToggle mode={lens.agentsMode} onChange={(agentsMode) => setLens({ agentsMode })} />
           ) : view === "issues" ? (
-            <TasksModeToggle mode={lens.tasksMode} onChange={(tasksMode) => setLens({ tasksMode })} />
+            <span className="flex items-center gap-xs" data-issues-controls="true">
+              <IssueFilterControl filter={lens.filter} onChange={(filter) => setLens({ filter })} />
+              <TasksModeToggle mode={lens.tasksMode} onChange={(tasksMode) => setLens({ tasksMode })} />
+            </span>
           ) : null}
         </div>
-        <LensTiles tiles={tiles} selected={view} onSelect={(tab) => setLens({ tab, focusTask: null })} />
+        <LensTiles tiles={tiles} selected={view} onSelect={(tab) => setLens({ tab, focusTask: null, panel: null })} />
       </header>
       <OpeningStatus actions={actions} />
       {device ? <UnavailableNotice device={device} availability={availability} actions={actions} /> : null}
@@ -176,15 +182,21 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
       ) : view === "agents" ? (
         <AgentsLens mode={lens.agentsMode} lanes={lanes} lineages={lineages} scope="project" selectedLane={lens.lane} folds={lens.folds} handlers={lensActions} now={now} />
       ) : (
-        <FocusedTask.Provider value={lens.focusTask}>
-          {lens.tasksMode === "dependencies" ? (
-            <DependenciesView board={tasks} focusedPaneId={focusedPaneId} actions={actions} handlers={handlers} />
-          ) : lens.tasksMode === "list" ? (
-            <TasksListView board={tasks} focusedPaneId={focusedPaneId} actions={actions} handlers={handlers} />
-          ) : (
-            <TasksView board={tasks} scope="project" focusedPaneId={focusedPaneId} actions={actions} handlers={handlers} doneOpen={doneOpen} onToggleDone={() => setDoneOpenFor(doneOpen ? null : project.id)} />
-          )}
-        </FocusedTask.Provider>
+        <IssuesView
+          board={tasks}
+          scope="project"
+          mode={lens.tasksMode}
+          filter={lens.filter}
+          onFilterChange={(filter) => setLens({ filter })}
+          panel={lens.panel}
+          onPanel={(panel) => setLens({ panel })}
+          focusTask={lens.focusTask}
+          focusedPaneId={focusedPaneId}
+          doneOpen={doneOpen}
+          onToggleDone={() => setDoneOpenFor(doneOpen ? null : project.id)}
+          actions={actions}
+          page={page}
+        />
       )}
     </section>
   );

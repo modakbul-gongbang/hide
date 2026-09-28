@@ -1011,7 +1011,7 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "issue_create", payload: { workspace_id: workspaceId, title, body } });
     },
 
-    /** An issue's body for the Start dialog, answered in `issue_work.detail`. */
+    /** An issue's body, labels, author, assignees and comments for its panel and the Start dialog, answered in `issue_work.detail`. */
     requestIssueDetail(workspaceId: string, taskKey: string) {
       dispatch({ schema_version: 2, kind: "issue_detail_request", payload: { workspace_id: workspaceId, task_key: taskKey } });
     },
@@ -1030,15 +1030,16 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "issue_settings_set", payload: patch });
     },
 
+    /** A Local issue's title and body, edited in its panel; answered in `issue_work.update` by `requestId`. */
+    updateLocalIssue(requestId: string, taskKey: string, title: string, body: string) {
+      dispatch({ schema_version: 2, kind: "local_issue_update", payload: { request_id: requestId, task_key: taskKey, title, body } });
+    },
+
     /** Closes or reopens a Local issue; a GitHub one closes on GitHub. */
     setIssueOpen(taskKey: string, open: boolean) {
       dispatch({ schema_version: 2, kind: "issue_set_open", payload: { task_key: taskKey, open } });
     },
 
-    /** Links a worktree to an issue by the id its source shows (`#42`, `L-3`); an empty id unlinks it. */
-    linkIssue(checkoutId: string, issueId: string) {
-      dispatch({ schema_version: 2, kind: "set_checkout_issue", payload: { checkout_id: checkoutId, text: issueId } });
-    },
 
     measureProjectDisk(workspaceId: string) {
       dispatch({ schema_version: 2, kind: "card_measure_disk", payload: { workspace_id: workspaceId } });

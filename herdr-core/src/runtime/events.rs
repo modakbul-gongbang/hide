@@ -769,12 +769,25 @@ pub(super) struct IssueCreatePayload {
     pub(super) body: String,
 }
 
-/// `issue_detail_request`: one issue's body, for the Start dialog.
+/// `issue_detail_request`: one issue's body, labels, author, assignees and
+/// comments, for its panel and the Start dialog.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct IssueDetailRequestPayload {
     pub(super) workspace_id: String,
     pub(super) task_key: String,
+}
+
+/// `local_issue_update`: a Local issue's title and body, edited in its panel.
+/// A GitHub issue has no such event; it is edited on GitHub.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct LocalIssueUpdatePayload {
+    pub(super) request_id: String,
+    pub(super) task_key: String,
+    pub(super) title: String,
+    #[serde(default)]
+    pub(super) body: String,
 }
 
 /// `issue_set_open`: close or reopen a Local issue.
@@ -1055,6 +1068,7 @@ pub(super) enum Event {
     IssueDetailRequest(IssueDetailRequestPayload),
     WorktreeNameSuggest(WorktreeNameSuggestPayload),
     IssueSetOpen(IssueSetOpenPayload),
+    LocalIssueUpdate(LocalIssueUpdatePayload),
     SetCheckoutPurpose(SetCheckoutPurposePayload),
     SetCheckoutIssue(SetCheckoutPurposePayload),
     MigrateMainBranch(MigrateMainBranchPayload),
@@ -1234,6 +1248,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "issue_detail_request" => decode!(IssueDetailRequestPayload, IssueDetailRequest),
         "worktree_name_suggest" => decode!(WorktreeNameSuggestPayload, WorktreeNameSuggest),
         "issue_set_open" => decode!(IssueSetOpenPayload, IssueSetOpen),
+        "local_issue_update" => decode!(LocalIssueUpdatePayload, LocalIssueUpdate),
         "set_checkout_issue" => decode!(SetCheckoutPurposePayload, SetCheckoutIssue),
         "set_checkout_purpose" => decode!(SetCheckoutPurposePayload, SetCheckoutPurpose),
         "migrate_main_branch" => decode!(MigrateMainBranchPayload, MigrateMainBranch),
@@ -2975,6 +2990,7 @@ impl Runtime {
             Event::IssueDetailRequest(payload) => self.request_issue_detail(payload),
             Event::WorktreeNameSuggest(payload) => self.suggest_worktree_name(payload),
             Event::IssueSetOpen(payload) => self.set_issue_open(payload),
+            Event::LocalIssueUpdate(payload) => self.update_local_issue(payload),
             Event::SetCheckoutPurpose(payload) => self.set_checkout_purpose(payload),
             Event::MigrateMainBranch(payload) => self.migrate_main_branch(payload),
             Event::TaskOperationAck(payload) => self.acknowledge_task_operation(payload.id),

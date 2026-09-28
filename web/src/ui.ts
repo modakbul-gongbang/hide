@@ -5,6 +5,7 @@
 import { create } from "zustand";
 import type { Relation } from "./lineage";
 import type { Opening } from "./navigation";
+import { NO_FILTER, type IssueFilter } from "./projectBoard";
 import type { SettingsTab } from "./settings";
 import type { CycleItem } from "./recent";
 import type { NumberedFamily } from "./shortcuts";
@@ -72,6 +73,10 @@ export type OverviewLens = {
   folds: readonly LensFold[];
   /** The issue card to bring into view on the Issues tab. */
   focusTask: string | null;
+  /** The issue whose panel is open beside the Issues board, by task key (PRD overview-lenses-issues D-08). */
+  panel: string | null;
+  /** The Issues filter (B21). */
+  filter: IssueFilter;
 };
 
 /** `folds` with `fold` opened, or closed again when it was open. */
@@ -85,7 +90,7 @@ export function toggledFold(folds: readonly LensFold[], fold: LensFold): LensFol
  * All projects' Tasks shows too (task-agents-views D-10).
  */
 export function entryLens(lane: string | null, tasksMode: TasksMode): OverviewLens {
-  return { tab: "agents", agentsMode: "checkouts", tasksMode, lane, folds: [], focusTask: null };
+  return { tab: "agents", agentsMode: "checkouts", tasksMode, lane, folds: [], focusTask: null, panel: null, filter: NO_FILTER };
 }
 
 /**
