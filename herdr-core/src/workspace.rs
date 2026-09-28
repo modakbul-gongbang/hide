@@ -647,13 +647,18 @@ pub(crate) fn temp_base_outside_any_repository() -> &'static Path {
 pub enum ProjectFolder {
     /// Nothing is there; the folder is made.
     Free,
-    /// A folder holding nothing, or nothing but `.git`: what a create that
-    /// failed after making its folder leaves. A retry continues into it, so
-    /// the same intent converges instead of being refused by its own leftover.
+    /// A folder holding nothing, or nothing but `.git` (and the `.DS_Store`
+    /// Finder writes when the folder is looked at): what a create that failed
+    /// after making its folder leaves. A retry continues into it, so the same
+    /// intent converges instead of being refused by its own leftover.
     Leftover,
     /// Something else is there, a file, a symlink or a folder with contents.
     Taken,
 }
+
+/// The names a leftover folder may hold: its repository, and what Finder
+/// writes into a folder the operator opened to see why a create failed.
+const LEFTOVER_NAMES: [&str; 2] = [".git", ".DS_Store"];
 
 /// Reads the path a new project would take without following a symlink at it.
 /// The caller has already confined the parent; this judges only the last name.
@@ -668,8 +673,10 @@ pub fn project_folder(path: &Path) -> ProjectFolder {
     }
     match fs::read_dir(path) {
         Ok(mut entries) => {
-            let only_git =
-                entries.all(|entry| entry.is_ok_and(|entry| entry.file_name() == ".git"));
+            let only_git = entries.all(|entry| {
+                entry
+                    .is_ok_and(|entry| LEFTOVER_NAMES.iter().any(|name| entry.file_name() == *name))
+            });
             if only_git {
                 ProjectFolder::Leftover
             } else {
@@ -1643,6 +1650,23 @@ mod tests {
         assert_eq!(project_folder(&empty), ProjectFolder::Leftover);
         create_project_folder(&empty).expect("an empty folder is continued into");
         assert!(empty.join(".git").is_dir());
+
+        let looked_at = outer.join("looked-at");
+        fs::create_dir(&looked_at).unwrap();
+        fs::write(looked_at.join(".DS_Store"), "finder").unwrap();
+        assert_eq!(project_folder(&looked_at), ProjectFolder::Leftover);
+
+        // A symlink at the name is refused, never followed into its target.
+        #[cfg(unix)]
+        {
+            let elsewhere = temp_dir("new-project-elsewhere");
+            let link = outer.join("link");
+            std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+            assert_eq!(project_folder(&link), ProjectFolder::Taken);
+            assert!(create_project_folder(&link).is_err());
+            assert!(!elsewhere.join(".git").exists());
+            let _ = fs::remove_dir_all(&elsewhere);
+        }
 
         let taken = outer.join("taken");
         fs::create_dir(&taken).unwrap();

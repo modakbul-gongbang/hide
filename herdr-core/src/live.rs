@@ -161,12 +161,19 @@ pub fn spawn_workspace_creation(
                     read
                 })
                 .unwrap_or_default();
-            let result = workspace::registration(&path, &label, workspace::LOCAL_DEVICE_ID)
+            // A new folder is made at the literal path hided checked, before
+            // the registration canonicalizes it: canonicalizing first would
+            // follow a symlink planted at the name since the check, and make
+            // or continue into its target, wherever that is.
+            let made = if new_folder {
+                workspace::create_project_folder(Path::new(&path))
+            } else {
+                Ok(())
+            };
+            let result = made
+                .and_then(|()| workspace::registration(&path, &label, workspace::LOCAL_DEVICE_ID))
                 .and_then(|registration| {
                     let root = Path::new(&registration.path);
-                    if new_folder {
-                        workspace::create_project_folder(root)?;
-                    }
                     if !root.exists() {
                         return Err(format!(
                             "Workspace path does not exist: {}",
