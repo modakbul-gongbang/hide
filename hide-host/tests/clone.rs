@@ -12,11 +12,7 @@ use std::time::Duration;
 use hide_host::clone::{CloneFailure, CloneProgress, CloneSource, STALL_LIMIT, clone_repository};
 
 fn git(dir: &Path, args: &[&str]) {
-    // `git commit` starts a detached `git maintenance run --auto`, which can
-    // pack and prune the fixture's loose objects while the next `git clone
-    // --bare` is still copying them ("failed to copy file to ...").
     let status = Command::new("git")
-        .args(["-c", "maintenance.auto=false", "-c", "gc.auto=0"])
         .args(args)
         .current_dir(dir)
         .env("GIT_AUTHOR_NAME", "t")
