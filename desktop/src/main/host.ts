@@ -97,6 +97,8 @@ export class DesktopHost {
   constructor(
     private readonly env: DesktopEnv,
     private readonly log: HostLog,
+    /** `SHOW_INACTIVE_SWITCH` was passed: no window ever activates the app. */
+    private readonly showInactive: boolean,
   ) {}
 
   // --- lifecycle ------------------------------------------------------------
@@ -121,8 +123,7 @@ export class DesktopHost {
     if (!this.window) this.openWindow();
     else {
       if (this.window.isMinimized()) this.window.restore();
-      this.window.show();
-      this.window.focus();
+      this.present(this.window, true);
     }
     if (this.state.kind === "failed" || this.state.kind === "lost") void this.discover(trigger);
   }
@@ -443,6 +444,24 @@ export class DesktopHost {
     });
   }
 
+  /**
+   * Shows the window, and with `focus` gives it the keyboard. `show()` and
+   * `focus()` activate the app, which takes the screen and the keyboard from
+   * whatever the operator is using. Under `SHOW_INACTIVE_SWITCH` the window
+   * is ordered in without activating the app (`showInactive()` alone would
+   * still put it above every other window), then sent behind the operator's
+   * windows (`blur()` orders it to the back on macOS).
+   */
+  private present(window: BrowserWindow, focus: boolean): void {
+    if (this.showInactive) {
+      window.showInactive();
+      window.blur();
+      return;
+    }
+    window.show();
+    if (focus) window.focus();
+  }
+
   private openWindow(): void {
     const file = windowStatePath(app.getPath("userData"));
     const displays = screen.getAllDisplays().map((display) => display.workArea);
@@ -466,7 +485,7 @@ export class DesktopHost {
     });
     this.window = window;
     this.browsers?.attach(window);
-    window.once("ready-to-show", () => window.show());
+    window.once("ready-to-show", () => this.present(window, false));
     window.on("close", () => {
       try {
         writeWindowState(file, window.getNormalBounds());

@@ -5,6 +5,7 @@ import { app, Menu } from "electron";
 import { loadEnv } from "./env";
 import { DesktopHost } from "./host";
 import { HostLog } from "./log";
+import { SHOW_INACTIVE_SWITCH } from "./launchSwitches";
 import { REGISTRY, type Command } from "../../../web/src/shortcuts";
 import { menuBindings, menuTemplate } from "./menu";
 
@@ -19,8 +20,9 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   const log = new HostLog(app.getPath("logs"));
-  const host = new DesktopHost(env, log);
-  log.event("host.start", { packaged: app.isPackaged, version: app.getVersion(), electron: process.versions.electron });
+  const showInactive = app.commandLine.hasSwitch(SHOW_INACTIVE_SWITCH);
+  const host = new DesktopHost(env, log, showInactive);
+  log.event("host.start", { packaged: app.isPackaged, version: app.getVersion(), electron: process.versions.electron, show_inactive: showInactive });
 
   app.on("second-instance", () => host.reopen("second-instance"));
   app.on("activate", () => host.reopen("activate"));

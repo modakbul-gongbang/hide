@@ -3,13 +3,13 @@
 // answers, so a pick, a cancel and a refused folder run with no native sheet.
 // Clone from URL clones a local bare repository through the same dialog.
 
-import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { expect, type ElectronApplication, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { sendEvent } from "../../web/e2e/wire";
-import { isolate, launch } from "./fixture";
+import { isolate, launch, test } from "./fixture";
 
 type Pick = { canceled: boolean; filePaths: string[] };
 
@@ -41,7 +41,7 @@ test("Add a project picks a folder with the native picker, and a cancel or a ref
     // The picker answers real paths; hided keeps the canonical spelling it checked.
     const alpha = fs.realpathSync(path.join(home, "projects", "alpha"));
     const outside = fs.realpathSync(path.join(run.root, "outside"));
-    const launched = await launch(run.env, { switches: ["--disable-backgrounding-occluded-windows"] });
+    const launched = await launch(run.env);
     app = launched.app;
     const page = launched.page;
     await expect(page.locator("[data-main-screen], [data-workspace-screen]")).toBeVisible({ timeout: 30_000 });
@@ -140,7 +140,7 @@ test("Create new project makes a Git repository and adds it; a name already take
     fs.mkdirSync(path.join(home, "projects", "taken"), { recursive: true });
     fs.writeFileSync(path.join(home, "projects", "taken", "notes.md"), "mine\n");
     const projects = fs.realpathSync(path.join(home, "projects"));
-    const launched = await launch(run.env, { switches: ["--disable-backgrounding-occluded-windows"] });
+    const launched = await launch(run.env);
     app = launched.app;
     const page = launched.page;
     await expect(page.locator("[data-main-screen], [data-workspace-screen]")).toBeVisible({ timeout: 30_000 });
@@ -231,7 +231,7 @@ test("Clone from URL clones a repository into a folder under home and adds it as
     fs.mkdirSync(path.join(home, "origin"));
     const projects = fs.realpathSync(path.join(home, "projects"));
 
-    const launched = await launch(run.env, { switches: ["--disable-backgrounding-occluded-windows"] });
+    const launched = await launch(run.env);
     app = launched.app;
     const page = launched.page;
     await expect(page.locator("[data-main-screen], [data-workspace-screen]")).toBeVisible({ timeout: 30_000 });
