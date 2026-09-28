@@ -122,6 +122,7 @@ fn decode_snapshot_response(value: Value) -> Result<res::SessionSnapshot, Sessio
 
 fn convert_snapshot(snapshot: res::SessionSnapshot) -> ProjectionState {
     ProjectionState {
+        tab_focus: None,
         focused_pane_id: snapshot.focused_pane_id,
         focused_workspace_id: snapshot.focused_workspace_id,
         workspaces: snapshot.workspaces.into_iter().map(Into::into).collect(),
@@ -456,9 +457,13 @@ fn convert_event(data: ev::EventData) -> (&'static str, ReplicaEvent) {
                 workspace_id,
             },
         ),
-        ev::EventData::TabCreated { tab, .. } => {
-            ("tab_created", ReplicaEvent::TabCreated { tab: tab.into() })
-        }
+        ev::EventData::TabCreated { tab, .. } => (
+            "tab_created",
+            ReplicaEvent::TabCreated {
+                focused: tab.focused,
+                tab: tab.into(),
+            },
+        ),
         ev::EventData::TabClosed {
             tab_id,
             workspace_id,
@@ -796,12 +801,34 @@ pub(crate) fn move_outcome(
 }
 
 pub(crate) fn tab_create_params(workspace: &str, cwd: &str, label: &str) -> Result<Value, String> {
+    tab_create_with_env_params(workspace, cwd, label, Default::default())
+}
+
+pub(crate) fn tab_create_with_env_params(
+    workspace: &str,
+    cwd: &str,
+    label: &str,
+    env: std::collections::BTreeMap<String, String>,
+) -> Result<Value, String> {
     params(req::TabCreateParams {
         workspace_id: Some(workspace.into()),
         cwd: Some(cwd.into()),
         label: Some(label.into()),
         focus: true,
-        env: Default::default(),
+        env: env.into_iter().collect(),
+    })
+}
+pub(crate) fn replacement_tab_params(
+    workspace: &str,
+    cwd: &str,
+    env: std::collections::BTreeMap<String, String>,
+) -> Result<Value, String> {
+    params(req::TabCreateParams {
+        workspace_id: Some(workspace.into()),
+        cwd: Some(cwd.into()),
+        label: None,
+        focus: false,
+        env: env.into_iter().collect(),
     })
 }
 pub(crate) fn worktree_create_params(

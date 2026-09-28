@@ -99,7 +99,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await page.locator(`[data-tab="${tabs[1]}"]`).click();
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", tabs[1]);
     await expect(page.locator("[data-pane-view]")).toHaveCount(1);
-    await expect.poll(() => sent.get("focus_tab")).toBe(1);
+    await expect.poll(() => sent.get("agent_layout.focus")).toBe(1);
     await expect.poll(() => screen(page), { timeout: 15_000 }).toContain("fixture %");
 
     // ⌥T is one create_tab; the new tab is active with the core's next label.
@@ -110,13 +110,14 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await expect.poll(() => sent.get("create_tab")).toBe(1);
 
     // ⌥` walks Recent Panels: the previous surface (the second tab) is the first candidate.
+    const panelFocusEvents = sent.get("focus_tab") ?? 0;
     await page.keyboard.down("Alt");
     await page.keyboard.press("Backquote");
     await expect(page.locator("[data-cycle=panels] [aria-selected=true]")).toHaveAttribute("data-cycle-row", tabs[1]);
     await page.keyboard.up("Alt");
     await expect(page.locator("[data-cycle]")).toHaveCount(0);
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", tabs[1]);
-    await expect.poll(() => sent.get("focus_tab")).toBe(2);
+    await expect.poll(() => sent.get("focus_tab")).toBe(panelFocusEvents + 1);
 
     // Back on the split tab: ⌘D splits the focused pane (second split), ⌘⌥↩ zooms it.
     await page.locator(`[data-tab="${herdr.tab}"]`).click();
@@ -301,7 +302,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await expect.poll(() => page.evaluate(() => window.__hideProbe?.liveTerminals() ?? [])).not.toContain(closingPane);
     await expect(page.locator("[data-terminal-parking] [data-terminal]")).toHaveCount(0);
 
-    // Dragging a tab onto another sends one reorder_tab; the strip redraws in the core's order.
+    // Agent areas own local order (B7/D19): one move changes the strip without a Herdr reorder.
     const secondTab = page.locator(`[data-tab="${tabs[1]}"]`);
     const firstTab = page.locator(`[data-tab="${herdr.tab}"]`);
     const from = (await secondTab.boundingBox())!;
@@ -309,9 +310,12 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
     await page.mouse.down();
     await page.mouse.move(from.x + from.width / 2 - 30, from.y + from.height / 2, { steps: 4 });
-    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 });
+    // Stay inside the tab, clear of the sidebar's centered resize grab.
+    await page.mouse.move(to.x + to.width / 4, to.y + to.height / 2, { steps: 8 });
+    await expect(page.locator('[data-agent-drop="bar"]')).toBeVisible();
     await page.mouse.up();
-    await expect.poll(() => sent.get("reorder_tab")).toBe(1);
+    await expect.poll(() => sent.get("agent_layout.move")).toBe(1);
+    expect(sent.get("reorder_tab") ?? 0).toBe(0);
     await expect.poll(() => page.locator("[role=tab]").first().getAttribute("data-tab"), { timeout: 10_000 }).toBe(tabs[1]);
 
     // The tab close control closes the visible tab (idle panes need no confirmation).

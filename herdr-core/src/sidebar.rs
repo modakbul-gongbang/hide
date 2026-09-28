@@ -5,8 +5,20 @@ use serde_json::Value;
 
 use crate::model::{PaneLayoutDirection, PaneReadRecord, SidebarAgentSnapshot};
 
+/// Event provenance belongs to the local replica, not the external wire.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SessionTabFocus {
+    pub generation: u64,
+    pub workspace_id: String,
+    pub tab_id: String,
+    pub revision: u64,
+    pub creation: bool,
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionSnapshotPayload {
+    #[serde(skip)]
+    pub tab_focus: Option<SessionTabFocus>,
     #[serde(default)]
     pub focused_pane_id: Option<String>,
     /// The Herdr workspace that holds Herdr's keyboard. Its active tab is the
@@ -27,6 +39,8 @@ pub struct SessionSnapshotPayload {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct SessionWorkspacePayload {
+    #[serde(default)]
+    pub worktree: Option<crate::domain::WorktreeProjection>,
     pub workspace_id: String,
     #[serde(default)]
     pub label: String,

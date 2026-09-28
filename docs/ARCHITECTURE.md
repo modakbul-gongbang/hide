@@ -135,6 +135,9 @@ A spawned child does not split the operator's pane.
 Herdr owns split geometry and the PTY size, so a delegated child pane is really moved out - `pane.move` to a new tab in the workspace it is already in - rather than left undrawn; a tab holding nothing but delegated children then stays out of the tab strip while remaining in the checkout.
 Detection is the same on every pass, so a child that arrives while Hide is running and one already split when Hide started take the same path, and a refusal is retried on a fixed interval rather than assumed to have worked.
 Herdr reports a refusal as an unchanged move with a reason rather than as an error, so the decision reads `changed` instead of trusting a successful request.
+Machine-qualified lineage is resolved before tab ownership is projected; local snapshots, remote snapshots and machine identity changes all update the tab strip and Agent area membership in the same transition.
+A disconnected parent restores its unresolved local child to normal placement, and reconnecting removes it from the bar while preserving sidebar selection as a delegated canvas.
+If normal placement is full, the unresolved child waits and the core moves its keyboard and visible-tab identity to a shown tab in that same transition; a local catalog rebuild preserves known delegation until canonical lineage resolves it.
 
 Ownership is the fifth derived status axis and it is read off the lineage, never stored.
 A delegated row can only be Working or Seen, so a child's question or completion never enters the operator's own attention groups; instead it is a signal in every ancestor's read fingerprint, so the ancestor turns unread and its badge reports the count, while the ancestor's own group stays whatever its own axes say.
@@ -162,17 +165,18 @@ Hide's fork calls the fixed hcoord binary only after `pane.split` and `agent.sta
 `wire.rs` is the only token conversion boundary.
 The runtime reads every connected device's hcoord identity on the remote worker, outside `Mutex<Runtime>`, then resolves all local and remote rows into one machine-qualified lineage.
 
-An attach lives only while its tab is in the last five shown.
-Herdr renders a pane for every attached client, so an attach nobody is looking at costs a child process here and a render there for the life of the process; visiting eight tabs used to leave eight attaches alive.
-The core keeps the most recently shown tabs (`ATTACHED_TAB_LIMIT`) and releases the rest, which is the ordinary session drop, not a new path.
-A released pane keeps its projection entry carrying the transport state `released`, because the sidebar and the pane header read their state from there and a missing entry reads as a failure; the shell drops that pane's canvas and its held bytes on that state, so the tab redraws from Herdr's own frame on the next visit.
-Nothing re-attaches it until it is shown again: an idle tick attaches only the visible tab's panes.
+Every shown Agent tab stays attached; recently shown tabs fill the remaining retention window.
+The total is `max(ATTACHED_TAB_LIMIT, shown_count)`, at most six tabs, so an unseen attach never displaces a shown tab.
+Herdr renders a pane for every attached client, so the core releases tabs outside that bounded set through the ordinary session drop.
+A released pane keeps its projection entry carrying `released`; the shell disposes its terminal and redraws from Herdr's frame on the next visit.
+The idle tick attaches every shown tab's panes, while focus, read and sleep-visit state follow only the active area's tab.
+All shown tabs count as on screen for sleep prevention.
 
-Tab reorder ownership is decided per drag, not per checkout.
-Herdr orders the tabs inside one of its workspaces and has no order that spans two of them, so a strip slot is refilled from the workspace that slot already belongs to and Hide owns how the workspaces and the file tabs interleave.
-A drag that changes the moved tab's own workspace subsequence sends one `tab.move` with an index counted in that workspace; a drag that only steps over another workspace's tabs settles locally with no Herdr call.
-Deciding this for the whole checkout is what refused every drag in a checkout two Herdr workspaces share, which is the ordinary arrangement for a repository opened twice.
-A device's checkout strip follows the same rule (`place_checkout_strip`, reached through `place_device_strips`): its file tabs keep the slot they were dropped in, and a drag that changes its Herdr order sends `tab.move` to that device's own Herdr with the id that Herdr knows, so the strip moves only when the device reports the order; a device that is not connected takes no Herdr move.
+Hide owns local Agent area membership and tab order.
+Moving, reordering or splitting a tab changes the persisted Agent tree without `tab.move`, workspace creation or pane movement, preserving pane identity and lineage.
+Herdr remains authoritative for tab existence; its reorder does not rearrange the saved tree.
+Device strips retain Herdr-confirmed reorder (`place_checkout_strip`, `place_device_strips`): a move of a tab within its owning Herdr workspace sends `tab.move` to that device, and an offline device refuses it.
+The legacy host without `workspace_views_path` retains its mixed file/Herdr strip compatibility path; the web host refuses its obsolete local `reorder_tab` event.
 
 A pane that is going away ends its attach quietly.
 Herdr closes the PTY before it reports the pane gone, so the attach child ends while the pane is still drawn; projecting that as `ended` is what flashed "terminal attach ended" over a pane the operator had just closed.
@@ -339,7 +343,7 @@ With `probe=1` in the page URL it also installs `window.__hideProbe`, the only w
 The center draws the visible tab's `pane_layouts` entry as nested CSS grids (`web/src/PaneGrid.tsx`): a split is a two-track grid sized by Herdr's ratio and every leaf is a pane with its own xterm instance (`web/src/terminals.ts`, keyed by pane id).
 An instance lives as long as the core streams its pane (PRD S2 D-05, amendment 1): leaving a tab parks its terminals in a hidden lot in the document, still fed by the chunks the core keeps sending for every attached pane, and coming back re-parents them into the pane hosts and fits them, so the last frame is on screen in the same tick and only a size change goes out (`terminal_viewport` with `new_view: false`, `terminal_resize`).
 A chunk for a pane that has never been shown is dropped; its first show requests a full frame with `new_view`, as does a parked pane's next show after a self-contained snapshot.
-`retainTerminals` disposes an instance only when the core reports the pane `released` or stops listing it; the attach rule itself is unchanged: the core attaches the visible tab's panes on its own tick, keeps the last five shown tabs attached, and reports `released` for the rest, which the pane header draws as a caption whose click sends `reconnect_pane`.
+`retainTerminals` disposes an instance only when the core reports the pane `released` or stops listing it; the core attaches all shown Agent tabs on its own tick, fills the bounded retention window with recent tabs, and reports `released` for the rest, which the pane header draws as a caption whose click sends `reconnect_pane`.
 The store keeps the `rest` section structurally shared across frames (`web/src/share.ts`): the core resends the whole section whenever any part changes, so an untouched workspace, tab or pane row keeps its object reference and its memoized row does not re-render.
 A divider drag moves a guide line and sends one `resize_pane` on release, computed from the first subtree's last pane and the travel over the split's span; a change outside the core's `0.001..=0.5` sends nothing.
 A zoomed tab draws only the zoomed pane, over the whole canvas, so its fit and `terminal_resize` follow the full geometry Herdr gave the PTY; the other panes' terminals stay parked and fed.
@@ -369,6 +373,7 @@ Copy diagnostics carries versions, paths, states and the core's recent diagnosti
 `remove_device` removes Hide's own record of a device and nothing on it (PRD S5.5 B26): its registration, its project registrations and pins, its expanded folders, its open file tabs and its closed items go, while its host, Herdr server, panes, agents and folders are left as they are; a dirty tab closed this way leaves its draft in the browser, where a draft no tab stands for is offered to export or discard, and the confirmation counts the projects, tabs and drafts before anything is removed.
 Before `remove_device` is sent the page writes every draft of that device's tabs it still has queued, and a draft that could not be stored (B44) holds the removal: the confirmation names it until it is saved or exported (Export releases exactly the text it downloaded, so a later edit holds the removal again, and the confirmation then says that draft leaves only as the exported file, because the page cannot confirm the download was kept), since closing its tab would lose it; once the drafts are being stored the removal can no longer be kept from the dialog.
 The web's `ui_state_update` echo omits `workspace_registrations` and `device_registrations`, which their own events own, so a stale echo can never undo a registration.
+It also omits `sidebar_width` unless the action explicitly changes that width, so an unrelated UI save cannot undo a drag before its snapshot arrives.
 The accent swatches read the `--color-accent-choice-*` tokens; the chosen value replaces `--color-accent`, and `font_size` scales the interface text tokens through `--interface-scale` while the terminal and editor sizes stay their own, and so does the sidebar: its nav carries the generated `.interface-scale-exempt` rule, which declares the text tokens again at scale 1, because a custom property resolves where it is declared and setting `--interface-scale` on the nav alone would change nothing.
 
 The sidebar's project, checkout and agent rows open a menu on a right-click, or the menu key or ⇧F10 on the focused row (`EntryContextMenu` in `web/src/components/entry-menu.tsx`, rules in `web/src/workspaceManage.ts`, the items in docs/UI_BEHAVIOR.md); an action a row cannot use is drawn disabled with its reason, and one the host cannot perform (Finder in a browser tab) is not listed.
@@ -416,6 +421,32 @@ Pinned is not a fourth state: it is stored beside `panel` and the width, and a p
 The last view leaving keeps the tool column alone when tools are enabled; otherwise the core closes and persists the panel in the same transition.
 Hiding the final tool column also closes the panel, so the panel content is views or tools, never empty.
 An entry stored before the panel, with S6's `mode` (and `agent_share`, `views_over_agents`) instead of `panel`, is read into the nearest state (`legacy_panel`): `agents` as closed, or open when its View areas floated over the agents; `together` as pinned open at `1 - agent_share`; `views` as expanded; the next save writes only the new keys, and the schema stays 2 because the change adds keys.
+
+The same schema-2 entry adds a defaulted `agent_layout` key for local Agent areas.
+Externally created tabs join the active area's bar without replacing a shown canvas, including when creation focuses the new tab in Herdr.
+The replica carries the creation cause and a focus-event revision with the authoritative workspace focus, including during partial publication and bootstrap replay.
+One pending creation pairing per live tab is consumed by its first `tab_focused` event; a later `tab_focused` event gets a new revision and is followed.
+The pinned Herdr emits no event for a focus command that leaves its current tab unchanged; Hide cannot observe that no-op command.
+This metadata remains inside the core projection, adds no terminal-output work, and is removed with its tab; local New and Reopen intents retain their existing focus claim.
+Agent admission counts the shared 64-item limit together with pending creates, placements, reopen and replacement-close effects.
+Request-specific claims reserve slots before the worker starts; reconciliation places acknowledged local effects before external arrivals and does not expire uncertain claims by time.
+An ambiguous local create gets one bounded marker lookup outside the runtime lock, without another mutation; an unresolved claim remains charged for that runtime session.
+Reopen and replacement claims have the same explicit owner, independent of operation phase or Dismiss; retries reuse their claim, and a confirmed tab transfers it to placement before the claim is released.
+A close retry that reuses a confirmed replacement carries reuse-only permission to its worker, so a concurrent deletion cannot turn that retry into a new creation.
+An authoritative excess tab remains in checkout topology and contributes to the snapshot waiting count; reconciliation admits it when a slot opens without selecting an unplaced tab.
+Hide refuses a new external effect at capacity, including a protected replacement close, and uses the existing capacity notice surface.
+
+`split_tree.rs::SplitTree<I: AreaItem>` owns structural repair, ordered membership, focus, move, split, collapse, resize and limits; `view_layout.rs` wraps it with document/preview/browser rules, and `agent_layout.rs` wraps it with stable Herdr tab references and delegated canvas selection.
+The shared web `AreaTree` consumes View and Agent adapters over `areaLayout`, `areaDrag` and column-scoped drawn frames, so gestures, geometry, dividers and narrow presentation have one implementation.
+`AgentTab` renders the same status/provider/name/Rename unit in every area, and `PaneCanvas` receives its explicit tab.
+Agent actions name the Workspace and use the shared stale-frame guard and bounded split-request deduplication; only authoritative topology reconciles persisted references, so a startup placeholder cannot erase the saved tree.
+Created and reopened tabs carry a bounded pending placement into that reconciliation; a missing target area falls back to the active area.
+The snapshot's `workspace_view.agent_layout` contains only the tree and tab references; `checkout.tabs` remains the source of tab and pane contents, and `checkout.active_tab_id` remains the active area's tab.
+
+A protected primary close uses authoritative workspace `worktree` provenance, including repository identity and linked status, rather than labels or paths alone (`runtime/agent_close.rs`).
+The existing close worker first creates or adopts a shell bearing the close intent marker, outside the runtime mutex, reconciles its same-area placement, then sends the original tab or last-pane close.
+Creation failure closes nothing; refusal retains the shell and the pending intent, whose Retry close adopts the same marker instead of creating another shell.
+Dismiss releases a definite failed intent, and ordinary closes retain their existing guards and topology confirmation.
 
 Schema 2 of that file (PRD S7) stores each Workspace's View areas as a binary split tree (`layout`, rules in `herdr-core/src/view_layout.rs`).
 A split node has an `axis`, `row` for first-left and second-right or `column` for first-top and second-bottom, and a `ratio`, the first child's share, clamped to 0.15..0.85; a leaf is an area holding its displays in tab order and naming its `active` display.
@@ -708,7 +739,7 @@ The Electron column is the macOS chord set the desktop app uses, with ⌘/ kept 
 Each surface reads the running host's column (`web/src/host.ts`: `window.hideHost` means the desktop app): the window listener, the ⌘/ sheet, which drops the "moved for Chrome" note there, and every hint that names a chord.
 The desktop app menu is built from the same column with the stored macOS set applied (`desktop/src/main/menu.ts`): the shell reports the set over the bridge when it changes and the menu is rebuilt only when its chords do; a click reaches the same `run` path as a chord, and a chord the listener answers calls `preventDefault` in the page.
 The held-modifier cycles (⌃Tab and ⌥Tab, ⇧ for backward) walk while the modifier is down and commit one focus when it is released; the desktop e2e drives both through the app.
-The numbered chords (`select_tab_1..9`, `select_agent_1..9`) exist only in the Electron column: their target is the screen order the page knows (`web/src/numbering.ts`: the strip's Herdr tabs of the checkout the Agent area draws, the rows the Agents list draws from the same `agentTree`), so the page answers them and the app menu carries no item or accelerator for them (`KEYBOARD_ONLY`); a pane chord rebound onto ⌘n is refused as that command's.
+The numbered chords (`select_tab_1..9`, `select_agent_1..9`) exist only in the Electron column: their target is the screen order the page knows (`web/src/numbering.ts`: placed tabs in Agent tree/bar order for a local checkout, the Herdr strip order for a device checkout, the rows the Agents list draws from the same `agentTree`), so the page answers them and the app menu carries no item or accelerator for them (`KEYBOARD_ONLY`); a pane chord rebound onto ⌘n is refused as that command's.
 The hold hint is a pure state machine (`web/src/hints.ts`, ported from the removed native app's `HideHintState`: one modifier set, one deadline, revealed after 150 ms of the exact hold) fed by the same window listener from keydown, keyup, blur and visibilitychange, and cleared by any key during the hold or by a layer opening in the ui store; the listener publishes only the family the state reveals (`ui.hint`: `tabs`, `agents` or null), computed from the registry's chords for the running host, so a browser reveals nothing and an unrevealed hold renders nothing.
 The keycap is `web/src/components/ui/keycap.tsx`, an absolutely positioned overlay the tab strip and the sidebar agent row draw only while their family is revealed.
 The ⌘/ sheet folds each family into one row with its range (`sheetRows`), and Settings > Shortcuts lists both read-only.

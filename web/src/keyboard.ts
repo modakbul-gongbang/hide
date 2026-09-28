@@ -27,6 +27,7 @@ import { hostRegistry, isNumberedCommand, matchHost, numberedCommand, REGISTRY, 
 import { editorFor, focusedCheckout, type AgentRow, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type Cycle } from "./ui";
+import { workspaceViewOf } from "./workspace";
 import { drawnViews, installKeyboardOwner, keyboardOwner } from "./viewFocus";
 
 /**
@@ -121,7 +122,9 @@ function stripCheckout(rest: SnapshotRest | null) {
 export function numberedTarget(family: NumberedFamily, number: Digit, state: { rest: SnapshotRest | null; agents: AgentRow[] }): string | null {
   if (family === "tabs") {
     const checkout = stripCheckout(state.rest);
-    return checkout ? (numberedTabs(checkout).get(number) ?? null) : null;
+    const view = workspaceViewOf(state.rest);
+    const layout = !remoteContext(state.rest) && view?.device_id === "local" && view.path === checkout?.path ? view.agent_layout : null;
+    return checkout ? (numberedTabs(checkout, layout).get(number) ?? null) : null;
   }
   return numberedAgents(agentListOrder(state)).get(number) ?? null;
 }

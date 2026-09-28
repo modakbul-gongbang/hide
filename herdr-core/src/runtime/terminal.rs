@@ -1309,13 +1309,13 @@ impl Runtime {
         // would shrink the window for the tabs that can.
         self.recent_visible_tabs
             .retain(|tab_id| known_tabs.contains(tab_id));
-        if let Some(tab_id) = self.focused_visible_tab_id()
-            && self.recent_visible_tabs.first() != Some(&tab_id)
-        {
-            self.recent_visible_tabs.retain(|held| held != &tab_id);
-            self.recent_visible_tabs.insert(0, tab_id);
+        let shown = self.shown_agent_tabs();
+        for tab_id in shown.iter().rev() {
+            self.recent_visible_tabs.retain(|held| held != tab_id);
+            self.recent_visible_tabs.insert(0, tab_id.clone());
         }
-        self.recent_visible_tabs.truncate(ATTACHED_TAB_LIMIT);
+        self.recent_visible_tabs
+            .truncate(ATTACHED_TAB_LIMIT.max(shown.len()));
         self.release_sessions_outside_attach_window()
     }
     /// Ends the terminal session of every pane whose tab has left the attach
@@ -1431,22 +1431,15 @@ impl Runtime {
         }
     }
     pub(crate) fn maintain_terminals(&mut self, now: Instant) -> bool {
+        let shown = self.shown_agent_tabs();
         let visible = self
-            .focused_visible_tab_id()
-            .and_then(|tab_id| {
-                self.snapshot
-                    .pane_layouts
-                    .iter()
-                    .find(|layout| layout.tab_id == tab_id)
-                    .map(|layout| {
-                        layout
-                            .pane_ids()
-                            .into_iter()
-                            .map(str::to_owned)
-                            .collect::<HashSet<_>>()
-                    })
-            })
-            .unwrap_or_default();
+            .snapshot
+            .pane_layouts
+            .iter()
+            .filter(|layout| shown.contains(&layout.tab_id))
+            .flat_map(|layout| layout.pane_ids())
+            .map(str::to_owned)
+            .collect::<HashSet<_>>();
         let mut changed = false;
         for pane_id in &visible {
             if self

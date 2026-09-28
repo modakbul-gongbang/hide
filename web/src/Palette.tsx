@@ -1,3 +1,4 @@
+import { areaFrame } from "./areaFrames";
 import { ChevronRightIcon, FolderIcon, GitBranchIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -11,7 +12,7 @@ import { filterEntries, groupEntries, searchEntries, type SearchEntry } from "./
 import { explorerContext } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
-import { drawnViews } from "./viewFocus";
+import { drawnViews, keyboardOwner } from "./viewFocus";
 
 // The two palettes (PRD B12, B13) on the System command palette: a query
 // field, a list cmdk's own arrow keys and Enter walk, and Escape closes
@@ -197,9 +198,10 @@ function DiffPalette({ actions }: { actions: Actions }) {
 function SearchPalette({ actions }: { actions: Actions }) {
   const rest = useShellStore((s) => s.rest);
   const [query, setQuery] = useState("");
+  const [fromAgent] = useState(() => ["pane", "agent"].includes(keyboardOwner().kind));
   const workspaceOnScreen = useUiStore((s) => s.screen?.kind === "workspace");
   const placement = useUiStore((s) => s.toolsPlacement);
-  const entries = filterEntries(searchEntries(rest, workspaceOnScreen ? { drawn: drawnViews(), placement } : null), query);
+  const entries = filterEntries(searchEntries(rest, workspaceOnScreen ? { drawn: drawnViews(), placement, agent: fromAgent ? areaFrame("agent") : null } : null), query);
 
   const activate = (entry: SearchEntry | undefined) => {
     // A command that cannot run now stays in the list with its reason.
@@ -209,6 +211,7 @@ function SearchPalette({ actions }: { actions: Actions }) {
       if ("panel" in entry.command) actions.setPanel(entry.command.panel);
       else if ("pinned" in entry.command) actions.setPanelPinned(entry.command.pinned);
       else if ("tool" in entry.command) actions.setTool(entry.command.tool, entry.command.visible);
+      else if ("agent" in entry.command) actions.runAgentCommand(entry.command.agent);
       else if ("view" in entry.command) actions.runViewCommand(entry.command.view);
       else actions.openFilePaletteBeside();
     } else if (entry.kind === "agent" && entry.paneId) {

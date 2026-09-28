@@ -16553,7 +16553,7 @@
           "type": "text",
           "id": "screen-workspace-spec",
           "name": "web/src/WorkspaceScreen.tsx,",
-          "content": "web/src/WorkspaceScreen.tsx, TabBar.tsx, ViewAreas.tsx, Tools.tsx: the Workspace with its side panel (Component / Side panel, issue 170) open at full height over the agent column, then closed with two views still open. The toolbar spans only the agent column and holds no tool toggles; row 1 of the panel holds the area tabs and their New tab, then the tool-column toggle, Expand, Pin and the panel toggle, which the toolbar carries with the open-view count while the panel is closed; row 2 holds the document header and the Explorer and History tool tabs. A Korean file name verifies B11 wrapping.",
+          "content": "web/src/WorkspaceScreen.tsx, AreaTree.tsx, AgentAreas.tsx, TabBar.tsx, ViewAreas.tsx, Tools.tsx: the Workspace with its side panel (Component / Side panel, issue 170) open at full height over the agent column, then closed with two views still open, and with two Agent areas using the shared divider and independent tab bars. The toolbar spans only the agent column and holds no tool toggles; row 1 of the panel holds the area tabs and their New tab, then the tool-column toggle, Expand, Pin and the panel toggle, which the toolbar carries with the open-view count while the panel is closed; row 2 holds the document header and the Explorer and History tool tabs. A Korean file name verifies B11 wrapping.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -17045,145 +17045,71 @@
                         },
                         {
                           "type": "frame",
-                          "id": "ws-agtabs-lo",
-                          "name": "Tab bar",
+                          "id": "ws-agentarea-lo",
+                          "name": "Agent area",
                           "children": [
                             {
                               "type": "frame",
-                              "id": "ws-agtab1-lo",
-                              "name": "탭 이름과 구성 개선",
+                              "id": "ws-agtabs-lo",
+                              "name": "Tab bar",
                               "children": [
-                                {
-                                  "type": "text",
-                                  "id": "ws-agtab1-lo-status",
-                                  "name": "●",
-                                  "content": "●",
-                                  "fill": "$--agent-working",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
-                                },
                                 {
                                   "type": "frame",
-                                  "id": "ws-agtab1-lo-provider",
-                                  "name": "Provider logo",
-                                  "children": [],
-                                  "width": 12,
-                                  "height": 12,
-                                  "fill": {
-                                    "type": "image",
-                                    "enabled": true,
-                                    "url": "../web/src/assets/agent-claude.png",
-                                    "mode": "fit"
-                                  }
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ws-agtab1-lo-t",
+                                  "id": "ws-agtab1-lo",
                                   "name": "탭 이름과 구성 개선",
-                                  "content": "탭 이름과 구성 개선",
-                                  "fill": "$--foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-subhead",
-                                  "fontWeight": "600"
-                                }
-                              ],
-                              "layout": "horizontal",
-                              "gap": "$--spacing-xxs",
-                              "alignItems": "center",
-                              "padding": [
-                                0,
-                                "$--spacing-xs",
-                                "$--spacing-xxs",
-                                "$--spacing-xs"
-                              ],
-                              "stroke": "$--foreground",
-                              "strokeWidth": {
-                                "bottom": 2
-                              },
-                              "strokeAlignment": "inner"
-                            },
-                            {
-                              "id": "ws-agtabclose-lo",
-                              "type": "ref",
-                              "ref": "hideui:Nyvom",
-                              "name": "Icon",
-                              "width": 20,
-                              "height": 20,
-                              "descendants": {
-                                "hideui:ZIZFR": {
-                                  "fill": "$--muted-foreground",
-                                  "icon": "x"
-                                }
-                              }
-                            },
-                            {
-                              "id": "ws-agtabadd-lo",
-                              "type": "ref",
-                              "ref": "hideui:Nyvom",
-                              "name": "Icon",
-                              "width": 20,
-                              "height": 20,
-                              "descendants": {
-                                "hideui:ZIZFR": {
-                                  "fill": "$--muted-foreground",
-                                  "icon": "plus"
-                                }
-                              }
-                            }
-                          ],
-                          "width": "fill_container",
-                          "height": 32,
-                          "layout": "horizontal",
-                          "gap": "$--spacing-xxs",
-                          "alignItems": "center"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "ws-panehdr-lo",
-                          "name": "Pane header",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "ws-panehdr-lo-label",
-                              "name": "w2:p1",
-                              "content": "w2:p1",
-                              "fill": "$--subtle-foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
-                            },
-                            {
-                              "type": "frame",
-                              "id": "ws-panehdr-lo-trail",
-                              "name": "Trailing",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "ws-panehdr-lo-status",
-                                  "name": "Working",
-                                  "content": "Working",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
-                                },
-                                {
-                                  "id": "ws-panehdr-lo-more",
-                                  "type": "ref",
-                                  "ref": "hideui:Nyvom",
-                                  "name": "Icon",
-                                  "width": 20,
-                                  "height": 20,
-                                  "descendants": {
-                                    "hideui:ZIZFR": {
-                                      "fill": "$--muted-foreground",
-                                      "icon": "ellipsis"
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ws-agtab1-lo-status",
+                                      "name": "●",
+                                      "content": "●",
+                                      "fill": "$--agent-working",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ws-agtab1-lo-provider",
+                                      "name": "Provider logo",
+                                      "children": [],
+                                      "width": 12,
+                                      "height": 12,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agent-claude.png",
+                                        "mode": "fit"
+                                      }
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-agtab1-lo-t",
+                                      "name": "탭 이름과 구성 개선",
+                                      "content": "탭 이름과 구성 개선",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-subhead",
+                                      "fontWeight": "600"
                                     }
-                                  }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xxs",
+                                  "alignItems": "center",
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs",
+                                    "$--spacing-xxs",
+                                    "$--spacing-xs"
+                                  ],
+                                  "stroke": "$--foreground",
+                                  "strokeWidth": {
+                                    "bottom": 2
+                                  },
+                                  "strokeAlignment": "inner"
                                 },
                                 {
-                                  "id": "ws-panehdr-lo-close",
+                                  "id": "ws-agtabclose-lo",
                                   "type": "ref",
                                   "ref": "hideui:Nyvom",
                                   "name": "Icon",
@@ -17195,96 +17121,183 @@
                                       "icon": "x"
                                     }
                                   }
+                                },
+                                {
+                                  "id": "ws-agtabadd-lo",
+                                  "type": "ref",
+                                  "ref": "hideui:Nyvom",
+                                  "name": "Icon",
+                                  "width": 20,
+                                  "height": 20,
+                                  "descendants": {
+                                    "hideui:ZIZFR": {
+                                      "fill": "$--muted-foreground",
+                                      "icon": "plus"
+                                    }
+                                  }
                                 }
                               ],
+                              "width": "fill_container",
+                              "height": 32,
                               "layout": "horizontal",
-                              "gap": "$--spacing-xs",
+                              "gap": "$--spacing-xxs",
                               "alignItems": "center"
-                            }
-                          ],
-                          "width": "fill_container",
-                          "height": 28,
-                          "layout": "horizontal",
-                          "justifyContent": "space_between",
-                          "alignItems": "center",
-                          "padding": [
-                            0,
-                            "$--spacing-sm"
-                          ],
-                          "fill": "$--secondary"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "ws-terminal-lo",
-                          "name": "Terminal",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "ws-term0-lo",
-                              "name": "fixture % echo capture-demo ",
-                              "content": "fixture % echo capture-demo 한글 확인",
-                              "fill": "$--foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
                             },
                             {
-                              "type": "text",
-                              "id": "ws-term1-lo",
-                              "name": "capture-demo 한글 확인",
-                              "content": "capture-demo 한글 확인",
-                              "fill": "$--subtle-foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
+                              "type": "frame",
+                              "id": "ws-panehdr-lo",
+                              "name": "Pane header",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ws-panehdr-lo-label",
+                                  "name": "w2:p1",
+                                  "content": "w2:p1",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ws-panehdr-lo-trail",
+                                  "name": "Trailing",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ws-panehdr-lo-status",
+                                      "name": "Working",
+                                      "content": "Working",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "id": "ws-panehdr-lo-more",
+                                      "type": "ref",
+                                      "ref": "hideui:Nyvom",
+                                      "name": "Icon",
+                                      "width": 20,
+                                      "height": 20,
+                                      "descendants": {
+                                        "hideui:ZIZFR": {
+                                          "fill": "$--muted-foreground",
+                                          "icon": "ellipsis"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "id": "ws-panehdr-lo-close",
+                                      "type": "ref",
+                                      "ref": "hideui:Nyvom",
+                                      "name": "Icon",
+                                      "width": 20,
+                                      "height": 20,
+                                      "descendants": {
+                                        "hideui:ZIZFR": {
+                                          "fill": "$--muted-foreground",
+                                          "icon": "x"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xs",
+                                  "alignItems": "center"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": 28,
+                              "layout": "horizontal",
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "padding": [
+                                0,
+                                "$--spacing-sm"
+                              ],
+                              "fill": "$--secondary"
                             },
                             {
-                              "type": "text",
-                              "id": "ws-term2-lo",
-                              "name": "fixture % git status --short",
-                              "content": "fixture % git status --short",
-                              "fill": "$--foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
-                            },
-                            {
-                              "type": "text",
-                              "id": "ws-term3-lo",
-                              "name": " M docs/한글 노트.md",
-                              "content": " M docs/한글 노트.md",
-                              "fill": "$--warning",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
-                            },
-                            {
-                              "type": "text",
-                              "id": "ws-term4-lo",
-                              "name": "?? scripts/pen-screens.mjs",
-                              "content": "?? scripts/pen-screens.mjs",
-                              "fill": "$--subtle-foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
-                            },
-                            {
-                              "type": "text",
-                              "id": "ws-term5-lo",
-                              "name": "fixture % ",
-                              "content": "fixture % ",
-                              "fill": "$--foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
+                              "type": "frame",
+                              "id": "ws-terminal-lo",
+                              "name": "Terminal",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ws-term0-lo",
+                                  "name": "fixture % echo capture-demo ",
+                                  "content": "fixture % echo capture-demo 한글 확인",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term1-lo",
+                                  "name": "capture-demo 한글 확인",
+                                  "content": "capture-demo 한글 확인",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term2-lo",
+                                  "name": "fixture % git status --short",
+                                  "content": "fixture % git status --short",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term3-lo",
+                                  "name": " M docs/한글 노트.md",
+                                  "content": " M docs/한글 노트.md",
+                                  "fill": "$--warning",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term4-lo",
+                                  "name": "?? scripts/pen-screens.mjs",
+                                  "content": "?? scripts/pen-screens.mjs",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term5-lo",
+                                  "name": "fixture % ",
+                                  "content": "fixture % ",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "fill": "$--background",
+                              "padding": "$--spacing-sm",
+                              "layout": "vertical",
+                              "gap": "$--spacing-xxs"
                             }
                           ],
                           "width": "fill_container",
                           "height": "fill_container",
-                          "fill": "$--background",
-                          "padding": "$--spacing-sm",
                           "layout": "vertical",
-                          "gap": "$--spacing-xxs"
+                          "gap": 0,
+                          "fill": "$--background",
+                          "clip": true
                         }
                       ],
                       "width": 900,
@@ -18639,145 +18652,71 @@
                         },
                         {
                           "type": "frame",
-                          "id": "ws-agtabs-lc",
-                          "name": "Tab bar",
+                          "id": "ws-agentarea-lc",
+                          "name": "Agent area",
                           "children": [
                             {
                               "type": "frame",
-                              "id": "ws-agtab1-lc",
-                              "name": "탭 이름과 구성 개선",
+                              "id": "ws-agtabs-lc",
+                              "name": "Tab bar",
                               "children": [
-                                {
-                                  "type": "text",
-                                  "id": "ws-agtab1-lc-status",
-                                  "name": "●",
-                                  "content": "●",
-                                  "fill": "$--agent-working",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
-                                },
                                 {
                                   "type": "frame",
-                                  "id": "ws-agtab1-lc-provider",
-                                  "name": "Provider logo",
-                                  "children": [],
-                                  "width": 12,
-                                  "height": 12,
-                                  "fill": {
-                                    "type": "image",
-                                    "enabled": true,
-                                    "url": "../web/src/assets/agent-claude.png",
-                                    "mode": "fit"
-                                  }
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ws-agtab1-lc-t",
+                                  "id": "ws-agtab1-lc",
                                   "name": "탭 이름과 구성 개선",
-                                  "content": "탭 이름과 구성 개선",
-                                  "fill": "$--foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-subhead",
-                                  "fontWeight": "600"
-                                }
-                              ],
-                              "layout": "horizontal",
-                              "gap": "$--spacing-xxs",
-                              "alignItems": "center",
-                              "padding": [
-                                0,
-                                "$--spacing-xs",
-                                "$--spacing-xxs",
-                                "$--spacing-xs"
-                              ],
-                              "stroke": "$--foreground",
-                              "strokeWidth": {
-                                "bottom": 2
-                              },
-                              "strokeAlignment": "inner"
-                            },
-                            {
-                              "id": "ws-agtabclose-lc",
-                              "type": "ref",
-                              "ref": "hideui:Nyvom",
-                              "name": "Icon",
-                              "width": 20,
-                              "height": 20,
-                              "descendants": {
-                                "hideui:ZIZFR": {
-                                  "fill": "$--muted-foreground",
-                                  "icon": "x"
-                                }
-                              }
-                            },
-                            {
-                              "id": "ws-agtabadd-lc",
-                              "type": "ref",
-                              "ref": "hideui:Nyvom",
-                              "name": "Icon",
-                              "width": 20,
-                              "height": 20,
-                              "descendants": {
-                                "hideui:ZIZFR": {
-                                  "fill": "$--muted-foreground",
-                                  "icon": "plus"
-                                }
-                              }
-                            }
-                          ],
-                          "width": "fill_container",
-                          "height": 32,
-                          "layout": "horizontal",
-                          "gap": "$--spacing-xxs",
-                          "alignItems": "center"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "ws-panehdr-lc",
-                          "name": "Pane header",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "ws-panehdr-lc-label",
-                              "name": "w2:p1",
-                              "content": "w2:p1",
-                              "fill": "$--subtle-foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
-                            },
-                            {
-                              "type": "frame",
-                              "id": "ws-panehdr-lc-trail",
-                              "name": "Trailing",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "ws-panehdr-lc-status",
-                                  "name": "Working",
-                                  "content": "Working",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
-                                },
-                                {
-                                  "id": "ws-panehdr-lc-more",
-                                  "type": "ref",
-                                  "ref": "hideui:Nyvom",
-                                  "name": "Icon",
-                                  "width": 20,
-                                  "height": 20,
-                                  "descendants": {
-                                    "hideui:ZIZFR": {
-                                      "fill": "$--muted-foreground",
-                                      "icon": "ellipsis"
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ws-agtab1-lc-status",
+                                      "name": "●",
+                                      "content": "●",
+                                      "fill": "$--agent-working",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ws-agtab1-lc-provider",
+                                      "name": "Provider logo",
+                                      "children": [],
+                                      "width": 12,
+                                      "height": 12,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agent-claude.png",
+                                        "mode": "fit"
+                                      }
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-agtab1-lc-t",
+                                      "name": "탭 이름과 구성 개선",
+                                      "content": "탭 이름과 구성 개선",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-subhead",
+                                      "fontWeight": "600"
                                     }
-                                  }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xxs",
+                                  "alignItems": "center",
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs",
+                                    "$--spacing-xxs",
+                                    "$--spacing-xs"
+                                  ],
+                                  "stroke": "$--foreground",
+                                  "strokeWidth": {
+                                    "bottom": 2
+                                  },
+                                  "strokeAlignment": "inner"
                                 },
                                 {
-                                  "id": "ws-panehdr-lc-close",
+                                  "id": "ws-agtabclose-lc",
                                   "type": "ref",
                                   "ref": "hideui:Nyvom",
                                   "name": "Icon",
@@ -18789,15 +18728,673 @@
                                       "icon": "x"
                                     }
                                   }
+                                },
+                                {
+                                  "id": "ws-agtabadd-lc",
+                                  "type": "ref",
+                                  "ref": "hideui:Nyvom",
+                                  "name": "Icon",
+                                  "width": 20,
+                                  "height": 20,
+                                  "descendants": {
+                                    "hideui:ZIZFR": {
+                                      "fill": "$--muted-foreground",
+                                      "icon": "plus"
+                                    }
+                                  }
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": 32,
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ws-panehdr-lc",
+                              "name": "Pane header",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ws-panehdr-lc-label",
+                                  "name": "w2:p1",
+                                  "content": "w2:p1",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ws-panehdr-lc-trail",
+                                  "name": "Trailing",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ws-panehdr-lc-status",
+                                      "name": "Working",
+                                      "content": "Working",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "id": "ws-panehdr-lc-more",
+                                      "type": "ref",
+                                      "ref": "hideui:Nyvom",
+                                      "name": "Icon",
+                                      "width": 20,
+                                      "height": 20,
+                                      "descendants": {
+                                        "hideui:ZIZFR": {
+                                          "fill": "$--muted-foreground",
+                                          "icon": "ellipsis"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "id": "ws-panehdr-lc-close",
+                                      "type": "ref",
+                                      "ref": "hideui:Nyvom",
+                                      "name": "Icon",
+                                      "width": 20,
+                                      "height": 20,
+                                      "descendants": {
+                                        "hideui:ZIZFR": {
+                                          "fill": "$--muted-foreground",
+                                          "icon": "x"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xs",
+                                  "alignItems": "center"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": 28,
+                              "layout": "horizontal",
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "padding": [
+                                0,
+                                "$--spacing-sm"
+                              ],
+                              "fill": "$--secondary"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ws-terminal-lc",
+                              "name": "Terminal",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ws-term0-lc",
+                                  "name": "fixture % echo capture-demo ",
+                                  "content": "fixture % echo capture-demo 한글 확인",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term1-lc",
+                                  "name": "capture-demo 한글 확인",
+                                  "content": "capture-demo 한글 확인",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term2-lc",
+                                  "name": "fixture % git status --short",
+                                  "content": "fixture % git status --short",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term3-lc",
+                                  "name": " M docs/한글 노트.md",
+                                  "content": " M docs/한글 노트.md",
+                                  "fill": "$--warning",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term4-lc",
+                                  "name": "?? scripts/pen-screens.mjs",
+                                  "content": "?? scripts/pen-screens.mjs",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term5-lc",
+                                  "name": "fixture % ",
+                                  "content": "fixture % ",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "fill": "$--background",
+                              "padding": "$--spacing-sm",
+                              "layout": "vertical",
+                              "gap": "$--spacing-xxs"
+                            }
+                          ],
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "layout": "vertical",
+                          "gap": 0,
+                          "fill": "$--background",
+                          "clip": true
+                        }
+                      ],
+                      "width": 900,
+                      "height": 460,
+                      "layout": "vertical",
+                      "gap": 0,
+                      "fill": "$--background",
+                      "clip": true
+                    }
+                  ],
+                  "width": 900,
+                  "height": 460,
+                  "layout": "vertical",
+                  "gap": 0
+                }
+              ],
+              "layout": "horizontal",
+              "gap": "$--spacing-md",
+              "alignItems": "start"
+            },
+            {
+              "type": "frame",
+              "id": "ws-wrap-lg",
+              "name": "Two Agent areas, independent tab bars and live terminals",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "ws-sidebar-lg",
+                  "name": "Sidebar",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ws-sidebar-tabs-lg",
+                      "name": "Tabs",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ws-sidebar-agentstab-lg",
+                          "name": "Agents",
+                          "content": "Agents",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-sidebar-projectstab-lg",
+                          "name": "Projects",
+                          "content": "Projects",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-md"
+                    },
+                    {
+                      "type": "text",
+                      "id": "ws-sidebar-seen-lg",
+                      "name": "Seen · 2",
+                      "content": "Seen · 2",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "500"
+                    },
+                    {
+                      "id": "ws-sidebar-agent0-lg",
+                      "type": "ref",
+                      "ref": "hideui:sidebar-agent-row",
+                      "name": "Agent two",
+                      "width": 268,
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-xs",
+                        "$--spacing-xs",
+                        4
+                      ],
+                      "descendants": {
+                        "hideui:sar-dot": {
+                          "fill": "$--agent-working",
+                          "enabled": true
+                        },
+                        "hideui:sar-ring": {
+                          "stroke": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:sar-glyph": {
+                          "fill": "$--warning",
+                          "enabled": false
+                        },
+                        "hideui:sar-title": {
+                          "fill": "$--subtle-foreground",
+                          "content": "Agent two"
+                        },
+                        "hideui:sar-branch": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:sar-branch-label": {
+                          "fill": "$--subtle-foreground",
+                          "content": ""
+                        },
+                        "hideui:sar-device": {
+                          "stroke": "$--border",
+                          "enabled": false
+                        },
+                        "hideui:sar-device-label": {
+                          "fill": "$--subtle-foreground",
+                          "content": ""
+                        },
+                        "hideui:sar-badge": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:sar-badge-label": {
+                          "fill": "$--subtle-foreground",
+                          "content": ""
+                        },
+                        "hideui:sar-elapsed": {
+                          "fill": "$--muted-foreground",
+                          "content": "3m"
+                        },
+                        "hideui:sar-chevron": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
+                        },
+                        "hideui:sar-line": {
+                          "fill": "$--warning",
+                          "enabled": false
+                        },
+                        "hideui:sar-place": {
+                          "fill": "$--muted-foreground",
+                          "enabled": true,
+                          "content": "herdr-ide › main"
+                        },
+                        "hideui:sar-provider": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "hideui:sar-fold": {
+                          "opacity": 0
+                        }
+                      }
+                    },
+                    {
+                      "id": "ws-sidebar-agent1-lg",
+                      "type": "ref",
+                      "ref": "hideui:sidebar-agent-row",
+                      "name": "Agent one",
+                      "width": 268,
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-xs",
+                        "$--spacing-xs",
+                        4
+                      ],
+                      "descendants": {
+                        "hideui:sar-dot": {
+                          "fill": "$--agent-working",
+                          "enabled": false
+                        },
+                        "hideui:sar-ring": {
+                          "stroke": "$--muted-foreground",
+                          "enabled": true
+                        },
+                        "hideui:sar-glyph": {
+                          "fill": "$--warning",
+                          "enabled": false
+                        },
+                        "hideui:sar-title": {
+                          "fill": "$--subtle-foreground",
+                          "content": "Agent one"
+                        },
+                        "hideui:sar-branch": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:sar-branch-label": {
+                          "fill": "$--subtle-foreground",
+                          "content": ""
+                        },
+                        "hideui:sar-device": {
+                          "stroke": "$--border",
+                          "enabled": false
+                        },
+                        "hideui:sar-device-label": {
+                          "fill": "$--subtle-foreground",
+                          "content": ""
+                        },
+                        "hideui:sar-badge": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:sar-badge-label": {
+                          "fill": "$--subtle-foreground",
+                          "content": ""
+                        },
+                        "hideui:sar-elapsed": {
+                          "fill": "$--muted-foreground",
+                          "content": "3m"
+                        },
+                        "hideui:sar-chevron": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
+                        },
+                        "hideui:sar-line": {
+                          "fill": "$--warning",
+                          "enabled": false
+                        },
+                        "hideui:sar-place": {
+                          "fill": "$--muted-foreground",
+                          "enabled": true,
+                          "content": "herdr-ide › main"
+                        },
+                        "hideui:sar-provider": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "hideui:sar-fold": {
+                          "opacity": 0
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ws-sidebar-newws-lg",
+                      "name": "New workspace",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ws-sidebar-newwsi-lg",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "plus",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-sidebar-newwst-lg",
+                          "name": "새 워크스페이스 ⌥⇧N",
+                          "content": "새 워크스페이스 ⌥⇧N",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "padding": [
+                        "$--spacing-sm",
+                        0
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ws-sidebar-footer-lg",
+                      "name": "Footer",
+                      "children": [
+                        {
+                          "id": "ws-sidebar-device-lg",
+                          "type": "ref",
+                          "ref": "hideui:sel-m",
+                          "name": "Select",
+                          "fill": "$--background",
+                          "stroke": "$--input",
+                          "width": 84,
+                          "descendants": {
+                            "hideui:sel-t": {
+                              "fill": "$--foreground",
+                              "content": "This Mac"
+                            },
+                            "hideui:sel-i": {
+                              "fill": "$--muted-foreground"
+                            }
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ws-sidebar-footergap-lg",
+                          "name": "Gap",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "id": "ws-sidebar-usage0-lg",
+                          "type": "ref",
+                          "ref": "hideui:usage-chip",
+                          "name": "Usage claude",
+                          "fill": "$--secondary",
+                          "descendants": {
+                            "hideui:usage-chip-percent": {
+                              "fill": "$--success",
+                              "content": "62%"
+                            }
+                          }
+                        },
+                        {
+                          "id": "ws-sidebar-usage1-lg",
+                          "type": "ref",
+                          "ref": "hideui:usage-chip",
+                          "name": "Usage codex",
+                          "fill": "$--secondary",
+                          "descendants": {
+                            "hideui:usage-chip-percent": {
+                              "fill": "$--success",
+                              "content": "59%"
+                            },
+                            "hideui:usage-chip-mark": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-codex.png",
+                                "mode": "fit"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "id": "ws-sidebar-settings-lg",
+                          "type": "ref",
+                          "ref": "hideui:Nyvom",
+                          "name": "Icon",
+                          "width": 20,
+                          "height": 20,
+                          "descendants": {
+                            "hideui:ZIZFR": {
+                              "fill": "$--muted-foreground",
+                              "icon": "settings"
+                            }
+                          }
+                        }
+                      ],
+                      "width": "fill_container",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center"
+                    }
+                  ],
+                  "width": 292,
+                  "layout": "vertical",
+                  "gap": "$--spacing-md",
+                  "fill": "$--sidebar",
+                  "padding": "$--spacing-md",
+                  "cornerRadius": "$--radius-md"
+                },
+                {
+                  "type": "frame",
+                  "id": "ws-main-lg",
+                  "name": "Workspace",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ws-agents-lg",
+                      "name": "Agent column",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ws-topbar-lg",
+                          "name": "Toolbar",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ws-crumb-lg",
+                              "name": "Breadcrumb",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ws-c1-lg",
+                                  "name": "Main",
+                                  "content": "Main",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-c2-lg",
+                                  "name": "/",
+                                  "content": "/",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-c3-lg",
+                                  "name": "demo",
+                                  "content": "demo",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-c4-lg",
+                                  "name": "/",
+                                  "content": "/",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-c5-lg",
+                                  "name": "demo",
+                                  "content": "demo",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
                                 }
                               ],
                               "layout": "horizontal",
                               "gap": "$--spacing-xs",
                               "alignItems": "center"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ws-paneltoggle-lg",
+                              "name": "Side panel toggle",
+                              "children": [
+                                {
+                                  "id": "ws-paneltoggle-lg-button",
+                                  "type": "ref",
+                                  "ref": "hideui:Nyvom",
+                                  "name": "panel-right",
+                                  "descendants": {
+                                    "hideui:ZIZFR": {
+                                      "fill": "$--subtle-foreground",
+                                      "icon": "panel-right"
+                                    }
+                                  },
+                                  "x": 0,
+                                  "y": 0
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ws-paneltoggle-lg-badge",
+                                  "name": "Open views badge",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ws-paneltoggle-lg-count",
+                                      "name": "2",
+                                      "content": "2",
+                                      "fill": "$--primary-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-micro",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "x": 12,
+                                  "y": -2,
+                                  "width": 14,
+                                  "height": 14,
+                                  "fill": "$--primary",
+                                  "cornerRadius": "$--radius-lg",
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                }
+                              ],
+                              "layout": "none",
+                              "width": 24,
+                              "height": 24
                             }
                           ],
                           "width": "fill_container",
-                          "height": 28,
+                          "height": 32,
                           "layout": "horizontal",
                           "justifyContent": "space_between",
                           "alignItems": "center",
@@ -18805,80 +19402,538 @@
                             0,
                             "$--spacing-sm"
                           ],
-                          "fill": "$--secondary"
+                          "fill": "$--sidebar",
+                          "stroke": "$--border",
+                          "strokeWidth": {
+                            "bottom": "$--size-hairline"
+                          },
+                          "strokeAlignment": "inner"
                         },
                         {
                           "type": "frame",
-                          "id": "ws-terminal-lc",
-                          "name": "Terminal",
+                          "id": "ws-agentareas-lg",
+                          "name": "Two Agent areas",
                           "children": [
                             {
-                              "type": "text",
-                              "id": "ws-term0-lc",
-                              "name": "fixture % echo capture-demo ",
-                              "content": "fixture % echo capture-demo 한글 확인",
-                              "fill": "$--foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
+                              "type": "frame",
+                              "id": "ws-agentarea-lg-left",
+                              "name": "Agent area",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ws-agtabs-lg-left",
+                                  "name": "Tab bar",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "ws-agtab1-lg-left",
+                                      "name": "탭 이름과 구성 개선",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "ws-agtab1-lg-left-status",
+                                          "name": "●",
+                                          "content": "●",
+                                          "fill": "$--agent-working",
+                                          "fontFamily": "$--font-ui",
+                                          "fontSize": "$--text-caption",
+                                          "fontWeight": "400"
+                                        },
+                                        {
+                                          "type": "frame",
+                                          "id": "ws-agtab1-lg-left-provider",
+                                          "name": "Provider logo",
+                                          "children": [],
+                                          "width": 12,
+                                          "height": 12,
+                                          "fill": {
+                                            "type": "image",
+                                            "enabled": true,
+                                            "url": "../web/src/assets/agent-claude.png",
+                                            "mode": "fit"
+                                          }
+                                        },
+                                        {
+                                          "type": "text",
+                                          "id": "ws-agtab1-lg-left-t",
+                                          "name": "탭 이름과 구성 개선",
+                                          "content": "탭 이름과 구성 개선",
+                                          "fill": "$--foreground",
+                                          "fontFamily": "$--font-ui",
+                                          "fontSize": "$--text-subhead",
+                                          "fontWeight": "600"
+                                        }
+                                      ],
+                                      "layout": "horizontal",
+                                      "gap": "$--spacing-xxs",
+                                      "alignItems": "center",
+                                      "padding": [
+                                        0,
+                                        "$--spacing-xs",
+                                        "$--spacing-xxs",
+                                        "$--spacing-xs"
+                                      ],
+                                      "stroke": "$--foreground",
+                                      "strokeWidth": {
+                                        "bottom": 2
+                                      },
+                                      "strokeAlignment": "inner"
+                                    },
+                                    {
+                                      "id": "ws-agtabclose-lg-left",
+                                      "type": "ref",
+                                      "ref": "hideui:Nyvom",
+                                      "name": "Icon",
+                                      "width": 20,
+                                      "height": 20,
+                                      "descendants": {
+                                        "hideui:ZIZFR": {
+                                          "fill": "$--muted-foreground",
+                                          "icon": "x"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "id": "ws-agtabadd-lg-left",
+                                      "type": "ref",
+                                      "ref": "hideui:Nyvom",
+                                      "name": "Icon",
+                                      "width": 20,
+                                      "height": 20,
+                                      "descendants": {
+                                        "hideui:ZIZFR": {
+                                          "fill": "$--muted-foreground",
+                                          "icon": "plus"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "height": 32,
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xxs",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ws-panehdr-lg-left",
+                                  "name": "Pane header",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ws-panehdr-lg-left-label",
+                                      "name": "w2:p1",
+                                      "content": "w2:p1",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ws-panehdr-lg-left-trail",
+                                      "name": "Trailing",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "ws-panehdr-lg-left-status",
+                                          "name": "Working",
+                                          "content": "Working",
+                                          "fill": "$--muted-foreground",
+                                          "fontFamily": "$--font-ui",
+                                          "fontSize": "$--text-caption",
+                                          "fontWeight": "400"
+                                        },
+                                        {
+                                          "id": "ws-panehdr-lg-left-more",
+                                          "type": "ref",
+                                          "ref": "hideui:Nyvom",
+                                          "name": "Icon",
+                                          "width": 20,
+                                          "height": 20,
+                                          "descendants": {
+                                            "hideui:ZIZFR": {
+                                              "fill": "$--muted-foreground",
+                                              "icon": "ellipsis"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "id": "ws-panehdr-lg-left-close",
+                                          "type": "ref",
+                                          "ref": "hideui:Nyvom",
+                                          "name": "Icon",
+                                          "width": 20,
+                                          "height": 20,
+                                          "descendants": {
+                                            "hideui:ZIZFR": {
+                                              "fill": "$--muted-foreground",
+                                              "icon": "x"
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      "layout": "horizontal",
+                                      "gap": "$--spacing-xs",
+                                      "alignItems": "center"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "height": 28,
+                                  "layout": "horizontal",
+                                  "justifyContent": "space_between",
+                                  "alignItems": "center",
+                                  "padding": [
+                                    0,
+                                    "$--spacing-sm"
+                                  ],
+                                  "fill": "$--secondary"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ws-terminal-lg-left",
+                                  "name": "Terminal",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term0-lg-left",
+                                      "name": "fixture % echo capture-demo ",
+                                      "content": "fixture % echo capture-demo 한글 확인",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term1-lg-left",
+                                      "name": "capture-demo 한글 확인",
+                                      "content": "capture-demo 한글 확인",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term2-lg-left",
+                                      "name": "fixture % git status --short",
+                                      "content": "fixture % git status --short",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term3-lg-left",
+                                      "name": " M docs/한글 노트.md",
+                                      "content": " M docs/한글 노트.md",
+                                      "fill": "$--warning",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term4-lg-left",
+                                      "name": "?? scripts/pen-screens.mjs",
+                                      "content": "?? scripts/pen-screens.mjs",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term5-lg-left",
+                                      "name": "fixture % ",
+                                      "content": "fixture % ",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "height": "fill_container",
+                                  "fill": "$--background",
+                                  "padding": "$--spacing-sm",
+                                  "layout": "vertical",
+                                  "gap": "$--spacing-xxs"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "layout": "vertical",
+                              "gap": 0,
+                              "fill": "$--background",
+                              "clip": true
                             },
                             {
-                              "type": "text",
-                              "id": "ws-term1-lc",
-                              "name": "capture-demo 한글 확인",
-                              "content": "capture-demo 한글 확인",
-                              "fill": "$--subtle-foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
+                              "type": "frame",
+                              "id": "ws-agentdivider-lg",
+                              "name": "Agent area divider",
+                              "width": "$--size-resize-handle",
+                              "height": "fill_container",
+                              "fill": "$--border"
                             },
                             {
-                              "type": "text",
-                              "id": "ws-term2-lc",
-                              "name": "fixture % git status --short",
-                              "content": "fixture % git status --short",
-                              "fill": "$--foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
-                            },
-                            {
-                              "type": "text",
-                              "id": "ws-term3-lc",
-                              "name": " M docs/한글 노트.md",
-                              "content": " M docs/한글 노트.md",
-                              "fill": "$--warning",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
-                            },
-                            {
-                              "type": "text",
-                              "id": "ws-term4-lc",
-                              "name": "?? scripts/pen-screens.mjs",
-                              "content": "?? scripts/pen-screens.mjs",
-                              "fill": "$--subtle-foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
-                            },
-                            {
-                              "type": "text",
-                              "id": "ws-term5-lc",
-                              "name": "fixture % ",
-                              "content": "fixture % ",
-                              "fill": "$--foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
+                              "type": "frame",
+                              "id": "ws-agentarea-lg-right",
+                              "name": "Agent area",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ws-agtabs-lg-right",
+                                  "name": "Tab bar",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "ws-agtab1-lg-right",
+                                      "name": "검증 결과 확인",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "ws-agtab1-lg-right-status",
+                                          "name": "●",
+                                          "content": "●",
+                                          "fill": "$--agent-working",
+                                          "fontFamily": "$--font-ui",
+                                          "fontSize": "$--text-caption",
+                                          "fontWeight": "400"
+                                        },
+                                        {
+                                          "type": "frame",
+                                          "id": "ws-agtab1-lg-right-provider",
+                                          "name": "Provider logo",
+                                          "children": [],
+                                          "width": 12,
+                                          "height": 12,
+                                          "fill": {
+                                            "type": "image",
+                                            "enabled": true,
+                                            "url": "../web/src/assets/agent-claude.png",
+                                            "mode": "fit"
+                                          }
+                                        },
+                                        {
+                                          "type": "text",
+                                          "id": "ws-agtab1-lg-right-t",
+                                          "name": "검증 결과 확인",
+                                          "content": "검증 결과 확인",
+                                          "fill": "$--subtle-foreground",
+                                          "fontFamily": "$--font-ui",
+                                          "fontSize": "$--text-subhead",
+                                          "fontWeight": "400"
+                                        }
+                                      ],
+                                      "layout": "horizontal",
+                                      "gap": "$--spacing-xxs",
+                                      "alignItems": "center",
+                                      "padding": [
+                                        0,
+                                        "$--spacing-xs",
+                                        "$--spacing-xxs",
+                                        "$--spacing-xs"
+                                      ]
+                                    },
+                                    {
+                                      "id": "ws-agtabclose-lg-right",
+                                      "type": "ref",
+                                      "ref": "hideui:Nyvom",
+                                      "name": "Icon",
+                                      "width": 20,
+                                      "height": 20,
+                                      "descendants": {
+                                        "hideui:ZIZFR": {
+                                          "fill": "$--muted-foreground",
+                                          "icon": "x"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "id": "ws-agtabadd-lg-right",
+                                      "type": "ref",
+                                      "ref": "hideui:Nyvom",
+                                      "name": "Icon",
+                                      "width": 20,
+                                      "height": 20,
+                                      "descendants": {
+                                        "hideui:ZIZFR": {
+                                          "fill": "$--muted-foreground",
+                                          "icon": "plus"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "height": 32,
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xxs",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ws-panehdr-lg-right",
+                                  "name": "Pane header",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ws-panehdr-lg-right-label",
+                                      "name": "w2:p1",
+                                      "content": "w2:p1",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ws-panehdr-lg-right-trail",
+                                      "name": "Trailing",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "ws-panehdr-lg-right-status",
+                                          "name": "Working",
+                                          "content": "Working",
+                                          "fill": "$--muted-foreground",
+                                          "fontFamily": "$--font-ui",
+                                          "fontSize": "$--text-caption",
+                                          "fontWeight": "400"
+                                        },
+                                        {
+                                          "id": "ws-panehdr-lg-right-more",
+                                          "type": "ref",
+                                          "ref": "hideui:Nyvom",
+                                          "name": "Icon",
+                                          "width": 20,
+                                          "height": 20,
+                                          "descendants": {
+                                            "hideui:ZIZFR": {
+                                              "fill": "$--muted-foreground",
+                                              "icon": "ellipsis"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "id": "ws-panehdr-lg-right-close",
+                                          "type": "ref",
+                                          "ref": "hideui:Nyvom",
+                                          "name": "Icon",
+                                          "width": 20,
+                                          "height": 20,
+                                          "descendants": {
+                                            "hideui:ZIZFR": {
+                                              "fill": "$--muted-foreground",
+                                              "icon": "x"
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      "layout": "horizontal",
+                                      "gap": "$--spacing-xs",
+                                      "alignItems": "center"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "height": 28,
+                                  "layout": "horizontal",
+                                  "justifyContent": "space_between",
+                                  "alignItems": "center",
+                                  "padding": [
+                                    0,
+                                    "$--spacing-sm"
+                                  ],
+                                  "fill": "$--secondary"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ws-terminal-lg-right",
+                                  "name": "Terminal",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term0-lg-right",
+                                      "name": "fixture % echo capture-demo ",
+                                      "content": "fixture % echo capture-demo 한글 확인",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term1-lg-right",
+                                      "name": "capture-demo 한글 확인",
+                                      "content": "capture-demo 한글 확인",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term2-lg-right",
+                                      "name": "fixture % git status --short",
+                                      "content": "fixture % git status --short",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term3-lg-right",
+                                      "name": " M docs/한글 노트.md",
+                                      "content": " M docs/한글 노트.md",
+                                      "fill": "$--warning",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term4-lg-right",
+                                      "name": "?? scripts/pen-screens.mjs",
+                                      "content": "?? scripts/pen-screens.mjs",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term5-lg-right",
+                                      "name": "fixture % ",
+                                      "content": "fixture % ",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "height": "fill_container",
+                                  "fill": "$--background",
+                                  "padding": "$--spacing-sm",
+                                  "layout": "vertical",
+                                  "gap": "$--spacing-xxs"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "layout": "vertical",
+                              "gap": 0,
+                              "fill": "$--background",
+                              "clip": true
                             }
                           ],
                           "width": "fill_container",
                           "height": "fill_container",
-                          "fill": "$--background",
-                          "padding": "$--spacing-sm",
-                          "layout": "vertical",
-                          "gap": "$--spacing-xxs"
+                          "layout": "horizontal",
+                          "gap": 0
                         }
                       ],
                       "width": 900,
@@ -19896,145 +20951,71 @@
                         },
                         {
                           "type": "frame",
-                          "id": "ws-agtabs-do",
-                          "name": "Tab bar",
+                          "id": "ws-agentarea-do",
+                          "name": "Agent area",
                           "children": [
                             {
                               "type": "frame",
-                              "id": "ws-agtab1-do",
-                              "name": "탭 이름과 구성 개선",
+                              "id": "ws-agtabs-do",
+                              "name": "Tab bar",
                               "children": [
-                                {
-                                  "type": "text",
-                                  "id": "ws-agtab1-do-status",
-                                  "name": "●",
-                                  "content": "●",
-                                  "fill": "$--agent-working",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
-                                },
                                 {
                                   "type": "frame",
-                                  "id": "ws-agtab1-do-provider",
-                                  "name": "Provider logo",
-                                  "children": [],
-                                  "width": 12,
-                                  "height": 12,
-                                  "fill": {
-                                    "type": "image",
-                                    "enabled": true,
-                                    "url": "../web/src/assets/agent-claude.png",
-                                    "mode": "fit"
-                                  }
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ws-agtab1-do-t",
+                                  "id": "ws-agtab1-do",
                                   "name": "탭 이름과 구성 개선",
-                                  "content": "탭 이름과 구성 개선",
-                                  "fill": "$--foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-subhead",
-                                  "fontWeight": "600"
-                                }
-                              ],
-                              "layout": "horizontal",
-                              "gap": "$--spacing-xxs",
-                              "alignItems": "center",
-                              "padding": [
-                                0,
-                                "$--spacing-xs",
-                                "$--spacing-xxs",
-                                "$--spacing-xs"
-                              ],
-                              "stroke": "$--foreground",
-                              "strokeWidth": {
-                                "bottom": 2
-                              },
-                              "strokeAlignment": "inner"
-                            },
-                            {
-                              "id": "ws-agtabclose-do",
-                              "type": "ref",
-                              "ref": "hideui:Nyvom",
-                              "name": "Icon",
-                              "width": 20,
-                              "height": 20,
-                              "descendants": {
-                                "hideui:ZIZFR": {
-                                  "fill": "$--muted-foreground",
-                                  "icon": "x"
-                                }
-                              }
-                            },
-                            {
-                              "id": "ws-agtabadd-do",
-                              "type": "ref",
-                              "ref": "hideui:Nyvom",
-                              "name": "Icon",
-                              "width": 20,
-                              "height": 20,
-                              "descendants": {
-                                "hideui:ZIZFR": {
-                                  "fill": "$--muted-foreground",
-                                  "icon": "plus"
-                                }
-                              }
-                            }
-                          ],
-                          "width": "fill_container",
-                          "height": 32,
-                          "layout": "horizontal",
-                          "gap": "$--spacing-xxs",
-                          "alignItems": "center"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "ws-panehdr-do",
-                          "name": "Pane header",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "ws-panehdr-do-label",
-                              "name": "w2:p1",
-                              "content": "w2:p1",
-                              "fill": "$--subtle-foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
-                            },
-                            {
-                              "type": "frame",
-                              "id": "ws-panehdr-do-trail",
-                              "name": "Trailing",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "ws-panehdr-do-status",
-                                  "name": "Working",
-                                  "content": "Working",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
-                                },
-                                {
-                                  "id": "ws-panehdr-do-more",
-                                  "type": "ref",
-                                  "ref": "hideui:Nyvom",
-                                  "name": "Icon",
-                                  "width": 20,
-                                  "height": 20,
-                                  "descendants": {
-                                    "hideui:ZIZFR": {
-                                      "fill": "$--muted-foreground",
-                                      "icon": "ellipsis"
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ws-agtab1-do-status",
+                                      "name": "●",
+                                      "content": "●",
+                                      "fill": "$--agent-working",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ws-agtab1-do-provider",
+                                      "name": "Provider logo",
+                                      "children": [],
+                                      "width": 12,
+                                      "height": 12,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agent-claude.png",
+                                        "mode": "fit"
+                                      }
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-agtab1-do-t",
+                                      "name": "탭 이름과 구성 개선",
+                                      "content": "탭 이름과 구성 개선",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-subhead",
+                                      "fontWeight": "600"
                                     }
-                                  }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xxs",
+                                  "alignItems": "center",
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs",
+                                    "$--spacing-xxs",
+                                    "$--spacing-xs"
+                                  ],
+                                  "stroke": "$--foreground",
+                                  "strokeWidth": {
+                                    "bottom": 2
+                                  },
+                                  "strokeAlignment": "inner"
                                 },
                                 {
-                                  "id": "ws-panehdr-do-close",
+                                  "id": "ws-agtabclose-do",
                                   "type": "ref",
                                   "ref": "hideui:Nyvom",
                                   "name": "Icon",
@@ -20046,96 +21027,183 @@
                                       "icon": "x"
                                     }
                                   }
+                                },
+                                {
+                                  "id": "ws-agtabadd-do",
+                                  "type": "ref",
+                                  "ref": "hideui:Nyvom",
+                                  "name": "Icon",
+                                  "width": 20,
+                                  "height": 20,
+                                  "descendants": {
+                                    "hideui:ZIZFR": {
+                                      "fill": "$--muted-foreground",
+                                      "icon": "plus"
+                                    }
+                                  }
                                 }
                               ],
+                              "width": "fill_container",
+                              "height": 32,
                               "layout": "horizontal",
-                              "gap": "$--spacing-xs",
+                              "gap": "$--spacing-xxs",
                               "alignItems": "center"
-                            }
-                          ],
-                          "width": "fill_container",
-                          "height": 28,
-                          "layout": "horizontal",
-                          "justifyContent": "space_between",
-                          "alignItems": "center",
-                          "padding": [
-                            0,
-                            "$--spacing-sm"
-                          ],
-                          "fill": "$--secondary"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "ws-terminal-do",
-                          "name": "Terminal",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "ws-term0-do",
-                              "name": "fixture % echo capture-demo ",
-                              "content": "fixture % echo capture-demo 한글 확인",
-                              "fill": "$--foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
                             },
                             {
-                              "type": "text",
-                              "id": "ws-term1-do",
-                              "name": "capture-demo 한글 확인",
-                              "content": "capture-demo 한글 확인",
-                              "fill": "$--subtle-foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
+                              "type": "frame",
+                              "id": "ws-panehdr-do",
+                              "name": "Pane header",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ws-panehdr-do-label",
+                                  "name": "w2:p1",
+                                  "content": "w2:p1",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ws-panehdr-do-trail",
+                                  "name": "Trailing",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ws-panehdr-do-status",
+                                      "name": "Working",
+                                      "content": "Working",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "id": "ws-panehdr-do-more",
+                                      "type": "ref",
+                                      "ref": "hideui:Nyvom",
+                                      "name": "Icon",
+                                      "width": 20,
+                                      "height": 20,
+                                      "descendants": {
+                                        "hideui:ZIZFR": {
+                                          "fill": "$--muted-foreground",
+                                          "icon": "ellipsis"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "id": "ws-panehdr-do-close",
+                                      "type": "ref",
+                                      "ref": "hideui:Nyvom",
+                                      "name": "Icon",
+                                      "width": 20,
+                                      "height": 20,
+                                      "descendants": {
+                                        "hideui:ZIZFR": {
+                                          "fill": "$--muted-foreground",
+                                          "icon": "x"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xs",
+                                  "alignItems": "center"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": 28,
+                              "layout": "horizontal",
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "padding": [
+                                0,
+                                "$--spacing-sm"
+                              ],
+                              "fill": "$--secondary"
                             },
                             {
-                              "type": "text",
-                              "id": "ws-term2-do",
-                              "name": "fixture % git status --short",
-                              "content": "fixture % git status --short",
-                              "fill": "$--foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
-                            },
-                            {
-                              "type": "text",
-                              "id": "ws-term3-do",
-                              "name": " M docs/한글 노트.md",
-                              "content": " M docs/한글 노트.md",
-                              "fill": "$--warning",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
-                            },
-                            {
-                              "type": "text",
-                              "id": "ws-term4-do",
-                              "name": "?? scripts/pen-screens.mjs",
-                              "content": "?? scripts/pen-screens.mjs",
-                              "fill": "$--subtle-foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
-                            },
-                            {
-                              "type": "text",
-                              "id": "ws-term5-do",
-                              "name": "fixture % ",
-                              "content": "fixture % ",
-                              "fill": "$--foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
+                              "type": "frame",
+                              "id": "ws-terminal-do",
+                              "name": "Terminal",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ws-term0-do",
+                                  "name": "fixture % echo capture-demo ",
+                                  "content": "fixture % echo capture-demo 한글 확인",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term1-do",
+                                  "name": "capture-demo 한글 확인",
+                                  "content": "capture-demo 한글 확인",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term2-do",
+                                  "name": "fixture % git status --short",
+                                  "content": "fixture % git status --short",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term3-do",
+                                  "name": " M docs/한글 노트.md",
+                                  "content": " M docs/한글 노트.md",
+                                  "fill": "$--warning",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term4-do",
+                                  "name": "?? scripts/pen-screens.mjs",
+                                  "content": "?? scripts/pen-screens.mjs",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term5-do",
+                                  "name": "fixture % ",
+                                  "content": "fixture % ",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "fill": "$--background",
+                              "padding": "$--spacing-sm",
+                              "layout": "vertical",
+                              "gap": "$--spacing-xxs"
                             }
                           ],
                           "width": "fill_container",
                           "height": "fill_container",
-                          "fill": "$--background",
-                          "padding": "$--spacing-sm",
                           "layout": "vertical",
-                          "gap": "$--spacing-xxs"
+                          "gap": 0,
+                          "fill": "$--background",
+                          "clip": true
                         }
                       ],
                       "width": 900,
@@ -21490,145 +22558,71 @@
                         },
                         {
                           "type": "frame",
-                          "id": "ws-agtabs-dc",
-                          "name": "Tab bar",
+                          "id": "ws-agentarea-dc",
+                          "name": "Agent area",
                           "children": [
                             {
                               "type": "frame",
-                              "id": "ws-agtab1-dc",
-                              "name": "탭 이름과 구성 개선",
+                              "id": "ws-agtabs-dc",
+                              "name": "Tab bar",
                               "children": [
-                                {
-                                  "type": "text",
-                                  "id": "ws-agtab1-dc-status",
-                                  "name": "●",
-                                  "content": "●",
-                                  "fill": "$--agent-working",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
-                                },
                                 {
                                   "type": "frame",
-                                  "id": "ws-agtab1-dc-provider",
-                                  "name": "Provider logo",
-                                  "children": [],
-                                  "width": 12,
-                                  "height": 12,
-                                  "fill": {
-                                    "type": "image",
-                                    "enabled": true,
-                                    "url": "../web/src/assets/agent-claude.png",
-                                    "mode": "fit"
-                                  }
-                                },
-                                {
-                                  "type": "text",
-                                  "id": "ws-agtab1-dc-t",
+                                  "id": "ws-agtab1-dc",
                                   "name": "탭 이름과 구성 개선",
-                                  "content": "탭 이름과 구성 개선",
-                                  "fill": "$--foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-subhead",
-                                  "fontWeight": "600"
-                                }
-                              ],
-                              "layout": "horizontal",
-                              "gap": "$--spacing-xxs",
-                              "alignItems": "center",
-                              "padding": [
-                                0,
-                                "$--spacing-xs",
-                                "$--spacing-xxs",
-                                "$--spacing-xs"
-                              ],
-                              "stroke": "$--foreground",
-                              "strokeWidth": {
-                                "bottom": 2
-                              },
-                              "strokeAlignment": "inner"
-                            },
-                            {
-                              "id": "ws-agtabclose-dc",
-                              "type": "ref",
-                              "ref": "hideui:Nyvom",
-                              "name": "Icon",
-                              "width": 20,
-                              "height": 20,
-                              "descendants": {
-                                "hideui:ZIZFR": {
-                                  "fill": "$--muted-foreground",
-                                  "icon": "x"
-                                }
-                              }
-                            },
-                            {
-                              "id": "ws-agtabadd-dc",
-                              "type": "ref",
-                              "ref": "hideui:Nyvom",
-                              "name": "Icon",
-                              "width": 20,
-                              "height": 20,
-                              "descendants": {
-                                "hideui:ZIZFR": {
-                                  "fill": "$--muted-foreground",
-                                  "icon": "plus"
-                                }
-                              }
-                            }
-                          ],
-                          "width": "fill_container",
-                          "height": 32,
-                          "layout": "horizontal",
-                          "gap": "$--spacing-xxs",
-                          "alignItems": "center"
-                        },
-                        {
-                          "type": "frame",
-                          "id": "ws-panehdr-dc",
-                          "name": "Pane header",
-                          "children": [
-                            {
-                              "type": "text",
-                              "id": "ws-panehdr-dc-label",
-                              "name": "w2:p1",
-                              "content": "w2:p1",
-                              "fill": "$--subtle-foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
-                            },
-                            {
-                              "type": "frame",
-                              "id": "ws-panehdr-dc-trail",
-                              "name": "Trailing",
-                              "children": [
-                                {
-                                  "type": "text",
-                                  "id": "ws-panehdr-dc-status",
-                                  "name": "Working",
-                                  "content": "Working",
-                                  "fill": "$--muted-foreground",
-                                  "fontFamily": "$--font-ui",
-                                  "fontSize": "$--text-caption",
-                                  "fontWeight": "400"
-                                },
-                                {
-                                  "id": "ws-panehdr-dc-more",
-                                  "type": "ref",
-                                  "ref": "hideui:Nyvom",
-                                  "name": "Icon",
-                                  "width": 20,
-                                  "height": 20,
-                                  "descendants": {
-                                    "hideui:ZIZFR": {
-                                      "fill": "$--muted-foreground",
-                                      "icon": "ellipsis"
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ws-agtab1-dc-status",
+                                      "name": "●",
+                                      "content": "●",
+                                      "fill": "$--agent-working",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ws-agtab1-dc-provider",
+                                      "name": "Provider logo",
+                                      "children": [],
+                                      "width": 12,
+                                      "height": 12,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agent-claude.png",
+                                        "mode": "fit"
+                                      }
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-agtab1-dc-t",
+                                      "name": "탭 이름과 구성 개선",
+                                      "content": "탭 이름과 구성 개선",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-subhead",
+                                      "fontWeight": "600"
                                     }
-                                  }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xxs",
+                                  "alignItems": "center",
+                                  "padding": [
+                                    0,
+                                    "$--spacing-xs",
+                                    "$--spacing-xxs",
+                                    "$--spacing-xs"
+                                  ],
+                                  "stroke": "$--foreground",
+                                  "strokeWidth": {
+                                    "bottom": 2
+                                  },
+                                  "strokeAlignment": "inner"
                                 },
                                 {
-                                  "id": "ws-panehdr-dc-close",
+                                  "id": "ws-agtabclose-dc",
                                   "type": "ref",
                                   "ref": "hideui:Nyvom",
                                   "name": "Icon",
@@ -21640,15 +22634,673 @@
                                       "icon": "x"
                                     }
                                   }
+                                },
+                                {
+                                  "id": "ws-agtabadd-dc",
+                                  "type": "ref",
+                                  "ref": "hideui:Nyvom",
+                                  "name": "Icon",
+                                  "width": 20,
+                                  "height": 20,
+                                  "descendants": {
+                                    "hideui:ZIZFR": {
+                                      "fill": "$--muted-foreground",
+                                      "icon": "plus"
+                                    }
+                                  }
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": 32,
+                              "layout": "horizontal",
+                              "gap": "$--spacing-xxs",
+                              "alignItems": "center"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ws-panehdr-dc",
+                              "name": "Pane header",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ws-panehdr-dc-label",
+                                  "name": "w2:p1",
+                                  "content": "w2:p1",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ws-panehdr-dc-trail",
+                                  "name": "Trailing",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ws-panehdr-dc-status",
+                                      "name": "Working",
+                                      "content": "Working",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "id": "ws-panehdr-dc-more",
+                                      "type": "ref",
+                                      "ref": "hideui:Nyvom",
+                                      "name": "Icon",
+                                      "width": 20,
+                                      "height": 20,
+                                      "descendants": {
+                                        "hideui:ZIZFR": {
+                                          "fill": "$--muted-foreground",
+                                          "icon": "ellipsis"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "id": "ws-panehdr-dc-close",
+                                      "type": "ref",
+                                      "ref": "hideui:Nyvom",
+                                      "name": "Icon",
+                                      "width": 20,
+                                      "height": 20,
+                                      "descendants": {
+                                        "hideui:ZIZFR": {
+                                          "fill": "$--muted-foreground",
+                                          "icon": "x"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xs",
+                                  "alignItems": "center"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": 28,
+                              "layout": "horizontal",
+                              "justifyContent": "space_between",
+                              "alignItems": "center",
+                              "padding": [
+                                0,
+                                "$--spacing-sm"
+                              ],
+                              "fill": "$--secondary"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ws-terminal-dc",
+                              "name": "Terminal",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ws-term0-dc",
+                                  "name": "fixture % echo capture-demo ",
+                                  "content": "fixture % echo capture-demo 한글 확인",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term1-dc",
+                                  "name": "capture-demo 한글 확인",
+                                  "content": "capture-demo 한글 확인",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term2-dc",
+                                  "name": "fixture % git status --short",
+                                  "content": "fixture % git status --short",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term3-dc",
+                                  "name": " M docs/한글 노트.md",
+                                  "content": " M docs/한글 노트.md",
+                                  "fill": "$--warning",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term4-dc",
+                                  "name": "?? scripts/pen-screens.mjs",
+                                  "content": "?? scripts/pen-screens.mjs",
+                                  "fill": "$--subtle-foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-term5-dc",
+                                  "name": "fixture % ",
+                                  "content": "fixture % ",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-mono",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "fill": "$--background",
+                              "padding": "$--spacing-sm",
+                              "layout": "vertical",
+                              "gap": "$--spacing-xxs"
+                            }
+                          ],
+                          "width": "fill_container",
+                          "height": "fill_container",
+                          "layout": "vertical",
+                          "gap": 0,
+                          "fill": "$--background",
+                          "clip": true
+                        }
+                      ],
+                      "width": 900,
+                      "height": 460,
+                      "layout": "vertical",
+                      "gap": 0,
+                      "fill": "$--background",
+                      "clip": true
+                    }
+                  ],
+                  "width": 900,
+                  "height": 460,
+                  "layout": "vertical",
+                  "gap": 0
+                }
+              ],
+              "layout": "horizontal",
+              "gap": "$--spacing-md",
+              "alignItems": "start"
+            },
+            {
+              "type": "frame",
+              "id": "ws-wrap-dg",
+              "name": "Two Agent areas, independent tab bars and live terminals",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "ws-sidebar-dg",
+                  "name": "Sidebar",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ws-sidebar-tabs-dg",
+                      "name": "Tabs",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "ws-sidebar-agentstab-dg",
+                          "name": "Agents",
+                          "content": "Agents",
+                          "fill": "$--foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "600"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-sidebar-projectstab-dg",
+                          "name": "Projects",
+                          "content": "Projects",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-body",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-md"
+                    },
+                    {
+                      "type": "text",
+                      "id": "ws-sidebar-seen-dg",
+                      "name": "Seen · 2",
+                      "content": "Seen · 2",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-micro",
+                      "fontWeight": "500"
+                    },
+                    {
+                      "id": "ws-sidebar-agent0-dg",
+                      "type": "ref",
+                      "ref": "hideui:sidebar-agent-row",
+                      "name": "Agent two",
+                      "width": 268,
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-xs",
+                        "$--spacing-xs",
+                        4
+                      ],
+                      "descendants": {
+                        "hideui:sar-dot": {
+                          "fill": "$--agent-working",
+                          "enabled": true
+                        },
+                        "hideui:sar-ring": {
+                          "stroke": "$--muted-foreground",
+                          "enabled": false
+                        },
+                        "hideui:sar-glyph": {
+                          "fill": "$--warning",
+                          "enabled": false
+                        },
+                        "hideui:sar-title": {
+                          "fill": "$--subtle-foreground",
+                          "content": "Agent two"
+                        },
+                        "hideui:sar-branch": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:sar-branch-label": {
+                          "fill": "$--subtle-foreground",
+                          "content": ""
+                        },
+                        "hideui:sar-device": {
+                          "stroke": "$--border",
+                          "enabled": false
+                        },
+                        "hideui:sar-device-label": {
+                          "fill": "$--subtle-foreground",
+                          "content": ""
+                        },
+                        "hideui:sar-badge": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:sar-badge-label": {
+                          "fill": "$--subtle-foreground",
+                          "content": ""
+                        },
+                        "hideui:sar-elapsed": {
+                          "fill": "$--muted-foreground",
+                          "content": "3m"
+                        },
+                        "hideui:sar-chevron": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
+                        },
+                        "hideui:sar-line": {
+                          "fill": "$--warning",
+                          "enabled": false
+                        },
+                        "hideui:sar-place": {
+                          "fill": "$--muted-foreground",
+                          "enabled": true,
+                          "content": "herdr-ide › main"
+                        },
+                        "hideui:sar-provider": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "hideui:sar-fold": {
+                          "opacity": 0
+                        }
+                      }
+                    },
+                    {
+                      "id": "ws-sidebar-agent1-dg",
+                      "type": "ref",
+                      "ref": "hideui:sidebar-agent-row",
+                      "name": "Agent one",
+                      "width": 268,
+                      "padding": [
+                        "$--spacing-xs",
+                        "$--spacing-xs",
+                        "$--spacing-xs",
+                        4
+                      ],
+                      "descendants": {
+                        "hideui:sar-dot": {
+                          "fill": "$--agent-working",
+                          "enabled": false
+                        },
+                        "hideui:sar-ring": {
+                          "stroke": "$--muted-foreground",
+                          "enabled": true
+                        },
+                        "hideui:sar-glyph": {
+                          "fill": "$--warning",
+                          "enabled": false
+                        },
+                        "hideui:sar-title": {
+                          "fill": "$--subtle-foreground",
+                          "content": "Agent one"
+                        },
+                        "hideui:sar-branch": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:sar-branch-label": {
+                          "fill": "$--subtle-foreground",
+                          "content": ""
+                        },
+                        "hideui:sar-device": {
+                          "stroke": "$--border",
+                          "enabled": false
+                        },
+                        "hideui:sar-device-label": {
+                          "fill": "$--subtle-foreground",
+                          "content": ""
+                        },
+                        "hideui:sar-badge": {
+                          "fill": "$--secondary",
+                          "enabled": false
+                        },
+                        "hideui:sar-badge-label": {
+                          "fill": "$--subtle-foreground",
+                          "content": ""
+                        },
+                        "hideui:sar-elapsed": {
+                          "fill": "$--muted-foreground",
+                          "content": "3m"
+                        },
+                        "hideui:sar-chevron": {
+                          "fill": "$--muted-foreground",
+                          "icon": "chevron-right"
+                        },
+                        "hideui:sar-line": {
+                          "fill": "$--warning",
+                          "enabled": false
+                        },
+                        "hideui:sar-place": {
+                          "fill": "$--muted-foreground",
+                          "enabled": true,
+                          "content": "herdr-ide › main"
+                        },
+                        "hideui:sar-provider": {
+                          "fill": {
+                            "type": "image",
+                            "enabled": true,
+                            "url": "../web/src/assets/agent-claude.png",
+                            "mode": "fit"
+                          }
+                        },
+                        "hideui:sar-fold": {
+                          "opacity": 0
+                        }
+                      }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ws-sidebar-newws-dg",
+                      "name": "New workspace",
+                      "children": [
+                        {
+                          "type": "icon",
+                          "id": "ws-sidebar-newwsi-dg",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "plus",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        },
+                        {
+                          "type": "text",
+                          "id": "ws-sidebar-newwst-dg",
+                          "name": "새 워크스페이스 ⌥⇧N",
+                          "content": "새 워크스페이스 ⌥⇧N",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "400"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center",
+                      "padding": [
+                        "$--spacing-sm",
+                        0
+                      ]
+                    },
+                    {
+                      "type": "frame",
+                      "id": "ws-sidebar-footer-dg",
+                      "name": "Footer",
+                      "children": [
+                        {
+                          "id": "ws-sidebar-device-dg",
+                          "type": "ref",
+                          "ref": "hideui:sel-m",
+                          "name": "Select",
+                          "fill": "$--background",
+                          "stroke": "$--input",
+                          "width": 84,
+                          "descendants": {
+                            "hideui:sel-t": {
+                              "fill": "$--foreground",
+                              "content": "This Mac"
+                            },
+                            "hideui:sel-i": {
+                              "fill": "$--muted-foreground"
+                            }
+                          }
+                        },
+                        {
+                          "type": "frame",
+                          "id": "ws-sidebar-footergap-dg",
+                          "name": "Gap",
+                          "children": [],
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "id": "ws-sidebar-usage0-dg",
+                          "type": "ref",
+                          "ref": "hideui:usage-chip",
+                          "name": "Usage claude",
+                          "fill": "$--secondary",
+                          "descendants": {
+                            "hideui:usage-chip-percent": {
+                              "fill": "$--success",
+                              "content": "62%"
+                            }
+                          }
+                        },
+                        {
+                          "id": "ws-sidebar-usage1-dg",
+                          "type": "ref",
+                          "ref": "hideui:usage-chip",
+                          "name": "Usage codex",
+                          "fill": "$--secondary",
+                          "descendants": {
+                            "hideui:usage-chip-percent": {
+                              "fill": "$--success",
+                              "content": "59%"
+                            },
+                            "hideui:usage-chip-mark": {
+                              "fill": {
+                                "type": "image",
+                                "enabled": true,
+                                "url": "../web/src/assets/agent-codex.png",
+                                "mode": "fit"
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "id": "ws-sidebar-settings-dg",
+                          "type": "ref",
+                          "ref": "hideui:Nyvom",
+                          "name": "Icon",
+                          "width": 20,
+                          "height": 20,
+                          "descendants": {
+                            "hideui:ZIZFR": {
+                              "fill": "$--muted-foreground",
+                              "icon": "settings"
+                            }
+                          }
+                        }
+                      ],
+                      "width": "fill_container",
+                      "gap": "$--spacing-xs",
+                      "alignItems": "center"
+                    }
+                  ],
+                  "width": 292,
+                  "layout": "vertical",
+                  "gap": "$--spacing-md",
+                  "fill": "$--sidebar",
+                  "padding": "$--spacing-md",
+                  "cornerRadius": "$--radius-md"
+                },
+                {
+                  "type": "frame",
+                  "id": "ws-main-dg",
+                  "name": "Workspace",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "ws-agents-dg",
+                      "name": "Agent column",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "ws-topbar-dg",
+                          "name": "Toolbar",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "ws-crumb-dg",
+                              "name": "Breadcrumb",
+                              "children": [
+                                {
+                                  "type": "text",
+                                  "id": "ws-c1-dg",
+                                  "name": "Main",
+                                  "content": "Main",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-c2-dg",
+                                  "name": "/",
+                                  "content": "/",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-c3-dg",
+                                  "name": "demo",
+                                  "content": "demo",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-c4-dg",
+                                  "name": "/",
+                                  "content": "/",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "ws-c5-dg",
+                                  "name": "demo",
+                                  "content": "demo",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
                                 }
                               ],
                               "layout": "horizontal",
                               "gap": "$--spacing-xs",
                               "alignItems": "center"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "ws-paneltoggle-dg",
+                              "name": "Side panel toggle",
+                              "children": [
+                                {
+                                  "id": "ws-paneltoggle-dg-button",
+                                  "type": "ref",
+                                  "ref": "hideui:Nyvom",
+                                  "name": "panel-right",
+                                  "descendants": {
+                                    "hideui:ZIZFR": {
+                                      "fill": "$--subtle-foreground",
+                                      "icon": "panel-right"
+                                    }
+                                  },
+                                  "x": 0,
+                                  "y": 0
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ws-paneltoggle-dg-badge",
+                                  "name": "Open views badge",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ws-paneltoggle-dg-count",
+                                      "name": "2",
+                                      "content": "2",
+                                      "fill": "$--primary-foreground",
+                                      "fontFamily": "$--font-ui",
+                                      "fontSize": "$--text-micro",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "x": 12,
+                                  "y": -2,
+                                  "width": 14,
+                                  "height": 14,
+                                  "fill": "$--primary",
+                                  "cornerRadius": "$--radius-lg",
+                                  "layout": "horizontal",
+                                  "justifyContent": "center",
+                                  "alignItems": "center"
+                                }
+                              ],
+                              "layout": "none",
+                              "width": 24,
+                              "height": 24
                             }
                           ],
                           "width": "fill_container",
-                          "height": 28,
+                          "height": 32,
                           "layout": "horizontal",
                           "justifyContent": "space_between",
                           "alignItems": "center",
@@ -21656,80 +23308,538 @@
                             0,
                             "$--spacing-sm"
                           ],
-                          "fill": "$--secondary"
+                          "fill": "$--sidebar",
+                          "stroke": "$--border",
+                          "strokeWidth": {
+                            "bottom": "$--size-hairline"
+                          },
+                          "strokeAlignment": "inner"
                         },
                         {
                           "type": "frame",
-                          "id": "ws-terminal-dc",
-                          "name": "Terminal",
+                          "id": "ws-agentareas-dg",
+                          "name": "Two Agent areas",
                           "children": [
                             {
-                              "type": "text",
-                              "id": "ws-term0-dc",
-                              "name": "fixture % echo capture-demo ",
-                              "content": "fixture % echo capture-demo 한글 확인",
-                              "fill": "$--foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
+                              "type": "frame",
+                              "id": "ws-agentarea-dg-left",
+                              "name": "Agent area",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ws-agtabs-dg-left",
+                                  "name": "Tab bar",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "ws-agtab1-dg-left",
+                                      "name": "탭 이름과 구성 개선",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "ws-agtab1-dg-left-status",
+                                          "name": "●",
+                                          "content": "●",
+                                          "fill": "$--agent-working",
+                                          "fontFamily": "$--font-ui",
+                                          "fontSize": "$--text-caption",
+                                          "fontWeight": "400"
+                                        },
+                                        {
+                                          "type": "frame",
+                                          "id": "ws-agtab1-dg-left-provider",
+                                          "name": "Provider logo",
+                                          "children": [],
+                                          "width": 12,
+                                          "height": 12,
+                                          "fill": {
+                                            "type": "image",
+                                            "enabled": true,
+                                            "url": "../web/src/assets/agent-claude.png",
+                                            "mode": "fit"
+                                          }
+                                        },
+                                        {
+                                          "type": "text",
+                                          "id": "ws-agtab1-dg-left-t",
+                                          "name": "탭 이름과 구성 개선",
+                                          "content": "탭 이름과 구성 개선",
+                                          "fill": "$--foreground",
+                                          "fontFamily": "$--font-ui",
+                                          "fontSize": "$--text-subhead",
+                                          "fontWeight": "600"
+                                        }
+                                      ],
+                                      "layout": "horizontal",
+                                      "gap": "$--spacing-xxs",
+                                      "alignItems": "center",
+                                      "padding": [
+                                        0,
+                                        "$--spacing-xs",
+                                        "$--spacing-xxs",
+                                        "$--spacing-xs"
+                                      ],
+                                      "stroke": "$--foreground",
+                                      "strokeWidth": {
+                                        "bottom": 2
+                                      },
+                                      "strokeAlignment": "inner"
+                                    },
+                                    {
+                                      "id": "ws-agtabclose-dg-left",
+                                      "type": "ref",
+                                      "ref": "hideui:Nyvom",
+                                      "name": "Icon",
+                                      "width": 20,
+                                      "height": 20,
+                                      "descendants": {
+                                        "hideui:ZIZFR": {
+                                          "fill": "$--muted-foreground",
+                                          "icon": "x"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "id": "ws-agtabadd-dg-left",
+                                      "type": "ref",
+                                      "ref": "hideui:Nyvom",
+                                      "name": "Icon",
+                                      "width": 20,
+                                      "height": 20,
+                                      "descendants": {
+                                        "hideui:ZIZFR": {
+                                          "fill": "$--muted-foreground",
+                                          "icon": "plus"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "height": 32,
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xxs",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ws-panehdr-dg-left",
+                                  "name": "Pane header",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ws-panehdr-dg-left-label",
+                                      "name": "w2:p1",
+                                      "content": "w2:p1",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ws-panehdr-dg-left-trail",
+                                      "name": "Trailing",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "ws-panehdr-dg-left-status",
+                                          "name": "Working",
+                                          "content": "Working",
+                                          "fill": "$--muted-foreground",
+                                          "fontFamily": "$--font-ui",
+                                          "fontSize": "$--text-caption",
+                                          "fontWeight": "400"
+                                        },
+                                        {
+                                          "id": "ws-panehdr-dg-left-more",
+                                          "type": "ref",
+                                          "ref": "hideui:Nyvom",
+                                          "name": "Icon",
+                                          "width": 20,
+                                          "height": 20,
+                                          "descendants": {
+                                            "hideui:ZIZFR": {
+                                              "fill": "$--muted-foreground",
+                                              "icon": "ellipsis"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "id": "ws-panehdr-dg-left-close",
+                                          "type": "ref",
+                                          "ref": "hideui:Nyvom",
+                                          "name": "Icon",
+                                          "width": 20,
+                                          "height": 20,
+                                          "descendants": {
+                                            "hideui:ZIZFR": {
+                                              "fill": "$--muted-foreground",
+                                              "icon": "x"
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      "layout": "horizontal",
+                                      "gap": "$--spacing-xs",
+                                      "alignItems": "center"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "height": 28,
+                                  "layout": "horizontal",
+                                  "justifyContent": "space_between",
+                                  "alignItems": "center",
+                                  "padding": [
+                                    0,
+                                    "$--spacing-sm"
+                                  ],
+                                  "fill": "$--secondary"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ws-terminal-dg-left",
+                                  "name": "Terminal",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term0-dg-left",
+                                      "name": "fixture % echo capture-demo ",
+                                      "content": "fixture % echo capture-demo 한글 확인",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term1-dg-left",
+                                      "name": "capture-demo 한글 확인",
+                                      "content": "capture-demo 한글 확인",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term2-dg-left",
+                                      "name": "fixture % git status --short",
+                                      "content": "fixture % git status --short",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term3-dg-left",
+                                      "name": " M docs/한글 노트.md",
+                                      "content": " M docs/한글 노트.md",
+                                      "fill": "$--warning",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term4-dg-left",
+                                      "name": "?? scripts/pen-screens.mjs",
+                                      "content": "?? scripts/pen-screens.mjs",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term5-dg-left",
+                                      "name": "fixture % ",
+                                      "content": "fixture % ",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "height": "fill_container",
+                                  "fill": "$--background",
+                                  "padding": "$--spacing-sm",
+                                  "layout": "vertical",
+                                  "gap": "$--spacing-xxs"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "layout": "vertical",
+                              "gap": 0,
+                              "fill": "$--background",
+                              "clip": true
                             },
                             {
-                              "type": "text",
-                              "id": "ws-term1-dc",
-                              "name": "capture-demo 한글 확인",
-                              "content": "capture-demo 한글 확인",
-                              "fill": "$--subtle-foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
+                              "type": "frame",
+                              "id": "ws-agentdivider-dg",
+                              "name": "Agent area divider",
+                              "width": "$--size-resize-handle",
+                              "height": "fill_container",
+                              "fill": "$--border"
                             },
                             {
-                              "type": "text",
-                              "id": "ws-term2-dc",
-                              "name": "fixture % git status --short",
-                              "content": "fixture % git status --short",
-                              "fill": "$--foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
-                            },
-                            {
-                              "type": "text",
-                              "id": "ws-term3-dc",
-                              "name": " M docs/한글 노트.md",
-                              "content": " M docs/한글 노트.md",
-                              "fill": "$--warning",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
-                            },
-                            {
-                              "type": "text",
-                              "id": "ws-term4-dc",
-                              "name": "?? scripts/pen-screens.mjs",
-                              "content": "?? scripts/pen-screens.mjs",
-                              "fill": "$--subtle-foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
-                            },
-                            {
-                              "type": "text",
-                              "id": "ws-term5-dc",
-                              "name": "fixture % ",
-                              "content": "fixture % ",
-                              "fill": "$--foreground",
-                              "fontFamily": "$--font-mono",
-                              "fontSize": "$--text-caption",
-                              "fontWeight": "400"
+                              "type": "frame",
+                              "id": "ws-agentarea-dg-right",
+                              "name": "Agent area",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "ws-agtabs-dg-right",
+                                  "name": "Tab bar",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "ws-agtab1-dg-right",
+                                      "name": "검증 결과 확인",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "ws-agtab1-dg-right-status",
+                                          "name": "●",
+                                          "content": "●",
+                                          "fill": "$--agent-working",
+                                          "fontFamily": "$--font-ui",
+                                          "fontSize": "$--text-caption",
+                                          "fontWeight": "400"
+                                        },
+                                        {
+                                          "type": "frame",
+                                          "id": "ws-agtab1-dg-right-provider",
+                                          "name": "Provider logo",
+                                          "children": [],
+                                          "width": 12,
+                                          "height": 12,
+                                          "fill": {
+                                            "type": "image",
+                                            "enabled": true,
+                                            "url": "../web/src/assets/agent-claude.png",
+                                            "mode": "fit"
+                                          }
+                                        },
+                                        {
+                                          "type": "text",
+                                          "id": "ws-agtab1-dg-right-t",
+                                          "name": "검증 결과 확인",
+                                          "content": "검증 결과 확인",
+                                          "fill": "$--subtle-foreground",
+                                          "fontFamily": "$--font-ui",
+                                          "fontSize": "$--text-subhead",
+                                          "fontWeight": "400"
+                                        }
+                                      ],
+                                      "layout": "horizontal",
+                                      "gap": "$--spacing-xxs",
+                                      "alignItems": "center",
+                                      "padding": [
+                                        0,
+                                        "$--spacing-xs",
+                                        "$--spacing-xxs",
+                                        "$--spacing-xs"
+                                      ]
+                                    },
+                                    {
+                                      "id": "ws-agtabclose-dg-right",
+                                      "type": "ref",
+                                      "ref": "hideui:Nyvom",
+                                      "name": "Icon",
+                                      "width": 20,
+                                      "height": 20,
+                                      "descendants": {
+                                        "hideui:ZIZFR": {
+                                          "fill": "$--muted-foreground",
+                                          "icon": "x"
+                                        }
+                                      }
+                                    },
+                                    {
+                                      "id": "ws-agtabadd-dg-right",
+                                      "type": "ref",
+                                      "ref": "hideui:Nyvom",
+                                      "name": "Icon",
+                                      "width": 20,
+                                      "height": 20,
+                                      "descendants": {
+                                        "hideui:ZIZFR": {
+                                          "fill": "$--muted-foreground",
+                                          "icon": "plus"
+                                        }
+                                      }
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "height": 32,
+                                  "layout": "horizontal",
+                                  "gap": "$--spacing-xxs",
+                                  "alignItems": "center"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ws-panehdr-dg-right",
+                                  "name": "Pane header",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ws-panehdr-dg-right-label",
+                                      "name": "w2:p1",
+                                      "content": "w2:p1",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "frame",
+                                      "id": "ws-panehdr-dg-right-trail",
+                                      "name": "Trailing",
+                                      "children": [
+                                        {
+                                          "type": "text",
+                                          "id": "ws-panehdr-dg-right-status",
+                                          "name": "Working",
+                                          "content": "Working",
+                                          "fill": "$--muted-foreground",
+                                          "fontFamily": "$--font-ui",
+                                          "fontSize": "$--text-caption",
+                                          "fontWeight": "400"
+                                        },
+                                        {
+                                          "id": "ws-panehdr-dg-right-more",
+                                          "type": "ref",
+                                          "ref": "hideui:Nyvom",
+                                          "name": "Icon",
+                                          "width": 20,
+                                          "height": 20,
+                                          "descendants": {
+                                            "hideui:ZIZFR": {
+                                              "fill": "$--muted-foreground",
+                                              "icon": "ellipsis"
+                                            }
+                                          }
+                                        },
+                                        {
+                                          "id": "ws-panehdr-dg-right-close",
+                                          "type": "ref",
+                                          "ref": "hideui:Nyvom",
+                                          "name": "Icon",
+                                          "width": 20,
+                                          "height": 20,
+                                          "descendants": {
+                                            "hideui:ZIZFR": {
+                                              "fill": "$--muted-foreground",
+                                              "icon": "x"
+                                            }
+                                          }
+                                        }
+                                      ],
+                                      "layout": "horizontal",
+                                      "gap": "$--spacing-xs",
+                                      "alignItems": "center"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "height": 28,
+                                  "layout": "horizontal",
+                                  "justifyContent": "space_between",
+                                  "alignItems": "center",
+                                  "padding": [
+                                    0,
+                                    "$--spacing-sm"
+                                  ],
+                                  "fill": "$--secondary"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "ws-terminal-dg-right",
+                                  "name": "Terminal",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term0-dg-right",
+                                      "name": "fixture % echo capture-demo ",
+                                      "content": "fixture % echo capture-demo 한글 확인",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term1-dg-right",
+                                      "name": "capture-demo 한글 확인",
+                                      "content": "capture-demo 한글 확인",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term2-dg-right",
+                                      "name": "fixture % git status --short",
+                                      "content": "fixture % git status --short",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term3-dg-right",
+                                      "name": " M docs/한글 노트.md",
+                                      "content": " M docs/한글 노트.md",
+                                      "fill": "$--warning",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term4-dg-right",
+                                      "name": "?? scripts/pen-screens.mjs",
+                                      "content": "?? scripts/pen-screens.mjs",
+                                      "fill": "$--subtle-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    },
+                                    {
+                                      "type": "text",
+                                      "id": "ws-term5-dg-right",
+                                      "name": "fixture % ",
+                                      "content": "fixture % ",
+                                      "fill": "$--foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-caption",
+                                      "fontWeight": "400"
+                                    }
+                                  ],
+                                  "width": "fill_container",
+                                  "height": "fill_container",
+                                  "fill": "$--background",
+                                  "padding": "$--spacing-sm",
+                                  "layout": "vertical",
+                                  "gap": "$--spacing-xxs"
+                                }
+                              ],
+                              "width": "fill_container",
+                              "height": "fill_container",
+                              "layout": "vertical",
+                              "gap": 0,
+                              "fill": "$--background",
+                              "clip": true
                             }
                           ],
                           "width": "fill_container",
                           "height": "fill_container",
-                          "fill": "$--background",
-                          "padding": "$--spacing-sm",
-                          "layout": "vertical",
-                          "gap": "$--spacing-xxs"
+                          "layout": "horizontal",
+                          "gap": 0
                         }
                       ],
                       "width": 900,

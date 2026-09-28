@@ -56,7 +56,7 @@ A plain terminal tab shows the terminal icon and that name; terminal titles are 
 Local and remote process names are read only for focused panes of attached tabs, outside the runtime lock, on focus or agent-state changes and a 30-second recheck.
 The foreground process is the process-group leader, or the last returned process when the leader is absent; its name is the basename of `argv0`, falling back to `name` only when `argv0` is empty, and to `Tab N` when both are empty.
 The tooltip and accessible name carry the kind, full name and agent state; widths, scrolling, truncation and close behavior stay the same.
-Every Herdr tab's context menu contains New tab, Rename…, Copy name, and Close tab….
+Every Agent tab reuses the same name and Rename field in its area menu described below.
 Rename opens an inline field with the displayed name selected: Enter saves to that host's Herdr, an empty name restores automatic naming, and Escape or blur cancels editing.
 While saving, the committed name stays unchanged; a refusal or timeout keeps the entered text with “이름을 저장하지 못했습니다 · 다시 시도” below it, Enter retries, and Escape returns to the prior name.
 Failure details go to diagnostics, with no banner; a successful name survives reconnect while Herdr keeps the tab.
@@ -74,6 +74,52 @@ When a connected pane selects, splits, moves, or closes a View through `hide vie
 These commands do not move the keyboard target; a close that would lose the last View of an unsaved document reports the refusal and keeps the draft.
 `hide file open` and `hide diff open` put the calling pane's file or changed-file diff into its own Workspace without selecting that Workspace by default.
 An explicit local `--reveal` brings that Workspace and the opened View forward, opening its side panel if it was closed; without it, the side panel keeps its state.
+
+### Agent areas
+
+Electron’s numbered tab shortcuts and hold keycaps share the saved Agent area tree order, then each bar’s left-to-right tab order.
+Moving or reordering a tab updates both numbers together; waiting overflow tabs have no number.
+
+At most 64 normal Agent tabs are placed, in up to six areas and three split levels.
+New tab, Reopen that needs a tab, and protected replacement close count pending admissions and refuse before any external effect when full; the existing one-line notice asks the operator to close a tab.
+After an ambiguous creation reply, Hide checks the request marker once without resending the mutation.
+An unconfirmed creation retains its request-specific place and reports that uncertainty in the same notice; elapsed time alone never frees the place.
+External tabs beyond the cap remain in Herdr topology, with their waiting count in that same notice, and enter the active area in authoritative order when a slot opens.
+A waiting tab cannot take Hide's keyboard or active-tab selection.
+This boundary is an Observer-approved, user-vetoable implementation assumption from the Agent groups contract.
+
+The Agent column has its own area tree, separate from the side panel's View tree.
+Each area has a tab bar, a New tab button and the active tab's live pane canvas; dividers separate areas.
+Only the active area's selected tab carries the accent; clicking a tab or pane activates its area and sends the keyboard to that pane.
+All shown tabs stay attached and awake, while only the active area's tab receives read and sleep-visit updates.
+Pane headers, child chips, relationship controls and pane splits remain inside each canvas; find belongs to the focused pane.
+
+Agent and View areas share the drag, divider and narrow-window controls described below.
+A drag keeps its original tab in place and changes no terminal size until a valid drop.
+Dropping on a tab bar reorders or moves the tab; dropping on a content edge highlights the new half with Split left/right/up/down and creates another area on release.
+Moving the last tab out collapses its area, as does closing it or its disappearance from Herdr.
+A sole empty area shows No agent tab is open and New tab.
+Agent tabs cannot enter the View column, and a sole tab cannot split its own area.
+Invalid size, area or depth limits show the forbidden cursor without an overlay; Escape, outside release and a vanished target leave the layout unchanged.
+Each area scrolls its selected tab into view; when the column is too narrow, an area switcher shows one area without changing the saved tree.
+
+New tab, Split right/left/up/down, available directional Move commands, Rename…, Copy name and Close tab… form each tab menu.
+A disabled split explains its reason, and opening the menu changes no selection.
+The palette opened from an Agent pane adds these area commands and next/previous area focus and grow/shrink commands, including unavailable reasons.
+An area's New tab adds at its end; ⌘T/⌥T uses the active area.
+Externally created tabs append to the active area without changing the shown tab; Herdr's own reorder never changes Hide's area order.
+Delegated-only tabs remain absent from every bar and occupy the active canvas when chosen from the sidebar.
+Choosing a normal tab elsewhere activates its owning area.
+
+The tree, ratios, ordered membership and active selections return after restart.
+Missing tabs are removed, previously unplaced tabs append, and Reopen closed tab uses the former area when it survives, otherwise the active area.
+An older build may discard Agent layout state; returning starts with all current tabs in one area and keeps the View layout.
+SSH device Workspaces use the same component with one area, retain device Herdr reorder, and disable splitting with a local-Workspaces-only reason.
+
+Closing a primary Herdr workspace's last tab or last pane while a linked worktree remains first creates a shell at the checkout root in the same area and position.
+The existing close guards run first, and linked workspaces remain untouched.
+If shell creation fails, nothing closes; if closing is refused, the shell remains.
+Retry close reuses that intent's shell, while Dismiss ends the failed intent; detailed Herdr failures are diagnostic-only.
 
 ### View areas
 

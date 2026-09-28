@@ -4,6 +4,8 @@ use std::sync::{Arc, Mutex, Weak};
 use std::thread;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
+mod agent_areas;
+mod agent_close;
 mod agent_sleep;
 mod agents;
 mod attachments;
@@ -29,6 +31,7 @@ mod workspace_view;
 pub use hosts::WorkspaceRemoteRoute;
 pub use snapshot_delta::serialize_snapshot_delta;
 
+use agent_areas::AgentLayoutPayload;
 use agent_sleep::{AgentSleepSetPayload, AgentWakePayload};
 use events::*;
 use operations::*;
@@ -427,6 +430,7 @@ struct HerdrTabView {
     workspace_by_tab: BTreeMap<String, String>,
     /// The active tab of Herdr's focused workspace.
     focused_tab_id: Option<String>,
+    focus_event: Option<crate::sidebar::SessionTabFocus>,
 }
 
 impl HerdrTabView {
@@ -478,6 +482,10 @@ impl HerdrTabView {
             .and_then(|workspace_id| active_tab_by_workspace.get(workspace_id))
             .cloned();
         Self {
+            focus_event: payload.tab_focus.clone().filter(|event| {
+                focused_tab_id.as_ref() == Some(&event.tab_id)
+                    && focused_workspace_id.as_ref() == Some(&event.workspace_id)
+            }),
             active_tab_by_workspace,
             workspace_by_tab,
             focused_tab_id,
@@ -850,6 +858,7 @@ fn remote_tab_creation_key(
             workspace_id,
             cwd,
             label,
+            ..
         } => Some((
             target_id.to_owned(),
             workspace_id.clone(),
@@ -857,7 +866,7 @@ fn remote_tab_creation_key(
             label.clone(),
         )),
         // A workspace created for a registered project is keyed by its folder.
-        RemoteControlAction::CreateWorkspace { cwd, label } => Some((
+        RemoteControlAction::CreateWorkspace { cwd, label, .. } => Some((
             target_id.to_owned(),
             cwd.clone(),
             cwd.clone(),
@@ -1150,6 +1159,7 @@ pub struct Runtime {
     /// Hide's, as it does after a notification Herdr never answered, is not
     /// an operator action and is not followed.
     herdr_focused_tab_seen: Option<String>,
+    herdr_tab_focus_seen: Option<crate::sidebar::SessionTabFocus>,
     /// The pane focus Hide has told Herdr about and is still waiting to see
     /// confirmed.
     pending_pane_focus: Option<PendingViewFocus>,
@@ -1193,6 +1203,7 @@ pub struct Runtime {
     /// the workspace's list, not in a checkout's part of it, so the index has
     /// to be read off this list or the tab lands somewhere else.
     herdr_workspace_tab_order: BTreeMap<String, Vec<String>>,
+    herdr_worktrees: BTreeMap<String, crate::domain::WorktreeProjection>,
     /// The arrangement a reorder asked for and Herdr has not reported yet,
     /// per checkout. Herdr owns where its own tabs sit, so a drag that moves
     /// one of them is held here rather than written into the strip: an
@@ -1503,6 +1514,7 @@ impl Runtime {
             visible_tab_ids: BTreeMap::new(),
             pending_tab_focus: None,
             herdr_focused_tab_seen: None,
+            herdr_tab_focus_seen: None,
             pending_pane_focus: None,
             herdr_active_tab_ids: BTreeSet::new(),
             pet_unseen_observed: std::collections::BTreeMap::new(),
@@ -1516,6 +1528,7 @@ impl Runtime {
             catalog_roots: workspace::RootIndex::new(),
             checkout_tab_order: BTreeMap::new(),
             herdr_workspace_tab_order: BTreeMap::new(),
+            herdr_worktrees: BTreeMap::new(),
             pending_tab_move: BTreeMap::new(),
             next_tab_move_generation: 0,
             unresolved_active_tabs: BTreeSet::new(),

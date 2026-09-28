@@ -255,3 +255,15 @@ export function FindBar({ actions }: { actions: Actions }) {
     </div>
   );
 }
+
+/** A refused replacement close remains an explicit, retryable operator intent. */
+export function AgentCloseNotice({ actions }: { actions: Actions }) {
+  const pending = useShellStore((s) => s.rest?.recent_closed?.pending);
+  const item = pending?.find((item) => item.phase === "failed" || item.phase === "refused");
+  if (!item) return null;
+  return <div role="status" data-agent-close-notice={item.key} className="flex items-center gap-md border-b border-border bg-card px-md py-xs text-caption text-subtle-foreground">
+    <span className="min-w-0 flex-1">{item.message}</span>
+    {item.retryable && <Button variant="link" size="sm" onClick={() => actions.retryAgentClose(item.key)}>Retry close</Button>}
+    <Button variant="ghost" size="icon-sm" aria-label="Dismiss close" onClick={() => actions.dismissAgentClose(item.key)}><XIcon /></Button>
+  </div>;
+}

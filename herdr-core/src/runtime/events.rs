@@ -121,6 +121,8 @@ pub(super) struct CreateWorkspacePayload {
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CreateTabPayload {
+    #[serde(default)]
+    pub(super) area_id: Option<String>,
     pub(super) workspace_id: String,
     #[serde(default)]
     pub(super) checkout_id: Option<String>,
@@ -890,6 +892,7 @@ pub(super) enum Event {
     WorkspaceView(WorkspaceViewPayload),
     PanelCovers(PanelCoversPayload),
     ViewLayout(ViewLayoutPayload),
+    AgentLayout(AgentLayoutPayload),
     BrowserOpen(BrowserOpenPayload),
     BrowserState(BrowserStatePayload),
     Key(KeyPayload),
@@ -926,6 +929,8 @@ pub(super) enum Event {
     CloseTab(ConfirmedTabPayload),
     ClosePane(ConfirmedPanePayload),
     CheckCloseStatus(CheckCloseStatusPayload),
+    RetryAgentClose(CheckCloseStatusPayload),
+    DismissAgentClose(CheckCloseStatusPayload),
     ReopenClosed,
     ForkPane(PaneTargetPayload),
     AgentSleepSet(AgentSleepSetPayload),
@@ -1093,6 +1098,8 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "close_tab" => decode!(ConfirmedTabPayload, CloseTab),
         "close_pane" => decode!(ConfirmedPanePayload, ClosePane),
         "check_close_status" => decode!(CheckCloseStatusPayload, CheckCloseStatus),
+        "retry_agent_close" => decode!(CheckCloseStatusPayload, RetryAgentClose),
+        "dismiss_agent_close" => decode!(CheckCloseStatusPayload, DismissAgentClose),
         "reopen_closed" => Ok(Event::ReopenClosed),
         "fork_pane" => decode!(PaneTargetPayload, ForkPane),
         "agent_sleep_set" => decode!(AgentSleepSetPayload, AgentSleepSet),
@@ -1168,6 +1175,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pet_shortcut_update" => decode!(PetShortcutPayload, PetShortcutUpdate),
         "workspace_view" => decode!(WorkspaceViewPayload, WorkspaceView),
         "panel_covers" => decode!(PanelCoversPayload, PanelCovers),
+        "agent_layout" => decode!(AgentLayoutPayload, AgentLayout),
         "view_layout" => decode!(ViewLayoutPayload, ViewLayout),
         "browser_open" => decode!(BrowserOpenPayload, BrowserOpen),
         "browser_state" => decode!(BrowserStatePayload, BrowserState),
@@ -1183,6 +1191,7 @@ impl Runtime {
         match event {
             Event::WorkspaceView(payload) => self.apply_workspace_view(payload),
             Event::PanelCovers(payload) => self.apply_panel_covers(payload),
+            Event::AgentLayout(payload) => self.apply_agent_layout(payload),
             Event::ViewLayout(payload) => self.apply_view_layout(payload),
             Event::BrowserOpen(payload) => self.open_browser(payload),
             Event::BrowserState(payload) => self.record_browser_state(payload),
@@ -1469,6 +1478,25 @@ impl Runtime {
                     );
                     return true;
                 };
+                let key = (workspace::LOCAL_DEVICE_ID.to_owned(), cwd.clone());
+                let area_id = payload.area_id.or_else(|| {
+                    self.agent_layout_of(&key)
+                        .map(|layout| layout.tree.active_area.clone())
+                });
+                if area_id.as_ref().is_some_and(|id| {
+                    self.agent_layout_of(&key)
+                        .is_none_or(|layout| layout.tree.area(id).is_none())
+                }) {
+                    self.set_error(
+                        "agent_layout.unknown_area",
+                        "The Agent area is no longer available",
+                        false,
+                    );
+                    return true;
+                }
+                if !self.admit_agent_tab(&cwd) {
+                    return true;
+                }
                 let label = payload.label.trim();
                 if label.is_empty() {
                     self.set_error("tab.invalid_label", "Tab label cannot be empty", false);
@@ -1490,15 +1518,32 @@ impl Runtime {
                 self.sync_changes_root_path();
                 self.yield_surface_to_terminal();
                 self.persist_current_ui_state();
+                self.next_async_operation_id = self
+                    .next_async_operation_id
+                    .saturating_add(1)
+                    .max(unix_milliseconds());
+                let admission_id = self.next_async_operation_id;
+                if let Some(store) = self.workspace_views.as_mut() {
+                    store
+                        .agent_admissions
+                        .entry(key)
+                        .or_default()
+                        .insert(format!("create:{admission_id}"));
+                }
+                let admission_path = cwd.clone();
                 let action = match session_workspace_id {
                     Some(session_workspace_id) => RemoteControlAction::CreateTab {
                         workspace_id: session_workspace_id,
                         cwd,
                         label: label.to_owned(),
+                        area_id,
+                        admission_id: Some(admission_id),
                     },
                     None => RemoteControlAction::CreateWorkspace {
                         cwd,
                         label: workspace_label,
+                        area_id,
+                        admission_id: Some(admission_id),
                     },
                 };
                 self.push_diagnostic(
@@ -1506,6 +1551,7 @@ impl Runtime {
                     format!("Creating {}", action.kind()),
                 );
                 if let Err(message) = live::spawn_local_control(context, action) {
+                    self.finish_agent_admission(&admission_path, admission_id);
                     self.set_error("tab.create_worker_failed", message, true);
                 }
                 true
@@ -1552,6 +1598,14 @@ impl Runtime {
                 changed
             }
             Event::FocusTab(payload) => {
+                if self.agent_tab_waiting(&payload.tab_id) {
+                    self.set_error(
+                        "agent_layout.display_limit",
+                        "This Agent tab is waiting. Close a tab to make room.",
+                        false,
+                    );
+                    return true;
+                }
                 let Some(workspace_snapshot) = self
                     .snapshot
                     .navigator
@@ -2172,6 +2226,8 @@ impl Runtime {
                 self.start_close_capture(live::CloseCaptureTarget::Pane { pane_id }, tab)
             }
             Event::CheckCloseStatus(payload) => self.check_close_status(&payload.key),
+            Event::RetryAgentClose(payload) => self.retry_agent_close(&payload.key),
+            Event::DismissAgentClose(payload) => self.dismiss_agent_close(&payload.key),
             Event::ReopenClosed => self.reopen_closed(),
             Event::ForkPane(payload) => {
                 let pane_id = payload.pane_id;

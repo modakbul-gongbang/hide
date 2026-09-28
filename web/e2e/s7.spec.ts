@@ -1027,6 +1027,9 @@ test("the tab menu offers only what a view can do, and each cap refuses with its
     await page.goto("about:blank");
     await open(page, stack.daemon);
     await expect(page.locator('[data-view-area-id] [role="tab"][data-view-state="open"]')).toHaveCount(64, { timeout: 30_000 });
+    // Explorer virtualizes this long list: reveal its last rows before clicking one.
+    await page.getByRole("tree", { name: "Checkout files" }).hover();
+    await page.mouse.wheel(0, 2000);
     await explorerRow(page, stack, "f65.txt").click();
     await expect(page.locator("[data-notice]")).toContainText("This Workspace has 64 views open. Close a view to open another.");
     await expect(page.locator('[data-view-area-id] [role="tab"]')).toHaveCount(64);

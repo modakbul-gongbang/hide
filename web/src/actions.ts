@@ -1,3 +1,6 @@
+import { areaFrame } from "./areaFrames";
+import { AGENT_WORDS, agentCommands, agentMenu, type AgentCommand } from "./agentLayout";
+import { findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacentInOrder as adjacentAgentArea, locateDisplay as locateAgentTab, neighbourArea as neighbourAgentArea, resizeTarget as resizeAgentTarget, type Edge as AgentEdge } from "./areaLayout";
 // Every shell command in one place, so a shortcut, a button and a menu run
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
@@ -115,13 +118,16 @@ export function createActions(dispatch: DispatchFn) {
    * exception: their own events (`register_device`, `workspace_pin_set`, …)
    * own them and the core keeps them when they are absent, so an echo of an
    * older snapshot can never undo a registration that landed after it.
+   * Sidebar width is also patch-only: echoing it could undo a completed drag
+   * while its snapshot is still in flight.
    */
   const updateUiState = (patch: Record<string, unknown>) => {
     const state = rest()?.ui_state;
     if (!state) return;
-    const { workspace_registrations: _workspaces, device_registrations: _devices, ...owned } = state;
+    const { workspace_registrations: _workspaces, device_registrations: _devices, sidebar_width: _width, ...owned } = state;
     void _workspaces;
     void _devices;
+    void _width;
     dispatch({ schema_version: 2, kind: "ui_state_update", payload: { ...owned, ...patch } });
   };
 
@@ -724,6 +730,78 @@ export function createActions(dispatch: DispatchFn) {
     }
   };
 
+  const createTab = (areaId?: string) => {
+      if (remoteContext(rest())) {
+        const host = remoteHost("New tab");
+        if (!host) return;
+        const checkout = host.view?.checkout;
+        if (!checkout) return diagnostic("create_tab: the remote device has no workspace open");
+        sendRemote(host.targetId, { action: "create_tab", workspace_id: checkout.workspace_id, checkout_id: checkout.id, cwd: checkout.path, label: checkout.next_tab_label });
+        return;
+      }
+      const here = current();
+      if (!here) return diagnostic("create_tab: no focused checkout");
+      dispatch({
+        schema_version: 2,
+        kind: "create_tab",
+        payload: { workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, label: here.checkout.next_tab_label, ...(areaId ? { area_id: areaId } : {}) },
+      });
+    };
+
+  const closeTab = (tabId: string) => {
+      if (remoteContext(rest())) {
+        const host = remoteHost("Close tab");
+        if (!host) return;
+        const tab = host.view?.checkout.tabs.find((row) => row.id === (tabId ?? host.view?.tab?.id));
+        if (!tab?.id) return diagnostic("close_tab: no visible remote tab");
+        requestClose("tab", tab.id, tab.panes, host.targetId, host.agents);
+        return;
+      }
+      const here = current();
+      const id = tabId ?? here?.tab?.id;
+      if (!here || !id) return diagnostic("close_tab: no visible tab");
+      const tab = here.checkout.tabs.find((row) => row.id === id);
+      requestClose("tab", id, tab?.panes ?? [], null, useShellStore.getState().agents);
+    };
+
+  const agentLayout = (action: { action: string } & Record<string, unknown>) => {
+    const frame = areaFrame("agent");
+    if (!frame) return diagnostic("agent_layout: no Agent areas are drawn");
+    dispatch({ schema_version: 2, kind: "agent_layout", payload: { workspace: frame.workspace, ...action } });
+  };
+  const runAgentCommand = (command: AgentCommand, tabId?: string) => {
+    const frame = areaFrame("agent");
+    if (!frame) return;
+    const id = tabId ?? activeAgentDisplay(frame.layout)?.display.id;
+    const entry = (tabId ? agentMenu(frame, tabId) : agentCommands(frame)).find((row) => row.id === command);
+    if (!entry || entry.unavailable) return;
+    if (command === "new_tab") return createTab(id ? locateAgentTab(frame.layout.root, id)?.area.id : undefined);
+    if (command === "focus_next" || command === "focus_previous") {
+      const area = adjacentAgentArea(frame.layout.root, frame.layout.active_area, command === "focus_next" ? 1 : -1);
+      if (area) agentLayout({ action: "focus_area", area_id: area.id });
+      return;
+    }
+    if (command === "grow" || command === "shrink") {
+      const target = resizeAgentTarget(frame.layout, frame.geometry, command === "grow", AGENT_WORDS);
+      if (!("reason" in target)) agentLayout({ action: "resize", split_id: target.splitId, ratio: target.ratio });
+      return;
+    }
+    if (!id) return;
+    const located = locateAgentTab(frame.layout.root, id);
+    if (!located) return;
+    if (command.startsWith("split_")) agentLayout({ action: "split", tab_id: id, area_id: located.area.id, edge: command.slice(6), request_id: remoteRequestId() });
+    if (command.startsWith("move_")) {
+      const area = neighbourAgentArea(frame.layout.root, located.area.id, command.slice(5) as AgentEdge);
+      if (area) agentLayout({ action: "move", tab_id: id, area_id: area, index: findAgentArea(frame.layout.root, area)?.displays.length ?? 0 });
+    }
+    if (command === "copy_name") {
+      const checkout = remoteContext(rest()) ? remoteView(remoteContext(rest())!.session)?.checkout : current()?.checkout;
+      const label = checkout?.strip.find((row) => row.source_id === id)?.label;
+      if (label) void navigator.clipboard?.writeText(label);
+    }
+    if (command === "close_tab") closeTab(id);
+  };
+
   return {
     dispatch,
     revealAncestors,
@@ -1029,23 +1107,9 @@ export function createActions(dispatch: DispatchFn) {
 
     focusPane,
 
-    createTab() {
-      if (remoteContext(rest())) {
-        const host = remoteHost("New tab");
-        if (!host) return;
-        const checkout = host.view?.checkout;
-        if (!checkout) return diagnostic("create_tab: the remote device has no workspace open");
-        sendRemote(host.targetId, { action: "create_tab", workspace_id: checkout.workspace_id, checkout_id: checkout.id, cwd: checkout.path, label: checkout.next_tab_label });
-        return;
-      }
-      const here = current();
-      if (!here) return diagnostic("create_tab: no focused checkout");
-      dispatch({
-        schema_version: 2,
-        kind: "create_tab",
-        payload: { workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, label: here.checkout.next_tab_label },
-      });
-    },
+    createTab,
+    agentLayout,
+    runAgentCommand,
 
     /** `inPlace`: chosen in the Agent area's own tab strip, beside the side panel, which stays up (issue 170). */
     focusTab(tabId: string, inPlace = false) {
@@ -1107,13 +1171,7 @@ export function createActions(dispatch: DispatchFn) {
         });
         return;
       }
-      const here = current();
-      if (!here) return;
-      dispatch({
-        schema_version: 2,
-        kind: "reorder_tab",
-        payload: { workspace_id: here.checkout.workspace_id, checkout_id: here.checkout.id, tab_id: stripId, to_index: toIndex },
-      });
+      diagnostic("reorder_tab: local tabs are ordered by their Agent area");
     },
 
     closeFocused() {
@@ -1133,21 +1191,7 @@ export function createActions(dispatch: DispatchFn) {
       diagnostic(`close_shortcut: ${target.reason}`);
     },
 
-    closeTab(tabId: string) {
-      if (remoteContext(rest())) {
-        const host = remoteHost("Close tab");
-        if (!host) return;
-        const tab = host.view?.checkout.tabs.find((row) => row.id === (tabId ?? host.view?.tab?.id));
-        if (!tab?.id) return diagnostic("close_tab: no visible remote tab");
-        requestClose("tab", tab.id, tab.panes, host.targetId, host.agents);
-        return;
-      }
-      const here = current();
-      const id = tabId ?? here?.tab?.id;
-      if (!here || !id) return diagnostic("close_tab: no visible tab");
-      const tab = here.checkout.tabs.find((row) => row.id === id);
-      requestClose("tab", id, tab?.panes ?? [], null, useShellStore.getState().agents);
-    },
+    closeTab,
 
     closePane(paneId?: string) {
       const id = paneId ?? useShellStore.getState().focusedPaneId;
@@ -1160,8 +1204,8 @@ export function createActions(dispatch: DispatchFn) {
         return;
       }
       const here = current();
-      if (!here?.tab || !id) return diagnostic("close_pane: no focused pane");
-      const pane = here.tab.panes.find((row) => row.id === id);
+      if (!here || !id) return diagnostic("close_pane: no focused pane");
+      const pane = here.checkout.tabs.flatMap((tab) => tab.panes).find((row) => row.id === id);
       if (!pane) return diagnostic("close_pane: the pane is no longer visible");
       requestClose("pane", id, [pane], null, useShellStore.getState().agents);
     },
@@ -1186,6 +1230,12 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     /** A close whose outcome the core could not read; asks it to check (`check_close_status`). */
+    retryAgentClose(key: string) {
+      dispatch({ schema_version: 2, kind: "retry_agent_close", payload: { key } });
+    },
+    dismissAgentClose(key: string) {
+      dispatch({ schema_version: 2, kind: "dismiss_agent_close", payload: { key } });
+    },
     checkCloseStatus(key: string) {
       dispatch({ schema_version: 2, kind: "check_close_status", payload: { key } });
     },

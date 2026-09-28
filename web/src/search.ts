@@ -1,3 +1,4 @@
+import { agentCommands, type AgentCommand, type AgentFrame } from "./agentLayout";
 // The two palettes' data (PRD B12, B13, D-05): ⌘K searches the snapshot the
 // shell already holds, and ⌘P shows what hided's index ranked. The search
 // entries, the fuzzy score and the grouping are pure functions, so the
@@ -32,7 +33,7 @@ export type SearchEntry = {
   workspaceId?: string;
   checkoutId?: string;
   /** What a command entry changes on the Workspace in front. */
-  command?: { panel: PanelState } | { pinned: boolean } | { tool: Tool; visible: boolean } | { view: ViewCommandId } | { openBeside: true };
+  command?: { panel: PanelState } | { pinned: boolean } | { tool: Tool; visible: boolean } | { agent: AgentCommand } | { view: ViewCommandId } | { openBeside: true };
   /** Why a command cannot run now; the palette shows it and runs nothing. */
   unavailable?: string | null;
 };
@@ -64,7 +65,7 @@ export function fuzzyScore(candidate: string, query: string): number | null {
  * View areas (a split's room is judged on it) and where its tools stand (a
  * narrow panel's closed overlay shows none of them, S7 B12).
  */
-export type WorkspaceOnScreen = { drawn: { geometry: Geometry; sizes: LayoutSizes } | null; placement: ToolsPlacement };
+export type WorkspaceOnScreen = { drawn: { geometry: Geometry; sizes: LayoutSizes } | null; placement: ToolsPlacement; agent?: AgentFrame | null };
 
 /**
  * The Workspace commands ⌘K offers while a Workspace is on screen: the side
@@ -108,6 +109,9 @@ export function workspaceCommands(rest: SnapshotRest | null, screen: WorkspaceOn
     group: COMMANDS_GROUP,
     command: { tool: "changes", visible: shown !== "changes" },
   });
+  if (screen.agent) for (const command of agentCommands(screen.agent)) {
+    entries.push({ id: `command:agent:${command.id}`, title: command.label, subtitle: "Agent areas", kind: "command", group: COMMANDS_GROUP, command: { agent: command.id }, unavailable: command.unavailable });
+  }
   if (!view.layout) return entries;
   for (const command of viewCommands(view.layout, screen.drawn)) {
     entries.push({

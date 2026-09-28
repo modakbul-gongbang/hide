@@ -686,7 +686,9 @@ impl Runtime {
                     phase: operation.phase.clone(),
                     checking: self.close_status_checks_in_flight.contains(key),
                     message: operation.message.clone(),
-                    retryable: operation.retryable,
+                    retryable: operation.retryable
+                        && (!matches!(operation.phase.as_str(), "failed" | "refused")
+                            || operation.request.context.replacement_shell),
                 },
             )
             .collect();
@@ -826,6 +828,17 @@ impl Runtime {
                         tab_id: tab_id.clone(),
                         tab_label: tab.label.clone().unwrap_or_else(|| "Tab".into()),
                         tab_index: tab_order.iter().position(|id| id == tab_id).unwrap_or(0),
+                        agent_area: self
+                            .agent_layout_of(&(workspace.device_id.clone(), checkout.path.clone()))
+                            .and_then(|layout| {
+                                layout.tree.areas().into_iter().find_map(|area| {
+                                    area.displays
+                                        .iter()
+                                        .position(|item| &item.id == tab_id)
+                                        .map(|index| (area.id.clone(), index))
+                                })
+                            }),
+                        replacement_shell: self.primary_needs_shell(session_workspace_id, tab_id),
                     })
             })
     }
@@ -1032,6 +1045,12 @@ impl Runtime {
         operation.retryable = true;
         operation.deadline_at_unix_ms = None;
         let operation = operation.clone();
+        if !operation.replacement_effect_started {
+            self.finish_agent_effect(
+                &operation.request.context.checkout_path,
+                &format!("close:{key}"),
+            );
+        }
         self.clear_close_guards(&operation);
         self.restore_close_selection(operation.selection_restore.as_ref());
         self.set_reopen_notices(vec![live::ReopenNotice {
@@ -1040,7 +1059,7 @@ impl Runtime {
                 live::CloseCaptureTarget::Pane { .. }
             )
             .then_some(operation.target_id.clone()),
-            message: operation.message.clone().unwrap_or(message),
+            message: operation.message.clone().unwrap_or_else(|| message.clone()),
         }]);
         self.push_diagnostic(
             "recent_closed.close_canceled",
@@ -1129,6 +1148,13 @@ impl Runtime {
         tab: TabSnapshot,
     ) -> bool {
         let target_id = close_target_id(&target).to_owned();
+        if self.close_operations.len() >= crate::recent_closed::RECENT_CLOSED_LIMIT {
+            self.set_reopen_notices(vec![live::ReopenNotice {
+                pane_id: None,
+                message: "Resolve or dismiss an earlier close before closing another item".into(),
+            }]);
+            return true;
+        }
         let Some(scope_id) = tab.id.clone() else {
             self.set_reopen_notices(vec![live::ReopenNotice {
                 pane_id: matches!(&target, live::CloseCaptureTarget::Pane { .. })
@@ -1155,7 +1181,7 @@ impl Runtime {
             self.sync_recent_closed_snapshot();
             return false;
         }
-        let Some(context) = self.close_context(&tab) else {
+        let Some(mut context) = self.close_context(&tab) else {
             self.set_reopen_notices(vec![live::ReopenNotice {
                 pane_id: matches!(&target, live::CloseCaptureTarget::Pane { .. })
                     .then_some(target_id.clone()),
@@ -1165,6 +1191,11 @@ impl Runtime {
             }]);
             return true;
         };
+        context.replacement_shell &=
+            matches!(target, live::CloseCaptureTarget::Tab { .. }) || tab.panes.len() == 1;
+        if context.replacement_shell && !self.admit_agent_tab(&context.checkout_path) {
+            return true;
+        }
         let Some(live_context) = self.live.as_ref().cloned() else {
             self.set_reopen_notices(vec![live::ReopenNotice {
                 pane_id: matches!(&target, live::CloseCaptureTarget::Pane { .. })
@@ -1180,6 +1211,14 @@ impl Runtime {
             panes: self.closed_panes(&tab),
             target,
         };
+        if request.context.replacement_shell
+            && !self.reserve_agent_effect(
+                &request.context.checkout_path,
+                &format!("close:{}", request.key),
+            )
+        {
+            return true;
+        }
         let pane_ids = Self::close_operation_pane_ids(&request.target, &request.panes);
         let mut scope_pane_ids = tab
             .panes
@@ -1220,6 +1259,9 @@ impl Runtime {
         self.close_operations.insert(
             request.key.clone(),
             PendingClose {
+                replacement_effect_started: false,
+                replacement_tab_id: None,
+                allow_replacement_create: true,
                 target_id: target_id.clone(),
                 scope_id,
                 scope_pane_ids,
@@ -1356,12 +1398,20 @@ impl Runtime {
         };
         operation.phase = "failed".to_owned();
         operation.stage = "capture".to_owned();
-        operation.message = Some(format!(
-            "Restore information was not prepared; the item was not closed: {message}"
-        ));
+        operation.message = Some(if operation.request.context.replacement_shell {
+            "The close could not be prepared. Nothing was closed; retry when the connection is ready.".to_owned()
+        } else {
+            format!("Restore information was not prepared; the item was not closed: {message}")
+        });
         operation.retryable = true;
         operation.deadline_at_unix_ms = None;
         let operation = operation.clone();
+        if !operation.replacement_effect_started {
+            self.finish_agent_effect(
+                &operation.request.context.checkout_path,
+                &format!("close:{key}"),
+            );
+        }
         self.clear_close_guards(&operation);
         self.set_reopen_notices(vec![live::ReopenNotice {
             pane_id: matches!(
@@ -1369,15 +1419,11 @@ impl Runtime {
                 live::CloseCaptureTarget::Pane { .. }
             )
             .then_some(operation.target_id.clone()),
-            message: operation.message.clone().unwrap_or(message),
+            message: operation.message.clone().unwrap_or_else(|| message.clone()),
         }]);
         self.push_diagnostic(
             "recent_closed.capture_failed",
-            format!(
-                "{}: {}",
-                operation.request.key,
-                operation.message.as_deref().unwrap_or("unknown failure")
-            ),
+            format!("{}: {}", operation.request.key, message),
         );
         self.promote_close_reservations();
         self.sync_recent_closed_snapshot();
@@ -1396,6 +1442,9 @@ impl Runtime {
         self.close_operations.insert(
             request.key.clone(),
             PendingClose {
+                replacement_effect_started: false,
+                replacement_tab_id: None,
+                allow_replacement_create: true,
                 request: request.clone(),
                 target_id,
                 scope_id: request.context.tab_id.clone(),
@@ -1462,13 +1511,20 @@ impl Runtime {
                 let Some(operation) = self.close_operations.get_mut(&request.key) else {
                     return (false, Vec::new());
                 };
+                operation.replacement_effect_started |= request.context.replacement_shell;
                 operation.item = outcome.item;
                 operation.phase = "transmitting".to_owned();
                 operation.stage = "close_request".to_owned();
                 operation.message = None;
                 operation.retryable = false;
-                operation.deadline_at_unix_ms =
-                    Some(unix_milliseconds().saturating_add(CLOSE_STAGE_TIMEOUT_MS));
+                operation.deadline_at_unix_ms = Some(unix_milliseconds().saturating_add(
+                    if request.context.replacement_shell {
+                        3 * CLOSE_STAGE_TIMEOUT_MS
+                    } else {
+                        CLOSE_STAGE_TIMEOUT_MS
+                    },
+                ));
+                let allow_replacement_create = operation.allow_replacement_create;
                 self.push_diagnostic(
                     "recent_closed.reserved",
                     format!(
@@ -1477,9 +1533,14 @@ impl Runtime {
                     ),
                 );
                 effects.push(live::CloseEffectRequest {
+                    allow_replacement_create,
                     key: request.key.clone(),
                     connection_generation: request.connection_generation,
                     target: request.target.clone(),
+                    replacement: (request.context.replacement_shell
+                        && (matches!(request.target, live::CloseCaptureTarget::Tab { .. })
+                            || request.panes.len() == 1))
+                        .then(|| request.context.clone()),
                 });
             }
             Err(message) => self.fail_close_operation(&request.key, message),
@@ -1516,6 +1577,8 @@ impl Runtime {
                     tab_id,
                     tab_label: request.key.clone(),
                     tab_index: 0,
+                    agent_area: None,
+                    replacement_shell: false,
                 },
                 panes: Vec::new(),
                 target: request.target.clone(),
@@ -1576,9 +1639,20 @@ impl Runtime {
             Err(hide_herdr_client::ApiError::Remote { code, message }) => {
                 if let Some(operation) = self.close_operations.get_mut(&request.key) {
                     operation.phase = "refused".to_owned();
-                    operation.stage = "close_request".to_owned();
-                    operation.message = Some(format!("The close was refused: {code}: {message}"));
-                    operation.retryable = true;
+                    operation.stage = if code == "replacement_failed" {
+                        "replacement"
+                    } else {
+                        "close_request"
+                    }
+                    .to_owned();
+                    operation.message = Some(if !operation.request.context.replacement_shell {
+                        "The item was not closed. Check its current state before closing it again."
+                    } else if code == "replacement_failed" {
+                        "The replacement shell is unconfirmed; its place stays reserved. Nothing was closed. Retry when the connection is ready."
+                    } else {
+                        "The item was not closed. The replacement shell remains available; retry the close."
+                    }.to_owned());
+                    operation.retryable = operation.request.context.replacement_shell;
                     operation.deadline_at_unix_ms = None;
                 }
                 let operation = self.close_operations.get(&request.key).cloned();
@@ -1591,7 +1665,7 @@ impl Runtime {
                         .then_some(close_target_id(&request.target).to_owned()),
                     message: operation
                         .and_then(|operation| operation.message)
-                        .unwrap_or_else(|| format!("The item was not closed: {code}: {message}")),
+                        .unwrap_or_else(|| "The item was not closed. Check its current state before closing it again.".to_owned()),
                 }]);
                 self.push_diagnostic(
                     "recent_closed.close_failed",
@@ -1639,6 +1713,11 @@ impl Runtime {
                 continue;
             };
             if !matches!(operation.phase.as_str(), "completed" | "failed" | "refused") {
+                break;
+            }
+            if operation.request.context.replacement_shell
+                && matches!(operation.phase.as_str(), "failed" | "refused")
+            {
                 break;
             }
             self.close_capture_order.pop_front();
@@ -2173,6 +2252,26 @@ impl Runtime {
         {
             return true;
         }
+        let admission = if !tab_exists && self.reopen_device() == workspace::LOCAL_DEVICE_ID {
+            match &item {
+                ClosedItem::Pane { context, .. } | ClosedItem::Tab { context, .. } => Some((
+                    context.checkout_path.clone(),
+                    format!("reopen:{}", item.key()),
+                )),
+                ClosedItem::File { .. } => None,
+            }
+        } else {
+            None
+        };
+        let prior_admission = admission
+            .as_ref()
+            .is_some_and(|(path, claim)| self.has_agent_effect(path, claim));
+        if admission
+            .as_ref()
+            .is_some_and(|(path, claim)| !self.reserve_agent_effect(path, claim))
+        {
+            return true;
+        }
         let key = item.key().to_owned();
         self.reopen_in_flight = Some(key.clone());
         self.set_reopen_notices(vec![live::ReopenNotice {
@@ -2220,6 +2319,9 @@ impl Runtime {
                 .and_then(|context| live::spawn_reopen(context, request))
         };
         if let Err(message) = spawned {
+            if !prior_admission && let Some((path, claim)) = admission {
+                self.finish_agent_effect(&path, &claim);
+            }
             self.reopen_in_flight = None;
             self.set_reopen_notices(vec![live::ReopenNotice {
                 pane_id: None,
@@ -2242,9 +2344,20 @@ impl Runtime {
         self.reopen_in_flight = None;
         match result {
             Err(message) => {
+                let reserved = match &request.item {
+                    ClosedItem::Pane { context, .. } | ClosedItem::Tab { context, .. } => {
+                        self.has_agent_effect(&context.checkout_path, &format!("reopen:{key}"))
+                    }
+                    ClosedItem::File { .. } => false,
+                };
+                let reservation = if reserved {
+                    " Its tab place stays reserved."
+                } else {
+                    ""
+                };
                 self.set_reopen_notices(vec![live::ReopenNotice {
                     pane_id: request.fallback_pane_id.clone(),
-                    message: format!("Reopen failed; retry is available: {message}"),
+                    message: format!("Reopen failed; retry is available: {message}.{reservation}"),
                 }]);
             }
             Ok(live::FileReopenResultOrHerdr::File(file)) => {
@@ -2313,10 +2426,35 @@ impl Runtime {
                 }
             }
             Ok(live::FileReopenResultOrHerdr::Herdr(outcome)) => {
+                if let Some(tab_id) = outcome.tab_id.as_ref() {
+                    let context = match &request.item {
+                        ClosedItem::Pane { context, .. } | ClosedItem::Tab { context, .. } => {
+                            Some(context)
+                        }
+                        _ => None,
+                    };
+                    if let Some(context) = context {
+                        match self.queue_restored_agent_tab(context, tab_id) {
+                            Ok(()) => self.finish_agent_effect(
+                                &context.checkout_path,
+                                &format!("reopen:{key}"),
+                            ),
+                            Err(message) => self
+                                .push_diagnostic("agent_layout.reopen_placement_failed", message),
+                        }
+                    }
+                }
                 if outcome.consumed {
                     self.consume_recent_closed(key);
                 }
-                if let Some(pane_id) = outcome.focused_pane_id {
+                let can_show = match (&request.item, outcome.tab_id.as_deref()) {
+                    (
+                        ClosedItem::Pane { context, .. } | ClosedItem::Tab { context, .. },
+                        Some(id),
+                    ) => self.agent_can_show_created(&context.checkout_path, id),
+                    _ => true,
+                };
+                if can_show && let Some(pane_id) = outcome.focused_pane_id {
                     self.snapshot.terminal.pane_id = Some(pane_id.clone());
                     self.snapshot.focused.surface = Surface::Terminal;
                     self.snapshot.focused.pane_id = Some(pane_id.clone());
