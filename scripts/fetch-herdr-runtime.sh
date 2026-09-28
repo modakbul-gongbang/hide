@@ -9,7 +9,7 @@
 # digest no longer matches the pin is discarded rather than trusted.
 #
 # `--platform linux-x86_64` is the same release's Linux asset, whose digest the
-# manifest records under `linux_x86_64`; only the Linux CI lanes ask for it.
+# manifest records under `linux_x86_64`; only the Linux CI checks lane asks for it.
 set -euo pipefail
 
 export LC_ALL=en_US.UTF-8

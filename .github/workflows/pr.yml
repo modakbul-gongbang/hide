@@ -7,10 +7,14 @@
 # Runner placement is a capacity decision. This organization's plan runs five
 # macOS jobs at a time across every repository, and on 2026-09-28 one run held
 # all five for 26 minutes, so a second pull request waited up to 70 minutes
-# before its lanes started. Only what needs macOS runs there: the Rust suite,
-# whose pane attestation, process ownership and Trash paths are macOS system
-# calls, and the Electron end-to-end. Everything else runs on Linux, where the
-# web end-to-end is split three ways and twenty jobs run at a time.
+# before its lanes started. The unit suites and the invariant checks run on
+# Linux. The Rust suite, the web end-to-end and the Electron end-to-end stay on
+# macOS, the platform hide ships on: a Linux web e2e was tried on 2026-09-29
+# and 22 of 87 tests failed on Linux-only behaviour (the daemon's terminal
+# control socket broke its pipe, headless Chromium read an empty clipboard,
+# and a visible scrollbar moved a menu by 20 px). The web end-to-end is split
+# into three shards, so no macOS job holds a slot for more than about ten
+# minutes.
 name: verify
 
 on:
@@ -77,7 +81,8 @@ jobs:
       - name: Fetch the pinned Herdr runtime
         id: herdr
         # The manifest is the pin; the script verifies the download against
-        # the manifest's digest before the binary answers anything.
+        # the manifest's digest before the binary answers anything. This lane
+        # is the one place the release's Linux asset is run.
         run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64)" >> "$GITHUB_OUTPUT"
       - name: Compare the Herdr API schema with the contract
         run: zsh scripts/check-herdr-contract.sh --herdr-bin "${{ steps.herdr.outputs.bin }}" --schema-only
@@ -105,7 +110,7 @@ jobs:
 
   web-e2e:
     name: web e2e ${{ matrix.shard }}/3
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     strategy:
       fail-fast: false
       matrix:
@@ -125,10 +130,6 @@ jobs:
           workspaces: ". -> target"
           shared-key: web-e2e
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install zsh
-        # Herdr starts each pane's shell from SHELL, and the fixture names zsh
-        # so its private .zshrc sets the prompt the tests wait for.
-        run: sudo apt-get install -y --no-install-recommends zsh
       - name: Build hided for Playwright
         run: bash -lc 'source scripts/toolchain-env.sh && cargo build --locked -p hided'
       - name: Install web dependencies
@@ -136,12 +137,12 @@ jobs:
       - name: Build the web shell
         run: pnpm --dir web build
       - name: Install Playwright Chromium
-        run: pnpm --dir web exec playwright install --with-deps chromium
+        run: pnpm --dir web exec playwright install chromium
       - name: Fetch the pinned Herdr runtime
         id: herdr
         # The click-flow e2e attaches hided to an isolated real Herdr; the
         # fixture refuses any binary whose version is not the pin.
-        run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64)" >> "$GITHUB_OUTPUT"
+        run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh)" >> "$GITHUB_OUTPUT"
       - name: End-to-end
         # Each spec starts its own Herdr, hided and Chromium, so one worker per
         # runner keeps timing assertions honest; the shards are the parallelism.

@@ -96,9 +96,9 @@ function isolatedEnv(root: string, socket: string): NodeJS.ProcessEnv {
   // name out of screenshots and is what the fixture waits for.
   fs.writeFileSync(path.join(root, "home", ".zshrc"), "PS1='fixture %# '\n");
   // Ubuntu's /etc/zsh/zshrc runs compinit before this HOME's .zshrc, and on a
-  // CI runner compinit stops at "insecure directories, continue [y] or abort
-  // [n]?", so the prompt never comes. That file skips compinit when this
-  // variable is set, and .zshenv is read before it.
+  // Linux runner compinit stops at "insecure directories, continue [y] or
+  // abort [n]?", so the prompt never comes. That file skips compinit when this
+  // variable is set, and .zshenv is read before it. macOS has no such file.
   fs.writeFileSync(path.join(root, "home", ".zshenv"), "skip_global_compinit=1\n");
   return {
     ...env,
