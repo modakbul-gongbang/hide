@@ -45,6 +45,15 @@ describe("the shell drag mark", () => {
     expect(shellDragging()).toBe(false);
   });
 
+  it("shows the latest drag still held when an earlier one ends", () => {
+    const first = holdShellDrag("col-resize");
+    const second = holdShellDrag("row-resize");
+    first();
+    expect(root.get("data-view-drag")).toBe("row-resize");
+    second();
+    expect(shellDragging()).toBe(false);
+  });
+
   it("counts a drag in the Agent column", () => {
     const release = holdShellDrag("move", "data-agent-drag");
     expect(root.has("data-view-drag")).toBe(false);

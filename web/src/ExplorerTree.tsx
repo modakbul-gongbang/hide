@@ -505,12 +505,21 @@ const dragPath = { current: null as string | null };
 /**
  * Starts carrying `path` from its row. The drag marks the root while it runs,
  * so a page it crosses gives way to its still and never takes the drop. The
- * mark goes at the drag's end, heard on the row itself: a row the list drew
- * away mid-drag still gets its `dragend`, which never reaches the window.
+ * mark and the carried path go at the drag's end, heard on the row itself: a
+ * row the list drew away mid-drag still gets its `dragend`, which never
+ * reaches the window or React.
  */
 function beginDrag(path: string, source: HTMLElement): void {
   dragPath.current = path;
-  source.addEventListener("dragend", holdShellDrag("file"), { once: true });
+  const release = holdShellDrag("file");
+  source.addEventListener(
+    "dragend",
+    () => {
+      dragPath.current = null;
+      release();
+    },
+    { once: true },
+  );
 }
 
 function DraftRowView({
@@ -695,10 +704,7 @@ function ExplorerRowView({
         dragPath.current = null;
         onDrop(from || null);
       }}
-      onDragEnd={() => {
-        dragPath.current = null;
-        setOver(false);
-      }}
+      onDragEnd={() => setOver(false)}
     >
       <span className="w-[var(--size-lineage-chevron)] shrink-0 text-center text-caption text-muted-foreground" aria-hidden="true">
         {disclosureMark(row)}
