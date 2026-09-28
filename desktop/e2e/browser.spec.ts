@@ -6,7 +6,7 @@
 // relaunch, and is a quiet notice in a plain browser tab. Everything runs on
 // a private Herdr server, hided and Electron profile (see `fixture.ts`).
 
-import { chromium, expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { chromium, expect, type ElectronApplication, type Page } from "@playwright/test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -14,7 +14,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
-import { hostLog, isolate, launch, relaunch, screenshot, shellPage, type Isolated } from "./fixture";
+import { hostLog, isolate, launch, NEEDS_FOCUS, relaunch, screenshot, shellPage, test, type Isolated } from "./fixture";
 
 test.describe.configure({ timeout: 240_000 });
 test.use({ actionTimeout: 15_000 });
@@ -106,13 +106,6 @@ async function slotBounds(page: Page, displayId: string): Promise<View["bounds"]
   return { x, y, width: Math.round(box.x + box.width) - x, height: Math.round(box.y + box.height) - y };
 }
 
-/**
- * The test window sits behind whatever the operator is using, and Chromium
- * stops painting an occluded window, so a capture by window id would show a
- * stale frame. The window is never focused for a capture; it keeps painting.
- */
-const PAINT_WHILE_OCCLUDED = ["--disable-backgrounding-occluded-windows"];
-
 /** The window this run draws in: a CI runner's whole screen width, and a height its work area holds. */
 const WINDOW = { width: 1024, height: 640 };
 
@@ -178,7 +171,7 @@ async function displayIdOf(page: Page, text: string): Promise<string> {
 test("browser: a page opens from an agent's pane, follows its area, moves without loading again, freezes under the palette and ends with its display", async () => {
   const report = path.join(herdr.root, "fixture", "리포트 1.html");
   fs.writeFileSync(report, '<!doctype html><meta charset="utf-8"><title>Local report</title><h1>리포트</h1>');
-  ({ app } = await launch(run.env, { switches: PAINT_WHILE_OCCLUDED }));
+  ({ app } = await launch(run.env));
   // The window is the size this run needs, whatever the machine's screen:
   // a CI runner's screen is 1024 points wide.
   const bounds = await app.evaluate(({ BrowserWindow, screen }, size) => {
@@ -365,7 +358,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
 
   // A relaunch brings the pages back at the addresses they last showed.
   await app.close();
-  app = await relaunch(run.env, { switches: PAINT_WHILE_OCCLUDED });
+  app = await relaunch(run.env);
   const again = await shellPage(app);
   await enterWorkspace(again, "fixture");
   await expect(tab(again, "Page A")).toBeVisible({ timeout: 20_000 });
@@ -390,7 +383,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
 });
 
 test("browser: waiting for a hidden page does not take the operator's keyboard target", async () => {
-  ({ app } = await launch(run.env, { switches: PAINT_WHILE_OCCLUDED }));
+  ({ app } = await launch(run.env));
   const page = await app.firstWindow();
   await enterWorkspace(page, "fixture");
   const focused = await page.locator('[data-pane-view][data-focused="true"]').getAttribute("data-pane-view");
@@ -404,7 +397,7 @@ test("browser: waiting for a hidden page does not take the operator's keyboard t
 });
 
 test("new-tab: empty page creates no native renderer and address loads in the same display", async () => {
-  ({ app } = await launch(run.env, { switches: PAINT_WHILE_OCCLUDED }));
+  ({ app } = await launch(run.env));
   expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1024, 640));
   const page = await app.firstWindow();
@@ -462,8 +455,8 @@ function pinch(url: string): Promise<number> {
   }, url);
 }
 
-test("zoom: the text-size commands zoom a focused page in Chrome's steps and a pinch zooms it", async () => {
-  ({ app } = await launch(run.env, { switches: PAINT_WHILE_OCCLUDED }));
+test("zoom: the text-size commands zoom a focused page in Chrome's steps and a pinch zooms it", { tag: NEEDS_FOCUS }, async () => {
+  ({ app } = await launch(run.env));
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1024, 640));
   const page = await app.firstWindow();
   const sent = countSent(page);

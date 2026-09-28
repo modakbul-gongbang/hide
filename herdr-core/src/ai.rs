@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use hide_ai::{
-    AiBackend, AiRouter, AiSettings, Availability, ModelCatalog, NoopLogSink, ProviderId,
+    AiBackend, AiLogEvent, AiLogSink, AiRouter, AiSettings, Availability, ModelCatalog, ProviderId,
 };
 
 use crate::model::{BackgroundAiProviderSnapshot, BackgroundAiSnapshot};
@@ -78,7 +78,7 @@ impl AiReader {
                         let router = Arc::new(AiRouter::new(
                             backends(&request.models),
                             AiSettings::default().router_config(),
-                            Arc::new(NoopLogSink),
+                            Arc::new(DiagnosticLogSink),
                         ));
                         *guard = Some((request.models.clone(), Arc::clone(&router)));
                         router
@@ -101,6 +101,31 @@ impl Default for AiReader {
     }
 }
 
+/// Writes the provider boundary's events to the core's diagnostic log, so a
+/// fallback, an over-budget restart or a swept `CODEX_HOME` is visible from
+/// outside the process. `emit` only queues, so logging from a provider thread
+/// never waits on the file.
+struct DiagnosticLogSink;
+
+impl AiLogSink for DiagnosticLogSink {
+    fn log(&self, event: AiLogEvent) {
+        crate::diagnostic!(diagnostic_record(&event));
+    }
+}
+
+/// The event as a diagnostic record: its name under the log's `kind` key,
+/// `component` `ai`, the other fields as they serialize.
+fn diagnostic_record(event: &AiLogEvent) -> serde_json::Value {
+    let mut record = serde_json::to_value(event)
+        .unwrap_or_else(|error| serde_json::json!({ "serialize_error": error.to_string() }));
+    if let Some(fields) = record.as_object_mut() {
+        fields.remove("event");
+        fields.insert("kind".to_owned(), event.event.into());
+        fields.insert("component".to_owned(), "ai".into());
+    }
+    record
+}
+
 fn backends(models: &BTreeMap<ProviderId, String>) -> Vec<Arc<dyn AiBackend>> {
     let model_for = |provider: ProviderId| {
         models
@@ -114,7 +139,7 @@ fn backends(models: &BTreeMap<ProviderId, String>) -> Vec<Arc<dyn AiBackend>> {
                 model: model_for(ProviderId::Codex),
                 ..hide_ai::CodexConfig::default()
             },
-            Arc::new(NoopLogSink),
+            Arc::new(DiagnosticLogSink),
         )),
         Arc::new(hide_ai::ClaudeCliBackend::new(hide_ai::ClaudeConfig {
             model: model_for(ProviderId::Claude),
@@ -128,7 +153,11 @@ fn backends(models: &BTreeMap<ProviderId, String>) -> Vec<Arc<dyn AiBackend>> {
 /// shared provider selection, process, retry, cancellation, and budget caps.
 pub(crate) fn memory_router(settings: &AiSettings) -> AiRouter {
     let config = memory_router_config(settings);
-    AiRouter::new(backends(&settings.models), config, Arc::new(NoopLogSink))
+    AiRouter::new(
+        backends(&settings.models),
+        config,
+        Arc::new(DiagnosticLogSink),
+    )
 }
 
 fn memory_router_config(settings: &AiSettings) -> hide_ai::RouterConfig {
@@ -305,6 +334,22 @@ mod tests {
         assert_eq!(branch_slug("한국어만"), "");
         let long = branch_slug(&"word ".repeat(30));
         assert!(long.len() <= WORKTREE_SLUG_LIMIT && !long.ends_with('-'));
+    }
+
+    #[test]
+    fn an_ai_event_reaches_the_diagnostic_log_as_a_kind_record_without_absent_fields() {
+        let mut event = AiLogEvent::new("ai.codex_home.swept");
+        event.provider = Some(ProviderId::Codex);
+        event.detail = Some("removed=2;bytes=10".to_owned());
+        assert_eq!(
+            diagnostic_record(&event),
+            serde_json::json!({
+                "kind": "ai.codex_home.swept",
+                "component": "ai",
+                "provider": "codex",
+                "detail": "removed=2;bytes=10",
+            })
+        );
     }
 
     #[test]

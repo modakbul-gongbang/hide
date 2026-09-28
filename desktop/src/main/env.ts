@@ -4,9 +4,9 @@
 //
 // The daemon's own keys (HIDE_STATE_DIR, HERDR_SOCKET_PATH, ...) are not
 // read here: the `hide` CLI inherits this process's environment and
-// `hided/src/env.rs` owns them. HOME and HERDR_BIN_PATH are read by both:
-// the host reads HERDR_BIN_PATH only to know whether it may name the Herdr
-// it bundles.
+// `hided/src/env.rs` owns them. HOME, HERDR_BIN_PATH and HERDR_PANE_ID are
+// read by both: the host reads the two Herdr keys only to know whether it
+// may name the Herdr it bundles (`herdr.ts`).
 
 import os from "node:os";
 import path from "node:path";
@@ -39,7 +39,14 @@ export const ENV_REGISTRY: readonly EnvKey[] = [
     requirement: "optional",
     shape: "absolute path of the herdr binary",
     fallback: "a packaged app passes its own Contents/Resources/herdr to every `hide` child; unpackaged, nothing is added and hided resolves herdr from PATH",
-    note: "Names the Herdr a daemon this host starts attaches pane terminals with; when set it is passed through unchanged, so an isolated e2e or a development server keeps its own binary",
+    note: "Names the Herdr a daemon this host starts attaches pane terminals with; set without HERDR_PANE_ID it is an override passed through unchanged, so an isolated e2e or a development server keeps its own binary",
+  },
+  {
+    key: "HERDR_PANE_ID",
+    requirement: "optional",
+    shape: "any non-empty value; only its presence is read",
+    fallback: "absent: an inherited HERDR_BIN_PATH is an explicit override",
+    note: "Herdr sets it in every pane beside its own HERDR_BIN_PATH, so a packaged app opened from a pane replaces that HERDR_BIN_PATH with its bundled herdr instead of inheriting a path that dies with the bundle that started the server",
   },
   {
     key: "SHELL",
@@ -68,6 +75,7 @@ export type DesktopEnv = {
   cliPath: string | null;
   userDataDir: string | null;
   herdrBinPath: string | null;
+  herdrPaneId: string | null;
   shell: string;
   home: string;
   path: string;
@@ -93,6 +101,7 @@ export function loadEnv(source: Record<string, string | undefined>): DesktopEnv 
     cliPath: absolute("HIDE_CLI_PATH"),
     userDataDir: absolute("HIDE_DESKTOP_USER_DATA_DIR"),
     herdrBinPath: absolute("HERDR_BIN_PATH"),
+    herdrPaneId: source.HERDR_PANE_ID || null,
     shell: absolute("SHELL") ?? "/bin/zsh",
     home: absolute("HOME") ?? os.userInfo().homedir,
     path: source.PATH ?? "",

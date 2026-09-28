@@ -4,7 +4,7 @@
 // HIDE_E2E_SSH_PID plus HIDE_E2E_SSH_CONFIG enable the stalled-handshake
 // check only for an identified, test-owned sshd listener.
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
@@ -17,7 +17,7 @@ import type { Duplex } from "node:stream";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
-import { HIDE_CLI, hostLog, isolate, launch, type Isolated } from "./fixture";
+import { HIDE_CLI, hostLog, isolate, launch, test, type Isolated } from "./fixture";
 
 const HOOK_CLI = path.join(path.dirname(HIDE_CLI), "hide-agent-hooks");
 

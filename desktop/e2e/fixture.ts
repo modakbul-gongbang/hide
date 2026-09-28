@@ -3,12 +3,13 @@
 // refused a launch unless HIDE_STATE_DIR, HOME, HERDR_SOCKET_PATH and its
 // own userData all sit under this run's temporary directory.
 
-import { _electron as electron, expect, type ElectronApplication, type Page } from "@playwright/test";
-import { spawnSync } from "node:child_process";
+import { _electron as electron, test as base, expect, type ElectronApplication, type Page } from "@playwright/test";
+import { spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { HerdrFixture } from "../../web/e2e/herdr-fixture";
+import { SHOW_INACTIVE_SWITCH } from "../src/main/launchSwitches";
 
 export const DESKTOP_DIR = path.resolve(__dirname, "..");
 export const REPO = path.resolve(DESKTOP_DIR, "..");
@@ -72,15 +73,77 @@ function assertIsolated(env: Record<string, string>): void {
 }
 
 /**
- * `switches` are Chromium command-line switches for this launch only;
- * `appDir` is the app folder to run, the desktop package unless a test copies it.
+ * Every launch runs beside the operator's own work (issue 232): the host shows
+ * its window behind the operator's without activating the app, so a run never
+ * takes the screen, the keyboard or the frontmost app, and the covered window
+ * keeps painting, so a capture by window id is current.
  */
+const BACKGROUND_SWITCHES = [`--${SHOW_INACTIVE_SWITCH}`, "--disable-backgrounding-occluded-windows"];
+
+/**
+ * The tag of a test that needs the key window or native input (a page
+ * holding the keyboard, a pinch, a native drag). Such a test brings its
+ * window to the front itself, so it takes the keyboard while it runs;
+ * `--grep-invert @needs-focus` leaves it out.
+ */
+export const NEEDS_FOCUS = "@needs-focus";
+
+const FOCUS_GUARD = path.join(__dirname, "focus-guard.cjs");
+
+/** The running test's report folder and the apps it launched; null outside a test from this module's `test`. */
+let focusReports: { dir: string; apps: { app: ElectronApplication; child: ChildProcess }[] } | null = null;
+
+/**
+ * The desktop e2e `test`: after each test not tagged `NEEDS_FOCUS`, any app
+ * it launched that became active or gave a window the keyboard fails it, so
+ * "an e2e app never comes to the front" is checked on every run, CI included.
+ * It sees only this app; other programs a spec could open (a browser, Finder)
+ * are stubbed by the specs that reach them. A spec must take `test` from
+ * here; `launch` refuses otherwise.
+ */
+export const test = base.extend<{ focusGuard: void }>({
+  focusGuard: [
+    // eslint-disable-next-line no-empty-pattern -- Playwright requires the fixtures argument to be destructured.
+    async ({}, use, testInfo) => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-focus-"));
+      focusReports = { dir, apps: [] };
+      try {
+        await use();
+        // A test that timed out skips its own cleanup; an app it left running is closed here, so
+        // none outlives its report folder. The guard appends synchronously, so every report is on disk.
+        for (const { app, child } of focusReports.apps) {
+          if (child.exitCode === null && child.signalCode === null) await app.close().catch(() => undefined);
+        }
+        const reports = fs.readdirSync(dir).flatMap((file) => fs.readFileSync(path.join(dir, file), "utf8").split("\n").filter(Boolean));
+        if (!testInfo.tags.includes(NEEDS_FOCUS)) {
+          expect(reports, `the app came to the front in a test not tagged ${NEEDS_FOCUS}`).toEqual([]);
+        }
+      } finally {
+        focusReports = null;
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    },
+    { auto: true },
+  ],
+});
+
+/** Starts the app with the focus guard preloaded, reporting into the running test's folder. */
+async function start(appDir: string, env: Record<string, string>): Promise<ElectronApplication> {
+  assertIsolated(env);
+  if (!focusReports) throw new Error("launch the desktop app from a test imported from desktop/e2e/fixture.ts, so its focus guard runs");
+  const report = path.join(focusReports.dir, `launch-${focusReports.apps.length + 1}.jsonl`);
+  const app = await electron.launch({ args: ["-r", FOCUS_GUARD, appDir, ...BACKGROUND_SWITCHES, `--hide-e2e-focus-report=${report}`], cwd: appDir, env });
+  // Taken now: `app.process()` throws once the app is closed.
+  focusReports.apps.push({ app, child: app.process() });
+  return app;
+}
+
+/** `appDir` is the app folder to run, the desktop package unless a test copies it. */
 export async function launch(
   env: Record<string, string>,
-  { switches = [], appDir = DESKTOP_DIR }: { switches?: string[]; appDir?: string } = {},
+  { appDir = DESKTOP_DIR }: { appDir?: string } = {},
 ): Promise<{ app: ElectronApplication; page: Page }> {
-  assertIsolated(env);
-  const app = await electron.launch({ args: [appDir, ...switches], cwd: appDir, env });
+  const app = await start(appDir, env);
   const page = await app.firstWindow();
   return { app, page };
 }
@@ -94,9 +157,8 @@ export async function launch(
  * (checked by reading the window through the main process when Playwright's
  * page did not). The main process sees the window as the operator does.
  */
-export async function relaunch(env: Record<string, string>, { appDir = DESKTOP_DIR, switches = [] }: { appDir?: string; switches?: string[] } = {}): Promise<ElectronApplication> {
-  assertIsolated(env);
-  const app = await electron.launch({ args: [appDir, ...switches], cwd: appDir, env });
+export async function relaunch(env: Record<string, string>, { appDir = DESKTOP_DIR }: { appDir?: string } = {}): Promise<ElectronApplication> {
+  const app = await start(appDir, env);
   await expect
     .poll(
       () =>

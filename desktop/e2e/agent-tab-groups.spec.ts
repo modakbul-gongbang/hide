@@ -1,9 +1,9 @@
-import { expect, test, type ElectronApplication } from "@playwright/test";
+import { expect, type ElectronApplication } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
-import { isolate, launch, screenshot } from "./fixture";
+import { isolate, launch, screenshot, test } from "./fixture";
 
 test("Agent edge drag splits the desktop column into two live tab groups", async () => {
   const herdr = await startHerdr({ agents: false });
