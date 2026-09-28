@@ -615,10 +615,6 @@ pub(crate) fn empty_params() -> Value {
     Value::Object(Default::default())
 }
 
-pub(crate) fn workspace_create_params(cwd: &str, label: &str) -> Result<Value, String> {
-    workspace_create_with_env_params(cwd, label, Default::default())
-}
-
 pub(crate) fn workspace_create_with_env_params(
     cwd: &str,
     label: &str,
@@ -1342,15 +1338,6 @@ pub(crate) fn workspace_active_tab(value: Value) -> Result<String, String> {
         _ => Err(missing.into()),
     }
 }
-pub(crate) fn created_workspace_pane(value: Value) -> Result<String, String> {
-    let missing = "workspace.create response is missing root_pane.pane_id";
-    match response(value, missing)? {
-        res::ResponseResult::WorkspaceCreated { root_pane, .. } => {
-            nonempty_id(root_pane.pane_id, missing)
-        }
-        _ => Err(missing.into()),
-    }
-}
 pub(crate) fn created_tab(value: Value) -> Result<(String, String), String> {
     let tab_missing = "tab.create response is missing tab.tab_id";
     let pane_missing = "tab.create response is missing root_pane.pane_id";
@@ -1737,7 +1724,7 @@ mod tests {
             serde_json::from_slice::<Value>(&bytes).unwrap()["result"].clone()
         };
         assert_eq!(
-            created_workspace_pane(load("workspace.create.json")).unwrap(),
+            created_workspace(load("workspace.create.json")).unwrap().2,
             "w1:p1"
         );
         assert_eq!(

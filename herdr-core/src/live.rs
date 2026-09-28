@@ -132,11 +132,6 @@ pub struct WorkspaceCreationOutcome {
     pub git_init_error: Option<String>,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-struct CreatedWorkspace {
-    pane_id: String,
-}
-
 pub fn spawn_workspace_creation(
     context: LiveContext,
     path: String,
@@ -205,13 +200,17 @@ pub fn spawn_workspace_creation(
                     let needs_herdr_workspace = before_catalog
                         .iter()
                         .any(|workspace| workspace.id == registration.id);
+                    // The project's first workspace is its checkout's owner
+                    // (PRD checkout-workspace-binding B12), never a plain
+                    // workspace a later tab would pass over.
                     let created = needs_herdr_workspace
                         .then(|| {
-                            create_herdr_workspace(
+                            ensure_owner(
                                 context.api_connector.as_ref(),
-                                &registration.path,
-                                &registration.label,
+                                &registered_owner(&registration.path, &registration.label),
+                                Default::default(),
                             )
+                            .map_err(|error| error.message().to_owned())
                         })
                         .transpose()?;
                     let session = if created.is_some() {
@@ -234,7 +233,8 @@ pub fn spawn_workspace_creation(
                         registrations,
                         workspaces,
                         session,
-                        created_pane_id: created.map(|created| created.pane_id),
+                        created_pane_id: created
+                            .and_then(|(_, first_tab)| first_tab.map(|(_, pane_id)| pane_id)),
                         git_init_error,
                     })
                 });
@@ -255,18 +255,20 @@ pub fn spawn_workspace_creation(
         .map_err(|error| format!("workspace creation worker could not be started: {error}"))
 }
 
-fn create_herdr_workspace(
-    connector: &dyn ApiConnector,
-    cwd: &str,
-    label: &str,
-) -> Result<CreatedWorkspace, String> {
-    let result = control_request(
-        connector,
-        "workspace.create",
-        wire::workspace_create_params(cwd, label)?,
-    )?;
-    let pane_id = wire::created_workspace_pane(result)?;
-    Ok(CreatedWorkspace { pane_id })
+/// The owner a newly registered project's checkout gets: a Git checkout is
+/// opened from its repository's main worktree, a plain folder is created
+/// and marked at the registered path, the same path the catalog keys it by.
+fn registered_owner(path: &str, label: &str) -> OwnerOpen {
+    match hide_project::facts(Path::new(path)) {
+        Ok(facts) if facts.kind == hide_project::ProjectKind::Git => OwnerOpen::for_checkout(
+            crate::workspace::LOCAL_DEVICE_ID,
+            &facts.checkout_root.to_string_lossy(),
+            &facts.root.to_string_lossy(),
+            true,
+            label,
+        ),
+        _ => OwnerOpen::for_checkout(crate::workspace::LOCAL_DEVICE_ID, path, path, false, label),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -4752,39 +4754,34 @@ mod tests {
     }
 
     #[test]
-    fn workspace_creation_uses_the_official_focused_root_pane_contract() {
-        let herdr = FakeHerdr::start("workspace-create-contract", |_, _| {
-            json!({
-                "type": "workspace_created",
-                "workspace": {"workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "tab_count": 1, "active_tab_id": "w1:t1", "agent_status": "idle"},
-                "tab": {"tab_id": "w1:t1", "workspace_id": "w1", "number": 1, "label": "fixture", "focused": false, "pane_count": 1, "agent_status": "idle"},
-                "root_pane": {"pane_id": "w1:p1", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1},
-            })
-        });
+    fn a_registered_project_gets_its_checkouts_owner_not_a_plain_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        let folder = root.join("notes");
+        let repo = root.join("repo");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        std::fs::write(repo.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        let folder = folder.to_string_lossy().into_owned();
+        let repo = repo.to_string_lossy().into_owned();
 
-        let created = create_herdr_workspace(
-            &herdr.connector(),
-            "/tmp/herdr-ide-verify-workspace",
-            "Verify workspace",
-        )
-        .expect("workspace create request");
         assert_eq!(
-            created,
-            CreatedWorkspace {
-                pane_id: "w1:p1".to_owned()
-            }
+            registered_owner(&folder, "Notes"),
+            OwnerOpen::for_checkout(
+                crate::workspace::LOCAL_DEVICE_ID,
+                &folder,
+                &folder,
+                false,
+                "Notes"
+            )
         );
-
         assert_eq!(
-            herdr.calls(),
-            [(
-                "workspace.create".to_owned(),
-                json!({
-                    "cwd": "/tmp/herdr-ide-verify-workspace",
-                    "focus": true,
-                    "label": "Verify workspace",
-                })
-            )]
+            registered_owner(&repo, "Repo"),
+            OwnerOpen::Worktree {
+                path: repo.clone(),
+                repository_root: repo.clone(),
+                label: "Repo".to_owned(),
+            }
         );
     }
 
