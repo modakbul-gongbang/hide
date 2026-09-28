@@ -17,7 +17,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { agentsIn, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 
@@ -455,6 +455,12 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     const worktrees = git(repo, ["worktree", "list", "--porcelain"]);
     expect(worktrees).toContain("branch refs/heads/dependabot/cargo/sha2");
     expect(git(repo, ["rev-parse", "--abbrev-ref", "dependabot/cargo/sha2@{upstream}"]).trim()).toBe("origin/dependabot/cargo/sha2");
+    // The agent really runs in that worktree's pane: Herdr lists it there,
+    // and the start never turned into a failure banner.
+    const delegated = worktrees.split("\n\n").find((entry) => entry.includes("branch refs/heads/dependabot/cargo/sha2"))?.match(/^worktree (.+)$/m)?.[1];
+    expect(delegated).toBeTruthy();
+    await expect.poll(() => agentsIn(herdr, delegated as string), { timeout: 60_000 }).toContain("claude");
+    await expect(page.locator('[data-task-agent="failed"]')).toHaveCount(0);
 
     // 최근 머지 unfolds from its header, dimmed; 정리 opens the existing
     // Delete worktree dialog, whose cancel changes nothing (B19, B20).

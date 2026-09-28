@@ -22,7 +22,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { agentsIn, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 
@@ -166,6 +166,9 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
   try {
+    // Panes created from here on find the fixture's `claude` first, so the
+    // agent an issue starts is the shim, never a real one.
+    fs.writeFileSync(path.join(herdr.root, "home", ".zshenv"), `export PATH="${path.join(herdr.root, "bin")}:$PATH"\n`);
     // A repository with an origin, as a real one has: the core measures each
     // branch against origin's default. Two worktrees carry commits of their
     // own (one also uncommitted work), one was merged into main.
@@ -802,15 +805,21 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await expect(start).toBeVisible();
     await expect(start.locator("[data-start-name]")).toHaveValue(/^3-/);
     await start.locator("[data-start-name]").fill("3-graph-view");
-    await start.locator('[data-start-agent="terminal"]').click();
+    await start.locator('[data-start-agent="claude"]').click();
     await start.locator('[data-start-submit="start"]').click();
     await expect(start).toHaveCount(0, { timeout: 30_000 });
     await expect(workspace).toBeVisible({ timeout: 30_000 });
     await expect(page.locator(`[data-checkout][aria-label^="3-graph-view"]`)).toHaveAttribute("aria-current", "true");
+    // The agent really runs in the new worktree's pane: Herdr lists it
+    // there, and the start never turned into a failure banner.
+    const started = execFileSync("git", ["worktree", "list", "--porcelain"], { cwd: repo, encoding: "utf8" }).split("\n\n").find((entry) => entry.includes("branch refs/heads/3-graph-view"))?.match(/^worktree (.+)$/m)?.[1];
+    expect(started).toBeTruthy();
+    await expect.poll(() => agentsIn(herdr, started as string), { timeout: 60_000 }).toContain("claude");
+    await expect(page.locator('[data-task-agent="failed"]')).toHaveCount(0);
     await page.keyboard.press("Meta+Shift+KeyH");
     await expect(overview).toHaveAttribute("data-overview-view", "agents");
     await expect(lane("3-graph-view")).toHaveAttribute("data-selected", "true");
-    await expect(emptyFold).toHaveAttribute("aria-expanded", "true");
+    await expect(lane("3-graph-view").locator("[data-lens-node]")).toHaveCount(1);
     await tile("issues").locator("[data-lens-tile-button]").click();
     await expect(column("backlog").locator("[data-overview-card]")).toHaveCount(0, { timeout: 30_000 });
     await expect(column("working").locator('[data-overview-card][data-task-key="github:acme/repo#3"]')).toContainText("3-graph-view", { timeout: 30_000 });
