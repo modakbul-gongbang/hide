@@ -29,12 +29,12 @@ const AGENTS = [
   { id: "claude", label: "Claude" },
   { id: "codex", label: "Codex" },
 ] as const;
-type AgentChoice = (typeof AGENTS)[number]["id"];
+export type AgentChoice = (typeof AGENTS)[number]["id"];
 
-const DEFAULT_SETTINGS: IssueSettings = { ai_worktree_name: true, default_agent: "claude", closes_instruction: true };
+export const DEFAULT_SETTINGS: IssueSettings = { ai_worktree_name: true, default_agent: "claude", closes_instruction: true };
 
 /** A multi-line field in the text field's look; the issue body and the first prompt. */
-function TextArea({ className, ...props }: ComponentProps<"textarea">) {
+export function TextArea({ className, ...props }: ComponentProps<"textarea">) {
   return (
     <textarea
       className={cn(
@@ -46,7 +46,7 @@ function TextArea({ className, ...props }: ComponentProps<"textarea">) {
   );
 }
 
-function Field({ label, aside, children }: { label: string; aside?: ReactNode; children: ReactNode }) {
+export function Field({ label, aside, children }: { label: string; aside?: ReactNode; children: ReactNode }) {
   return (
     <label className="block text-body text-subtle-foreground">
       <span className="flex items-center gap-xs">
@@ -59,7 +59,7 @@ function Field({ label, aside, children }: { label: string; aside?: ReactNode; c
 }
 
 /** ⌘↵ sends the form from any field, the way the footer's keycap says. */
-function submitOnCommandEnter(event: React.KeyboardEvent<HTMLFormElement>) {
+export function submitOnCommandEnter(event: React.KeyboardEvent<HTMLFormElement>) {
   if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
     event.preventDefault();
     event.currentTarget.requestSubmit();
@@ -391,12 +391,13 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
   );
 }
 
-function AgentChoiceField({ agent, disabled, onChange }: { agent: AgentChoice; disabled: boolean; onChange: (agent: AgentChoice) => void }) {
+/** The agent to start; `agents` narrows the choice where a terminal alone has nothing to do (a pull request handed on). */
+export function AgentChoiceField({ agent, disabled, onChange, agents = AGENTS.map((row) => row.id) }: { agent: AgentChoice; disabled: boolean; onChange: (agent: AgentChoice) => void; agents?: readonly AgentChoice[] }) {
   return (
     <fieldset className="text-body text-subtle-foreground" disabled={disabled}>
       <legend>에이전트</legend>
       <RadioGroup className="mt-xxs grid-flow-col justify-start gap-md" value={agent} onValueChange={(value) => onChange(value as AgentChoice)}>
-        {AGENTS.map((row) => (
+        {AGENTS.filter((row) => agents.includes(row.id)).map((row) => (
           <label key={row.id} className="inline-flex h-(--size-control) items-center gap-xs text-foreground">
             <RadioGroupItem value={row.id} data-start-agent={row.id} />
             {row.label}

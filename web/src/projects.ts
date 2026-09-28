@@ -302,6 +302,20 @@ export function checkoutCard(workspace: Workspace, checkout: Checkout, nowMs: nu
   };
 }
 
+/**
+ * The PR card of a pull request on its own, for a PRs tab row whose branch
+ * has no checkout here (PRD overview-lenses-prs B7): the same header and
+ * Review and Checks rows the checkout card draws, and the branch.
+ */
+export function pullRequestCard(pr: PullRequest): CheckoutCard {
+  const rows: CheckoutCardRow[] = [];
+  if (pr.review) rows.push({ key: "review", label: "Review", ...REVIEW_WORD[pr.review] });
+  const checks = pr.checks ? CHECKS_WORD[pr.checks] : undefined;
+  if (checks) rows.push({ key: "checks", label: "Checks", ...checks });
+  if (pr.head_branch) rows.push({ key: "branch", label: "Branch", value: pr.head_branch });
+  return { header: { kind: "pull_request", badge: pullRequestBadge(pr), glyph: pullRequestKind(pr), number: pr.number, url: pr.url, title: pr.title }, rows };
+}
+
 /** `↑N ↓N`, each part only above zero; empty when the branch is even with both. */
 export function distanceText(ahead: number, behind: number): string {
   return [ahead > 0 ? `↑${ahead}` : null, behind > 0 ? `↓${behind}` : null].filter(Boolean).join(" ");

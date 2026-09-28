@@ -314,7 +314,7 @@ function WorkDone({ card, handlers, focusedPaneId, actions }: { card: TaskCard; 
       ) : null}
       {checkout && pr && card.pr ? (
         <div className="flex min-w-0 items-center gap-xs text-caption text-muted-foreground" data-issue-work-pr={pr.number}>
-          <PullRequestChip project={owner} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, owner.device_id)} now={Date.now()} />
+          <PullRequestChip project={owner} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, owner.device_id)} onRow={(number) => handlers.openPullRequestRow(owner, number)} now={Date.now()} />
           <span className="min-w-0 flex-1 truncate text-foreground">{pr.title}</span>
           <ReviewMarks pr={card.pr} />
         </div>

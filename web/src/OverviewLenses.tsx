@@ -45,8 +45,10 @@ export type LensHandlers = {
   openAgent: (paneId: string) => void;
   /** An issue chip: the Issues tab's card for it. */
   openIssue: (project: Workspace, task: Task) => void;
-  /** A PR chip, or ⌘-click anywhere: the page on GitHub. */
+  /** ⌘-click anywhere, a PR chip's included: the page on GitHub. */
   openGitHub: (url: string, deviceId: string) => void;
+  /** A PR chip: its row on the Project's PRs tab (PRD overview-lenses-prs B21). */
+  openPullRequestRow: (project: Workspace, number: number) => void;
   /** `정리`: the Delete worktree dialog for that worktree. */
   cleanup: (project: Workspace, checkout: Checkout) => void;
   toggleFold: (fold: LensFold) => void;
@@ -59,6 +61,7 @@ export function lensHandlers(actions: Actions, page: Pick<LensHandlers, "openIss
     openCheckout: (project, checkout) => actions.openWorkspace(project.device_id, checkout.workspace_id, checkout.id),
     openAgent: actions.openAgent,
     openGitHub: (url, deviceId) => actions.openPullRequest(url, deviceId, true),
+    openPullRequestRow: (project, number) => actions.openPullRequestRow(project.id, number),
     cleanup: (project, checkout) => useUiStore.getState().setWorkspaceDialog({ kind: "delete_worktree", workspaceId: project.id, checkoutId: checkout.id }),
   };
 }
@@ -74,6 +77,8 @@ const SEGMENT_TONE: Record<string, string> = {
   review: "bg-success",
   claude: "bg-file-orange",
   codex: "bg-agent-working",
+  fixing: "bg-agent-working",
+  blocked: "bg-destructive",
 };
 
 /** The Issues tile's `진행 중` is the warning tone, the Agents tile's `일하는 중` the success one. */
@@ -222,7 +227,7 @@ function moveFocus(event: KeyboardEvent<HTMLElement>) {
 // --- chips -------------------------------------------------------------------
 
 /** ⌘-click means GitHub wherever it lands (D-09). */
-function gitHubClick(event: MouseEvent, url: string | null | undefined, deviceId: string, handlers: LensHandlers): boolean {
+export function gitHubClick(event: MouseEvent, url: string | null | undefined, deviceId: string, handlers: LensHandlers): boolean {
   if (!event.metaKey || !url) return false;
   event.preventDefault();
   handlers.openGitHub(url, deviceId);
@@ -230,7 +235,7 @@ function gitHubClick(event: MouseEvent, url: string | null | undefined, deviceId
 }
 
 /** The issue a checkout works on, by its id; it opens the Issues tab's card, its half-second card the issue itself (B24). */
-function IssueChip({ project, task, handlers, now }: { project: Workspace; task: Task; handlers: LensHandlers; now: number }) {
+export function IssueChip({ project, task, handlers, now }: { project: Workspace; task: Task; handlers: LensHandlers; now: number }) {
   const preview = [
     [task.id ?? task.title, task.open ? "열림" : "닫힘"].join(" · "),
     task.title,
@@ -258,10 +263,11 @@ function IssueChip({ project, task, handlers, now }: { project: Workspace; task:
 
 /**
  * A checkout's pull request in its lifecycle colour, on a lens or an issue
- * card; it opens the pull request on GitHub, its half-second card is the
- * checkout's PR card (B17, B24; overview-lenses-issues B8, B9).
+ * card; it opens the pull request's row on the PRs tab, ⌘-click the pull
+ * request on GitHub, and its half-second card is the checkout's PR card
+ * (B17, B24; overview-lenses-issues B8, B9; overview-lenses-prs B21).
  */
-export function PullRequestChip({ project, checkout, onOpen, now }: { project: Workspace; checkout: Checkout; onOpen: (url: string) => void; now: number }) {
+export function PullRequestChip({ project, checkout, onOpen, onRow, now }: { project: Workspace; checkout: Checkout; onOpen: (url: string) => void; onRow: (number: number) => void; now: number }) {
   const pr = shownPullRequest(checkout);
   if (!pr) return null;
   const chip = prChip(pr);
@@ -275,7 +281,8 @@ export function PullRequestChip({ project, checkout, onOpen, now }: { project: W
         className="pointer-events-auto relative z-10 rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
         onClick={(event) => {
           event.stopPropagation();
-          onOpen(pr.url);
+          if (event.metaKey) onOpen(pr.url);
+          else onRow(pr.number);
         }}
       >
         <Badge variant="outline" className={PR_TONE[chip.tone]}>
@@ -353,7 +360,7 @@ function AgentNode({ value, chips, handlers, now }: { value: LensAgent; chips: b
         <span className="pointer-events-none relative flex min-w-0 items-center gap-sm" data-lens-node-chips="true">
           <CheckoutChip project={project} checkout={checkout} handlers={handlers} now={now} />
           {task ? <IssueChip project={project} task={task} handlers={handlers} now={now} /> : null}
-          <PullRequestChip project={project} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, project.device_id)} now={now} />
+          <PullRequestChip project={project} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, project.device_id)} onRow={(number) => handlers.openPullRequestRow(project, number)} now={now} />
         </span>
       ) : null}
     </div>
@@ -367,14 +374,27 @@ function AgentNode({ value, chips, handlers, now }: { value: LensAgent; chips: b
  * own click. `place` is the checkout it works in.
  */
 export function AgentMessageHint({ agent, place, line, tone, onOpen }: { agent: AgentRow; place: string; line: string; tone: string; onOpen: () => void }) {
+  return (
+    <AgentMessagePopover agent={agent} place={place} fallback={line} tone={tone} onOpen={onOpen}>
+      <span className={cn("relative z-10 line-clamp-1 cursor-pointer break-all text-caption", tone)} data-lens-node-line={agent.pane_id} onClick={onOpen}>
+        {line}
+      </span>
+    </AgentMessagePopover>
+  );
+}
+
+/**
+ * Everything an agent last said, after a half-second rest on `children`
+ * (D-50): on its line, or on its mark in a PRs tab row (overview-lenses-prs
+ * B7). `fallback` is what is said when the agent has no message.
+ */
+export function AgentMessagePopover({ agent, place, fallback, tone, onOpen, children }: { agent: AgentRow; place: string; fallback: string; tone: string; onOpen: () => void; children: ReactNode }) {
   const { open, onOpenChange, triggerProps } = useHintOpen();
-  const message = agent.message?.trim() || line;
+  const message = agent.message?.trim() || fallback;
   return (
     <Tooltip open={open} onOpenChange={onOpenChange} disableHoverableContent={false}>
       <TooltipTrigger asChild {...triggerProps}>
-        <span className={cn("relative z-10 line-clamp-1 cursor-pointer break-all text-caption", tone)} data-lens-node-line={agent.pane_id} onClick={onOpen}>
-          {line}
-        </span>
+        {children}
       </TooltipTrigger>
       <TooltipContent side="bottom" align="start" className="pointer-events-auto w-(--size-pr-popover) max-w-(--radix-tooltip-content-available-width) text-left text-wrap rounded-md p-md" data-lens-message={agent.pane_id}>
         <div className="flex flex-col gap-sm">
@@ -561,7 +581,7 @@ function LaneHead({ lane, scope, handlers, now }: { lane: Lane; scope: "project"
         ) : (
           <>
             {lane.task ? <IssueChip project={project} task={lane.task} handlers={handlers} now={now} /> : null}
-            <PullRequestChip project={project} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, project.device_id)} now={now} />
+            <PullRequestChip project={project} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, project.device_id)} onRow={(number) => handlers.openPullRequestRow(project, number)} now={now} />
             {ahead > 0 || behind > 0 ? (
               <span className="pointer-events-none" data-lens-head-distance={`${ahead}:${behind}`}>
                 {distanceText(ahead, behind)}

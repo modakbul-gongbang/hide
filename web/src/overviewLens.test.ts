@@ -4,8 +4,8 @@
 // Behaviors, read against small fixtures.
 
 import { describe, expect, it } from "vitest";
-import { agentsTile, bucketOf, buildLanes as lanesOf, buildLineages as lineagesOf, childSummary, entryLane, issuesTile, lineageAgentCount, scopeAgents, sessionsTile, startOfDay } from "./overviewLens";
-import { buildTasks, type BoardProject } from "./projectBoard";
+import { agentsTile, bucketOf, buildLanes as lanesOf, buildLineages as lineagesOf, childSummary, entryLane, issuesTile, lineageAgentCount, prsTile, scopeAgents, sessionsTile, startOfDay } from "./overviewLens";
+import { buildTasks, type BoardProject, type PrBoard, type PrRow } from "./projectBoard";
 import type { AgentRow, Checkout, ProjectSessions, PullRequest, SessionRow, Task, Workspace } from "./snapshot";
 
 const buildLanes = (projects: BoardProject[], scope: "project" | "all") => lanesOf(projects, scopeAgents(projects), scope);
@@ -118,6 +118,30 @@ describe("the tiles", () => {
     const failed = issuesTile(buildTasks(one(workspace([], { tasks: [task(1)], failure: "gh auth" }), []), "project", NOW), NOW, NOW - 3 * 60_000);
     expect(failed.value).toBe(1);
     expect(failed.failure).toContain("3분 전");
+  });
+
+  it("counts open pull requests, badges the operator's turn with review, drafts and finished agents to look at, and bars turn, fixing and blocked (B1, B22)", () => {
+    const row = (group: PrRow["group"], extra: Partial<PrRow> = {}) => ({ group, tone: "open", needsLook: false, ...extra }) as PrRow;
+    const board = (rows: PrRow[], extra: Partial<PrBoard> = {}): PrBoard => ({
+      groups: (["turn", "fixing", "blocked", "merged"] as const).map((group) => ({ group, label: group, rows: rows.filter((value) => value.group === group) })).filter((entry) => entry.rows.length > 0),
+      open: rows.filter((value) => value.group !== "merged").length,
+      reading: false,
+      failure: null,
+      ...extra,
+    });
+    const tile = prsTile(board([row("turn"), row("turn"), row("turn", { needsLook: true }), row("turn", { tone: "draft" }), row("fixing"), row("blocked"), row("merged")]));
+    expect(tile).toMatchObject({ id: "prs", label: "PRs", value: 6, unit: "열림", failure: null });
+    expect(tile.badge).toEqual({
+      count: 4,
+      parts: [
+        { key: "review", label: "리뷰", count: 2 },
+        { key: "draft", label: "초안", count: 1 },
+        { key: "look", label: "끝난 에이전트 확인", count: 1 },
+      ],
+    });
+    expect(tile.bar?.map((segment) => [segment.key, segment.count])).toEqual([["turn", 4], ["fixing", 1], ["blocked", 1]]);
+    expect(prsTile(board([], { open: null, reading: true }))).toMatchObject({ value: null, badge: null, bar: null });
+    expect(prsTile(board([row("fixing")], { failure: "GitHub 읽기 실패 · 3분 전 값 · 이유는 로그에" }))).toMatchObject({ value: 1, badge: null, failure: expect.stringContaining("3분 전") });
   });
 
   it("counts today's sessions by this machine's date, split Claude and Codex, and stays empty until this Project's history answered (B5, D-16)", () => {

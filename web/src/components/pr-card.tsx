@@ -32,6 +32,7 @@ export function CheckoutCardHint({
   description,
   onOpenPullRequest,
   onOpenWorkspace,
+  onShowPullRequestRow,
   children,
 }: {
   card: CheckoutCard;
@@ -41,6 +42,8 @@ export function CheckoutCardHint({
   onOpenPullRequest: (url: string, external: boolean) => void;
   /** Where the card was opened from goes to the checkout's Workspace; the card then offers `↵ Workspace`, the same move (PRD overview-lenses-tiles-agents B16). */
   onOpenWorkspace?: () => void;
+  /** The pull request's row on its Project's PRs tab; the header then offers `PRs 탭에서 보기` (PRD overview-lenses-prs B21). */
+  onShowPullRequestRow?: (number: number) => void;
   children: ReactNode;
 }) {
   const { open, onOpenChange, triggerProps } = useHintOpen();
@@ -61,6 +64,21 @@ export function CheckoutCardHint({
       >
         <div className="flex flex-col gap-sm">
           {header?.kind === "pull_request" ? <PullRequestHeader header={header} onOpen={onOpenPullRequest} /> : null}
+          {header?.kind === "pull_request" && onShowPullRequestRow ? (
+            <Hint label="이 PR의 이슈와 에이전트 계보">
+              <button
+                type="button"
+                data-checkout-card-prs-tab={header.number}
+                className="inline-flex items-center gap-xxs self-start rounded-xs text-caption font-medium text-foreground outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onShowPullRequestRow(header.number);
+                }}
+              >
+                PRs 탭에서 보기
+              </button>
+            </Hint>
+          ) : null}
           {header?.kind === "missing" ? (
             <div className="text-subhead font-medium text-destructive" data-checkout-card-missing="true">
               {header.label}

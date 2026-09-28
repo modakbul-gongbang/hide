@@ -35742,6 +35742,26 @@
     "--issue-panel-min-width": {
       "type": "number",
       "value": 360
+    },
+    "--size-pr-branch-max": {
+      "type": "number",
+      "value": 190
+    },
+    "--size-pr-indent": {
+      "type": "number",
+      "value": 60
+    },
+    "--size-pr-number": {
+      "type": "number",
+      "value": 38
+    },
+    "--size-pr-review": {
+      "type": "number",
+      "value": 70
+    },
+    "--size-pr-slot": {
+      "type": "number",
+      "value": 72
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4",
