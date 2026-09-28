@@ -21,6 +21,7 @@ import type { CommandId } from "../../../web/src/shortcuts";
 import { BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL } from "../channel";
 import { loadable, MAX_LIVE_VIEWS, nextZoomFactor, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds, viewKey, type PageZoom } from "./browserSync";
 import type { HostLog } from "./log";
+import { accelerator } from "./menu";
 
 /** Page state reports coalesce to one per view in this window, so a title ticking every frame costs one event. */
 const REPORT_COALESCE_MS = 100;
@@ -30,7 +31,7 @@ const PAGE_PERMISSIONS = new Set(["clipboard-sanitized-write"]);
 /** The text-size commands, which zoom a focused page the way Chrome's ⌘= / ⌘- / ⌘0 do. */
 const PAGE_ZOOM_COMMANDS: Readonly<Partial<Record<CommandId, PageZoom>>> = { text_larger: "in", text_smaller: "out", text_reset: "reset" };
 /** Chrome's second zoom-in chord, ⌘+ (⌘⇧= on a US keyboard), as an app-menu accelerator. */
-const ZOOM_IN_ALIAS = "Shift+Command+=";
+const ZOOM_IN_ALIAS = accelerator({ code: "Equal", meta: true, shift: true });
 /** Pinch zoom on a page, as visual zoom levels; Electron turns it off by default. */
 const PINCH_ZOOM_LIMITS = [1, 3] as const;
 

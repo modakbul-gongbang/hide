@@ -500,7 +500,7 @@ test("zoom: the text-size commands zoom a focused page in Chrome's steps and a p
   const moved = `${origin.replace("127.0.0.1", "localhost")}/b.html`;
   await inPage(pageA, `location.href = ${JSON.stringify(moved)}`);
   await viewOf(moved);
-  expect((await zoomOf(moved)).pid, "navigation kept the renderer").not.toBe(before);
+  expect((await zoomOf(moved)).pid, "navigation did not swap the renderer").not.toBe(before);
   await expect.poll(() => inPage<number>(moved, "window.visualViewport.scale")).toBe(1);
   expect(await pinch(moved)).toBeGreaterThan(1.2);
   await windowShot("browser-zoom-pinched");
