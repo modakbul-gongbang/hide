@@ -78,6 +78,7 @@ pub struct Snapshot {
     pub task_operation: Option<TaskOperationSnapshot>,
     pub explorer_operation: Option<ExplorerOperationSnapshot>,
     pub issue_work: IssueWorkSnapshot,
+    pub pr_work: PrWorkSnapshot,
     pub find: PaneFindSnapshot,
     pub ui_state: UiStateSnapshot,
     pub ime: ImeSnapshot,
@@ -792,6 +793,12 @@ pub struct WorkspaceSnapshot {
     /// The project's tasks in the source-neutral shape the web reads
     /// (`tasks.rs`); `home_issues` stays as older readers read it.
     pub tasks: crate::tasks::ProjectTasksSnapshot,
+    /// The project's pull requests as `gh pr list` answered them, one per
+    /// branch, for the Overview's PRs tab (PRD overview-lenses-prs), where a
+    /// pull request with no checkout here (a bot's branch) is a row too. A
+    /// local Git project's only, and absent from the wire while empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pull_requests: Vec<PullRequestSnapshot>,
     pub id: String,
     pub label: String,
     pub path: String,
@@ -2295,6 +2302,65 @@ pub struct IssueUpdateSnapshot {
     pub message: Option<String>,
 }
 
+/// The Overview's pull-request work in flight (PRD overview-lenses-prs):
+/// a pull request linked to an issue, and the checks and reviews read for
+/// an agent's first prompt. Each is one slot a newer request replaces; the
+/// web matches a slot to its own request by `request_id`.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct PrWorkSnapshot {
+    pub link: Option<PrLinkSnapshot>,
+    pub feedback: Option<PrFeedbackSnapshot>,
+}
+
+/// `pr_link_issue`'s progress: the issue made (a new one), the link Hide
+/// keeps, then `Closes #N` in the pull request's body. A failed body write
+/// keeps what came before it (D-31, D-53); `issue_key` names the issue the
+/// pull request is linked to, the new one included, so a retry sends it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PrLinkSnapshot {
+    pub request_id: String,
+    pub workspace_id: String,
+    pub pr_number: u32,
+    /// `create`, `link` or `body`: the step working now, or the one that failed.
+    pub step: String,
+    /// `working`, `ready` or `failed`.
+    pub phase: String,
+    pub issue_key: Option<String>,
+    /// The id the source shows for `issue_key` (`#12`, `L-3`).
+    pub issue_id: Option<String>,
+    /// The issue was made by this request.
+    pub created: bool,
+    pub message: Option<String>,
+}
+
+/// One failed check of a pull request, by the name GitHub shows and the page
+/// that says why.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PrFailedCheck {
+    pub name: String,
+    pub url: Option<String>,
+}
+
+/// A review that asked for changes, as its author wrote it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PrChangeRequest {
+    pub author: Option<String>,
+    pub body: String,
+}
+
+/// What a pull request's failed checks and change requests say, read for
+/// the first prompt of an agent it is handed to (D-46).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PrFeedbackSnapshot {
+    pub request_id: String,
+    pub pr_number: u32,
+    /// `reading`, `ready` or `failed`.
+    pub phase: String,
+    pub failed_checks: Vec<PrFailedCheck>,
+    pub change_requests: Vec<PrChangeRequest>,
+    pub message: Option<String>,
+}
+
 /// The background AI's name for a worktree started from an issue.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorktreeNameSnapshot {
@@ -3359,6 +3425,7 @@ impl Snapshot {
             task_operation: None,
             explorer_operation: None,
             issue_work: IssueWorkSnapshot::default(),
+            pr_work: PrWorkSnapshot::default(),
             find: PaneFindSnapshot::default(),
             ui_state: UiStateSnapshot::default(),
             ime: ImeSnapshot {
@@ -3437,6 +3504,7 @@ pub struct RestSections {
     pub task_operation: Option<TaskOperationSnapshot>,
     pub explorer_operation: Option<ExplorerOperationSnapshot>,
     pub issue_work: IssueWorkSnapshot,
+    pub pr_work: PrWorkSnapshot,
     pub overlay: OverlaySnapshot,
     pub tab: TabSnapshot,
     pub connection: ConnectionSnapshot,
@@ -3470,6 +3538,7 @@ impl RestSections {
             task_operation: snapshot.task_operation.clone(),
             explorer_operation: snapshot.explorer_operation.clone(),
             issue_work: snapshot.issue_work.clone(),
+            pr_work: snapshot.pr_work.clone(),
             overlay: snapshot.overlay.clone(),
             tab: snapshot.tab.clone(),
             connection: snapshot.connection.clone(),
@@ -3504,6 +3573,7 @@ impl RestSections {
             && self.task_operation == snapshot.task_operation
             && self.explorer_operation == snapshot.explorer_operation
             && self.issue_work == snapshot.issue_work
+            && self.pr_work == snapshot.pr_work
             && self.overlay == snapshot.overlay
             && self.tab == snapshot.tab
             && self.connection == snapshot.connection
@@ -3646,6 +3716,7 @@ pub struct RestWire<'a> {
     pub task_operation: &'a Option<TaskOperationSnapshot>,
     pub explorer_operation: &'a Option<ExplorerOperationSnapshot>,
     pub issue_work: &'a IssueWorkSnapshot,
+    pub pr_work: &'a PrWorkSnapshot,
     pub overlay: &'a OverlaySnapshot,
     pub tab: &'a TabSnapshot,
     pub connection: &'a ConnectionSnapshot,
@@ -3676,6 +3747,7 @@ impl<'a> RestWire<'a> {
             task_operation: &rest.task_operation,
             explorer_operation: &rest.explorer_operation,
             issue_work: &rest.issue_work,
+            pr_work: &rest.pr_work,
             overlay: &rest.overlay,
             tab: &rest.tab,
             connection: &rest.connection,

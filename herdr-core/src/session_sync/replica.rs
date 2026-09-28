@@ -438,6 +438,7 @@ impl SessionReplica {
                     .filter(|active| tabs.iter().any(|tab| tab.id.as_ref() == Some(active)));
                 WorkspaceSnapshot {
                     home_issues: Default::default(),
+                    pull_requests: Vec::new(),
                     tasks: Default::default(),
                     id: workspace_id.clone(),
                     label: workspace.label.clone(),

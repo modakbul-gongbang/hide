@@ -790,6 +790,54 @@ pub(super) struct LocalIssueUpdatePayload {
     pub(super) body: String,
 }
 
+/// `pr_link_issue`: a pull request linked to an issue of its project (PRD
+/// overview-lenses-prs D-13, D-31, D-34): an issue the project's source has,
+/// by `issue_key`, or a new one made from `new_issue`. A GitHub issue is
+/// linked in Hide and closed by `Closes #N` in the pull request's body; a
+/// Local one is linked in Hide only. A retry sends the same issue again.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PrLinkIssuePayload {
+    pub(super) request_id: String,
+    pub(super) workspace_id: String,
+    pub(super) pr_number: u32,
+    #[serde(default)]
+    pub(super) issue_key: Option<String>,
+    #[serde(default)]
+    pub(super) new_issue: Option<PrNewIssuePayload>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PrNewIssuePayload {
+    pub(super) title: String,
+    #[serde(default)]
+    pub(super) body: String,
+}
+
+/// `pr_feedback_read`: a pull request's failed checks and change requests,
+/// read for an agent's first prompt (D-46).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PrFeedbackReadPayload {
+    pub(super) request_id: String,
+    pub(super) workspace_id: String,
+    pub(super) pr_number: u32,
+}
+
+/// `pr_delegate`: an agent started on a pull request's branch with the
+/// operator's first prompt (D-12, D-46): in the checkout on that branch, or
+/// in a new worktree of the existing branch when there is none.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PrDelegatePayload {
+    pub(super) workspace_id: String,
+    pub(super) pr_number: u32,
+    pub(super) provider: String,
+    #[serde(default)]
+    pub(super) prompt: String,
+}
+
 /// `issue_set_open`: close or reopen a Local issue.
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -1069,6 +1117,9 @@ pub(super) enum Event {
     WorktreeNameSuggest(WorktreeNameSuggestPayload),
     IssueSetOpen(IssueSetOpenPayload),
     LocalIssueUpdate(LocalIssueUpdatePayload),
+    PrLinkIssue(PrLinkIssuePayload),
+    PrFeedbackRead(PrFeedbackReadPayload),
+    PrDelegate(PrDelegatePayload),
     SetCheckoutPurpose(SetCheckoutPurposePayload),
     SetCheckoutIssue(SetCheckoutPurposePayload),
     MigrateMainBranch(MigrateMainBranchPayload),
@@ -1249,6 +1300,9 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "worktree_name_suggest" => decode!(WorktreeNameSuggestPayload, WorktreeNameSuggest),
         "issue_set_open" => decode!(IssueSetOpenPayload, IssueSetOpen),
         "local_issue_update" => decode!(LocalIssueUpdatePayload, LocalIssueUpdate),
+        "pr_link_issue" => decode!(PrLinkIssuePayload, PrLinkIssue),
+        "pr_feedback_read" => decode!(PrFeedbackReadPayload, PrFeedbackRead),
+        "pr_delegate" => decode!(PrDelegatePayload, PrDelegate),
         "set_checkout_issue" => decode!(SetCheckoutPurposePayload, SetCheckoutIssue),
         "set_checkout_purpose" => decode!(SetCheckoutPurposePayload, SetCheckoutPurpose),
         "migrate_main_branch" => decode!(MigrateMainBranchPayload, MigrateMainBranch),
@@ -2991,6 +3045,9 @@ impl Runtime {
             Event::WorktreeNameSuggest(payload) => self.suggest_worktree_name(payload),
             Event::IssueSetOpen(payload) => self.set_issue_open(payload),
             Event::LocalIssueUpdate(payload) => self.update_local_issue(payload),
+            Event::PrLinkIssue(payload) => self.link_pr_issue(payload),
+            Event::PrFeedbackRead(payload) => self.read_pr_feedback(payload),
+            Event::PrDelegate(payload) => self.delegate_pr(payload),
             Event::SetCheckoutPurpose(payload) => self.set_checkout_purpose(payload),
             Event::MigrateMainBranch(payload) => self.migrate_main_branch(payload),
             Event::TaskOperationAck(payload) => self.acknowledge_task_operation(payload.id),

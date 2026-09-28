@@ -20,6 +20,7 @@ mod memory;
 mod operations;
 mod project_sessions;
 mod projects;
+mod pull_requests;
 mod rename;
 mod session;
 mod snapshot_delta;
@@ -1201,6 +1202,9 @@ pub struct Runtime {
     /// Ids for the `issue_work` slots, so a late answer for a replaced
     /// request is recognised and dropped.
     next_issue_work_id: u64,
+    /// The checkout whose Hide link a Local `pr_link_issue` waits on: its
+    /// answer in `ingest_issue_operation_result` settles `pr_work.link`.
+    pr_link_checkout: Option<String>,
     /// The first prompt for the agent a worktree task starts, by task id. It
     /// is kept off the snapshot: an issue body has no business on the wire
     /// after the Start dialog sent it.
@@ -1564,6 +1568,7 @@ impl Runtime {
             local_issues_save_active: false,
             local_issue_links: BTreeMap::new(),
             next_issue_work_id: 0,
+            pr_link_checkout: None,
             task_agent_prompt: None,
             last_accepted_catalog: None,
             catalog_roots: workspace::RootIndex::new(),

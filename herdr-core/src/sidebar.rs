@@ -1743,6 +1743,7 @@ mod tests {
         };
         let workspace = |checkout| WorkspaceSnapshot {
             home_issues: Default::default(),
+            pull_requests: Vec::new(),
             tasks: Default::default(),
             id: "project".into(),
             label: "Project".into(),
@@ -1848,6 +1849,7 @@ mod tests {
         };
         let mut workspaces = vec![WorkspaceSnapshot {
             home_issues: Default::default(),
+            pull_requests: Vec::new(),
             tasks: Default::default(),
             checkouts: vec![
                 checkout(

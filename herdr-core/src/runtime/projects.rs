@@ -1925,6 +1925,20 @@ impl Runtime {
                 workspace.home_issues = home_issues;
                 changed = true;
             }
+            let pull_requests = match project {
+                Some(project) if workspace.is_git && workspace.remote_target_id.is_none() => {
+                    super::pull_requests::shown_pull_requests(
+                        &project.pull_requests,
+                        &workspace.checkouts,
+                        unix_milliseconds(),
+                    )
+                }
+                _ => Vec::new(),
+            };
+            if workspace.pull_requests != pull_requests {
+                workspace.pull_requests = pull_requests;
+                changed = true;
+            }
             for checkout in workspace.checkouts.iter_mut() {
                 if checkout.github != status {
                     checkout.github = status.clone();
@@ -2020,6 +2034,17 @@ impl Runtime {
     }
 
     pub(super) fn create_project_worktree(&mut self, payload: CreateWorktreePayload) -> bool {
+        self.start_worktree_task(payload, false)
+    }
+
+    /// `create_worktree`, on a new branch or, `existing_branch`, on a branch
+    /// that already exists here or on `origin` (a pull request's, PRD
+    /// overview-lenses-prs D-46), which only this machine's repositories do.
+    pub(super) fn start_worktree_task(
+        &mut self,
+        payload: CreateWorktreePayload,
+        existing_branch: bool,
+    ) -> bool {
         // The kind reaches `agent.start`, which runs it in the new pane's
         // shell, so only the providers Hide can start are accepted.
         if let Some(kind) = payload.agent_kind.as_deref()
@@ -2135,7 +2160,12 @@ impl Runtime {
                     .ingest_task_operation_result(id, Err(format!("create worktree: {message}")));
             }
         };
-        if let Err(message) = live::spawn_worktree_create(context, request) {
+        let spawned = if existing_branch && device.is_none() {
+            live::spawn_existing_branch_worktree(context, request)
+        } else {
+            live::spawn_worktree_create(context, request)
+        };
+        if let Err(message) = spawned {
             return self.ingest_task_operation_result(id, Err(message));
         }
         true

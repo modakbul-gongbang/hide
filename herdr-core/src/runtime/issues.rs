@@ -283,6 +283,24 @@ impl Runtime {
     }
 
     pub(super) fn set_checkout_issue(&mut self, payload: SetCheckoutPurposePayload) -> bool {
+        match self.link_checkout_issue(&payload.checkout_id, &payload.text) {
+            Ok(()) => true,
+            Err((kind, message)) => {
+                self.push_diagnostic(kind, message);
+                false
+            }
+        }
+    }
+
+    /// The link Hide keeps between a checkout and an issue: the branch's issue
+    /// link and its Workspace token, written on a worker. `Err` names the
+    /// diagnostic kind and why nothing was started; the write's own answer
+    /// lands in `ingest_issue_operation_result`.
+    pub(super) fn link_checkout_issue(
+        &mut self,
+        checkout_id: &str,
+        text: &str,
+    ) -> Result<(), (&'static str, String)> {
         let target = self
             .snapshot
             .navigator
@@ -294,63 +312,48 @@ impl Runtime {
                     .checkouts
                     .iter()
                     .find(|checkout| {
-                        checkout.id == payload.checkout_id
+                        checkout.id == checkout_id
                             && checkout.is_worktree
                             && checkout.branch.is_some()
                     })
                     .map(|checkout| (workspace.clone(), checkout.clone()))
             });
         let Some((workspace, checkout)) = target else {
-            self.push_diagnostic(
+            return Err((
                 "checkout_issue.target_missing",
-                "Issue target checkout is unavailable",
-            );
-            return false;
+                "Issue target checkout is unavailable".to_owned(),
+            ));
         };
         let local_source = self.project_source_kind(&workspace) == crate::tasks::SourceKind::Local;
-        let text = if payload.text.trim().is_empty() {
+        let text = if text.trim().is_empty() {
             String::new()
         } else if local_source {
-            let known = crate::local_issues::parse_id(&payload.text).filter(|number| {
+            let known = crate::local_issues::parse_id(text).filter(|number| {
                 matches!(&self.local_issues, Ok(store) if store.issue(&workspace.path, *number).is_some())
             });
             match known {
                 Some(number) => crate::local_issues::display_id(number),
                 None => {
-                    self.push_diagnostic(
+                    return Err((
                         "checkout_issue.invalid",
-                        format!(
-                            "No local issue {} in {}",
-                            payload.text.trim(),
-                            workspace.label
-                        ),
-                    );
-                    return false;
+                        format!("No local issue {} in {}", text.trim(), workspace.label),
+                    ));
                 }
             }
         } else {
-            match IssueReference::parse(&payload.text, workspace.home_issues.repository.as_deref())
-            {
-                Ok(reference) => reference.token(),
-                Err(error) => {
-                    self.push_diagnostic("checkout_issue.invalid", error);
-                    return false;
-                }
-            }
+            IssueReference::parse(text, workspace.home_issues.repository.as_deref())
+                .map(|reference| reference.token())
+                .map_err(|error| ("checkout_issue.invalid", error))?
         };
-        let id = match self.begin_task_operation(
-            "checkout_issue",
-            Some(workspace.path.clone()),
-            checkout.branch.clone(),
-            None,
-            None,
-        ) {
-            Ok(id) => id,
-            Err(error) => {
-                self.push_diagnostic("checkout_issue.busy", error);
-                return false;
-            }
-        };
+        let id = self
+            .begin_task_operation(
+                "checkout_issue",
+                Some(workspace.path.clone()),
+                checkout.branch.clone(),
+                None,
+                None,
+            )
+            .map_err(|error| ("checkout_issue.busy", error))?;
         let session = workspace::authoritative_session_space(
             &self.last_session_spaces,
             &workspace,
@@ -387,7 +390,7 @@ impl Runtime {
                 Err(crate::live::IssueWriteFailure::unchanged(error)),
             );
         }
-        true
+        Ok(())
     }
 
     pub(crate) fn ingest_issue_operation_result(
@@ -403,6 +406,10 @@ impl Runtime {
             return false;
         }
         self.issue_write_pending = None;
+        if self.pr_link_checkout.as_deref() == Some(request.checkout_id.as_str()) {
+            self.pr_link_checkout = None;
+            self.settle_pr_link_write(result.as_ref().err().map(|error| error.detail.clone()));
+        }
         match result {
             Ok(issue) => {
                 if let Some(id) = &request.session_workspace_id {
@@ -539,7 +546,7 @@ impl Runtime {
         )
     }
 
-    fn local_project_by_id(&self, workspace_id: &str) -> Option<WorkspaceSnapshot> {
+    pub(super) fn local_project_by_id(&self, workspace_id: &str) -> Option<WorkspaceSnapshot> {
         self.snapshot
             .navigator
             .workspaces
@@ -556,7 +563,7 @@ impl Runtime {
     /// Runs `work` on its own thread and hands its answer to `ingest` under
     /// the lock; `Err` when there is no worker to run it on (a core built
     /// without one, as the tests build it).
-    fn spawn_issue_worker<T: Send + 'static>(
+    pub(super) fn spawn_issue_worker<T: Send + 'static>(
         &self,
         name: &str,
         work: impl FnOnce() -> T + Send + 'static,
@@ -760,7 +767,16 @@ impl Runtime {
             Err(message) => return self.settle_issue_create(id, Err(message)),
         };
         let key = crate::tasks::github_key(&issue.reference);
-        // The new issue shows at once; the next read confirms it.
+        self.remember_created_issue(project_path, issue);
+        self.settle_issue_create(id, Ok(key))
+    }
+
+    /// A GitHub issue Hide just made shows at once; the next read confirms it.
+    pub(super) fn remember_created_issue(
+        &mut self,
+        project_path: &str,
+        issue: crate::issues::IssueSnapshot,
+    ) {
         if let Some(project) = self
             .github
             .projects
@@ -776,7 +792,6 @@ impl Runtime {
         }
         self.refresh_pull_requests(project_path);
         self.apply_pull_requests();
-        self.settle_issue_create(id, Ok(key))
     }
 
     /// `issue_detail_request`: an issue's body, labels, author, assignees and
@@ -978,7 +993,7 @@ impl Runtime {
 
     /// Writes the Local store off the lock: one save thread at a time, and
     /// a change made while it writes is written after it (`write_ui_state`).
-    fn persist_local_issues(&mut self) {
+    pub(super) fn persist_local_issues(&mut self) {
         let Some(path) = self.local_issues_path.clone() else {
             return;
         };

@@ -292,6 +292,7 @@ mod tests {
     ) -> WorkspaceSnapshot {
         WorkspaceSnapshot {
             home_issues: Default::default(),
+            pull_requests: Vec::new(),
             tasks: Default::default(),
             id: id.to_owned(),
             label: id.to_owned(),
