@@ -103,6 +103,8 @@
   --lens-bar-height: 4px;
   --lens-lane-head: 296px;
   --lens-node-width: 232px;
+  --issue-panel-min-width: 360px;
+  --issue-label-dot: 6px;
   --size-sidebar-hierarchy-grandchild: 36px;
   --size-sidebar-hierarchy-great-grandchild: 48px;
   --text-display: 30px;

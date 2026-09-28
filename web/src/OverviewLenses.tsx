@@ -26,7 +26,7 @@ import {
 import { prChip } from "./projectBoard";
 import type { Actions } from "./actions";
 import { checkoutPresentation, distanceText, filesText, laneCheckoutCard, shownPullRequest } from "./projects";
-import type { Checkout, Task, Workspace } from "./snapshot";
+import type { AgentRow, Checkout, Task, Workspace } from "./snapshot";
 import { PR_TONE, TaskGlyph } from "./TaskBoards";
 import { useUiStore, type AgentsMode, type LensFold, type OverviewTab } from "./ui";
 
@@ -256,13 +256,17 @@ function IssueChip({ project, task, handlers, now }: { project: Workspace; task:
   );
 }
 
-/** A checkout's pull request in its lifecycle colour; it opens the pull request on GitHub, its half-second card is the checkout's PR card (B17, B24). */
-function PullRequestChip({ project, checkout, handlers, now }: { project: Workspace; checkout: Checkout; handlers: LensHandlers; now: number }) {
+/**
+ * A checkout's pull request in its lifecycle colour, on a lens or an issue
+ * card; it opens the pull request on GitHub, its half-second card is the
+ * checkout's PR card (B17, B24; overview-lenses-issues B8, B9).
+ */
+export function PullRequestChip({ project, checkout, onOpen, now }: { project: Workspace; checkout: Checkout; onOpen: (url: string) => void; now: number }) {
   const pr = shownPullRequest(checkout);
   if (!pr) return null;
   const chip = prChip(pr);
   return (
-    <CheckoutCardHint card={laneCheckoutCard(project, checkout, now)} description={`PR #${pr.number} · ${pr.title}`} onOpenPullRequest={(url) => handlers.openGitHub(url, project.device_id)}>
+    <CheckoutCardHint card={laneCheckoutCard(project, checkout, now)} description={`PR #${pr.number} · ${pr.title}`} onOpenPullRequest={onOpen}>
       <button
         type="button"
         data-lens-pr-chip={pr.number}
@@ -271,7 +275,7 @@ function PullRequestChip({ project, checkout, handlers, now }: { project: Worksp
         className="pointer-events-auto relative z-10 rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
         onClick={(event) => {
           event.stopPropagation();
-          handlers.openGitHub(pr.url, project.device_id);
+          onOpen(pr.url);
         }}
       >
         <Badge variant="outline" className={PR_TONE[chip.tone]}>
@@ -344,12 +348,12 @@ function AgentNode({ value, chips, handlers, now }: { value: LensAgent; chips: b
         <span className={cn("min-w-0 flex-1 truncate text-body text-foreground", turn && "font-semibold")}>{agent.identity_label}</span>
         <span className="shrink-0 font-mono text-caption text-muted-foreground">{agent.elapsed}</span>
       </span>
-      {line ? <MessageLine value={value} line={line} tone={tone} onOpen={open} /> : null}
+      {line ? <AgentMessageHint agent={agent} place={checkout.branch ?? checkout.label} line={line} tone={tone} onOpen={open} /> : null}
       {chips ? (
         <span className="pointer-events-none relative flex min-w-0 items-center gap-sm" data-lens-node-chips="true">
           <CheckoutChip project={project} checkout={checkout} handlers={handlers} now={now} />
           {task ? <IssueChip project={project} task={task} handlers={handlers} now={now} /> : null}
-          <PullRequestChip project={project} checkout={checkout} handlers={handlers} now={now} />
+          <PullRequestChip project={project} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, project.device_id)} now={now} />
         </span>
       ) : null}
     </div>
@@ -357,13 +361,13 @@ function AgentNode({ value, chips, handlers, now }: { value: LensAgent; chips: b
 }
 
 /**
- * The node's second line, and after a half-second rest on it everything the
- * agent last said (`message`, D-50), not the line cut to the node, with
- * `↵ 패널에서 답하기`, the node's own click.
+ * An agent's second line, on a lens node or an issue card's agent row, and
+ * after a half-second rest on it everything the agent last said (`message`,
+ * D-50), not the line cut to the row, with `↵ 패널에서 답하기`, the row's
+ * own click. `place` is the checkout it works in.
  */
-function MessageLine({ value, line, tone, onOpen }: { value: LensAgent; line: string; tone: string; onOpen: () => void }) {
+export function AgentMessageHint({ agent, place, line, tone, onOpen }: { agent: AgentRow; place: string; line: string; tone: string; onOpen: () => void }) {
   const { open, onOpenChange, triggerProps } = useHintOpen();
-  const { agent } = value;
   const message = agent.message?.trim() || line;
   return (
     <Tooltip open={open} onOpenChange={onOpenChange} disableHoverableContent={false}>
@@ -382,7 +386,7 @@ function MessageLine({ value, line, tone, onOpen }: { value: LensAgent; line: st
           </span>
           <p className={cn("whitespace-pre-wrap break-words text-caption", tone)}>{message}</p>
           <span className="flex items-center gap-sm text-caption text-muted-foreground">
-            <span className="min-w-0 flex-1 truncate font-mono">{value.checkout.branch ?? value.checkout.label}</span>
+            <span className="min-w-0 flex-1 truncate font-mono">{place}</span>
             <button
               type="button"
               data-lens-message-open={agent.pane_id}
@@ -557,7 +561,7 @@ function LaneHead({ lane, scope, handlers, now }: { lane: Lane; scope: "project"
         ) : (
           <>
             {lane.task ? <IssueChip project={project} task={lane.task} handlers={handlers} now={now} /> : null}
-            <PullRequestChip project={project} checkout={checkout} handlers={handlers} now={now} />
+            <PullRequestChip project={project} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, project.device_id)} now={now} />
             {ahead > 0 || behind > 0 ? (
               <span className="pointer-events-none" data-lens-head-distance={`${ahead}:${behind}`}>
                 {distanceText(ahead, behind)}

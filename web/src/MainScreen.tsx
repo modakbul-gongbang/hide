@@ -10,10 +10,11 @@ import { AGENT_GROUPS, boardProjects, mainSections, overviewScreen, type DeviceA
 import { useNewIssueShortcut } from "./IssueDialogs";
 import { AgentsLens, AgentsModeToggle, lensHandlers } from "./OverviewLenses";
 import { agentsTile, buildLanes, buildLineages, scopeAgents } from "./overviewLens";
-import { allProjectsStats, buildTasks, type AllProjectsStats, type SourceState, type TaskCard } from "./projectBoard";
+import { allProjectsStats, buildTasks, NO_FILTER, type AllProjectsStats, type IssueFilter, type SourceState, type TaskCard } from "./projectBoard";
 import { frontCheckout, type Device } from "./snapshot";
 import { useShellStore } from "./store";
-import { DependenciesView, FocusedTask, TasksListView, TasksModeToggle, TasksView, type BoardHandlers } from "./TaskBoards";
+import { IssueFilterControl, TasksModeToggle } from "./TaskBoards";
+import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
 import { toggledFold, useUiStore, type LensFold, type MainView } from "./ui";
 import { hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
@@ -49,6 +50,9 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const [doneOpen, setDoneOpen] = useState(false);
   const [folds, setFolds] = useState<readonly LensFold[]>([]);
   const [focusTask, setFocusTask] = useState<string | null>(null);
+  // The Tasks view's issue panel and filter, this screen's own page state (PRD overview-lenses-issues).
+  const [panel, setPanel] = useState<string | null>(null);
+  const [filter, setFilter] = useState<IssueFilter>(NO_FILTER);
   const sections = useMemo(() => mainSections(rest, agents), [rest, agents]);
   const stats = useMemo(() => allProjectsStats(sections.flatMap((section) => section.projects.map((project) => project.workspace))), [sections]);
   const projects = useMemo(() => boardProjects(rest, agents), [rest, agents]);
@@ -79,12 +83,15 @@ export function MainScreen({ actions }: { actions: Actions }) {
     if (issueProject) useUiStore.getState().setWorkspaceDialog({ kind: "new_issue", workspaceId: issueProject });
   };
   useNewIssueShortcut(issueProject ? newIssue : null);
-  const handlers: BoardHandlers = {
+  const page: IssuesPage = {
     openCheckout,
-    startIssue: (card) => {
-      if (card.task) useUiStore.getState().setWorkspaceDialog({ kind: "start_issue", workspaceId: card.place.projectId, taskKey: card.task.key });
-    },
+    startIssue: (card) => useUiStore.getState().setWorkspaceDialog({ kind: "start_issue", workspaceId: card.place.projectId, taskKey: card.task.key }),
     newIssue,
+    showCheckouts: () => {
+      setView("agents");
+      setAgentsMode("checkouts");
+      setPanel(null);
+    },
   };
   // The Agents tab keeps the count of agents whose turn it is, the Agents tile's badge.
   const waiting = agentsTile(lensAgents, { state: "ready" }).badge?.count ?? 0;
@@ -92,10 +99,12 @@ export function MainScreen({ actions }: { actions: Actions }) {
     openIssue: (_owner, task) => {
       setView("tasks");
       setFocusTask(task.key);
+      setPanel(task.key);
     },
     toggleFold: (fold) => setFolds((open) => toggledFold(open, fold)),
   });
-  const scrolls = view !== "projects";
+  // With the issue panel open the board and the panel scroll on their own (D-43).
+  const scrolls = view !== "projects" && !(view === "tasks" && panelCard(tasks, panel) !== null);
   const unavailable = sections.filter((section) => section.availability.state !== "ready");
   return (
     <section className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-background", scrolls && "overflow-y-auto")} aria-label="Overview" data-main-screen="true" data-main-view={view}>
@@ -123,6 +132,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
           onValueChange={(value) => {
             setView(value as MainView);
             setFocusTask(null);
+            setPanel(null);
           }}
         >
           <TabsList aria-label="Overview view">
@@ -138,7 +148,12 @@ export function MainScreen({ actions }: { actions: Actions }) {
             ))}
           </TabsList>
         </Tabs>
-        {view === "tasks" ? <TasksModeToggle mode={tasksMode} onChange={setTasksMode} /> : view === "agents" ? <AgentsModeToggle mode={agentsMode} onChange={setAgentsMode} /> : null}
+        {view === "tasks" ? (
+          <span className="flex items-center gap-xs" data-issues-controls="true">
+            <IssueFilterControl filter={filter} onChange={setFilter} />
+            <TasksModeToggle mode={tasksMode} onChange={setTasksMode} />
+          </span>
+        ) : view === "agents" ? <AgentsModeToggle mode={agentsMode} onChange={setAgentsMode} /> : null}
       </div>
       {boards ? (
         // A device that cannot answer keeps its last rows off these boards and says why here.
@@ -149,15 +164,21 @@ export function MainScreen({ actions }: { actions: Actions }) {
         ))
       ) : null}
       {view === "tasks" ? (
-        <FocusedTask.Provider value={focusTask}>
-          {tasksMode === "dependencies" ? (
-            <DependenciesView board={tasks} focusedPaneId={focusedPaneId} actions={actions} handlers={handlers} />
-          ) : tasksMode === "list" ? (
-            <TasksListView board={tasks} focusedPaneId={focusedPaneId} actions={actions} handlers={handlers} />
-          ) : (
-            <TasksView board={tasks} scope="all" focusedPaneId={focusedPaneId} actions={actions} handlers={handlers} doneOpen={doneOpen} onToggleDone={() => setDoneOpen((open) => !open)} />
-          )}
-        </FocusedTask.Provider>
+        <IssuesView
+          board={tasks}
+          scope="all"
+          mode={tasksMode}
+          filter={filter}
+          onFilterChange={setFilter}
+          panel={panel}
+          onPanel={setPanel}
+          focusTask={focusTask}
+          focusedPaneId={focusedPaneId}
+          doneOpen={doneOpen}
+          onToggleDone={() => setDoneOpen((open) => !open)}
+          actions={actions}
+          page={page}
+        />
       ) : view === "agents" ? (
         <AgentsLens mode={agentsMode} lanes={lanes} lineages={lineages} scope="all" selectedLane={null} folds={folds} handlers={lensActions} now={Date.now()} />
       ) : total === 0 && sections.every((section) => section.availability.state === "ready") ? (

@@ -4,7 +4,7 @@
 // agents per card, and both scopes.
 
 import { describe, expect, it } from "vitest";
-import { allProjectsStats, buildDependencies, buildTasks, formatBytes, projectStats, shownAgents, stageCards, stageOf, type BoardProject } from "./projectBoard";
+import { allProjectsStats, buildDependencies, buildTasks, filterActive, filterBoard, formatBytes, NO_FILTER, projectStats, shownAgents, stageCards, stageOf, type BoardProject } from "./projectBoard";
 import type { AgentRow, Checkout, PullRequest, Task, Workspace } from "./snapshot";
 
 const NOW = 1_800_000_000_000;
@@ -86,94 +86,129 @@ describe("the Git stage", () => {
   });
 });
 
-describe("the Tasks board", () => {
-  it("puts an open task no checkout works on in the backlog, never a closed one, and heads a linked card with its task (B1)", () => {
-    const board = buildTasks(one(workspace([checkout("feat", { task: "github:acme/project#170", changed: 4 }), checkout("main", { worktree: false })], { tasks: [task(170), task(172), task(8, false)] })), "project", NOW);
-    expect(stageCards(board, "backlog").map((card) => card.task?.id)).toEqual(["#172"]);
-    const working = stageCards(board, "working")[0];
+const key = (number: number) => `github:acme/project#${number}`;
+
+describe("the Issues board", () => {
+  it("puts an open issue no checkout works on in the backlog, never a closed one, and heads a linked card with its issue and checkout chip (B1, B2)", () => {
+    const board = buildTasks(one(workspace([checkout("feat", { task: key(170), changed: 4 }), checkout("main", { worktree: false })], { tasks: [task(170), task(172), task(8, false)] })), "project", NOW);
+    expect(stageCards(board, "backlog").map((card) => card.task.id)).toEqual(["#172"]);
+    const [working] = stageCards(board, "working");
     expect(working?.title).toBe("Task 170");
-    expect(working?.task?.id).toBe("#170");
-    expect(working?.facts).toEqual({ files: 4, ahead: null, pr: null, behind: null });
-    // The primary checkout with no issue and no agent is not a task.
+    expect(working?.chip).toEqual({ branch: "feat", primary: false, ahead: null, files: 4 });
+    expect(working?.first).toBe("workspace");
+    expect(stageCards(board, "backlog")[0]?.chip).toBeNull();
+    // The primary checkout with no issue and no agent is not a card.
     expect(board.cards.some((card) => card.checkout?.id === "main")).toBe(false);
   });
 
   it("orders the backlog by when each issue last changed, most recent first", () => {
     const at = (value: Task, updated: number): Task => ({ ...value, updated_at_unix_ms: updated });
     const board = buildTasks(one(workspace([], { tasks: [at(task(1), 10), at(task(2), 30), task(3), at(task(4), 20)] })), "project", NOW);
-    expect(stageCards(board, "backlog").map((card) => card.task?.id)).toEqual(["#2", "#4", "#1", "#3"]);
+    expect(stageCards(board, "backlog").map((card) => card.task.id)).toEqual(["#2", "#4", "#1", "#3"]);
     expect(board.source).toEqual({ reading: false, failure: null, openIssues: 4, label: "GitHub" });
   });
 
-  it("titles an untracked checkout by its branch and gives it only its pull request (D-07)", () => {
-    const board = buildTasks(one(workspace([checkout("fix/tab-crash", { pr: pr("open", "unknown", true) })], { tasks: [] })), "project", NOW);
-    const [card] = stageCards(board, "review");
-    expect(card?.task).toBeNull();
-    expect(card?.title).toBe("fix/tab-crash");
-    expect(card?.facts.pr).toEqual({ number: 7, url: "https://github.com/acme/project/pull/7", tone: "draft", checks: null, review: null });
-  });
-
-  it("colours the pull request by its lifecycle and reads CI only once it was read (D-06)", () => {
-    const facts = (value: PullRequest) => buildTasks(one(workspace([checkout("a", { pr: value })])), "project", NOW).cards[0]?.facts.pr;
-    expect(facts(pr("open", "passing"))).toMatchObject({ tone: "open", checks: "passing" });
-    expect(facts(pr("review", "failed"))).toMatchObject({ tone: "open", checks: "failed" });
-    expect(facts(pr("merged", "pending"))).toMatchObject({ tone: "merged", checks: "pending" });
-    expect(facts(pr("closed", "none"))).toMatchObject({ tone: "closed", checks: null });
-  });
-
-  it("shows the same pull request on every task it closes, and a done card behind its upstream (D-07)", () => {
+  it("makes no card of work with no issue: a worktree in progress and an open pull request each fold into their column's line (B1, B4)", () => {
     const board = buildTasks(
-      one(workspace([checkout("both", { pr: pr("merged"), task: "github:acme/project#194", closes: ["github:acme/project#195"], behind: 12 })], { tasks: [task(194, false), task(195)] })),
+      one(workspace([checkout("loose", { changed: 2, panes: ["a"] }), checkout("fix/tab-crash", { pr: pr("open", "passing") }), checkout("merged-work", { merged: true })], { tasks: [] })),
       "project",
       NOW,
     );
-    const done = stageCards(board, "done");
-    expect(done.map((card) => card.task?.id)).toEqual(["#194", "#195"]);
-    expect(done.every((card) => card.facts.pr?.tone === "merged" && card.facts.behind === 12)).toBe(true);
-    // A task the pull request closes is not also waiting in the backlog.
-    expect(stageCards(board, "backlog")).toEqual([]);
+    expect(board.cards).toEqual([]);
+    expect(board.loose.worktrees.map((value) => value.branch)).toEqual(["loose"]);
+    expect(board.loose.pullRequests.map((value) => [value.number, value.title, value.tone])).toEqual([[7, "PR", "open"]]);
   });
 
-  it("names at most two agents, the ones that need the operator first, and counts the rest (B6)", () => {
+  it("puts an issue in review when its open pull request reaches it by the branch's link or by a closing reference, and shows that pull request on each (B3)", () => {
+    const board = buildTasks(
+      one(
+        workspace(
+          [
+            checkout("191-desktop", { task: key(191), pr: pr("review", "passing") }),
+            // A pull request whose branch names no issue but whose body closes one.
+            { ...checkout("closer", { pr: { ...pr("open"), number: 9 }, closes: [key(193), key(194)] }) },
+          ],
+          { tasks: [task(191), task(193), task(194)] },
+        ),
+      ),
+      "project",
+      NOW,
+    );
+    const review = stageCards(board, "review");
+    expect(review.map((card) => [card.task.id, card.pr?.number])).toEqual([
+      ["#191", 7],
+      ["#193", 9],
+      ["#194", 9],
+    ]);
+    expect(review.every((card) => card.first === "pull_request")).toBe(true);
+    expect(stageCards(board, "backlog")).toEqual([]);
+    expect(board.loose.pullRequests).toEqual([]);
+  });
+
+  it("lists a done issue with the pull request that closed it and when that merged (B3)", () => {
+    const merged: PullRequest = { ...pr("merged"), number: 180, merged_at_unix_ms: NOW - 86_400_000 };
+    const board = buildTasks(one(workspace([checkout("both", { pr: merged, task: key(174), closes: [key(175)] })], { tasks: [task(174, false), task(175)] })), "project", NOW);
+    const done = stageCards(board, "done");
+    expect(done.map((card) => [card.task.id, card.pr?.number, card.pr?.tone, card.mergedAt])).toEqual([
+      ["#174", 180, "merged", NOW - 86_400_000],
+      ["#175", 180, "merged", NOW - 86_400_000],
+    ]);
+    expect(done.every((card) => card.chip === null && card.first === null)).toBe(true);
+  });
+
+  it("colours the pull request by its lifecycle and reads CI only once it was read (D-06)", () => {
+    const chip = (value: PullRequest) => buildTasks(one(workspace([checkout("a", { pr: value, task: key(1) })], { tasks: [task(1)] })), "project", NOW).cards[0]?.pr;
+    expect(chip(pr("open", "passing"))).toMatchObject({ tone: "open", checks: "passing" });
+    expect(chip(pr("review", "failed"))).toMatchObject({ tone: "open", checks: "failed" });
+    expect(chip(pr("merged", "pending"))).toMatchObject({ tone: "merged", checks: "pending" });
+    expect(chip(pr("closed", "none"))).toMatchObject({ tone: "closed", checks: null });
+    expect(chip(pr("open", "unknown", true))).toMatchObject({ tone: "draft", checks: null });
+  });
+
+  it("names at most two agents, the ones that need the operator first, and counts the rest (B2)", () => {
     const rows = ["w", "q", "d"].map((pane) => ({ agent: agent(pane, pane === "q" ? "needs_you" : pane === "d" ? "done" : "working", pane === "q" ? { demand: "question" } : {}), depth: 0 }));
     const { shown, more } = shownAgents(rows);
     expect(shown.map((row) => row.pane_id)).toEqual(["q", "d"]);
     expect(more).toBe(1);
   });
 
-  it("offers 시작 on an open backlog issue of a project on this Mac, and 이슈 연결 on a worktree with none (B7)", () => {
-    const project = workspace([checkout("idle"), checkout("busy", { panes: ["b"] }), checkout("linked", { task: "github:acme/project#1", changed: 1 })], { tasks: [task(1), task(2)] });
-    const board = buildTasks(one(project, [agent("b")]), "project", NOW);
+  it("offers 시작 on an open backlog issue of a project on this Mac and editing on a Local one only (B6, D-41)", () => {
+    const project = workspace([checkout("linked", { task: key(1), changed: 1 })], { tasks: [task(1), task(2)] });
+    const board = buildTasks(one(project), "project", NOW);
     expect(board.cards.filter((card) => card.canStart).map((card) => card.id)).toEqual(["task:project:github:acme/project#2"]);
-    expect(board.cards.filter((card) => card.canLink).map((card) => card.id)).toEqual(["checkout:idle", "checkout:busy"]);
-    // A worktree with no issue and no agent folds away; one an agent works in stays.
-    expect(board.cards.filter((card) => card.idle).map((card) => card.id)).toEqual(["checkout:idle"]);
-    expect(board.cards.find((card) => card.id === "checkout:busy")?.title).toBe("busy");
-    const remote = buildTasks(one(workspace([checkout("w")], { tasks: [task(3)], remote: "mini" })), "project", NOW);
-    expect(remote.cards.some((card) => card.canStart || card.canLink)).toBe(false);
+    expect(board.cards.find((card) => card.canStart)?.first).toBe("start");
+    expect(board.cards.some((card) => card.editable)).toBe(false);
+    const local: Task = { key: "local:/fixture#3", source: "local", id: "L-3", url: null, title: "Local 3", open: true };
+    expect(buildTasks(one(workspace([], { tasks: [local] })), "project", NOW).cards[0]?.editable).toBe(true);
+    const remote = buildTasks(one(workspace([checkout("w")], { tasks: [task(3), local], remote: "mini" })), "project", NOW);
+    expect(remote.cards.some((card) => card.canStart || card.editable)).toBe(false);
   });
 
-  it("titles a worktree with no issue by its purpose, else its branch", () => {
-    const named = { ...checkout("prd/agent-tab-groups"), purpose: { text: "Agent tab groups", origin: "token" } as Checkout["purpose"] };
-    const board = buildTasks(one(workspace([named])), "project", NOW);
-    expect(board.cards[0]?.title).toBe("Agent tab groups");
-    expect(board.cards[0]?.branch).toBe("prd/agent-tab-groups");
-  });
-
-  it("raises a needs-you card to the top of its own column and keeps the rest in order", () => {
+  it("raises a card whose agent waits on the operator to the top of its own column and keeps the rest in order (B5)", () => {
     const board = buildTasks(
-      one(workspace([checkout("a", { changed: 1, panes: ["a"] }), checkout("b", { changed: 1, panes: ["b"] }), checkout("c", { changed: 1, panes: ["c"] })]), [agent("a"), agent("b"), agent("c", "needs_you", { demand: "error" })]),
+      one(workspace([checkout("a", { task: key(1), panes: ["a"] }), checkout("b", { task: key(2), panes: ["b"] }), checkout("c", { task: key(3), panes: ["c"] })], { tasks: [task(1), task(2), task(3)] }), [
+        agent("a"),
+        agent("b"),
+        agent("c", "needs_you", { demand: "question" }),
+      ]),
       "project",
       NOW,
     );
-    expect(stageCards(board, "working").map((card) => card.id)).toEqual(["checkout:c", "checkout:a", "checkout:b"]);
-    expect(stageCards(board, "working")[0]?.error).toBe(true);
+    expect(stageCards(board, "working").map((card) => [card.id, card.needsYou])).toEqual([
+      ["checkout:c", true],
+      ["checkout:a", false],
+      ["checkout:b", false],
+    ]);
   });
 
   it("keeps a cross-checkout descendant under its root", () => {
     const parent = agent("p", "needs_you", { demand: "question", lineage_child_pane_ids: ["child"], lineage_collapsed: true });
     const child = agent("child", "working", { lineage_parent_pane_id: "p", delegated: true });
-    const board = buildTasks(one(workspace([checkout("parent-branch", { changed: 1, panes: ["p"] }), checkout("child-branch", { changed: 1, panes: ["child"] })]), [child, parent]), "project", NOW);
+    const board = buildTasks(
+      one(workspace([checkout("parent-branch", { task: key(1), panes: ["p"] }), checkout("child-branch", { task: key(2), panes: ["child"] })], { tasks: [task(1), task(2)] }), [child, parent]),
+      "project",
+      NOW,
+    );
     const parentCard = board.cards.find((card) => card.id === "checkout:parent-branch");
     expect(parentCard?.rows.map((row) => [row.agent.pane_id, row.depth])).toEqual([
       ["p", 0],
@@ -183,20 +218,18 @@ describe("the Tasks board", () => {
     expect(board.cards.find((card) => card.id === "checkout:child-branch")?.rows.map((row) => row.agent.pane_id)).toEqual(["child"]);
   });
 
-  it("keeps the last tasks when the source could not be read and says so on each task card only (B13)", () => {
-    const board = buildTasks(one(workspace([checkout("feat", { task: "github:acme/project#170" }), checkout("loose")], { tasks: [task(170), task(171)], failure: "rate limited" })), "project", NOW);
-    expect(board.cards).toHaveLength(3);
-    const failures = board.cards.map((card) => card.sourceFailure);
-    expect(failures.filter(Boolean)).toHaveLength(2);
-    expect(failures[0]).toBe("GitHub 읽기 실패 · 5분 전에 확인한 상태 · 자세한 오류는 진단 로그");
-    expect(board.cards.find((card) => card.id === "checkout:loose")?.sourceFailure).toBeNull();
-    expect(board.source.failure).toBe("GitHub 읽기 실패 · 자세한 오류는 진단 로그");
+  it("keeps the last issues when the source could not be read and says so on every card with the value's age (B17)", () => {
+    const board = buildTasks(one(workspace([checkout("feat", { task: key(170) }), checkout("loose")], { tasks: [task(170), task(171)], failure: "rate limited" })), "project", NOW);
+    expect(board.cards).toHaveLength(2);
+    expect(board.cards.map((card) => card.sourceFailure)).toEqual(["GitHub 읽기 실패 · 5분 전 값 · 이유는 로그에", "GitHub 읽기 실패 · 5분 전 값 · 이유는 로그에"]);
+    expect(board.source.failure).toBe("GitHub 읽기 실패 · 이유는 로그에");
   });
 
-  it("puts a folder or the primary checkout on the board only while an agent there works on an issue (B14)", () => {
+  it("puts a folder or the primary checkout on the board only while an agent there works on an issue", () => {
     const local = (number: number): Task => ({ key: `local:/fixture#${number}`, source: "local", id: `L-${number}`, url: null, title: `Local ${number}`, open: true });
-    const folder = (key: string | undefined, panes: string[]) => workspace([checkout("f", { worktree: false, panes, task: key })], { git: false, tasks: [local(1)] });
-    expect(stageCards(buildTasks(one(folder("local:/fixture#1", ["x"]), [agent("x")]), "project", NOW), "working").map((card) => card.task?.id)).toEqual(["L-1"]);
+    const folder = (task: string | undefined, panes: string[]) => workspace([checkout("f", { worktree: false, panes, task })], { git: false, tasks: [local(1)] });
+    const working = stageCards(buildTasks(one(folder("local:/fixture#1", ["x"]), [agent("x")]), "project", NOW), "working");
+    expect(working.map((card) => [card.task.id, card.chip?.primary])).toEqual([["L-1", true]]);
     expect(buildTasks(one(folder(undefined, ["x"]), [agent("x")]), "project", NOW).cards.map((card) => card.id)).toEqual(["task:project:local:/fixture#1"]);
     expect(stageCards(buildTasks(one(folder("local:/fixture#1", [])), "project", NOW), "working")).toEqual([]);
     // A project still reading its source has no count to state.
@@ -205,8 +238,8 @@ describe("the Tasks board", () => {
     expect(buildTasks(one(reading), "project", NOW).source.openIssues).toBeNull();
   });
 
-  it("mixes every project's tasks on All projects, each card naming its project (B15)", () => {
-    const herdr = workspace([checkout("feat", { task: "github:acme/project#170", panes: ["h"] })], { id: "herdr", tasks: [task(170), task(172)] });
+  it("mixes every project's issues on All projects, each card naming its project", () => {
+    const herdr = workspace([checkout("feat", { task: key(170), panes: ["h"] })], { id: "herdr", tasks: [task(170), task(172)] });
     const quiet = workspace([checkout("main", { worktree: false, panes: ["m"] })], { id: "modakbul", tasks: null });
     const board = buildTasks(
       [
@@ -219,6 +252,23 @@ describe("the Tasks board", () => {
     expect(board.cards.map((card) => card.place.projectId)).toEqual(["herdr", "herdr"]);
     expect(board.cards[0]?.idHelp).toBe("GitHub · herdr · feat");
     expect(board.cards.map((card) => card.project)).toEqual(["herdr", "herdr"]);
+  });
+});
+
+describe("the Issues filter", () => {
+  const board = buildTasks(
+    one(workspace([checkout("sig", { task: key(192), panes: ["q"] })], { tasks: [task(192, true, "hided has no SIGTERM handler"), task(214, true, "Stale HERDR_BIN_PATH")] }), [agent("q", "needs_you", { demand: "question" })]),
+    "project",
+    NOW,
+  );
+
+  it("keeps the issues whose id or title holds every word, and the operator's turn only when asked (B21)", () => {
+    expect(filterBoard(board, NO_FILTER)).toBe(board);
+    expect(filterBoard(board, { query: "sigterm HIDED", turn: false }).cards.map((card) => card.task.id)).toEqual(["#192"]);
+    expect(filterBoard(board, { query: "#214", turn: false }).cards.map((card) => card.task.id)).toEqual(["#214"]);
+    expect(filterBoard(board, { query: "", turn: true }).cards.map((card) => card.task.id)).toEqual(["#192"]);
+    expect(filterBoard(board, { query: "nothing", turn: false }).cards).toEqual([]);
+    expect(filterActive({ query: "  ", turn: false })).toBe(false);
   });
 });
 

@@ -1,27 +1,24 @@
 // Work that starts from an issue (the issue-first Overview, 2026-09-28): a
-// new issue in a project's source, the Start dialog that turns an issue into
-// a worktree with an agent and its first prompt, and the popover that links
-// a worktree with no issue to one. Each sends the one core event that owns
+// new issue in a project's source and the Start dialog that turns an issue
+// into a worktree with an agent and its first prompt. Each sends the one core event that owns
 // the change and reads the core's own answer for it (`issue_work`,
 // `task_operation`); a dialog never decides that its request succeeded.
 
-import { FileTextIcon, CircleDotIcon, PlusIcon, RotateCcwIcon, SparklesIcon } from "lucide-react";
+import { FileTextIcon, CircleDotIcon, RotateCcwIcon, SparklesIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
 import { Checkbox } from "./components/ui/checkbox";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList, CommandShortcut } from "./components/ui/command";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
 import { Kbd } from "./components/ui/kbd";
-import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover";
 import { RadioGroup, RadioGroupItem } from "./components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Hint } from "./components/ui/tooltip";
 import { Note, Status } from "./components/settings-rows";
 import { defaultWorktreeName, firstPrompt, namePrefix } from "./issueStart";
 import { cn } from "./lib/utils";
-import type { Checkout, IssueSettings, Task, Workspace } from "./snapshot";
+import type { IssueSettings, Task, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { branchProblem, taskFor } from "./workspaceManage";
@@ -407,86 +404,6 @@ function AgentChoiceField({ agent, disabled, onChange }: { agent: AgentChoice; d
         ))}
       </RadioGroup>
     </fieldset>
-  );
-}
-
-/**
- * 이슈 연결 on a worktree with no issue: the project's open issues to pick
- * from, and, when none is the one, a new issue with the typed title made in
- * place and linked once the source has it.
- */
-export function LinkIssuePopover({ workspaceId, checkout, actions, children }: { workspaceId: string; checkout: Checkout; actions: Actions; children: ReactNode }) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [pending, setPending] = useState<{ after: number } | null>(null);
-  const workspace = useShellStore((s) => s.rest?.navigator?.workspaces?.find((row) => row.id === workspaceId) ?? null);
-  const create = useShellStore((s) => s.rest?.issue_work?.create ?? null);
-  const answer = pending && create && create.id > pending.after && create.workspace_id === workspaceId ? create : null;
-  const tasks = useMemo(() => (workspace?.tasks?.tasks ?? []).filter((task) => task.open), [workspace]);
-  const worked = useMemo(() => new Set((workspace?.checkouts ?? []).map((row) => row.task_key).filter(Boolean)), [workspace]);
-
-  useEffect(() => {
-    if (answer?.phase !== "ready" || !answer.task_key) return;
-    const task = tasks.find((row) => row.key === answer.task_key);
-    if (!task?.id) return;
-    actions.linkIssue(checkout.id, task.id);
-    setPending(null);
-    setOpen(false);
-  }, [answer, tasks, actions, checkout.id]);
-
-  const link = (task: Task) => {
-    if (!task.id) return;
-    actions.linkIssue(checkout.id, task.id);
-    setOpen(false);
-  };
-  const title = query.trim();
-  return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
-        if (!next) setQuery("");
-      }}
-    >
-      <PopoverTrigger asChild>{children}</PopoverTrigger>
-      <PopoverContent align="start" className="w-(--size-pr-popover) p-none" data-link-issue={checkout.id}>
-        <Command loop>
-          <CommandInput value={query} onValueChange={setQuery} placeholder="연결할 이슈 찾기" aria-label={`${checkout.branch ?? checkout.label}에 연결할 이슈`} data-link-issue-query="true" />
-          <CommandList className="max-h-(--size-relationship-list-max)">
-            <CommandEmpty>맞는 열린 이슈가 없습니다</CommandEmpty>
-            <CommandGroup>
-              {tasks.map((task) => (
-                <CommandItem key={task.key} value={`${task.id ?? ""} ${task.title}`} onSelect={() => link(task)} data-link-issue-item={task.key}>
-                  {task.source === "github" ? <CircleDotIcon aria-hidden="true" /> : <FileTextIcon aria-hidden="true" />}
-                  <span className="shrink-0 font-mono text-caption text-muted-foreground">{task.id}</span>
-                  <span className="min-w-0 flex-1 truncate">{task.title}</span>
-                  {worked.has(task.key) ? <span className="text-caption text-muted-foreground">작업 중</span> : null}
-                </CommandItem>
-              ))}
-            </CommandGroup>
-            {title ? (
-              <CommandGroup forceMount>
-                <CommandItem
-                  forceMount
-                  value={`new-issue ${title}`}
-                  disabled={pending !== null && answer?.phase !== "failed"}
-                  onSelect={() => {
-                    setPending({ after: create?.id ?? 0 });
-                    actions.createIssue(workspaceId, title, "");
-                  }}
-                  data-link-issue-create="true"
-                >
-                  <PlusIcon aria-hidden="true" />
-                  <span className="min-w-0 flex-1 truncate">"{title}"로 새 이슈 만들기</span>
-                  <CommandShortcut>{pending && answer?.phase !== "failed" ? "만드는 중…" : null}</CommandShortcut>
-                </CommandItem>
-              </CommandGroup>
-            ) : null}
-          </CommandList>
-          {answer?.phase === "failed" ? <p className="border-t border-border px-md py-xs text-caption text-destructive">{answer.message}</p> : null}
-        </Command>
-      </PopoverContent>
-    </Popover>
   );
 }
 
