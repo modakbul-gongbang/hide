@@ -21,8 +21,8 @@ const DNS: &str = "mac.tailnet-name.ts.net";
 /// A `tailscale` that answers from files under `state`: `status.json`,
 /// `serve.json`; `fail-serve` makes every serve change fail, `fail-remove`
 /// only removals, and `apply-then-fail` applies an add and then fails it
-/// (a `serve --bg` that timed out after it took); every call is appended to
-/// `calls.log`.
+/// (a `serve --bg` that timed out after it took); with `funnel` a removal
+/// leaves the Funnel flag in place; every call is appended to `calls.log`.
 struct FakeTailscale {
     state: PathBuf,
     bin: PathBuf,
@@ -45,6 +45,7 @@ case "$1" in
     if [ -e "$S/fail-serve" ]; then echo "serve config denied: access denied" >&2; exit 1; fi
     last=""; for a in "$@"; do last="$a"; done
     if [ "$last" = off ] && [ -e "$S/fail-remove" ]; then echo "remove denied" >&2; exit 1; fi
+    if [ "$last" = off ] && [ -e "$S/funnel" ]; then echo '{{"AllowFunnel":{{"{dns}:443":true}}}}' > "$S/serve.json"; exit 0; fi
     if [ "$last" = off ]; then echo '{{}}' > "$S/serve.json"; exit 0; fi
     printf '{{"TCP":{{"443":{{"HTTPS":true}}}},"Web":{{"{dns}:443":{{"Handlers":{{"/":{{"Proxy":"%s"}}}}}}}}}}' "$last" > "$S/serve.json"
     if [ -e "$S/apply-then-fail" ]; then echo "timed out" >&2; exit 1; fi
@@ -698,13 +699,11 @@ async fn the_phone_app_is_served_under_m_and_nothing_else_leaks() {
     running.stop();
 }
 
-async fn http_status(port: u16, path: &str, host: Option<&str>) -> String {
+async fn http_status(port: u16, path: &str, headers: &[&str]) -> String {
     let url = format!("http://127.0.0.1:{port}{path}");
     let mut args = vec!["-s", "-o", "/dev/null", "-w", "%{http_code}"];
-    let header;
-    if let Some(host) = host {
-        header = format!("Host: {host}");
-        args.extend(["-H", header.as_str()]);
+    for header in headers {
+        args.extend(["-H", header]);
     }
     args.push(&url);
     let output = tokio::process::Command::new("/usr/bin/curl")
@@ -755,9 +754,22 @@ async fn the_tailnet_reaches_only_the_phone_app_and_transport_trouble_stays_visi
 
     // Through `tailscale serve` only the phone app and /ws answer, and /ws
     // takes only a phone, whatever Origin the caller claims.
-    assert_eq!(http_status(port, "/health", Some(DNS)).await, "404");
-    assert_eq!(http_status(port, "/", Some(DNS)).await, "404");
-    assert_eq!(http_status(port, "/health", None).await, "200");
+    let tailnet_host = format!("Host: {DNS}");
+    assert_eq!(http_status(port, "/health", &[&tailnet_host]).await, "404");
+    assert_eq!(http_status(port, "/", &[&tailnet_host]).await, "404");
+    // Tailscale routes by TLS name, so a tailnet caller can claim a loopback
+    // Host; the forwarded-for header serve always adds still gives it away.
+    let loopback_host = format!("Host: 127.0.0.1:{port}");
+    assert_eq!(
+        http_status(
+            port,
+            "/health",
+            &[&loopback_host, "X-Forwarded-For: 100.64.0.7"]
+        )
+        .await,
+        "404"
+    );
+    assert_eq!(http_status(port, "/health", &[]).await, "200");
     let mut request = format!("ws://127.0.0.1:{port}/ws")
         .into_client_request()
         .unwrap();
@@ -783,8 +795,22 @@ async fn the_tailnet_reaches_only_the_phone_app_and_transport_trouble_stays_visi
         "the shell token is refused through serve even with a loopback Origin"
     );
     let code = pair_code(exposed["qr"].as_str().unwrap());
-    let (_paired, answer) = pair(port, &format!("https://{DNS}"), &code).await;
+    let (mut paired, answer) = pair(port, &format!("https://{DNS}"), &code).await;
     assert_eq!(answer["type"], "paired");
+
+    // A Funnel turned on after exposure takes hide's entry down and closes
+    // every phone; turned off again, the entry comes back.
+    std::fs::write(fake.state.join("funnel"), "").unwrap();
+    let mut serve = fake.serve();
+    serve["AllowFunnel"] = json!({format!("{DNS}:443"): true});
+    fake.set_serve(serve);
+    let funnel = mobile_frame(&mut shell, |frame| frame["failure"]["step"] == "funnel").await;
+    assert!(funnel["qr"].is_null());
+    assert_eq!(close_code(&mut paired).await, Some(4001));
+    fake.wait_until_removed().await;
+    std::fs::remove_file(fake.state.join("funnel")).unwrap();
+    fake.set_serve(json!({}));
+    mobile_frame(&mut shell, |frame| frame["exposure"] == "exposed").await;
 
     // A removal that fails at switch-off stays on screen, and the next pass
     // finishes it.

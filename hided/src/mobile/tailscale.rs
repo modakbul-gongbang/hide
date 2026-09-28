@@ -246,13 +246,22 @@ pub fn proxy_target(port: u16) -> String {
 
 /// Whether Tailscale Funnel publishes `dns_name`'s port 443 to the whole
 /// internet. hide's entry is for the tailnet only (PRD D-01), so a Funnel
-/// there keeps Mobile unexposed.
+/// there keeps Mobile unexposed. A foreground `tailscale funnel` session
+/// keeps its own config under `Foreground.<session>`, so those count too.
 pub fn funnel_on(serve: &Value, dns_name: &str) -> bool {
-    serve
-        .get("AllowFunnel")
-        .and_then(|funnel| funnel.get(format!("{dns_name}:443")))
-        .and_then(Value::as_bool)
-        == Some(true)
+    let key = format!("{dns_name}:443");
+    let allows = |config: &Value| {
+        config
+            .get("AllowFunnel")
+            .and_then(|funnel| funnel.get(&key))
+            .and_then(Value::as_bool)
+            == Some(true)
+    };
+    allows(serve)
+        || serve
+            .get("Foreground")
+            .and_then(Value::as_object)
+            .is_some_and(|sessions| sessions.values().any(allows))
 }
 
 /// The line Settings > Mobile shows while Funnel is on for this address.
@@ -475,5 +484,7 @@ mod tests {
             &serde_json::json!({}),
             "mac.tailnet-name.ts.net"
         ));
+        let foreground = serde_json::json!({"Foreground": {"a1b2": {"AllowFunnel": {"mac.tailnet-name.ts.net:443": true}}}});
+        assert!(funnel_on(&foreground, "mac.tailnet-name.ts.net"));
     }
 }

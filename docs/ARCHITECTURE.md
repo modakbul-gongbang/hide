@@ -357,12 +357,13 @@ The transport is the operator's own Tailscale, and `mobile/tailscale.rs` is the 
 It finds the CLI at `HIDE_TAILSCALE_BIN`, then the macOS app bundle's `/Applications/Tailscale.app/Contents/MacOS/Tailscale`, then `tailscale` on PATH, and reads `tailscale status --json` for the backend state, `Self.DNSName`, `Self.HostName`, MagicDNS and `CertDomains`; every command runs with a fifteen-second bound.
 hided binds loopback as before and adds `tailscale serve --bg --yes --https=443 http://127.0.0.1:<port>`, then confirms the entry with `serve status --json` before a QR is shown.
 It records the entry before running the add, so an add that took effect and then failed or timed out is still recognised as its own on the next pass.
-It refuses to expose while `AllowFunnel` covers that HTTPS 443 name, because Funnel would publish the address to the internet, and says so on screen.
+It refuses to expose while `AllowFunnel` covers that HTTPS 443 name, in the saved config or a foreground session's, because Funnel would publish the address to the internet, and says so on screen; a Funnel turned on after exposure takes hide's entry down and closes every phone until it is off.
+Settings > Mobile rechecks every three seconds while it is open, and with no one watching hided reconciles once a minute while Mobile is on, and while a removal is still owed after it was switched off, so a Tailscale that starts late is picked up and a failing command is retried at that pace.
 It owns only the entry it recorded (`{dns_name, port, added_at}`): an HTTPS 443 handler it did not record is shown as the foreign target and left alone, an entry for its old port is replaced, and switching off or a clean exit removes it with `serve --yes --https=443 --set-path=/ off`.
 Every start reconciles the record, so a crash's leftover entry is repaired or removed on the next start; `run_daemon` answers SIGTERM and SIGINT with the same shutdown, which removes the entry before the process exits.
 A failed command leaves Mobile unexposed with the step that failed on screen, and its command line and stderr go to a `mobile_transport` record; a removal that fails at switch-off stays on screen and is retried until it succeeds, and shutdown waits for a reconcile already running.
 While exposed, `https://<Self.DNSName>` joins the allowed WebSocket Origins, and only a phone handshake may use it; a desktop handshake from that Origin is closed with 4002.
-A request that arrives through `tailscale serve` (a forwarded-for or Tailscale identity header, or a Host that is not loopback) reaches only `/m`, `/m/*`, `/assets/*` and `/ws`, everything else answers 404, and its `/ws` takes only a phone handshake whatever Origin it claims, with a 64 KiB frame limit.
+A request that arrives through `tailscale serve` (a forwarded-for or Tailscale identity header, or a Host that is not loopback) reaches only `/m`, `/m/*`, `/assets/*` and `/ws`, everything else answers 404, and its `/ws` takes only a phone handshake from the Mac's tailnet Origin while Mobile is exposed, whatever other Origin it claims, with a 64 KiB frame limit.
 Every handshake has ten seconds to send its first frame.
 
 The phone app is a static shell and a data channel, kept apart.
@@ -377,7 +378,7 @@ The QR is `https://<DNSName>/m/#pair=<base64url {v:1, endpoint, code}>`, so the 
 A paired phone gets a 32-byte credential; `phones.json` (mode 0600) keeps only its SHA-256, compared in constant time, with the name, the last connection, the notification answer and the push subscription.
 The phone keeps the credential in its storage and in its address fragment (`#k=`), because the manifest has no `start_url` and a Home Screen app starts from the address it was added from, whose storage iOS may keep apart from Safari's.
 At most four phones pair; the limit is checked before the code is spent.
-A phone keeps at most two connections, the oldest closed first, and a connection that answers no ping for 45 seconds is closed and recorded as `phone.silent`.
+A phone keeps at most two connections, the oldest closed first, a connection that answers no ping for 45 seconds is closed and recorded as `phone.silent`, and one whose frame cannot leave within ten seconds is closed and recorded as `phone.stalled`.
 A phone away for seven days is revoked at start, by an hourly sweep and when it next connects, and a revoke, manual or automatic, drops the credential and the subscription in one write and closes that phone's connection.
 
 A phone's whole vocabulary is `open`, `more`, `close`, `input`, `push_subscription` and `push_permission`; anything else is answered `refused_request` and recorded as `scope.refused`, and a phone never receives a file, a path, a setting or the core snapshot.
@@ -391,7 +392,7 @@ Neither path goes through the attach set or a core key event, so a phone never m
 Push is Web Push that hided signs and encrypts itself with `ring`: a VAPID ES256 key made once and kept in `mobile.json`, RFC 8291 `aes128gcm` bodies, and a POST through `ureq` over rustls on a blocking thread, never under the core lock.
 Only the push services' own hosts are accepted as endpoints (Apple, FCM, Mozilla, Windows), parsed as an `https` URL with no userinfo and no port but 443 and posted without following redirects, plus a loopback endpoint in a debug build for the e2e.
 The first list only seeds the transitions; after it, a root agent entering Needs You or Done sends one notice per subscribed phone, a descendant's question, approval or error raises its root, and the notice's tag (`device|root pane`) replaces the one before it.
-An agent that leaves the list is remembered for ten minutes, so one that comes back in the same state is not announced again.
+An agent that leaves the list is remembered for ten minutes, so one that comes back in the same state is not announced again; the cost is that the notification of a root that left for good is cleared up to ten minutes later.
 The mode decides whether it is sent: never for 끔, only while no desktop renderer is connected for 앱이 닫혀 있을 때만, and always for 항상; a phone viewing that agent's detail is skipped in every mode.
 A root that turned Seen rides the next notice's `clear` list, and the app closes those notifications when it opens, because iOS drops a subscription that receives a push it does not show.
 A 404 or 410 answer drops that subscription, and the phone registers again on its next connection.

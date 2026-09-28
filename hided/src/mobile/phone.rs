@@ -34,6 +34,24 @@ const PING_INTERVAL: Duration = Duration::from_secs(20);
 /// socket through tailscaled can stay half-open for minutes, holding a
 /// client slot and a "viewing" that would hold back its push (B33).
 const SILENT_LIMIT: Duration = Duration::from_secs(45);
+/// How long one frame may take to leave: a send into a half-open socket
+/// whose buffer is full would otherwise block the loop, and with it the
+/// ping, the silent limit and a close for eviction or revoke.
+const SEND_LIMIT: Duration = Duration::from_secs(10);
+
+/// Sends one message; false when the socket failed or stalled past
+/// `SEND_LIMIT`, and the connection should end.
+async fn send(socket: &mut WebSocket, message: Message, phone_id: &str) -> bool {
+    match tokio::time::timeout(SEND_LIMIT, socket.send(message)).await {
+        Ok(result) => result.is_ok(),
+        Err(_) => {
+            herdr_core::diagnostic!(json!({
+                "component": "mobile_phone", "kind": "phone.stalled", "phone_id": phone_id,
+            }));
+            false
+        }
+    }
+}
 
 /// The one function every frame to a phone passes through.
 pub fn encode(frame: &Value) -> Message {
@@ -47,15 +65,17 @@ fn refusal_logged(kind: &str, phone_id: Option<&str>, reason: &str) {
 }
 
 async fn refuse(socket: &mut WebSocket, reason: &str) {
-    let _ = socket
-        .send(encode(&json!({"type": "refused", "reason": reason})))
-        .await;
-    let _ = socket
-        .send(Message::Close(Some(CloseFrame {
-            code: CLOSE_REFUSED,
-            reason: reason.to_owned().into(),
-        })))
-        .await;
+    let refusal = encode(&json!({"type": "refused", "reason": reason}));
+    let _ = tokio::time::timeout(SEND_LIMIT, async {
+        let _ = socket.send(refusal).await;
+        let _ = socket
+            .send(Message::Close(Some(CloseFrame {
+                code: CLOSE_REFUSED,
+                reason: reason.to_owned().into(),
+            })))
+            .await;
+    })
+    .await;
 }
 
 /// Whether a first frame is a phone's.
@@ -236,7 +256,7 @@ pub async fn serve(
         return;
     }
     if let Some(paired) = paired
-        && socket.send(encode(&paired)).await.is_err()
+        && !send(&mut socket, encode(&paired), &phone.id).await
     {
         mobile.unregister(connection);
         return;
@@ -278,7 +298,7 @@ async fn run(
         agents_frame(&projection.borrow_and_update()),
     ];
     for frame in &first {
-        if socket.send(encode(frame)).await.is_err() {
+        if !send(socket, encode(frame), phone_id).await {
             return;
         }
     }
@@ -292,15 +312,15 @@ async fn run(
             changed = projection.changed() => {
                 if changed.is_err() { return; }
                 let frame = agents_frame(&projection.borrow_and_update());
-                if socket.send(encode(&frame)).await.is_err() { return; }
+                if !send(socket, encode(&frame), phone_id).await { return; }
             }
             changed = meta.changed() => {
                 if changed.is_err() { return; }
                 let frame = meta_frame(&meta.borrow_and_update());
-                if socket.send(encode(&frame)).await.is_err() { return; }
+                if !send(socket, encode(&frame), phone_id).await { return; }
             }
             Some(frame) = frames.recv() => {
-                if socket.send(encode(&frame)).await.is_err() { return; }
+                if !send(socket, encode(&frame), phone_id).await { return; }
             }
             _ = ping.tick() => {
                 if heard.elapsed() >= SILENT_LIMIT {
@@ -309,7 +329,7 @@ async fn run(
                     }));
                     return;
                 }
-                if socket.send(Message::Ping(Default::default())).await.is_err() { return; }
+                if !send(socket, Message::Ping(Default::default()), phone_id).await { return; }
             }
             incoming = socket.recv() => {
                 heard = tokio::time::Instant::now();
@@ -334,7 +354,7 @@ async fn run(
                 let current = Arc::clone(&projection.borrow());
                 let reply = handle(mobile, connection, phone_id, &message, &mut detail, &frames_tx, &current).await;
                 if let Some(reply) = reply
-                    && socket.send(encode(&reply)).await.is_err()
+                    && !send(socket, encode(&reply), phone_id).await
                 {
                     return;
                 }

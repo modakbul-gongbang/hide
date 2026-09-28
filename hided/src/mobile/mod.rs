@@ -40,9 +40,9 @@ use tailscale::{Checklist, CliSource, CommandFailure, Ownership, StepState};
 const OBSERVE_INTERVAL: Duration = Duration::from_secs(3);
 /// How often the seven-day sweep runs.
 const SWEEP_INTERVAL: Duration = Duration::from_secs(60 * 60);
-/// How often an unexposed Mobile, or a serve entry left after switching
-/// off, is tried again with no one watching Settings > Mobile (Tailscale may
-/// start after hided, or a removal may have failed).
+/// How often Mobile is reconciled with no one watching Settings > Mobile:
+/// while on, to expose once Tailscale is ready and to notice what changed
+/// under an exposed entry (a Funnel); while off, to finish a failed removal.
 const BACKGROUND_INTERVAL: Duration = Duration::from_secs(60);
 /// How many input request ids per phone are remembered to refuse a repeat.
 const REMEMBERED_INPUTS: usize = 64;
@@ -489,6 +489,21 @@ impl Mobile {
         };
         let exposed = matches!(exposure, Exposure::Exposed { .. });
         self.set_origin(exposed.then_some(dns_name.as_str()));
+        if matches!(exposure, Exposure::Failed { step: "funnel", .. }) {
+            // Funnel publishes whatever serves this name to the internet:
+            // hide's own entry comes down and every phone is closed until
+            // the operator turns Funnel off (PRD D-16).
+            self.close_phones("mobile_off");
+            let record = self.lock().settings.serve.clone();
+            if let Some(record) = record
+                && let Err((step, message)) = self.remove_recorded(&program, &record).await
+            {
+                herdr_core::diagnostic!(json!({
+                    "component": "mobile_transport", "kind": "serve.funnel_withdraw_failed",
+                    "step": step, "message": message,
+                }));
+            }
+        }
         {
             let mut inner = self.lock();
             if exposed
@@ -684,13 +699,15 @@ impl Mobile {
         };
         self.set_record(Some(record.clone()));
         if let Err(failure) = tailscale::serve_add(program, port).await {
-            let applied = tailscale::serve_status(program).await.is_ok_and(|serve| {
-                matches!(
+            // Cleared only when a fresh read shows the entry absent; a record
+            // with no entry behind it reads as Free on the next pass.
+            let absent = tailscale::serve_status(program).await.is_ok_and(|serve| {
+                !matches!(
                     tailscale::ownership(&serve, dns_name, Some(&record)),
                     Ok(Ownership::Ours { port: current }) if current == port
                 )
             });
-            if !applied {
+            if absent {
                 self.set_record(None);
             }
             return Err(failure);
@@ -745,11 +762,9 @@ impl Mobile {
             let (observed, owed) = {
                 let inner = self.lock();
                 let observed = inner.settings.enabled && !inner.observers.is_empty();
-                let owed = if inner.settings.enabled {
-                    !matches!(inner.exposure, Exposure::Exposed { .. })
-                } else {
-                    inner.settings.serve.is_some()
-                };
+                // While on, the minute pass also catches what changed under an
+                // exposed entry (a Funnel turned on, the entry removed by hand).
+                let owed = inner.settings.enabled || inner.settings.serve.is_some();
                 (observed, owed)
             };
             if observed || (owed && since_background >= BACKGROUND_INTERVAL) {

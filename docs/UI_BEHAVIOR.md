@@ -739,7 +739,7 @@ A passed step shows a check; only the first failing step shows a warning with it
 The phone step is guidance hide cannot check: it waits until the QR shows and then reads as done.
 The tab rechecks every three seconds while it is open, so logging in or turning HTTPS on continues without reopening it.
 Once every Mac step passes and hide has confirmed its serve entry, the tab shows the QR, 폰 카메라로 찍으세요, the ts.net address, the code's m:ss countdown and 새 코드.
-An HTTPS entry hide did not make shows its target in one line and no QR; a failed serve command shows the failed step and its message in one line, and so does a Funnel that would publish the address.
+An HTTPS entry hide did not make shows its target in one line and no QR; a failed serve command shows the failed step and its message in one line, and so does a Funnel that would publish the address, which also disconnects every phone when it is turned on later.
 A removal that fails when the switch goes off keeps that line under the switch until hide finishes it.
 Opening the tab, pressing 새 코드, or a phone pairing shows a new code, and the previous code stops working.
 The phones group is titled 연결된 폰 · n / 4; each row shows the phone's name, when it was last seen, whether notifications are on or off, the days left before the seven-day revoke once it has been away a day, and 해지, which closes that phone at once.

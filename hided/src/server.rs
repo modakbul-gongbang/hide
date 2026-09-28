@@ -466,7 +466,10 @@ async fn client_loop(
     // This Mac's tailnet address is an allowed Origin only while Mobile is
     // exposed, and only for a phone: the shell token is never accepted from
     // it, nor from anything that came through `tailscale serve` (PRD D-16).
-    let loopback = check_origin(origin.as_deref(), &state.allowed_origins).is_ok();
+    // A proxied request is never loopback, whatever Origin it claims: a
+    // client outside a browser can write any Origin, so through serve only
+    // the Mac's tailnet Origin counts, and only while Mobile is exposed.
+    let loopback = !proxied && check_origin(origin.as_deref(), &state.allowed_origins).is_ok();
     let tailnet = !loopback && state.mobile.origin_allowed(origin.as_deref());
     if !loopback && !tailnet {
         refuse(&mut socket, CloseReason::OriginNotAllowed, None).await;
@@ -499,7 +502,7 @@ async fn client_loop(
         client_gone(&state, connection, false, false);
         return;
     }
-    if !loopback || proxied {
+    if !loopback {
         refuse(&mut socket, CloseReason::OriginNotAllowed, None).await;
         return;
     }
