@@ -116,6 +116,9 @@ Authentication stays with SSH: the alias's `IdentityFile`, or the running SSH ag
 
 The remote machine needs Herdr installed where a non-login shell finds it (`~/.local/bin`, Homebrew, or the system paths) and a running `herdr server`.
 hide asks that machine `herdr status server --json` to learn where the server socket is, so nothing about the remote user or home directory is configured on this side.
+Allowing Hide's helper on a machine also installs Hide's `hide` command there and links it in `~/.local/bin`, unless a `hide` that is not Hide's is already there.
+A pane on that machine can then run `hide file open`, `hide diff open` or `hide browser open http://localhost:3000`, and the result opens in this Hide, with `localhost` meaning that machine.
+A machine allowed by an earlier version of Hide asks once more in Settings, because the command widens what the consent covers; that shell's `PATH` has to include `~/.local/bin` for a bare `hide` to be found.
 Each device row in Settings shows whether the remote session is connected and, when it is not, the reason in the words the connection failed with; `Test` runs the SSH, authentication, Herdr, protocol, PTY, SFTP, and Git stages one after another and lists the first one that needs attention on that host.
 
 ## Update
