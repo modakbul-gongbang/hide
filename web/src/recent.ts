@@ -12,6 +12,7 @@
 // so the order is the shell's convenience: nothing here is authority, and a
 // reload rebuilds it from use.
 
+import { allProjectsCount } from "./navigation";
 import { catalogWorkspaces, type AgentRow, type Checkout, type SnapshotRest, type ViewDisplaySnapshot, type Workspace } from "./snapshot";
 import type { Screen } from "./ui";
 import { activeDisplay, areasOf } from "./viewLayout";
@@ -258,8 +259,9 @@ function findCheckout(rest: SnapshotRest | null, checkoutId: string) {
 /**
  * A Recent Panels row: a tab holding exactly one agent pane is called by
  * that agent and carries its status mark; any other tab keeps its Herdr
- * label, and a display its own name. A screen is called by its Project, or
- * All projects, and is gone with its Project.
+ * label, and a display its own name. A Project's Overview is called by its
+ * Project and is gone with it; the every-project Overview reads as its
+ * sidebar row does, `Overview` over the project count (PRD sidebar-shell D-02).
  */
 export function panelItem(rest: SnapshotRest | null, entry: RecentEntry): CycleItem | null {
   if (isScreenVisit(entry)) return screenItem(rest, entry);
@@ -279,9 +281,14 @@ export function panelItem(rest: SnapshotRest | null, entry: RecentEntry): CycleI
 
 function screenItem(rest: SnapshotRest | null, visit: ScreenVisit): CycleItem | null {
   const { screen } = visit;
-  const title = screen.kind === "main" ? "All projects" : catalogWorkspaces(rest).find((workspace) => workspace.id === screen.projectId)?.label;
+  const target = { kind: "screen", screen } as const;
+  if (screen.kind === "main") {
+    const count = allProjectsCount(rest);
+    return { key: visit.key, title: "Overview", detail: `${count} ${count === 1 ? "project" : "projects"}`, kind: screen.kind, agent: null, target };
+  }
+  const title = catalogWorkspaces(rest).find((workspace) => workspace.id === screen.projectId)?.label;
   if (title === undefined) return null;
-  return { key: visit.key, title, detail: "Overview", kind: screen.kind, agent: null, target: { kind: "screen", screen } };
+  return { key: visit.key, title, detail: "Overview", kind: screen.kind, agent: null, target };
 }
 
 /** A Recent Projects row: the project, with the surface and checkout it would come back on. */

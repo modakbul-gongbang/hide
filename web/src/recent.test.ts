@@ -58,7 +58,7 @@ function session(checkoutId: string, tabId: string, displays: ViewDisplaySnapsho
   const front = shape.flatMap((row) => row.checkouts).find((row) => row.id === checkoutId)!;
   front.active_tab_id = tabId;
   return {
-    navigator: { focused_workspace_id: front.workspace_id, focused_checkout_id: checkoutId, workspaces: shape, agents },
+    navigator: { focused_workspace_id: front.workspace_id, focused_checkout_id: checkoutId, workspaces: shape, agents, devices: [{ id: "local", label: "This Mac", kind: "local", state: "local", message: null }] },
     workspace_view: {
       device_id: "local",
       path: front.path,
@@ -161,7 +161,7 @@ describe("Recent Panels rows", () => {
   });
 });
 
-describe("Recent Panels over All projects and each Overview", () => {
+describe("Recent Panels over the every-project Overview and each Project's Overview", () => {
   beforeEach(() => {
     resetRecent();
     useUiStore.setState({ screen: null, cycle: null, opening: null });
@@ -185,7 +185,7 @@ describe("Recent Panels over All projects and each Overview", () => {
     expect(rows(rest).slice(0, 2)).toEqual(["herdr Fix the build (hide · main · Terminal)", "overview notes (Overview)"]);
   });
 
-  it("keeps one row per Overview, moves a revisited one to the front, and has All projects as its own row", () => {
+  it("keeps one row per Overview, moves a revisited one to the front, and has the every-project Overview as its own row, read as its sidebar row", () => {
     const rest = session("c-main", "t1");
     show(rest, { kind: "main" });
     show(rest, { kind: "overview", projectId: "w-notes" });
@@ -196,7 +196,7 @@ describe("Recent Panels over All projects and each Overview", () => {
       "overview notes (Overview)",
       "overview hide (Overview)",
       "herdr Fix the build (hide · main · Terminal)",
-      "main All projects (Overview)",
+      "main Overview (2 projects)",
       "herdr t2 label (hide · main · Terminal)",
       "herdr t3 label (hide · Terminal)",
       "herdr t4 label (notes · Terminal)",

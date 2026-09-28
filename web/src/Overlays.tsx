@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronUpIcon, FolderIcon, LayoutDashboardIcon, LayoutGridIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronUpIcon, FolderIcon, HouseIcon, LayoutDashboardIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Actions } from "./actions";
@@ -85,11 +85,11 @@ function CycleMarks({ item }: { item: CycleItem }) {
   );
 }
 
-/** All projects and an Overview wear the marks their sidebar rows wear. */
+/** The every-project Overview and a Project's Overview wear the marks their sidebar rows wear. */
 function KindMark({ item }: { item: CycleItem }) {
   if (item.kind === "herdr") return <AgentMark kind={item.agent?.agent_kind} />;
   if (item.kind === "project") return <FolderIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />;
-  if (item.kind === "main") return <LayoutGridIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />;
+  if (item.kind === "main") return <HouseIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />;
   if (item.kind === "overview") return <LayoutDashboardIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />;
   return displayMark({ kind: item.kind, label: item.title });
 }
