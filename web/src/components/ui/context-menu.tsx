@@ -46,7 +46,10 @@ function ContextMenu({ onOpenChange, children }: { onOpenChange?: (open: boolean
   );
 }
 
-/** The target: a right-click opens the menu at the pointer, the menu key or ⇧F10 under the target. */
+/**
+ * The target: a right-click opens the menu at the pointer, the menu key or ⇧F10 under the target.
+ * A `disabled` target offers no menu: the right-click opens nothing, not even the browser's own.
+ */
 function ContextMenuTrigger({ asChild = false, className, onContextMenu, onKeyDown, disabled = false, ...props }: ComponentProps<"div"> & { asChild?: boolean; disabled?: boolean }) {
   const { point, openAt, host } = useContextMenu();
   const Comp = asChild ? Slot.Root : "div";
@@ -61,9 +64,10 @@ function ContextMenuTrigger({ asChild = false, className, onContextMenu, onKeyDo
         className={className}
         onContextMenu={(event: MouseEvent<HTMLDivElement>) => {
           onContextMenu?.(event);
-          if (disabled || event.defaultPrevented) return;
+          if (event.defaultPrevented) return;
           event.preventDefault();
           event.stopPropagation();
+          if (disabled) return;
           openAt({ x: event.clientX, y: event.clientY });
         }}
         onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {

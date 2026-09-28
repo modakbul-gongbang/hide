@@ -797,8 +797,9 @@ const CheckoutRowView = memo(function CheckoutRowView({
     >
       <EntryContextMenu
         label={`${name} actions`}
-        items={() => (removing ? [] : checkoutMenu(workspace, checkout, menuHost(), purposeProblem))}
+        items={() => checkoutMenu(workspace, checkout, menuHost(), purposeProblem)}
         onSelect={(item) => runCheckoutItem(actions, workspace, checkout, item)}
+        disabled={removing}
         className="group flex items-stretch"
         data-checkout-menu={checkout.id}
       >
