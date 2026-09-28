@@ -547,18 +547,21 @@ fn worktree_rows_sort_main_then_open_then_commit_time() {
         ..WorktreeSnapshot::default()
     };
 
-    runtime.ingest_worktrees(WorktreeCatalogSnapshot {
-        projects: vec![ProjectWorktreesSnapshot {
-            root_path: "/repo".to_owned(),
-            worktrees: vec![
-                row("/repo.worktrees/old", "old", false, 20),
-                row("/repo.worktrees/recent", "recent", false, 30),
-                row("/repo.worktrees/open", "open", false, 10),
-                row("/repo", "main", true, 1),
-            ],
-            ..ProjectWorktreesSnapshot::default()
-        }],
-    });
+    runtime.ingest_worktrees(
+        WorktreeCatalogSnapshot {
+            projects: vec![ProjectWorktreesSnapshot {
+                root_path: "/repo".to_owned(),
+                worktrees: vec![
+                    row("/repo.worktrees/old", "old", false, 20),
+                    row("/repo.worktrees/recent", "recent", false, 30),
+                    row("/repo.worktrees/open", "open", false, 10),
+                    row("/repo", "main", true, 1),
+                ],
+                ..ProjectWorktreesSnapshot::default()
+            }],
+        },
+        0,
+    );
 
     let ordered = runtime
         .snapshot()
@@ -613,14 +616,17 @@ fn a_named_project_overview_measures_its_whole_disk() {
         is_main,
         ..WorktreeSnapshot::default()
     };
-    runtime.ingest_worktrees(WorktreeCatalogSnapshot {
-        projects: vec![ProjectWorktreesSnapshot {
-            root_path: "/repo".to_owned(),
-            shared_git_path: Some("/repo/.git".to_owned()),
-            worktrees: vec![row("/repo", true), row("/repo.worktrees/feature", false)],
-            ..ProjectWorktreesSnapshot::default()
-        }],
-    });
+    runtime.ingest_worktrees(
+        WorktreeCatalogSnapshot {
+            projects: vec![ProjectWorktreesSnapshot {
+                root_path: "/repo".to_owned(),
+                shared_git_path: Some("/repo/.git".to_owned()),
+                worktrees: vec![row("/repo", true), row("/repo.worktrees/feature", false)],
+                ..ProjectWorktreesSnapshot::default()
+            }],
+        },
+        0,
+    );
     let measure = |payload: serde_json::Value| {
         serde_json::to_vec(&serde_json::json!({
             "schema_version": SCHEMA_VERSION, "kind": "card_measure_disk", "payload": payload
@@ -1491,12 +1497,15 @@ fn cleanup_review_without_live_state_is_visible_and_never_deletes() {
     let project = runtime.snapshot.navigator.workspaces[0].clone();
     runtime.focus_checkout(&project.id, &project.checkouts[0].id);
     let root = runtime.focused_local_checkout().unwrap().0.path.clone();
-    runtime.ingest_worktrees(crate::model::WorktreeCatalogSnapshot {
-        projects: vec![crate::model::ProjectWorktreesSnapshot {
-            root_path: root,
-            ..Default::default()
-        }],
-    });
+    runtime.ingest_worktrees(
+        crate::model::WorktreeCatalogSnapshot {
+            projects: vec![crate::model::ProjectWorktreesSnapshot {
+                root_path: root,
+                ..Default::default()
+            }],
+        },
+        0,
+    );
     runtime.dispatch_json(br#"{"schema_version":2,"kind":"cleanup_review","payload":{}}"#);
     let snapshot = serde_json::to_value(runtime.snapshot()).unwrap();
     assert_eq!(snapshot["git_worktrees"]["cleanup"]["phase"], "failed");
@@ -2752,26 +2761,29 @@ fn a_closed_pane_still_listed_does_not_stop_the_removal_but_a_new_one_does() {
     );
     project.is_git = true;
     runtime.snapshot.navigator.workspaces = vec![project];
-    runtime.ingest_worktrees(WorktreeCatalogSnapshot {
-        projects: vec![ProjectWorktreesSnapshot {
-            root_path: "/repo".to_owned(),
-            worktrees: vec![
-                WorktreeSnapshot {
-                    path: "/repo".to_owned(),
-                    branch: Some("main".to_owned()),
-                    is_main: true,
-                    ..WorktreeSnapshot::default()
-                },
-                WorktreeSnapshot {
-                    path: "/repo.worktrees/open".to_owned(),
-                    branch: Some("open".to_owned()),
-                    head_sha: Some("abc".to_owned()),
-                    ..WorktreeSnapshot::default()
-                },
-            ],
-            ..ProjectWorktreesSnapshot::default()
-        }],
-    });
+    runtime.ingest_worktrees(
+        WorktreeCatalogSnapshot {
+            projects: vec![ProjectWorktreesSnapshot {
+                root_path: "/repo".to_owned(),
+                worktrees: vec![
+                    WorktreeSnapshot {
+                        path: "/repo".to_owned(),
+                        branch: Some("main".to_owned()),
+                        is_main: true,
+                        ..WorktreeSnapshot::default()
+                    },
+                    WorktreeSnapshot {
+                        path: "/repo.worktrees/open".to_owned(),
+                        branch: Some("open".to_owned()),
+                        head_sha: Some("abc".to_owned()),
+                        ..WorktreeSnapshot::default()
+                    },
+                ],
+                ..ProjectWorktreesSnapshot::default()
+            }],
+        },
+        0,
+    );
     let closing = |id: u64| crate::model::WorktreeRemovalSnapshot {
         device_id: None,
         id,
@@ -2806,6 +2818,157 @@ fn a_closed_pane_still_listed_does_not_stop_the_removal_but_a_new_one_does() {
     assert_eq!(removal.phase, "failed");
     assert!(removal.message.unwrap().contains("A pane appeared"));
     assert!(runtime.confirmed_worktree_removal(2).is_none());
+}
+
+/// A finished removal takes its row out in the same frame, without making
+/// every project's Git state stale; a catalog read that started before the
+/// removal settled still lists the worktree and cannot bring the row back,
+/// while a read that started after it is believed, so a worktree created
+/// again at that path appears.
+#[test]
+fn a_finished_removal_drops_its_row_at_once_and_an_older_read_cannot_bring_it_back() {
+    use crate::model::{ProjectWorktreesSnapshot, WorktreeCatalogSnapshot, WorktreeSnapshot};
+
+    let mut runtime = runtime();
+    let mut project = workspace(
+        "workspace-1",
+        "hide",
+        "/repo",
+        vec![checkout("workspace-1", "main", "/repo", None)],
+    );
+    project.is_git = true;
+    runtime.snapshot.navigator.workspaces = vec![project];
+    runtime.snapshot.navigator.focused_checkout_id = Some("main".to_owned());
+    let listed = WorktreeCatalogSnapshot {
+        projects: vec![ProjectWorktreesSnapshot {
+            root_path: "/repo".to_owned(),
+            worktrees: vec![
+                WorktreeSnapshot {
+                    path: "/repo".to_owned(),
+                    branch: Some("main".to_owned()),
+                    is_main: true,
+                    ..WorktreeSnapshot::default()
+                },
+                WorktreeSnapshot {
+                    path: "/repo.worktrees/gone".to_owned(),
+                    branch: Some("gone".to_owned()),
+                    head_sha: Some("abc".to_owned()),
+                    ..WorktreeSnapshot::default()
+                },
+            ],
+            ..ProjectWorktreesSnapshot::default()
+        }],
+    };
+    runtime.ingest_worktrees(listed.clone(), 0);
+    // The catalog every row is built from; the coordinator rebuilds the
+    // sidebar from it when `removals` moves.
+    let rows = |runtime: &Runtime| {
+        runtime
+            .snapshot()
+            .git_worktrees
+            .as_ref()
+            .unwrap()
+            .worktrees
+            .iter()
+            .map(|worktree| worktree.path.clone())
+            .collect::<Vec<_>>()
+    };
+    let gone = "/repo.worktrees/gone".to_owned();
+    assert!(rows(&runtime).contains(&gone));
+
+    // While Git works the row stays, and the receipt the shell dims it by
+    // names it.
+    runtime.snapshot.worktree_removal = Some(crate::model::WorktreeRemovalSnapshot {
+        device_id: None,
+        id: 1,
+        repository_root: "/repo".into(),
+        checkout_path: gone.clone(),
+        expected_head_sha: Some("abc".into()),
+        expected_branch: Some("gone".into()),
+        protected_base_branch: Some("main".into()),
+        branch: Some("gone".into()),
+        delete_branch: false,
+        force_delete_branch: false,
+        discard_changes: false,
+        phase: "removing".into(),
+        message: None,
+    });
+    assert!(rows(&runtime).contains(&gone));
+    let before = runtime.worktrees_request();
+
+    assert!(runtime.ingest_worktree_removal_result(1, Ok("Deleted.".into())));
+    assert!(!rows(&runtime).contains(&gone), "{:?}", rows(&runtime));
+    let after = runtime.worktrees_request();
+    assert_eq!(
+        after.generation, before.generation,
+        "no project is made stale"
+    );
+    assert!(!runtime.snapshot().git_worktrees_loading);
+    assert_eq!(after.removals, before.removals + 1);
+
+    // A read that started before the removal settled.
+    runtime.ingest_worktrees(listed.clone(), before.removals);
+    assert!(!rows(&runtime).contains(&gone));
+    // A read that started after it: the path is a worktree again.
+    runtime.ingest_worktrees(listed, after.removals);
+    assert!(rows(&runtime).contains(&gone));
+}
+
+/// A refused removal keeps its row and has the catalog read again, since
+/// what stopped it is news.
+#[test]
+fn a_failed_removal_keeps_its_row_and_rereads() {
+    use crate::model::{ProjectWorktreesSnapshot, WorktreeCatalogSnapshot, WorktreeSnapshot};
+
+    let mut runtime = runtime();
+    let mut project = workspace(
+        "workspace-1",
+        "hide",
+        "/repo",
+        vec![checkout("workspace-1", "main", "/repo", None)],
+    );
+    project.is_git = true;
+    runtime.snapshot.navigator.workspaces = vec![project];
+    runtime.ingest_worktrees(
+        WorktreeCatalogSnapshot {
+            projects: vec![ProjectWorktreesSnapshot {
+                root_path: "/repo".to_owned(),
+                worktrees: vec![WorktreeSnapshot {
+                    path: "/repo.worktrees/kept".to_owned(),
+                    branch: Some("kept".to_owned()),
+                    ..WorktreeSnapshot::default()
+                }],
+                ..ProjectWorktreesSnapshot::default()
+            }],
+        },
+        0,
+    );
+    runtime.snapshot.worktree_removal = Some(crate::model::WorktreeRemovalSnapshot {
+        device_id: None,
+        id: 2,
+        repository_root: "/repo".into(),
+        checkout_path: "/repo.worktrees/kept".into(),
+        expected_head_sha: None,
+        expected_branch: Some("kept".into()),
+        protected_base_branch: None,
+        branch: Some("kept".into()),
+        delete_branch: false,
+        force_delete_branch: false,
+        discard_changes: false,
+        phase: "removing".into(),
+        message: None,
+    });
+    let before = runtime.worktrees_request();
+    assert!(runtime.ingest_worktree_removal_result(2, Err("Not deleted: 1 file changed".into())));
+    assert!(
+        runtime.snapshot().navigator.workspaces[0]
+            .checkouts
+            .iter()
+            .any(|checkout| checkout.path == "/repo.worktrees/kept")
+    );
+    let after = runtime.worktrees_request();
+    assert_ne!(after.generation, before.generation);
+    assert_eq!(after.removals, before.removals);
 }
 
 /// The kind reaches `agent.start`, which runs it in the new pane's shell, so
@@ -2928,7 +3091,7 @@ fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
     };
     let mut runtime = boot();
     runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
-    runtime.ingest_worktrees(worktrees.clone());
+    runtime.ingest_worktrees(worktrees.clone(), 0);
     runtime.rebuild_catalog();
     assert_eq!(
         runtime.snapshot.navigator.workspaces[0].checkouts[0].id,
@@ -2975,7 +3138,7 @@ fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
             .as_deref(),
         Some(linked_id.as_str())
     );
-    restored.ingest_worktrees(worktrees);
+    restored.ingest_worktrees(worktrees, 0);
     restored.rebuild_catalog();
     assert!(
         restored.snapshot.navigator.workspaces[0]

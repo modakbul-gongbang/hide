@@ -292,3 +292,13 @@ export function removalFor(removal: WorktreeRemoval | null | undefined, deviceId
   if (!removal || receiptDevice(removal.device_id) !== deviceId || removal.checkout_path !== checkoutPath || removal.id <= afterId) return null;
   return removal;
 }
+
+/**
+ * Whether the checkout is being deleted: from the confirmation until Git
+ * answers, whoever confirmed it. A finished removal has taken the row away
+ * and a failed one gives it back as it was.
+ */
+export function checkoutRemoving(removal: WorktreeRemoval | null | undefined, deviceId: string, checkoutPath: string): boolean {
+  const current = removalFor(removal, deviceId, checkoutPath, 0);
+  return current !== null && (current.phase === "closing" || current.phase === "removing");
+}

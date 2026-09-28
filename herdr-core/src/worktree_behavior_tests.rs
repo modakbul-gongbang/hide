@@ -400,12 +400,13 @@ fn idle_twenty_seconds_does_not_reread_but_file_edits_and_manual_refresh_do() {
             base_override: None,
         }],
         generation: 0,
+        removals: 0,
     };
     let wait = |reader: &mut WorktreeReader, request: &WorktreeRequest| {
         let started = std::time::Instant::now();
         loop {
             if let Some(result) = reader.read_if_due(request.clone()) {
-                break result;
+                break result.catalog;
             }
             assert!(started.elapsed() < Duration::from_secs(15));
             std::thread::sleep(Duration::from_millis(20));
@@ -519,12 +520,13 @@ fn a_commit_in_one_project_does_not_rerun_status_in_another() {
             })
             .collect(),
         generation: 0,
+        removals: 0,
     };
     let wait = |reader: &mut WorktreeReader| {
         let started = std::time::Instant::now();
         loop {
             if let Some(result) = reader.read_if_due(request.clone()) {
-                break result;
+                break result.catalog;
             }
             assert!(started.elapsed() < Duration::from_secs(15));
             std::thread::sleep(Duration::from_millis(20));

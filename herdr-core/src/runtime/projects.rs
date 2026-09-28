@@ -243,10 +243,29 @@ impl Runtime {
         crate::worktrees::WorktreeRequest {
             projects,
             generation: self.worktree_generation,
+            removals: self.worktree_removals,
         }
     }
 
-    pub fn ingest_worktrees(&mut self, catalog: crate::model::WorktreeCatalogSnapshot) -> bool {
+    /// Stores a catalog read that started when `removals` local removals had
+    /// settled. A checkout a later removal dropped stays dropped: the read
+    /// ran before Git forgot it, and only a read that started after the
+    /// removal is news about that path.
+    pub fn ingest_worktrees(
+        &mut self,
+        mut catalog: crate::model::WorktreeCatalogSnapshot,
+        removals: u64,
+    ) -> bool {
+        self.removed_worktrees
+            .retain(|(settled, _)| *settled > removals);
+        for project in &mut catalog.projects {
+            project.worktrees.retain(|worktree| {
+                !self
+                    .removed_worktrees
+                    .iter()
+                    .any(|(_, path)| *path == worktree.path)
+            });
+        }
         let changed = self.worktree_catalog != catalog || self.snapshot.git_worktrees_loading;
         self.worktree_catalog = catalog;
         self.snapshot.git_worktrees_loading = false;
@@ -1722,15 +1741,35 @@ impl Runtime {
         };
         removal.phase = phase.to_owned();
         removal.message = Some(message);
-        // A refused removal re-reads too: whatever stopped it (a moved HEAD,
-        // a dirty file) is news the catalog should show.
+        let checkout_path = removal.checkout_path.clone();
         match removal.device_id.clone() {
             Some(device) => {
                 self.request_device_worktrees(&device, true);
             }
+            // The row leaves in this same frame. Git dropped the registration
+            // in the repository's own Git directory, which is that project's
+            // freshness key, so the reader re-reads that project alone; every
+            // other project keeps its last answer.
+            None if phase == "finished" => self.drop_removed_worktree(checkout_path),
+            // A refused removal re-reads too: whatever stopped it (a moved
+            // HEAD, a dirty file) is news the catalog should show.
             None => self.refresh_worktrees(),
         }
         true
+    }
+
+    /// Takes a removed checkout out of the catalog and the rows built on it,
+    /// and keeps it out of any read that started before the removal settled.
+    fn drop_removed_worktree(&mut self, checkout_path: String) {
+        self.worktree_removals = self.worktree_removals.wrapping_add(1);
+        for project in &mut self.worktree_catalog.projects {
+            project
+                .worktrees
+                .retain(|worktree| worktree.path != checkout_path);
+        }
+        self.removed_worktrees
+            .push((self.worktree_removals, checkout_path));
+        self.refresh_worktree_projection();
     }
 
     /// This machine's Herdr and file host, for a worktree task here.

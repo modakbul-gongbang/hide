@@ -1,4 +1,4 @@
-import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, FolderGit2Icon, FolderIcon, LayoutDashboardIcon, SettingsIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, FolderGit2Icon, FolderIcon, LayoutDashboardIcon, Loader2Icon, SettingsIcon } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
@@ -38,7 +38,7 @@ import {
 import { hostBridge, hostKind } from "./host";
 import { displayCommand, hostRegistry } from "./shortcuts";
 import { contextWorkspaces, deviceCatalogLine, remoteContext, remoteView } from "./remote";
-import { agentMenu, checkoutMenu, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
+import { agentMenu, checkoutMenu, checkoutRemoving, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
 import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
@@ -707,7 +707,9 @@ function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: Che
  * the purpose, and the last-commit age ends the row's last line on the time
  * column: line two's when the row has a purpose, line one's otherwise.
  * Opened, its rows and it share a small group fill, and the rows' own marks
- * stand for the badge.
+ * stand for the badge. While its worktree is being deleted the row and its
+ * agent rows are dimmed, a spinner stands where the badge was, and neither
+ * the row nor its menu opens anything.
  */
 const CheckoutRowView = memo(function CheckoutRowView({
   workspace,
@@ -724,15 +726,21 @@ const CheckoutRowView = memo(function CheckoutRowView({
 }) {
   const { actions } = context;
   const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote));
+  const removing = useShellStore((s) => checkoutRemoving(s.rest?.worktree_removal, workspace.device_id, checkout.path));
   const view = checkoutPresentation(workspace, checkout, Date.now());
   const name = checkout.branch ?? checkout.label;
   const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context);
   const marks = checkout.agent_summary?.marks;
   return (
-    <li data-checkout-row={checkout.id} data-checkout-open={open ? "true" : undefined} className={cn(open && "rounded-sm bg-muted py-xs")}>
+    <li
+      data-checkout-row={checkout.id}
+      data-checkout-open={open ? "true" : undefined}
+      data-checkout-removing={removing ? "true" : undefined}
+      className={cn(open && "rounded-sm bg-muted py-xs", removing && "opacity-(--opacity-dimmed)")}
+    >
       <EntryContextMenu
         label={`${name} actions`}
-        items={() => checkoutMenu(workspace, checkout, menuHost(), purposeProblem)}
+        items={() => (removing ? [] : checkoutMenu(workspace, checkout, menuHost(), purposeProblem))}
         onSelect={(item) => runCheckoutItem(actions, workspace, checkout, item)}
         className="group flex items-stretch"
         data-checkout-menu={checkout.id}
@@ -741,8 +749,8 @@ const CheckoutRowView = memo(function CheckoutRowView({
           className={cn(
             "relative flex w-full flex-col justify-center gap-xxs rounded-sm pr-xs",
             secondLine ? "min-h-(--size-checkout-row-detailed)" : "min-h-(--size-checkout-row)",
-            focused ? "bg-secondary" : "hover:bg-accent",
-            view.settled && "opacity-(--opacity-dimmed)",
+            focused ? "bg-secondary" : !removing && "hover:bg-accent",
+            view.settled && !removing && "opacity-(--opacity-dimmed)",
           )}
           style={{ paddingLeft: CHECKOUT_COLUMN }}
         >
@@ -751,9 +759,10 @@ const CheckoutRowView = memo(function CheckoutRowView({
             checkout={checkout}
             view={view}
             focused={focused}
-            label={[name, open ? null : badgeWords(marks), view.age, purpose].filter(Boolean).join(", ")}
+            label={[name, removing ? "deleting" : open ? null : badgeWords(marks), view.age, purpose].filter(Boolean).join(", ")}
             actions={actions}
             expanded={checkoutRowExpansion(foldable, context.workspaceScreen && focused, open)}
+            disabled={removing}
           />
           {/* The row button covers the whole row; a control drawn over it is positioned, so it stacks above.
               Line one is 20 whatever it carries: the 24-high fold toggle overhangs it rather than moving line two. */}
@@ -763,7 +772,11 @@ const CheckoutRowView = memo(function CheckoutRowView({
             <CheckoutBadge checkout={checkout} />
             <span className="flex-1" />
             <RowEnd>
-              {open ? null : <StatusBadge counts={marks} data-checkout-status={checkout.id} />}
+              {removing ? (
+                <Loader2Icon aria-hidden="true" data-checkout-removing-mark="true" className="size-(--size-icon-sm) shrink-0 animate-spin text-muted-foreground" />
+              ) : open ? null : (
+                <StatusBadge counts={marks} data-checkout-status={checkout.id} />
+              )}
               {!secondLine && view.age ? <CheckoutAge age={view.age} /> : null}
               {foldable ? (
                 <FoldToggle
@@ -914,6 +927,7 @@ function CheckoutOpenButton({
   label,
   actions,
   expanded,
+  disabled = false,
 }: {
   workspace: Workspace;
   checkout: Checkout;
@@ -922,6 +936,7 @@ function CheckoutOpenButton({
   label: string;
   actions: Actions;
   expanded?: boolean;
+  disabled?: boolean;
 }) {
   // Read on every render, like `view.detail`: a memo keyed on the checkout would keep the Commit age from the last change to this row.
   const card = checkoutCard(workspace, checkout, Date.now());
@@ -933,7 +948,8 @@ function CheckoutOpenButton({
         data-checkout-kind={view.kind}
         aria-current={focused ? "true" : undefined}
         aria-label={label}
-        className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+        disabled={disabled}
+        className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring disabled:cursor-default"
         onClick={() => actions.openWorkspace(workspace.device_id, checkout.workspace_id, checkout.id, expanded)}
       />
     </CheckoutCardHint>

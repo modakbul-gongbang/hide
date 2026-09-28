@@ -42,6 +42,8 @@ fn run_coordinator(
     let mut next_operation_tick = Instant::now() + ASYNC_OPERATION_TICK_INTERVAL;
     let mut next_hook_diagnosis_refresh = Instant::now();
     let mut catalog_cache: Option<CatalogCache> = None;
+    // The runtime's settled worktree removals the catalog was last rebuilt for.
+    let mut published_removals = 0;
     let mut purpose_mirror = if context.is_local() {
         match live::PurposeMirror::new(Arc::clone(&context.api_connector)) {
             Ok(mirror) => Some(mirror),
@@ -367,29 +369,28 @@ fn run_coordinator(
                     stop_subscription(&mut subscription);
                     return;
                 };
-                if let Some(catalog) = reader.read_if_due(request) {
+                // A settled removal already took its worktree out of the
+                // catalog, so the rows built on it are rebuilt on this wake
+                // rather than when the next read lands.
+                let mut rebuild = request.removals != published_removals;
+                published_removals = request.removals;
+                if let Some(answer) = reader.read_if_due(request) {
                     // New worktree facts change which rows exist and what they
                     // say, so the catalog is rebuilt rather than only stored.
-                    match publish_worktrees(&context, catalog) {
+                    match publish_worktrees(&context, answer) {
                         None => {
                             stop_subscription(&mut subscription);
                             return;
                         }
-                        Some(true) => {
-                            if let Some(current) = replica.as_ref()
-                                && !publish_replica(
-                                    &context,
-                                    current,
-                                    &mut catalog_cache,
-                                    &mut purpose_mirror,
-                                )
-                            {
-                                stop_subscription(&mut subscription);
-                                return;
-                            }
-                        }
-                        Some(false) => {}
+                        Some(changed) => rebuild |= changed,
                     }
+                }
+                if rebuild
+                    && let Some(current) = replica.as_ref()
+                    && !publish_replica(&context, current, &mut catalog_cache, &mut purpose_mirror)
+                {
+                    stop_subscription(&mut subscription);
+                    return;
                 }
             }
 
@@ -1166,10 +1167,13 @@ fn request_worktree_refresh(context: &SessionSyncContext) -> bool {
 /// means the rows changed and the navigator catalog must be rebuilt.
 fn publish_worktrees(
     context: &SessionSyncContext,
-    catalog: crate::model::WorktreeCatalogSnapshot,
+    answer: crate::worktrees::WorktreeAnswer,
 ) -> Option<bool> {
     let runtime = context.runtime.upgrade()?;
-    let changed = runtime.lock().ok()?.ingest_worktrees(catalog);
+    let changed = runtime
+        .lock()
+        .ok()?
+        .ingest_worktrees(answer.catalog, answer.removals);
     drop(runtime);
     Some(changed)
 }

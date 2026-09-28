@@ -500,6 +500,7 @@ The confirmation lists the folder's removal, the panes that close, one line nami
 `Also delete branch <name>` deletes the branch with `git branch -d` when Git counts it merged, and otherwise with `git branch -D`, saying how many commits not on the base go with it or that Git could not tell; it is not offered for the base branch or a missing folder.
 A folder that holds uncommitted files, a worktree inside it, or a status Git could not read shows a `Discard …` checkbox, and Delete stays disabled until it is ticked, because that loss cannot be undone; ticked, the folder is removed with `git worktree remove --force`.
 Files that change after the confirmation, typically written by an agent as it stops, stop an unticked removal with that reason and keep the worktree; every refusal and failure is shown in the dialog above the choices, and Delete tries again on the row as it is then.
+From the confirmation until Git answers, the checkout row and its agent rows are dimmed with a spinner where the badge was, and neither the row nor its menu opens anything; the row leaves the sidebar as the removal finishes, and a failure gives it back as it was.
 A copy that the clipboard refuses goes to the diagnostic log.
 A web checkout row opens its checkout and unfolds its agent rows in one event; activating its already selected, unfolded Workspace folds the agents while keeping that Workspace in front.
 Click, Enter and Space have the same behavior, and a checkout without agents only opens.
@@ -595,7 +596,7 @@ Cleanup opens a review sheet with separate Available and Excluded groups, exact 
 Nothing is preselected, and Remove is disabled until a user explicitly checks an eligible folder.
 Main/current, dirty/untracked, live-pane-use, locked, nested, detached, unknown, and not-confirmed-merged targets are excluded; only clean, unused linked worktrees merged into local main can be removed, without force.
 An ordinary merge is proven by Git ancestry; a squash merge requires the exact GitHub pull request head commit to equal the reviewed worktree HEAD and its merge commit to already be an ancestor of local main.
-Removal is one `git worktree remove`, so every build cache a checkout owns is deleted with it and nothing outside the folder is touched.
+Removal moves the folder into the repository's Git directory and has `git worktree remove` drop its registration, so every build cache a checkout owns goes with it and is deleted in the background, and nothing outside the folder is touched.
 Confirm rechecks current Git and Herdr state before each target and refuses changed state with a Review-again path.
 Completion lists individual removed/refused outcomes, and repeating the same completed intent does not repeat removal; Review and Cancel perform no filesystem mutations.
 
