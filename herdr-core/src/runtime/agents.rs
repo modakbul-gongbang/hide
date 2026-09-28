@@ -1286,6 +1286,7 @@ impl Runtime {
                 continue;
             };
             if tab_id != parent_tab_id {
+                self.pane_relocations_in_flight.remove(&agent.pane_id);
                 continue;
             }
             if self

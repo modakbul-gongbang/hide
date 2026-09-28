@@ -137,7 +137,7 @@ fn local_tab_creation_acknowledgement_preserves_the_created_pane_focus() {
 // session update re-sent it: one refusal per tick for as long as the
 // tab stayed zoomed (2026-09-10 audit, ~2 refusals per second).
 #[test]
-fn a_refused_relocation_keeps_its_stamp_and_a_completed_one_drops_it() {
+fn a_relocation_keeps_its_stamp_until_the_published_layout_shows_the_move() {
     let mut runtime = runtime();
     let action = || PaneControlAction::MoveToNewTab {
         pane_id: "w1:p2".to_owned(),
@@ -160,6 +160,9 @@ fn a_refused_relocation_keeps_its_stamp_and_a_completed_one_drops_it() {
         "a refusal waits out the retry interval"
     );
 
+    // Herdr's events for an acknowledged move arrive after the answer. A
+    // second request before they did moved the pane again and closed the tab
+    // the first had made, so no layout ever landed and the moves went on.
     runtime.ingest_pane_control_result(
         action(),
         Ok(live::PaneControlOutcome::Acknowledged {
@@ -167,9 +170,37 @@ fn a_refused_relocation_keeps_its_stamp_and_a_completed_one_drops_it() {
         }),
         3,
     );
+    assert_eq!(
+        runtime.pane_relocations_in_flight.get("w1:p2"),
+        Some(&asked_at),
+        "an acknowledged move waits for its layout"
+    );
+
+    let mut rows = crate::sidebar::project_agents(
+        serde_json::from_value(serde_json::json!({"agents": [
+            {"id":"parent-control","pane_id":"w1:p1","agent_status":"working","state_change_seq":1},
+            {"id":"child-control","pane_id":"w1:p2","agent_status":"working","state_change_seq":2}
+        ]}))
+        .unwrap(),
+    )
+    .agents;
+    rows[1].delegated = true;
+    rows[1].lineage_parent_pane_id = Some("w1:p1".to_owned());
+    runtime.snapshot.navigator.agents = rows;
+    let layout = |tab: &str, pane: &str| PaneLayoutSnapshot {
+        workspace_id: "w1".to_owned(),
+        tab_id: tab.to_owned(),
+        focused_pane_id: pane.to_owned(),
+        zoomed: false,
+        root: PaneLayoutNodeSnapshot::Pane {
+            pane_id: pane.to_owned(),
+        },
+    };
+    runtime.snapshot.pane_layouts = vec![layout("w1:t1", "w1:p1"), layout("w1:t2", "w1:p2")];
+    assert!(!runtime.relocate_delegated_child_panes());
     assert!(
         !runtime.pane_relocations_in_flight.contains_key("w1:p2"),
-        "a completed move is no longer in flight"
+        "a move the published layout shows is no longer in flight"
     );
 }
 

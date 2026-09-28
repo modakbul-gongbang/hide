@@ -416,6 +416,8 @@ pub(crate) const ATTACHED_TAB_LIMIT: usize = 5;
 /// split, and a delegated child changes state often enough that one arrives.
 /// The window keeps a persistently refusing Herdr from being asked once per
 /// event without adding a timer of its own (PRD B36).
+/// A move Herdr acknowledged holds its stamp too, until the published layout
+/// shows the child in its own tab; its events arrive after the answer.
 const RELOCATION_RETRY_INTERVAL_MS: u64 = 5_000;
 
 /// What Herdr says about its tabs, kept per Herdr workspace.
