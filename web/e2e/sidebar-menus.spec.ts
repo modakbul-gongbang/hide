@@ -125,9 +125,9 @@ test("the sidebar's row menus: pin an unregistered project, open a tab, move the
     await expect(menu.locator('[data-menu-item="unpin"]')).toHaveText(/Unpin/);
     await page.keyboard.press("Escape");
 
-    // B4: the checkout row's menu; the worktree is not the default yet. Delete
-    // worktree… stays disabled until the worktree reader has read the row, a
-    // few seconds after launch, so the menu is read again until it has.
+    // B4: the checkout row's menu; the worktree is not the default yet. The
+    // row's kind is known only once the worktree reader has read it, a few
+    // seconds after launch, so the menu is read again until it has.
     const checkoutLines = async (): Promise<string[]> => {
       const open = await openMenu(page, feature.locator("[data-checkout-menu]"), `${BRANCH} actions`);
       const lines = await menuLines(open);
