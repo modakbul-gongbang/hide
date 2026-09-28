@@ -4,7 +4,7 @@
 // own userData all sit under this run's temporary directory.
 
 import { _electron as electron, test as base, expect, type ElectronApplication, type Page } from "@playwright/test";
-import { spawnSync } from "node:child_process";
+import { spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -90,8 +90,8 @@ export const NEEDS_FOCUS = "@needs-focus";
 
 const FOCUS_GUARD = path.join(__dirname, "focus-guard.cjs");
 
-/** The running test's report folder and launch count; null outside a test from this module's `test`. */
-let focusReports: { dir: string; launches: number } | null = null;
+/** The running test's report folder and the apps it launched; null outside a test from this module's `test`. */
+let focusReports: { dir: string; apps: { app: ElectronApplication; child: ChildProcess }[] } | null = null;
 
 /**
  * The desktop e2e `test`: after each test not tagged `NEEDS_FOCUS`, any app
@@ -106,10 +106,14 @@ export const test = base.extend<{ focusGuard: void }>({
     // eslint-disable-next-line no-empty-pattern -- Playwright requires the fixtures argument to be destructured.
     async ({}, use, testInfo) => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-focus-"));
-      focusReports = { dir, launches: 0 };
+      focusReports = { dir, apps: [] };
       try {
         await use();
-        // Apps are closed by now; the guard appends synchronously, so every report is on disk.
+        // A test that timed out skips its own cleanup; an app it left running is closed here, so
+        // none outlives its report folder. The guard appends synchronously, so every report is on disk.
+        for (const { app, child } of focusReports.apps) {
+          if (child.exitCode === null && child.signalCode === null) await app.close().catch(() => undefined);
+        }
         const reports = fs.readdirSync(dir).flatMap((file) => fs.readFileSync(path.join(dir, file), "utf8").split("\n").filter(Boolean));
         if (!testInfo.tags.includes(NEEDS_FOCUS)) {
           expect(reports, `the app came to the front in a test not tagged ${NEEDS_FOCUS}`).toEqual([]);
@@ -127,8 +131,11 @@ export const test = base.extend<{ focusGuard: void }>({
 async function start(appDir: string, env: Record<string, string>): Promise<ElectronApplication> {
   assertIsolated(env);
   if (!focusReports) throw new Error("launch the desktop app from a test imported from desktop/e2e/fixture.ts, so its focus guard runs");
-  const report = path.join(focusReports.dir, `launch-${++focusReports.launches}.jsonl`);
-  return electron.launch({ args: ["-r", FOCUS_GUARD, appDir, ...BACKGROUND_SWITCHES, `--hide-e2e-focus-report=${report}`], cwd: appDir, env });
+  const report = path.join(focusReports.dir, `launch-${focusReports.apps.length + 1}.jsonl`);
+  const app = await electron.launch({ args: ["-r", FOCUS_GUARD, appDir, ...BACKGROUND_SWITCHES, `--hide-e2e-focus-report=${report}`], cwd: appDir, env });
+  // Taken now: `app.process()` throws once the app is closed.
+  focusReports.apps.push({ app, child: app.process() });
+  return app;
 }
 
 /** `appDir` is the app folder to run, the desktop package unless a test copies it. */

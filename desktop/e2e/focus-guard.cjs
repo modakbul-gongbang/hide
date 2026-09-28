@@ -10,6 +10,14 @@ const { app } = require("electron");
 
 const file = app.commandLine.getSwitchValue("hide-e2e-focus-report");
 if (!file) throw new Error("focus-guard.cjs needs --hide-e2e-focus-report=<file>");
-const report = (event) => fs.appendFileSync(file, `${JSON.stringify({ event, pid: process.pid, at: new Date().toISOString() })}\n`);
+const report = (event) => {
+  try {
+    fs.appendFileSync(file, `${JSON.stringify({ event, pid: process.pid, at: new Date().toISOString() })}\n`);
+  } catch (error) {
+    // An app that outlived its test finds the folder gone; a throw here would
+    // raise Electron's error dialog, which itself comes to the front.
+    process.stderr.write(`focus-guard: report not written: ${String(error)}\n`);
+  }
+};
 app.on("did-become-active", () => report("did-become-active"));
 app.on("browser-window-focus", () => report("browser-window-focus"));
