@@ -594,10 +594,10 @@ export function IssueCardView({ card, page, actions, handlers, graph }: { card: 
     } else if (event.key === " " && self) {
       event.preventDefault();
       setPreviewPinned((value) => !value);
-    } else if (event.key.toLowerCase() === "s" && card.canStart) {
+    } else if (event.key.toLowerCase() === "s" && card.first === "start") {
       event.preventDefault();
       handlers.startIssue(card);
-    } else if (event.key.toLowerCase() === "o" && checkout) {
+    } else if (event.key.toLowerCase() === "o" && card.first === "workspace") {
       event.preventDefault();
       handlers.openCheckout(card);
     }

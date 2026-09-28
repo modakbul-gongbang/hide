@@ -1,4 +1,4 @@
-import { EllipsisIcon, ExternalLinkIcon, GitBranchIcon, HouseIcon, PencilIcon, PlayIcon, SquareTerminalIcon, XIcon } from "lucide-react";
+import { EllipsisIcon, ExternalLinkIcon, GitBranchIcon, GitPullRequestIcon, HouseIcon, PencilIcon, PlayIcon, SquareTerminalIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
@@ -79,10 +79,10 @@ export function IssuePanel({
       if (!from) return;
       event.preventDefault();
       next?.focus();
-    } else if (event.key.toLowerCase() === "s" && card.canStart) {
+    } else if (event.key.toLowerCase() === "s" && card.first === "start") {
       event.preventDefault();
       handlers.startIssue(card);
-    } else if (event.key.toLowerCase() === "o" && card.checkout) {
+    } else if (event.key.toLowerCase() === "o" && card.first === "workspace") {
       event.preventDefault();
       handlers.openCheckout(card);
     }
@@ -145,27 +145,37 @@ export function IssuePanel({
   );
 }
 
-/** The action line (B11): the stage's first action and its key, GitHub or 편집 beside it, and `⋯` at the end. */
+/**
+ * The action line (B11): the stage's first action and its key, the card's own
+ * (시작 in the backlog, Workspace in progress, the pull request in review),
+ * GitHub or 편집 beside it, and `⋯` at the end.
+ */
 function PanelActions({ card, actions, handlers, onEdit }: { card: TaskCard; actions: Actions; handlers: BoardHandlers; onEdit: () => void }) {
   const { task, owner } = card;
   return (
     <div className="flex items-center gap-xs" data-issue-panel-actions="true">
-      {card.canStart ? (
+      {card.first === "start" ? (
         <Hint label={START_HINT} shortcut={<Kbd>S</Kbd>}>
           <Button size="sm" onClick={() => handlers.startIssue(card)} data-issue-panel-start="true">
             <PlayIcon aria-hidden="true" />
             시작
           </Button>
         </Hint>
-      ) : card.checkout ? (
+      ) : card.first === "workspace" ? (
         <Hint label="Workspace 열기" shortcut={<Kbd>O</Kbd>}>
           <Button size="sm" onClick={() => handlers.openCheckout(card)} data-issue-panel-workspace="true">
             <SquareTerminalIcon aria-hidden="true" />
             Workspace
           </Button>
         </Hint>
+      ) : card.first === "pull_request" && card.pr ? (
+        <Hint label={`PR #${card.pr.number} GitHub에서 열기`}>
+          <Button size="sm" onClick={() => handlers.openGitHub(card.pr!.url, owner.device_id)} data-issue-panel-pr={card.pr.number}>
+            <GitPullRequestIcon aria-hidden="true" />#{card.pr.number}
+          </Button>
+        </Hint>
       ) : null}
-      {card.canStart ? <Kbd>S</Kbd> : card.checkout ? <Kbd>O</Kbd> : null}
+      {card.first === "start" ? <Kbd>S</Kbd> : card.first === "workspace" ? <Kbd>O</Kbd> : null}
       {task.url ? (
         <Hint label="GitHub에서 열기">
           <Button variant="ghost" size="icon-sm" onClick={() => handlers.openGitHub(task.url as string, owner.device_id)} data-issue-panel-github="true">

@@ -521,6 +521,9 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await expect(panel.locator("[data-issue-body=failed] [data-issue-body-failure]")).toBeVisible({ timeout: 20_000 });
     await expect(panel.locator('[data-issue-property="stage"]')).toHaveText("리뷰");
     await expect(panel.locator("[data-issue-work-pr]")).toHaveAttribute("data-issue-work-pr", "11");
+    // In review the panel's first action is the card's: the pull request, not the Workspace (B6, B11).
+    await expect(panel.locator('[data-issue-panel-pr="11"]')).toBeVisible();
+    await expect(panel.locator("[data-issue-panel-workspace]")).toHaveCount(0);
     await expect(page.locator('[role="alert"]')).toHaveCount(0);
     const detailsBefore = sent.get("issue_detail_request") ?? 0;
     await panel.locator("[data-issue-body-retry]").click();
