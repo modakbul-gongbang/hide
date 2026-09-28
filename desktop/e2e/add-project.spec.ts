@@ -130,6 +130,84 @@ test("Add a project picks a folder with the native picker, and a cancel or a ref
   }
 });
 
+test("Create new project makes a Git repository and adds it; a name already taken is refused before anything is sent", async () => {
+  const herdr = await startHerdr();
+  const run = isolate(herdr, "create-project");
+  let app: ElectronApplication | undefined;
+  try {
+    const home = run.env.HOME!;
+    fs.mkdirSync(path.join(home, "projects", "taken"), { recursive: true });
+    fs.writeFileSync(path.join(home, "projects", "taken", "notes.md"), "mine\n");
+    const projects = fs.realpathSync(path.join(home, "projects"));
+    const launched = await launch(run.env, { switches: ["--disable-backgrounding-occluded-windows"] });
+    app = launched.app;
+    const page = launched.page;
+    await expect(page.locator("[data-main-screen], [data-workspace-screen]")).toBeVisible({ timeout: 30_000 });
+    await page.locator('[data-sidebar-mode="projects"]').click();
+    const dialog = page.locator("[data-add-project]");
+    const view = dialog.locator("[data-create-project]");
+    const name = view.getByLabel("Name");
+    const location = view.locator("[data-create-project-location]");
+    const preview = view.locator("[data-create-project-path]");
+    const problem = view.locator("[data-create-project-problem]");
+    const submit = view.locator("[data-create-project-submit]");
+
+    // Under Browse folder, Create new project opens its own view with the name field focused;
+    // with no project yet the folder goes in home.
+    await page.keyboard.press("Meta+Shift+KeyN");
+    await expect(dialog.locator("[data-add-project-other-ways]")).toContainText("Other ways to add");
+    await dialog.locator('[data-add-project-way="create"]').click();
+    await expect(view.getByRole("heading", { name: "Create a new project" })).toBeVisible();
+    await expect(name).toBeFocused();
+    await expect(location).toContainText("Git repository in ~");
+    await expect(submit).toBeDisabled();
+
+    // The location row opens the native picker; the full path follows the name as it is typed.
+    await stubPicker(app, [{ canceled: false, filePaths: [projects] }]);
+    await location.click();
+    await expect(location).toContainText("Git repository in ~/projects");
+    await expect(preview).toHaveAttribute("data-create-project-path", path.join(projects, "project-name"));
+    await name.fill("taken");
+    await expect(problem).toHaveAttribute("data-create-project-problem", "already_exists");
+    await expect(submit).toBeDisabled();
+    await name.fill("a/b");
+    await expect(problem).toHaveAttribute("data-create-project-problem", "name");
+    await expect(submit).toBeDisabled();
+    await name.fill("fresh");
+    await expect(preview).toHaveAttribute("data-create-project-path", path.join(projects, "fresh"));
+    await expect(problem).toHaveCount(0);
+    await expect(submit).toBeEnabled();
+    await captureWindow(app, page, "create-project");
+    expect(fs.existsSync(path.join(projects, "fresh"))).toBe(false);
+
+    // Enter creates it: the folder is a repository of its own and the project appears.
+    await name.press("Enter");
+    await expect(dialog).toHaveCount(0, { timeout: 20_000 });
+    await expect(page.locator("[data-project-list]")).toContainText("fresh", { timeout: 20_000 });
+    expect(fs.statSync(path.join(projects, "fresh", ".git")).isDirectory()).toBe(true);
+    expect(fs.readFileSync(path.join(projects, "taken", "notes.md"), "utf8")).toBe("mine\n");
+
+    // The next create starts beside it, and the same name again is the project already added.
+    await page.keyboard.press("Meta+Shift+KeyN");
+    await dialog.locator('[data-add-project-way="create"]').click();
+    await expect(location).toContainText("Git repository in ~/projects");
+    await name.fill("fresh");
+    await expect(problem).toHaveAttribute("data-create-project-problem", "already_registered");
+    await expect(submit).toBeDisabled();
+
+    // Back returns to the first view, the keyboard on the way it came from.
+    await view.locator("[data-create-project-back]").click();
+    await expect(dialog.getByRole("heading", { name: "Add a project" })).toBeVisible();
+    await expect(dialog.locator('[data-add-project-way="create"]')).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+  } finally {
+    await app?.close();
+    run.cleanup();
+    herdr.stop();
+  }
+});
+
 /** A capture of the candidate window by its own id, when a run directory was named. */
 async function captureWindow(app: ElectronApplication, page: Page, name: string): Promise<void> {
   const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;

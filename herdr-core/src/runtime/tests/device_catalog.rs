@@ -559,6 +559,22 @@ fn a_device_folder_outside_its_home_is_refused_by_its_helper() {
     assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
 }
 
+/// Create new project is this Mac's: a device's helper registers folders
+/// but makes none, so a new folder named on a device is refused, not sent.
+#[test]
+fn a_new_project_folder_on_a_device_is_refused_before_the_helper() {
+    let t = tree();
+    let mut runtime = runtime();
+    dispatch(
+        &mut runtime,
+        "create_workspace",
+        serde_json::json!({"device_id": TARGET, "path": t.other, "label": "Other", "initialize_git": true, "new_folder": true}),
+    );
+    let error = runtime.snapshot.status.last_error.clone().unwrap();
+    assert_eq!(error.kind, "workspace.create_refused");
+    assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
+}
+
 /// B23: a new tab in a device project Herdr has no workspace in creates one
 /// at the registered folder on that device; a registration-only checkout
 /// id for a project that is not registered there names nothing.

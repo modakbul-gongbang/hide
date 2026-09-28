@@ -40,6 +40,22 @@ export type DirectoryList = {
 /** A device folder its helper could not list now (`directory_unavailable`); the reason is the helper's. */
 export type DirectoryUnavailable = { device_id: string; root_path: string; code: string; message: string };
 export type PathRefusal = { kind: string; path: string; reason: string };
+/**
+ * hided's answer to a `project_target` probe: where Create new project would
+ * make `name` in `parent`, as sent, and what the create would be refused for.
+ */
+export type ProjectTarget = {
+  parent: string;
+  name: string;
+  parent_path: string | null;
+  /** The parent as `~` spells it. */
+  parent_label: string | null;
+  /** The folder the project takes; null until a name is checked. */
+  path: string | null;
+  /** An empty folder is already there and is used. */
+  leftover: boolean;
+  reason: string | null;
+};
 export type DirectoryChanged = { path: string };
 export type FileIndexEntry = { path: string; relative_path: string };
 export type FileIndexResult = {
@@ -135,6 +151,8 @@ type Store = {
   listings: Record<string, DirectoryList>;
   /** The last path hided refused; Add a project clears it before it sends a folder. */
   pathRefusal: PathRefusal | null;
+  /** hided's last answer about where Create new project would make its folder. */
+  projectTarget: ProjectTarget | null;
   /** The last device folder that could not be listed, until a listing for it arrives. */
   directoryUnavailable: DirectoryUnavailable | null;
   /** The ⌘P palette's last answer, keyed by the query it answered. */
@@ -239,6 +257,7 @@ export const useShellStore = create<Store>((set, get) => ({
   find: null,
   listings: {},
   pathRefusal: null,
+  projectTarget: null,
   directoryUnavailable: null,
   fileIndex: null,
   attachmentRefusal: null,
@@ -356,6 +375,21 @@ export const useShellStore = create<Store>((set, get) => ({
     if (frame.type === "path_refused") {
       set({
         pathRefusal: { kind: payload.kind ?? "", path: payload.path ?? "", reason: payload.reason ?? "" },
+      });
+      return [];
+    }
+    if (frame.type === "project_target") {
+      const answer = payload as Partial<ProjectTarget>;
+      set({
+        projectTarget: {
+          parent: answer.parent ?? "",
+          name: answer.name ?? "",
+          parent_path: answer.parent_path ?? null,
+          parent_label: answer.parent_label ?? null,
+          path: answer.path ?? null,
+          leftover: answer.leftover ?? false,
+          reason: answer.reason ?? null,
+        },
       });
       return [];
     }
