@@ -2,7 +2,7 @@
 // B1-B7): the fixed Overview row above the Projects | Agents strip opens the
 // Overview and carries its fill only while that screen is in front; Projects
 // is the first tab and the default; Search at the strip's end opens the ⌘K
-// palette and New workspace before it opens its flow on Projects only; the
+// palette, and a browser tab offers no Add project before it; the
 // Search field row, the bottom new-workspace button and the All projects row
 // inside the list are gone. Captured in Dark and Light.
 
@@ -25,7 +25,7 @@ async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await page.waitForTimeout(400);
 }
 
-test("the Overview row, the Projects | Agents strip and its Search and New workspace icons", async ({ page }) => {
+test("the Overview row, the Projects | Agents strip and its Search icon, with no Add project in a browser tab", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -87,15 +87,10 @@ test("the Overview row, the Projects | Agents strip and its Search and New works
     await page.keyboard.press("Escape");
     await expect(page.locator('[data-palette="Search"]')).toHaveCount(0);
 
-    // B5: New workspace before it, on Projects only, opens the new-workspace flow.
+    // B5: a browser tab has no folder picker, so the strip offers no Add project
+    // (the desktop app draws it before Search: desktop/e2e/add-project.spec.ts).
     const add = page.locator("[data-sidebar-new-workspace]");
-    await expect(add).toHaveAccessibleName("New workspace");
-    const [addBox, searchBox] = [(await add.boundingBox())!, (await search.boundingBox())!];
-    expect(addBox.x).toBeLessThan(searchBox.x);
-    await add.click();
-    await expect(page.locator("[data-new-workspace]")).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(page.locator("[data-new-workspace]")).toHaveCount(0);
+    await expect(add).toHaveCount(0);
 
     // B3, B5: the Agents tab swaps the list and leaves Search alone at the end; the Overview row stays.
     await page.locator('[data-sidebar-mode="agents"]').click();

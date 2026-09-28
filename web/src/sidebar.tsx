@@ -8,7 +8,6 @@ import { Hint } from "./components/ui/tooltip";
 import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
 import { CheckoutCardHint, pullRequestOpenExternal } from "./components/pr-card";
 import { DevicePicker } from "./DevicePicker";
-import { NewWorkspace } from "./NewWorkspace";
 import { badgeWords, unfoldedRows } from "./agentRow";
 import { Badge } from "./components/ui/badge";
 import { cn } from "./lib/utils";
@@ -36,7 +35,7 @@ import {
   type CheckoutPresentation,
   type ProjectRow,
 } from "./projects";
-import { hostKind } from "./host";
+import { hostBridge, hostKind } from "./host";
 import { displayCommand, hostRegistry } from "./shortcuts";
 import { contextWorkspaces, deviceCatalogLine, remoteContext, remoteView } from "./remote";
 import { agentMenu, checkoutMenu, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
@@ -107,13 +106,12 @@ export function Sidebar({ actions }: { actions: Actions }) {
           onOverview={() => useUiStore.getState().setScreen({ kind: "main" })}
           onMode={actions.showSidebarMode}
           onSearch={() => actions.openSearch()}
-          onNewWorkspace={() => actions.openNewWorkspace()}
+          onNewWorkspace={hostBridge() ? () => actions.openAddProject() : null}
         />
         {status ? (
           <div className="border-b border-border px-md py-sm text-caption text-muted-foreground">{status}</div>
         ) : null}
         {mode === "agents" ? <AgentList actions={actions} /> : <ProjectList actions={actions} />}
-        <NewWorkspace actions={actions} />
         <div className="flex shrink-0 items-center gap-xs border-t border-border px-md py-xs">
           <DevicePicker actions={actions} />
           <span className="flex-1" />
@@ -411,9 +409,11 @@ function ProjectList({ actions }: { actions: Actions }) {
       {!remote && workspaces.length === 0 ? (
         <li className="flex flex-col items-start gap-sm px-sm py-sm text-caption text-muted-foreground" data-projects-empty="true">
           No project on this machine yet.
-          <Button variant="secondary" size="sm" onClick={() => actions.openNewWorkspace()} data-projects-empty-add="true">
-            Add project
-          </Button>
+          {hostBridge() ? (
+            <Button variant="secondary" size="sm" onClick={() => actions.openAddProject()} data-projects-empty-add="true">
+              Add project
+            </Button>
+          ) : null}
         </li>
       ) : null}
     </ul>

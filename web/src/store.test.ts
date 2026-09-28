@@ -13,7 +13,6 @@ describe("snapshot merge", () => {
       focusedPaneId: null,
       herdrState: null,
       find: null,
-      directoryList: null,
       listings: {},
       pathRefusal: null,
       diagnostics: [],
@@ -186,20 +185,8 @@ describe("snapshot merge", () => {
     expect(useShellStore.getState().agents).toHaveLength(1);
   });
 
-  it("stores hided's directory listing and path refusal frames", () => {
+  it("stores hided's path refusal frames", () => {
     const store = useShellStore.getState();
-    expect(
-      store.applyFrame({
-        type: "directory_list",
-        payload: {
-          kind: "remote_file_list",
-          root_path: "/h",
-          entries: [{ name: "a", path: "/h/a", is_directory: true }],
-          truncated: false,
-        },
-      }),
-    ).toEqual([]);
-    expect(useShellStore.getState().directoryList?.entries[0]?.path).toBe("/h/a");
     store.applyFrame({
       type: "path_refused",
       payload: { kind: "create_workspace", path: "/etc", reason: "outside_home" },
@@ -225,32 +212,6 @@ describe("snapshot merge", () => {
     expect(useShellStore.getState().folderChanges["/r/src"]).toBe(1);
   });
 
-  it("keeps the Explorer's listing apart from the registration input", () => {
-    const store = useShellStore.getState();
-    store.applyFrame({
-      type: "directory_list",
-      payload: {
-        kind: "file_list",
-        root_path: "/repo/src",
-        entries: [{ name: "main.rs", path: "/repo/src/main.rs", is_directory: false }],
-        truncated: false,
-      },
-    });
-    expect(useShellStore.getState().listings["/repo/src"]?.entries[0]?.name).toBe("main.rs");
-    expect(useShellStore.getState().directoryList).toBeNull();
-    store.applyFrame({
-      type: "directory_list",
-      payload: {
-        kind: "remote_file_list",
-        root_path: "/h",
-        entries: [{ name: "a", path: "/h/a", is_directory: true }],
-        truncated: false,
-      },
-    });
-    expect(useShellStore.getState().directoryList?.root_path).toBe("/h");
-    expect(Object.keys(useShellStore.getState().listings)).toEqual(["/repo/src"]);
-  });
-
   it("keeps the newest LISTING_CAP folders and drops the oldest", () => {
     const store = useShellStore.getState();
     for (let i = 0; i < LISTING_CAP + 2; i += 1) {
@@ -272,7 +233,6 @@ describe("snapshot merge", () => {
       payload: { root_path: "/h", entries: [], truncated: false },
     });
     const state = useShellStore.getState();
-    expect(state.directoryList).toBeNull();
     expect(state.listings).toEqual({});
     expect(state.diagnostics.at(-1)).toContain("directory_list without a known kind=none");
   });

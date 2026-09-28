@@ -4,8 +4,8 @@
 //! Two lines live here, and every path a client sends is checked against one
 //! of them before the core sees it.
 //!
-//! The registration flow (`remote_file_list` for the `local` target and
-//! `create_workspace`) lives behind `$HOME`, as it did in S2: a path
+//! The registration flow (`create_workspace`, the folder Add a project
+//! picked) lives behind `$HOME`, as it did in S2: a path
 //! written outside home is refused as `outside_home` before anything is
 //! read, and a path under home is resolved one component at a time from home,
 //! where a symlink's target is tested as written the same way before it is
@@ -31,9 +31,7 @@
 //! The Explorer's listing (`file_list`) is that same line: the children of a
 //! folder under a root, files and hidden names included and `.git` dropped,
 //! ordered as the Explorer orders them, with a symlink that leaves the
-//! root left out rather than followed. The registration listing above keeps
-//! its own policy - directories only, hidden names dropped - because the
-//! directory autocomplete asks a different question of the same tree.
+//! root left out rather than followed.
 //!
 //! A refused path is answered to the client and logged. Accepted core events
 //! retain the checked path for UI identity, while actual file I/O uses opened
@@ -203,7 +201,7 @@ pub struct Entry {
     pub path: String,
     pub is_directory: bool,
     /// The entry's own inode in a checkout listing, which a trash of the
-    /// row confirms; absent in the registration listing.
+    /// row confirms.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inode: Option<u64>,
 }
@@ -213,13 +211,9 @@ pub struct Entry {
 pub struct Listing {
     pub root_path: String,
     pub entries: Vec<Entry>,
-    /// More than `LIST_CAP` children existed; the rest were not read.
+    /// More than `hide_host::list::LIST_CAP` children existed; the rest were not read.
     pub truncated: bool,
 }
-
-/// Children a listing carries at most; a home directory with more subfolders
-/// than this is answered as truncated, not grown (engineering principle 15).
-pub const LIST_CAP: usize = 500;
 
 /// Symlinks one path may pass through before it is refused as a loop; the
 /// kernel's own limit for one lookup is the same order.
@@ -836,45 +830,6 @@ impl Boundary {
         Ok(real)
     }
 
-    /// The visible subdirectories of `raw`: no files, no hidden names, and no
-    /// symlink whose target leaves home or is not a directory.
-    pub fn list(&self, raw: &str) -> Result<Listing, Refusal> {
-        let root = self.resolve_dir(raw)?;
-        let read = fs::read_dir(&root).map_err(|_| Refusal::NotFound)?;
-        let mut entries = Vec::new();
-        let mut truncated = false;
-        for item in read {
-            let Ok(item) = item else { continue };
-            let name = item.file_name();
-            let Some(name) = name.to_str() else { continue };
-            if name.starts_with('.') {
-                continue;
-            }
-            let Ok(real) = item.path().canonicalize() else {
-                continue;
-            };
-            if !real.starts_with(&self.home) || !real.is_dir() {
-                continue;
-            }
-            if entries.len() == LIST_CAP {
-                truncated = true;
-                break;
-            }
-            entries.push(Entry {
-                name: name.to_owned(),
-                path: root.join(name).display().to_string(),
-                is_directory: true,
-                inode: None,
-            });
-        }
-        entries.sort_by_key(|entry| entry.name.to_lowercase());
-        Ok(Listing {
-            root_path: root.display().to_string(),
-            entries,
-            truncated,
-        })
-    }
-
     /// The children of a folder inside a registered checkout: files and
     /// directories, hidden names included, `.git` left out.
     ///
@@ -963,16 +918,6 @@ mod tests {
 
     fn s(path: &Path) -> String {
         path.display().to_string()
-    }
-
-    #[test]
-    fn lists_only_visible_directories_inside_home() {
-        let f = fixture();
-        let listing = f.boundary.list(&s(&f.home.join("projects"))).unwrap();
-        let names: Vec<&str> = listing.entries.iter().map(|e| e.name.as_str()).collect();
-        assert_eq!(names, vec!["alias", "alpha", "Beta"]);
-        assert!(!listing.truncated);
-        assert_eq!(listing.root_path, s(&f.home.join("projects")));
     }
 
     #[test]
@@ -1076,7 +1021,7 @@ mod tests {
     fn a_symlink_out_of_home_is_refused_even_when_named_directly() {
         let f = fixture();
         let escape = s(&f.home.join("projects/escape"));
-        assert_eq!(f.boundary.list(&escape), Err(Refusal::OutsideHome));
+        assert_eq!(f.boundary.resolve_dir(&escape), Err(Refusal::OutsideHome));
         assert_eq!(
             f.boundary.resolve_workspace(&escape),
             Err(Refusal::OutsideHome)
@@ -1101,7 +1046,11 @@ mod tests {
                 Err(Refusal::OutsideHome),
                 "{tail}"
             );
-            assert_eq!(f.boundary.list(&path), Err(Refusal::OutsideHome), "{tail}");
+            assert_eq!(
+                f.boundary.resolve_dir(&path),
+                Err(Refusal::OutsideHome),
+                "{tail}"
+            );
         }
     }
 
@@ -1149,7 +1098,11 @@ mod tests {
                 Err(Refusal::OutsideHome),
                 "{path}: the reason must not tell whether it exists"
             );
-            assert_eq!(f.boundary.list(path), Err(Refusal::OutsideHome), "{path}");
+            assert_eq!(
+                f.boundary.resolve_dir(path),
+                Err(Refusal::OutsideHome),
+                "{path}"
+            );
         }
         // A symlink under home to a target outside home is refused the same
         // way whether its target exists or not, named directly or with a tail.
@@ -1205,10 +1158,7 @@ mod tests {
             boundary.resolve_workspace(&s(&canonical.join("projects/alpha"))),
             Ok(canonical.join("projects/alpha"))
         );
-        assert_eq!(
-            boundary.list(&s(&link_home)).unwrap().root_path,
-            s(&canonical)
-        );
+        assert_eq!(boundary.resolve_dir(&s(&link_home)), Ok(canonical));
     }
 
     #[test]
@@ -1219,7 +1169,7 @@ mod tests {
             f.boundary.resolve_workspace(&file),
             Err(Refusal::NotADirectory)
         );
-        assert_eq!(f.boundary.list(&file), Err(Refusal::NotADirectory));
+        assert_eq!(f.boundary.resolve_dir(&file), Err(Refusal::NotADirectory));
         let filelink = s(&f.home.join("projects/filelink"));
         assert_eq!(
             f.boundary.resolve_workspace(&filelink),
@@ -1239,8 +1189,8 @@ mod tests {
             f.boundary.resolve_workspace(&s(&f.home)),
             Err(Refusal::HomeRoot)
         );
-        assert!(f.boundary.list(&s(&f.home)).is_ok(), "home itself lists");
-        assert_eq!(f.boundary.list("~").unwrap().root_path, s(&f.home));
+        assert_eq!(f.boundary.resolve_dir(&s(&f.home)), Ok(f.home.clone()));
+        assert_eq!(f.boundary.resolve_dir("~"), Ok(f.home.clone()));
         assert_eq!(
             f.boundary.resolve_workspace("~/projects/alpha").unwrap(),
             f.home.join("projects/alpha")
@@ -1260,7 +1210,7 @@ mod tests {
                 .resolve_workspace(&format!("{}\0", s(&f.home.join("projects")))),
             Err(Refusal::InvalidPath)
         );
-        // A hidden directory is hidden from the listing but may be typed.
+        // A hidden directory may be added like any other.
         let hidden = s(&f.home.join("projects/.hidden"));
         assert!(f.boundary.resolve_workspace(&hidden).is_ok());
     }
@@ -1309,19 +1259,6 @@ mod tests {
             f.boundary.resolve_workspace(&trailing).unwrap(),
             f.home.join("projects/alpha")
         );
-    }
-
-    #[test]
-    fn the_listing_is_capped() {
-        let outer = tempfile::tempdir().unwrap();
-        let home = outer.path().join("home");
-        for i in 0..(LIST_CAP + 3) {
-            fs::create_dir_all(home.join(format!("d{i:04}"))).unwrap();
-        }
-        let boundary = Boundary::new(&home).unwrap();
-        let listing = boundary.list(&s(boundary.home())).unwrap();
-        assert_eq!(listing.entries.len(), LIST_CAP);
-        assert!(listing.truncated);
     }
 
     /// A device watch frame is admitted only for a folder under a root the

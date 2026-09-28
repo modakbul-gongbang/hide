@@ -1078,6 +1078,24 @@ export function createActions(dispatch: DispatchFn) {
       navigator.clipboard.writeText(text).catch((error: unknown) => diagnostic(`copy ${what}: ${String(error)}`));
     },
 
+    /**
+     * The native folder picker of the desktop app, for Add a project. A cancel
+     * answers null; so does a picker that failed, which goes to the log.
+     */
+    async pickFolder(): Promise<string | null> {
+      const bridge = hostBridge();
+      if (!bridge) {
+        diagnostic("add project: this host has no folder picker");
+        return null;
+      }
+      try {
+        return await bridge.pickFolder();
+      } catch (error) {
+        diagnostic(`add project: the folder picker failed: ${String(error)}`);
+        return null;
+      }
+    },
+
     /** Shows a folder in Finder through the desktop app; a browser tab has no such item (D-07). */
     revealInFinder(path: string) {
       const bridge = hostBridge();
@@ -1415,10 +1433,10 @@ export function createActions(dispatch: DispatchFn) {
       ui().openOverlay("find");
     },
 
-    /** The registration field lives in the sidebar, so a hidden sidebar is shown first. */
-    openNewWorkspace() {
-      setLeftSidebarVisible(true);
-      ui().openOverlay("new_workspace");
+    /** Add a project; a browser tab has no folder picker, so only the desktop app offers it. */
+    openAddProject() {
+      if (!hostBridge()) return diagnostic("add project: this host has no folder picker");
+      ui().openOverlay("add_project");
     },
 
     /**
@@ -1482,10 +1500,6 @@ export function createActions(dispatch: DispatchFn) {
     /** Removes a registration after its panes close (D-10); the folder is never touched. */
     removeWorkspace(workspaceId: string) {
       dispatch({ schema_version: 2, kind: "remove_workspace", payload: { workspace_id: workspaceId } });
-    },
-
-    listDirectory(path: string) {
-      dispatch({ schema_version: 2, kind: "remote_file_list", payload: { target_id: "local", root_path: path } });
     },
 
     /** One checkout folder's children, answered by hided as a `directory_list`. */
