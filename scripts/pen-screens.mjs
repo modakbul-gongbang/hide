@@ -560,7 +560,10 @@ const AGENTS_MODES = ['checkouts', 'lineage'];
 function overviewHeader(tokens, id, suffix, {project, facts, view, width, mode}) {
   const control = view === 'agents'
     ? [screenToggleGroup(`${id}-mode-${suffix}`, ['체크아웃', '계보'], AGENTS_MODES.indexOf(mode ?? 'checkouts'))]
-    : view === 'issues' ? [screenToggleGroup(`${id}-mode-${suffix}`, ['Board', 'List', 'Dependencies'], TASKS_MODES.indexOf(mode ?? 'board'))] : [];
+    : view === 'issues' ? [frame(`${id}-ictl-${suffix}`, 'Filter and mode', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, [
+        screenIconButton(`${id}-filter-${suffix}`, 'list-filter', {size: num(tokens, '--size-control-sm')}),
+        screenToggleGroup(`${id}-mode-${suffix}`, ['Board', 'List', 'Dependencies'], TASKS_MODES.indexOf(mode ?? 'board')),
+      ])] : [];
   return frame(`${id}-${suffix}`, 'Header', {layout: 'vertical', gap: '$--spacing-sm', width}, [
     frame(`${id}-title-${suffix}`, 'Title row', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'center', width}, [
       frame(`${id}-crumb-${suffix}`, 'Path', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
@@ -689,49 +692,89 @@ function issueBoardParts(tokens) {
     });
   }
 
-  // TaskCardView, top to bottom as the work flows: the id (or, with no issue,
-  // the branch) and on the Overview the project beside it; the title in at
-  // most two lines; the lock line; where the work is and what it delivered;
-  // at most two agents and +N 에이전트; on hover the card's next step. Needs
-  // You is the warning border; a done, idle or (in Dependencies) blocked card
-  // is dimmed.
+  // A GitHub label: a dot in its colour and its name (IssueLabelView).
+  function label(id, [name, fill]) {
+    return frame(id, name, {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
+      frame(`${id}-dot`, 'Dot', {width: num(tokens, '--issue-label-dot'), height: num(tokens, '--issue-label-dot'), cornerRadius: num(tokens, '--issue-label-dot') / 2, fill}, []),
+      caption(`${id}-t`, name),
+    ]);
+  }
+
+  // Where the work is (CheckoutChipView): the branch, ↑N and the changed files in warning.
+  function checkoutChip(id, card, max) {
+    return frame(id, 'Checkout', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+      place(`${id}-br`, card.branch, {primary: card.primary, max}),
+      ...(card.ahead ? [caption(`${id}-ahead`, `↑${card.ahead}`, '$--muted-foreground', true)] : []),
+      ...(card.files ? [caption(`${id}-files`, `${card.files} files`, '$--warning', true)] : []),
+    ]);
+  }
+
+  // The id line's reserved slot, filled under the pointer or focus (CardActions,
+  // B6): 시작 and S on a backlog issue, Workspace and O in progress, the PR icon
+  // in review, a Local issue's edit icon, and ⋯.
+  function cardActions(id, card) {
+    const first = card.hover === 'start'
+      ? [screenButton(`${id}-start`, '시작', {variant: 'secondary', height: small, icon: 'play'}), kbd(`${id}-sk`, 'S')]
+      : card.hover === 'workspace' ? [screenIconButton(`${id}-ws`, 'square-terminal', {size: small}), kbd(`${id}-ok`, 'O')]
+        : card.hover === 'pr' ? [screenIconButton(`${id}-pr`, 'git-pull-request', {size: small})] : [];
+    return frame(id, 'Actions, on hover', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
+      ...first,
+      ...(card.edit ? [screenIconButton(`${id}-edit`, 'pencil', {size: small})] : []),
+      screenIconButton(`${id}-menu`, 'ellipsis', {size: small}),
+    ]);
+  }
+
+  // IssueCardView (PRD overview-lenses-issues B1-B6): the source glyph, the id
+  // and at most two labels, on the Overview the project; the title in at most
+  // two lines; the lock line; the checkout chip and the PR chip with its CI
+  // and the review word; at most two agents and +N. Only the operator's turn
+  // is outlined in warning, the panel's card in primary; a done or (in
+  // Dependencies) blocked card is dimmed.
   function taskCard(id, card) {
-    const hasFacts = card.pr || card.ahead || card.files || card.behind || (card.task && card.branch);
-    const actions = card.hover === 'start'
-      ? [frame(`${id}-start`, '시작', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
-          screenButton(`${id}-start-b`, '시작', {variant: 'secondary', height: small, icon: 'play'}), kbd(`${id}-start-k`, 'S'),
-        ])]
-      : card.hover === 'link' ? [screenButton(`${id}-link`, '이슈 연결', {variant: 'secondary', height: small, icon: 'link-2'})] : [];
+    const chips = card.branch || card.pr;
     return frame(id, card.title, {
-      layout: 'vertical', gap: '$--spacing-xs', padding: '$--spacing-sm', width: column, fill: '$--card', cornerRadius: '$--radius-md',
-      stroke: card.error ? '$--destructive' : card.needsYou ? '$--warning' : '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
+      layout: 'vertical', gap: '$--spacing-xs', padding: '$--spacing-sm', width: column, fill: card.hover ? '$--accent' : '$--card', cornerRadius: '$--radius-md',
+      stroke: card.needsYou ? '$--warning' : card.selected ? '$--primary' : '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
       ...(card.dim ? {opacity: dimmed} : {}),
     }, [
-      frame(`${id}-idl`, 'Id line', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: inner}, [
-        card.task ? taskId(`${id}-id`, card.task) : place(`${id}-id`, card.branch, {primary: card.primary}),
+      frame(`${id}-idl`, 'Id line', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: inner, height: small}, [
+        taskId(`${id}-id`, card.task),
+        ...(card.labels ?? []).slice(0, 2).map((value, index) => label(`${id}-lb${index}`, value)),
         ...(card.project ? [caption(`${id}-proj`, card.project)] : []),
         spacer(`${id}-idsp`),
-        ...(card.word ? [caption(`${id}-word`, card.word)] : []),
+        ...(card.failure ? [icon(`${id}-warn`, 'triangle-alert', {size: 12, fill: '$--warning'})] : []),
+        ...(card.word && !card.hover ? [caption(`${id}-word`, card.word)] : []),
+        ...(card.hover ? [cardActions(`${id}-act`, card)] : []),
       ]),
       text(`${id}-title`, fitLines(card.title, inner, 14), {size: '$--text-title', weight: '600', width: inner}),
       ...(card.locked ? [frame(`${id}-lock`, 'Blocked by', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
         icon(`${id}-lock-g`, 'lock', {size: 12, fill: '$--warning'}),
-        caption(`${id}-lock-t`, card.locked, '$--warning'),
+        caption(`${id}-lock-t`, `먼저 끝나야 함: ${card.locked}`, '$--warning'),
       ])] : []),
-      ...(hasFacts ? [frame(`${id}-facts`, 'Facts', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: inner}, [
+      ...(chips ? [frame(`${id}-chips`, 'Chips', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: inner}, [
+        ...(card.branch ? [checkoutChip(`${id}-co`, card, branchMax)] : []),
         ...(card.pr ? [prChip(`${id}-pr`, card.pr)] : []),
-        ...(card.task && card.branch ? [place(`${id}-br`, card.branch, {primary: card.primary, max: branchMax})] : []),
-        ...(card.ahead ? [caption(`${id}-ahead`, `↑${card.ahead}`, '$--muted-foreground', true)] : []),
-        ...(card.files ? [caption(`${id}-files`, `${card.files} files`, '$--warning', true)] : []),
-        ...(card.behind ? [caption(`${id}-behind`, `↓${card.behind}`, '$--warning', true)] : []),
       ])] : []),
       ...(card.agents?.length ? [frame(`${id}-rows`, 'Agents', {layout: 'vertical', gap: 0, width: inner}, card.agents.slice(0, 2).map((agent, index) => agentRow(`${id}-a${index}`, agent, inner)))] : []),
-      ...(card.more ? [caption(`${id}-more`, `+${card.more} 에이전트`)] : []),
-      ...(actions.length || card.menu ? [frame(`${id}-act`, 'Next step, on hover', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: inner}, [
-        ...actions,
-        spacer(`${id}-actsp`),
-        ...(card.menu ? [screenIconButton(`${id}-menu`, 'ellipsis', {size: small})] : []),
-      ])] : []),
+      ...(card.more ? [caption(`${id}-more`, `+${card.more}`)] : []),
+    ]);
+  }
+
+  // The preview a half-second rest on the id opens (IssuePreviewBody, B8):
+  // id, labels, state, title, the body's first three lines, author, date and comments.
+  function preview(id, card, {body, byline}) {
+    const width = num(tokens, '--size-pr-popover');
+    const room = width - 2 * num(tokens, '--spacing-md');
+    return frame(id, 'Issue preview', {layout: 'vertical', gap: '$--spacing-xs', padding: '$--spacing-md', width, fill: '$--popover', cornerRadius: '$--radius-md', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
+      frame(`${id}-head`, 'Head', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: room}, [
+        taskId(`${id}-id`, card.task),
+        ...(card.labels ?? []).map((value, index) => label(`${id}-lb${index}`, value)),
+        spacer(`${id}-sp`),
+        caption(`${id}-state`, 'Open', '$--success'),
+      ]),
+      text(`${id}-title`, fitLines(card.title, room, 12), {size: '$--text-body', weight: '600', width: room}),
+      ...body.map((line, index) => caption(`${id}-b${index}`, fitText(line, room, 11), '$--subtle-foreground')),
+      caption(`${id}-by`, byline),
     ]);
   }
 
@@ -744,7 +787,7 @@ function issueBoardParts(tokens) {
     ]);
   }
 
-  // One line at a column's foot (FoldLine): `+N`, or the idle worktrees folded.
+  // One line at a column's foot (FoldLine): `+N`, or the work with no issue folded.
   function foldLine(id, label) {
     return frame(id, label, {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: column, padding: ['$--spacing-xxs', '$--spacing-sm'], cornerRadius: '$--radius-sm', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
       caption(`${id}-t`, label), spacer(`${id}-sp`), icon(`${id}-g`, 'chevron-right', {size: 14, fill: '$--muted-foreground'}),
@@ -759,8 +802,9 @@ function issueBoardParts(tokens) {
     ]);
   }
 
-  // Done starts folded (DoneColumn): its head is the toggle, then one line per
-  // card, its branch, or on the Overview one line per project with its count.
+  // Done starts folded (DoneColumn, B3): its head is the toggle, then one line
+  // per issue, its glyph, id, title and the pull request that closed it; on
+  // the Overview one line per project with its count.
   function doneColumn(id, count, lines, more) {
     return frame(id, '완료', {layout: 'vertical', gap: '$--spacing-sm', width: column}, [
       frame(`${id}-head`, 'Head', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: column, height: num(tokens, '--size-control'), padding: [0, '$--spacing-xs']}, [
@@ -769,7 +813,13 @@ function issueBoardParts(tokens) {
         icon(`${id}-g`, 'chevron-right', {size: 14, fill: '$--muted-foreground'}),
       ]),
       frame(`${id}-names`, 'Folded', {layout: 'vertical', gap: 0, width: column}, [
-        ...lines.map((line, index) => frame(`${id}-n${index}`, line.name, {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: ['$--spacing-xxs', '$--spacing-xs'], width: column}, [
+        ...lines.map((line, index) => frame(`${id}-n${index}`, line.title ?? line.name, {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: ['$--spacing-xxs', '$--spacing-xs'], width: column}, line.task ? [
+          icon(`${id}-n${index}-g`, line.task.source === 'local' ? 'file-text' : 'circle-check', {size: 12, fill: '$--pr-merged'}),
+          caption(`${id}-n${index}-id`, line.task.label, '$--subtle-foreground', true),
+          caption(`${id}-n${index}-t`, fitText(line.title, column - 120, 11), '$--subtle-foreground'),
+          spacer(`${id}-n${index}-sp`),
+          ...(line.pr ? [icon(`${id}-n${index}-pg`, 'git-merge', {size: 12, fill: '$--muted-foreground'}), caption(`${id}-n${index}-p`, String(line.pr), '$--muted-foreground', true)] : []),
+        ] : [
           icon(`${id}-n${index}-g`, 'git-merge', {size: 12, fill: '$--pr-merged'}),
           caption(`${id}-n${index}-t`, line.name, '$--subtle-foreground', true),
           ...(line.count ? [caption(`${id}-n${index}-c`, `· ${line.count}`, '$--muted-foreground', true)] : []),
@@ -797,7 +847,96 @@ function issueBoardParts(tokens) {
     return frame(id, 'Chain', {layout: 'horizontal', alignItems: 'center'}, parts);
   }
 
-  return {column, taskCard, stageColumn, doneColumn, foldLine, arrow, legend, chain};
+  // The issue panel beside the board (IssuePanel.tsx, B11-B19): the head,
+  // the title, the action line, the properties a source has, what was done
+  // for the issue, the body in Markdown and a GitHub issue's latest three
+  // comments. A Local issue can be drawn with its editor open in place.
+  function issuePanel(id, panel) {
+    const width = num(tokens, '--issue-panel-min-width') + 80;
+    const room = width - 2 * num(tokens, '--spacing-lg');
+    const local = panel.task.source === 'local';
+    const section = (sid, heading, children) => frame(sid, heading, {layout: 'vertical', gap: '$--spacing-xs', width: room}, [
+      caption(`${sid}-h`, heading), ...children,
+    ]);
+    const property = (pid, name, value, fill = '$--foreground') => frame(pid, name, {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'center', width: room}, [
+      text(`${pid}-k`, name, {size: '$--text-body', fill: '$--muted-foreground', width: 40}),
+      typeof value === 'string' ? text(`${pid}-v`, value, {size: '$--text-body', fill}) : value,
+    ]);
+    const first = panel.stage === '백로그'
+      ? [screenButton(`${id}-start`, '시작', {height: small, icon: 'play'}), kbd(`${id}-sk`, 'S')]
+      : [screenButton(`${id}-ws`, 'Workspace', {height: small, icon: 'square-terminal'}), kbd(`${id}-ok`, 'O')];
+    const editing = panel.editing;
+    return frame(id, 'Issue panel', {layout: 'vertical', gap: '$--spacing-md', padding: '$--spacing-lg', width, fill: '$--card', cornerRadius: '$--radius-md', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
+      frame(`${id}-head`, 'Head', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: room}, [
+        taskId(`${id}-id`, panel.task),
+        caption(`${id}-src`, local ? 'Local' : 'GitHub'),
+        spacer(`${id}-hsp`),
+        caption(`${id}-state`, 'Open', '$--success'),
+        screenIconButton(`${id}-close`, 'x', {size: small}),
+      ]),
+      ...(editing ? [
+        frame(`${id}-editor`, 'Editor', {layout: 'vertical', gap: '$--spacing-sm', width: room}, [
+          screenInput(`${id}-ed-title`, {content: editing.title, width: room}),
+          frame(`${id}-ed-body`, 'Body', {layout: 'vertical', gap: '$--spacing-xxs', padding: '$--spacing-sm', width: room, height: 140, cornerRadius: '$--radius-sm', stroke: '$--input', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'},
+            editing.body.map((line, index) => text(`${id}-ed-b${index}`, line, {size: '$--text-body'}))),
+          ...(editing.failure ? [caption(`${id}-ed-fail`, editing.failure, '$--destructive')] : []),
+          frame(`${id}-ed-act`, 'Save', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+            screenButton(`${id}-ed-save`, '저장', {height: small}), kbd(`${id}-ed-sk`, '⌘↵'),
+            screenButton(`${id}-ed-cancel`, '취소', {variant: 'ghost', height: small}), kbd(`${id}-ed-ck`, 'Esc'),
+          ]),
+        ]),
+      ] : [
+        text(`${id}-title`, fitLines(panel.title, room, 18, 3), {size: '$--text-headline', weight: '600', width: room}),
+        frame(`${id}-actions`, 'Actions', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: room}, [
+          ...first,
+          screenIconButton(`${id}-side`, local ? 'pencil' : 'external-link', {size: small}),
+          spacer(`${id}-asp`),
+          screenIconButton(`${id}-menu`, 'ellipsis', {size: small}),
+        ]),
+      ]),
+      frame(`${id}-props`, 'Properties', {layout: 'vertical', gap: '$--spacing-xs', width: room}, [
+        property(`${id}-p-stage`, '단계', panel.stage),
+        ...(panel.labels ? [property(`${id}-p-labels`, '라벨', frame(`${id}-p-lv`, 'Labels', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, panel.labels.map((value, index) => label(`${id}-p-l${index}`, value))))] : []),
+        ...(panel.author ? [property(`${id}-p-author`, '작성', panel.author)] : []),
+        ...(panel.assignees ? [property(`${id}-p-assign`, '담당', panel.assignees)] : []),
+        ...(panel.created ? [property(`${id}-p-created`, '만듦', panel.created)] : []),
+        property(`${id}-p-updated`, '갱신', panel.updated),
+        ...(panel.blocked ? [property(`${id}-p-blocked`, '막힘', panel.blocked, '$--warning')] : []),
+      ]),
+      ...(panel.work ? [section(`${id}-work`, '이 이슈로 한 일', [
+        frame(`${id}-w-co`, 'Checkout', {layout: 'horizontal', alignItems: 'center', width: room}, [
+          checkoutChip(`${id}-w-chip`, panel.work),
+          spacer(`${id}-w-sp`),
+          screenIconButton(`${id}-w-ws`, 'square-terminal', {size: small}),
+        ]),
+        ...panel.work.agents.map((agent, index) => screenSidebarAgentRow(`${id}-w-a${index}`, {
+          title: fitText(agent.title, room - 100, 12), symbol: AGENT_MARK[agent.mark][0], color: AGENT_MARK[agent.mark][1], provider: agent.provider ?? 'claude', age: agent.age,
+          line: agent.line ?? null, lineFill: agent.tone === 'request' ? '$--warning' : '$--foreground', bright: ATTENTION.has(agent.mark), inset: agent.depth ? 16 : 0, width: room, fold: 'none',
+        })),
+        ...(panel.work.pr ? [frame(`${id}-w-pr`, 'Pull request', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: room}, [
+          prChip(`${id}-w-prc`, {...panel.work.pr, review: undefined}),
+          caption(`${id}-w-prt`, fitText(panel.work.pr.title, room - 160, 11), '$--foreground'),
+          spacer(`${id}-w-prsp`),
+          ...(panel.work.pr.review ? [caption(`${id}-w-prr`, REVIEW_WORD[panel.work.pr.review][0], REVIEW_WORD[panel.work.pr.review][1])] : []),
+        ])] : []),
+      ])] : []),
+      ...(editing ? [] : [section(`${id}-body`, local ? '본문 · 누르면 고침' : '본문', panel.reading
+        ? [0, 1, 2].map((index) => frame(`${id}-sk${index}`, 'Skeleton', {width: Math.round(room * (1 - index * 0.2)), height: num(tokens, '--size-icon'), cornerRadius: '$--radius-xs', fill: '$--muted'}, []))
+        : panel.failure
+          ? [frame(`${id}-fail`, 'Failed read', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: room}, [
+              caption(`${id}-fail-t`, panel.failure), screenButton(`${id}-retry`, '재시도', {variant: 'secondary', height: small}),
+            ])]
+          : panel.body.map(([kind, line], index) => text(`${id}-b${index}`, line, kind === 'h' ? {size: '$--text-title', weight: '600', fill: '$--primary'} : {size: '$--text-body', width: room})))]),
+      ...(local || editing ? [] : [section(`${id}-comments`, `댓글 ${panel.comments.length}`, [
+        ...panel.comments.map(([who, body], index) => frame(`${id}-c${index}`, who, {layout: 'vertical', gap: '$--spacing-xxs', width: room}, [
+          caption(`${id}-c${index}-by`, who), text(`${id}-c${index}-t`, body, {size: '$--text-body', width: room}),
+        ])),
+        caption(`${id}-cw`, panel.comments.length === 0 ? '댓글 없음 · 쓰기는 GitHub에서' : '쓰기는 GitHub에서'),
+      ])]),
+    ]);
+  }
+
+  return {column, taskCard, stageColumn, doneColumn, foldLine, arrow, legend, chain, preview, issuePanel, label, taskId, checkoutChip, prChip, agentRow, kbd, caption, spacer};
 }
 
 // -- the Agents lens (OverviewLenses.tsx over overviewLens.ts) -----------------
@@ -969,7 +1108,9 @@ const gh = number => ({source: 'github', label: `#${number}`});
 const local = number => ({source: 'local', label: `L-${number}`});
 
 // The cards and agents of herdr-ide, the project both boards draw.
-const ISSUE_192 = {task: gh(192), title: 'hided has no SIGTERM handler: AI children die with the stdin pipe', branch: '192-hided-sigterm-handler', ahead: 3, files: 4, needsYou: true, agents: [
+const BUG = ['bug', '$--destructive'];
+const ENHANCEMENT = ['enhancement', '$--agent-working'];
+const ISSUE_192 = {task: gh(192), labels: [BUG], title: 'hided has no SIGTERM handler: AI children die with the stdin pipe', branch: '192-hided-sigterm-handler', ahead: 3, files: 4, needsYou: true, agents: [
   {mark: 'ask', provider: 'codex', title: 'SIGTERM 처리와 자식 정리 순서', line: '기존 stdin 종료 경로도 남길까요?', tone: 'request', age: '4m'},
   {mark: 'work', title: '종료 경로 테스트 작성', age: '2m'},
 ]};
@@ -977,17 +1118,18 @@ const ISSUE_186 = {task: gh(186), title: 'Set the Projects sidebar’s type ladd
   {mark: 'done', title: 'observer-sidebar-typography', line: 'Implementor가 PR #208 준비 완료', tone: 'news', age: '1m'},
   {mark: 'seen', title: '사이드바 타이포그래피 구현', age: '26m'},
 ]};
+// A Local issue an agent works on in main, on the project's board.
+const LOCAL_3 = {task: local(3), title: 'Overview 진입 흐름', branch: 'main', primary: true, agents: [
+  {mark: 'work', title: 'Overview 진입 흐름 디자인', line: 'Pen 보드 작성 중', age: '1m'},
+]};
 // A Local issue an agent works on in a project's primary checkout, on the Overview of every project.
 const LOCAL_5 = {task: local(5), project: 'creator', title: '소프트웨어 팩토리 경험담 글쓰기', branch: 'main', primary: true, needsYou: true, agents: [
   {mark: 'done', title: '경험담 초안 윤문', line: 'AI 티 윤문 완료, 빠진 문장 3곳 확인 대기', tone: 'news', age: '3m'},
 ]};
-const AGENT_TAB_GROUPS = {branch: 'prd/agent-tab-groups', title: 'Agent tab groups', ahead: 26, files: 7, agents: [
-  {mark: 'work', provider: 'codex', title: '세션초기화작업대기', age: '14m'},
-]};
 
-const MAIN_SPEC = 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx, TaskBoards.tsx, projectBoard.ts: Overview, the scope the sidebar’s global Overview row opens and marks. Its title carries Add project and 새 이슈 as the primary action (C); its facts line the project count, the open issues once every source has answered, and the open-PR and merged totals only when every project can give its part; its Tasks · Agents · Projects tabs the count of agents waiting on the operator on Agents, whose view is the Project Overview’s checkout lanes or lineage over every project with the project’s name above each lane head. Every project’s issues and worktrees share one board, 백로그 · 진행 중 · 리뷰 · 완료, each card with its project beside its id (a Local issue as L-N, a primary checkout as a house): 시작 on a backlog card under the pointer, the needs-you cards in the warning border, the idle worktrees folded at the foot of 진행 중, and 완료 folded to one line per project with its count. Every project has an issue source, so no project is set apart as unconnected. Its Dependencies mode draws an arrow that crosses projects, the blocker named with its repository on the lock line. The Projects view is the project list grouped by device.';
+const MAIN_SPEC = 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx, TaskBoards.tsx, projectBoard.ts: Overview, the scope the sidebar’s global Overview row opens and marks. Its title carries Add project and 새 이슈 as the primary action (C); its facts line the project count, the open issues once every source has answered, and the open-PR and merged totals only when every project can give its part; its Tasks · Agents · Projects tabs the count of agents waiting on the operator on Agents, whose view is the Project Overview’s checkout lanes or lineage over every project with the project’s name above each lane head. Every project’s issues share one board, 백로그 · 진행 중 · 리뷰 · 완료, each card an issue with its project beside its id (a Local issue as L-N): 시작 on a backlog card under the pointer, the operator’s-turn cards in the warning border, the worktrees with no issue folded into one line at the foot of 진행 중, and 완료 folded to one line per project with its count. Every project has an issue source, so no project is set apart as unconnected. Its Dependencies mode draws an arrow that crosses projects, the blocker named with its repository on the lock line. The Projects view is the project list grouped by device.';
 
-const OVERVIEW_SPEC = 'web/src/ProjectOverview.tsx, OverviewLenses.tsx, overviewLens.ts, TaskBoards.tsx, projectBoard.ts: a project’s Overview (PRD overview-lenses-tiles-agents). The header carries the path back, New agent as the quiet action and 새 이슈 as the primary one (C), the facts line of worktrees, disk, main behind and N merged → 정리 with the chosen view’s mode control at its right end, then the tiles Agents · Issues · Sessions where the tab row was: the name, the yellow badge of the operator’s turn, the large number and its unit, one bar; the chosen tile outlined. Every entry opens Agents › 체크아웃 with the front checkout’s lane outlined. A lane is a checkout: its head (the glyph in its PR’s colour and the branch, the purpose, the issue chip, PR chip, ↑N ↓N and the files in warning; main the house and 에이전트 N; a merged worktree dimmed with 정리) and its agents to the right. main is pinned on top, then the operator’s turn, working, resting. A delegation runs down across lanes in its Observer’s column or right within a lane, and no line crosses a node. A node reads mark, provider, title and age, then the core’s line; only the operator’s turn is yellow, a resting node is dimmed with no line. The worktrees with no agent and the ones to clean up fold into one line each. Beside it the lineage mode: Observer · Implementor · 하위 에이전트 columns, a row per lineage with the asking one first, each node’s chips (checkout, issue, PR), resting lineages folded. The Issues tile opens #218’s board renamed (Board, List, Dependencies).';
+const OVERVIEW_SPEC = 'web/src/ProjectOverview.tsx, OverviewLenses.tsx, overviewLens.ts, TaskBoards.tsx, projectBoard.ts: a project’s Overview (PRD overview-lenses-tiles-agents). The header carries the path back, New agent as the quiet action and 새 이슈 as the primary one (C), the facts line of worktrees, disk, main behind and N merged → 정리 with the chosen view’s mode control at its right end, then the tiles Agents · Issues · Sessions where the tab row was: the name, the yellow badge of the operator’s turn, the large number and its unit, one bar; the chosen tile outlined. Every entry opens Agents › 체크아웃 with the front checkout’s lane outlined. A lane is a checkout: its head (the glyph in its PR’s colour and the branch, the purpose, the issue chip, PR chip, ↑N ↓N and the files in warning; main the house and 에이전트 N; a merged worktree dimmed with 정리) and its agents to the right. main is pinned on top, then the operator’s turn, working, resting. A delegation runs down across lanes in its Observer’s column or right within a lane, and no line crosses a node. A node reads mark, provider, title and age, then the core’s line; only the operator’s turn is yellow, a resting node is dimmed with no line. The worktrees with no agent and the ones to clean up fold into one line each. Beside it the lineage mode: Observer · Implementor · 하위 에이전트 columns, a row per lineage with the asking one first, each node’s chips (checkout, issue, PR), resting lineages folded. The Issues tile opens a board of issues only (PRD overview-lenses-issues): a card is the glyph, id and at most two labels, the title, the lock line, the checkout chip and the PR chip with its CI and review word, and at most two agents; its buttons fill the id line’s slot under the pointer (시작 S, Workspace O, the PR icon, a Local issue’s edit, ⋯); only the operator’s turn is outlined in warning. The worktrees and pull requests with no issue are one line each under 진행 중 and 리뷰, and 완료 is folded to one line per issue with the pull request that closed it. The facts line’s right end carries the filter and Board · List · Dependencies. A card opens the issue panel beside the board: the head (glyph, id, source, Open, ×), the title, the action line, the properties, 이 이슈로 한 일, the Markdown body and a GitHub issue’s latest comments; a Local issue edits in place, and a failed read is one line with 재시도.';
 
 // -- Screen / Main ------------------------------------------------------------
 
@@ -1039,13 +1181,10 @@ function buildMain(tokens) {
           card('b3', {task: local(7), project: 'creator', title: 'AI 개발자 릴스 5탄 기획'}),
           card('b4', {task: gh(199), project: 'herdr-ide', title: 'Read the remote primary checkout over device connections'}),
         ], {newIssue: true}),
-        stageColumn(`main-working-${suffix}`, '진행 중', 7, [
+        stageColumn(`main-working-${suffix}`, '진행 중', 2, [
           card('w1', LOCAL_5),
           card('w2', {...ISSUE_192, project: 'herdr-ide'}),
-          card('w3', {branch: 'hcoord-remote-agents', project: 'sasu', title: 'Remote agents over hcoord', ahead: 12, agents: [
-            {mark: 'work', provider: 'codex', title: 'hcoord 원격 에이전트 구현', age: '40m'},
-          ]}),
-        ], {foot: [foldLine(`main-idle-${suffix}`, '에이전트 없는 워크트리 4')]}),
+        ], {foot: [foldLine(`main-loose-${suffix}`, '이슈 없는 워크트리 5')]}),
         stageColumn(`main-review-${suffix}`, '리뷰', 2, [
           card('r1', {...ISSUE_186, project: 'herdr-ide'}),
           card('r2', {task: gh(9), project: 'sasu', title: 'hcoord-decouple: move lineage tokens into the plugin', branch: '9-hcoord-decouple', pr: {number: 12, checks: 'pending', review: 'review_required'}}),
@@ -1088,7 +1227,7 @@ const TAB_GROUPS_IMPL = {mark: 'seen', provider: 'codex', title: 'Agent tab grou
 const CODEX_REST = {mark: 'seen', title: '코덱스 구현 및 PR 머지', age: '2h'};
 
 function buildProjectOverview(tokens) {
-  const {column, taskCard, stageColumn, doneColumn, foldLine, arrow, legend, chain} = issueBoardParts(tokens);
+  const {column, taskCard, stageColumn, doneColumn, foldLine, arrow, legend, chain, preview, issuePanel} = issueBoardParts(tokens);
   const {lanes, lineage, chips, nodeWidth, headWidth, gap} = lensParts(tokens);
   const columns = 4;
   const width = headWidth + 1 + 2 * num(tokens, '--spacing-sm') + columns * nodeWidth + (columns - 1) * gap;
@@ -1131,29 +1270,103 @@ function buildProjectOverview(tokens) {
       overviewHeader(tokens, 'ov-head', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'issues', mode: 'board', width: boardWidth}),
       frame(`ov-cols-${suffix}`, 'Columns', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
         stageColumn(`ov-backlog-${suffix}`, '백로그', 5, [
-          card('b1', {task: gh(201), title: 'Add Workspace design reference and visual review coverage', hover: 'start'}),
+          card('b1', {task: gh(201), labels: [ENHANCEMENT], title: 'Add Workspace design reference and visual review coverage', hover: 'start'}),
           card('b2', {task: gh(199), title: 'Read the remote primary checkout over device connections'}),
-          card('b3', {task: gh(194), title: 'Post-Swift-removal loose ends: hook reinstall after the app swap'}),
+          card('b3', {task: gh(194), labels: [BUG], title: 'Post-Swift-removal loose ends: hook reinstall after the app swap'}),
           card('b4', {task: gh(191), title: 'Desktop host starts the bundled Herdr server when none answers', locked: '#192'}),
           card('b5', {task: gh(193), title: 'Public release signing: hardened runtime and notarization', locked: '#191'}),
         ], {newIssue: true}),
-        stageColumn(`ov-working-${suffix}`, '진행 중', 5, [
+        stageColumn(`ov-working-${suffix}`, '진행 중', 2, [
           card('w1', ISSUE_192),
-          card('w2', {...AGENT_TAB_GROUPS, hover: 'link', menu: true}),
-        ], {foot: [foldLine(`ov-idle-${suffix}`, '에이전트 없는 워크트리 3')]}),
-        stageColumn(`ov-review-${suffix}`, '리뷰', 3, [
+          card('w2', LOCAL_3),
+        ], {foot: [foldLine(`ov-loose-${suffix}`, '이슈 없는 워크트리 3')]}),
+        stageColumn(`ov-review-${suffix}`, '리뷰', 2, [
           card('r1', ISSUE_186),
-          card('r2', {task: gh(184), title: 'Bundle hcoord as a Herdr plugin with checkout lineage', branch: '184-hcoord-plugin', behind: 2, pr: {number: 207, checks: 'pending', review: 'changes_requested'}, agents: [
+          card('r2', {task: gh(184), title: 'Bundle hcoord as a Herdr plugin with checkout lineage', branch: '184-hcoord-plugin', pr: {number: 207, checks: 'pending', review: 'changes_requested'}, agents: [
             {mark: 'work', provider: 'codex', title: '리뷰 반영', age: '3m'},
           ]}),
-          card('r3', {branch: 'fix/cycle-overlay-over-browser', title: 'Freeze browser pages under the Recent Panels list', pr: {number: 209, checks: 'passing', review: 'approved'}}),
-        ]),
+        ], {foot: [foldLine(`ov-loosepr-${suffix}`, '이슈 없는 PR 1')]}),
         doneColumn(`ov-done-${suffix}`, 12, [
-          {name: 'prd/checkout-capability'}, {name: 'feat/design-review-workflow'}, {name: 'prd/web-project-overview'},
-          {name: 'prd/sidebar-agent-status'}, {name: 'prd/web-pane-scroll-find-areas'}, {name: 'quick/155-browser-display'},
-        ], 6),
+          {task: gh(180), title: 'Sidebar readability and the status badge', pr: 180},
+          {task: gh(173), title: 'The Workspace side panel', pr: 173},
+          {task: gh(169), title: 'Web scope navigation', pr: 169},
+          {task: local(2), title: '체크아웃 권한 후속 정리'},
+        ], 8),
       ]),
     ]);
+    // The card's states (B5-B8, B17): at rest, under the pointer in each
+    // stage, a Local issue's edit, the operator's turn, blocked, a failed
+    // source read and the card whose panel is open; and the id's preview.
+    const states = frame(`ov-states-${suffix}`, 'Project Overview · Issues › Card states', {layout: 'vertical', gap: '$--spacing-md', width: boardWidth}, [
+      frame(`ov-states-r1-${suffix}`, 'Under the pointer', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
+        card('s1', {task: gh(201), labels: [ENHANCEMENT], title: 'Add Workspace design reference and visual review coverage', hover: 'start'}),
+        card('s2', {...LOCAL_3, hover: 'workspace'}),
+        card('s3', {task: gh(184), title: 'Bundle hcoord as a Herdr plugin with checkout lineage', branch: '184-hcoord-plugin', pr: {number: 207, checks: 'pending', review: 'changes_requested'}, hover: 'pr'}),
+        card('s4', {task: local(3), title: 'Overview 진입 흐름', hover: 'start', edit: true}),
+      ]),
+      frame(`ov-states-r2-${suffix}`, 'States', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
+        card('s5', ISSUE_192),
+        card('s6', {task: gh(191), title: 'Desktop host starts the bundled Herdr server when none answers', locked: '#192'}),
+        card('s7', {task: gh(199), title: 'Read the remote primary checkout over device connections', failure: true}),
+        card('s8', {...LOCAL_3, selected: true}),
+      ]),
+      preview(`ov-preview-${suffix}`, {task: gh(201), labels: [ENHANCEMENT], title: 'Add Workspace design reference and visual review coverage'}, {
+        body: ['Workspace 화면에도 Pen 기준 화면과 리뷰 규칙을 둔다.', 'design-review baseline을 Workspace에 만든다.', 'Light와 Dark 모두 캡처한다.'],
+        byline: 'hoyeon · 9월 26일 · 댓글 2',
+      }),
+    ]);
+    // The issue panel beside the board, which keeps the width left to it
+    // (B10-B16, B18, B19): a GitHub issue in progress, a Local one in the
+    // backlog, a Local one being edited, and a GitHub one whose read failed.
+    const withPanel = (key, panel) => frame(`ov-panel-${key}-${suffix}`, `Project Overview · Issues › Panel · ${panel.name}`, {layout: 'vertical', gap: '$--spacing-md', width: boardWidth}, [
+      overviewHeader(tokens, `ov-phead-${key}`, suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'issues', mode: 'board', width: boardWidth}),
+      frame(`ov-psplit-${key}-${suffix}`, 'Board and panel', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
+        frame(`ov-pcols-${key}-${suffix}`, 'Columns', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, panel.columns),
+        issuePanel(`ov-panel-${key}-p-${suffix}`, panel.spec),
+      ]),
+    ]);
+    const github = withPanel('gh', {name: 'GitHub', columns: [
+      stageColumn(`ov-pgb-${suffix}`, '백로그', 5, [
+        card('pg-b1', {task: gh(201), labels: [ENHANCEMENT], title: 'Add Workspace design reference and visual review coverage'}),
+        card('pg-b2', {task: gh(199), title: 'Read the remote primary checkout over device connections'}),
+      ], {newIssue: true}),
+      stageColumn(`ov-pgw-${suffix}`, '진행 중', 2, [card('pg-w1', {...ISSUE_192, selected: true}), card('pg-w2', LOCAL_3)], {foot: [foldLine(`ov-pgloose-${suffix}`, '이슈 없는 워크트리 3')]}),
+    ], spec: {
+      task: gh(192), title: ISSUE_192.title, stage: '진행 중', labels: [BUG], author: 'yansfil · 9월 27일', updated: '9월 27일',
+      work: {branch: ISSUE_192.branch, ahead: 3, files: 4, agents: [
+        {mark: 'seen', title: 'SIGTERM 정리 오케스트레이션', age: '20m'},
+        {mark: 'ask', provider: 'codex', title: 'SIGTERM 처리와 자식 정리 순서', line: '기존 stdin 종료 경로도 남길까요?', tone: 'request', age: '4m', depth: 1},
+      ], pr: {number: 221, tone: 'draft', title: 'hided: stop AI children on SIGTERM before exit', review: 'changes_requested'}},
+      body: [['h', '배경'], ['p', 'Found during the Swift removal (#188): hided installs no SIGTERM handler, so a background AI child is ended by the OS closing its stdin pipe.'], ['p', 'Add a graceful stop path: signal handler, owner-thread shutdown, child teardown with a bounded wait.']],
+      comments: [['yansfil · 9월 27일', '데스크톱 호스트 종료도 같은 경로로 가야 함']],
+    }});
+    const localPanel = withPanel('local', {name: 'Local', columns: [
+      stageColumn(`ov-plb-${suffix}`, '백로그', 2, [
+        card('pl-b1', {task: local(3), title: 'Overview 진입 흐름', selected: true}),
+        card('pl-b2', {task: local(4), title: '세션 탭 빈 상태 문구'}),
+      ], {newIssue: true}),
+    ], spec: {
+      task: local(3), title: 'Overview 진입 흐름', stage: '백로그', created: '9월 25일', updated: '9월 27일',
+      body: [['p', '사이드바 프로젝트 이름으로 들어오면 Agents › 체크아웃이 먼저 선다.'], ['p', '앞에 있던 체크아웃의 레인을 고른다.']],
+    }});
+    const editing = withPanel('edit', {name: 'Local 편집', columns: [
+      stageColumn(`ov-peb-${suffix}`, '백로그', 2, [
+        card('pe-b1', {task: local(3), title: 'Overview 진입 흐름', selected: true}),
+        card('pe-b2', {task: local(4), title: '세션 탭 빈 상태 문구'}),
+      ], {newIssue: true}),
+    ], spec: {
+      task: local(3), title: 'Overview 진입 흐름', stage: '백로그', created: '9월 25일', updated: '9월 27일',
+      editing: {title: 'Overview 진입 흐름과 레인 선택', body: ['사이드바 프로젝트 이름으로 들어오면 Agents › 체크아웃이 먼저 선다.', '앞에 있던 체크아웃의 레인을 고른다.']},
+    }});
+    const failed = withPanel('fail', {name: '읽기 실패', columns: [
+      stageColumn(`ov-pfb-${suffix}`, '백로그', 5, [
+        card('pf-b1', {task: gh(199), title: 'Read the remote primary checkout over device connections', selected: true}),
+        card('pf-b2', {task: gh(194), labels: [BUG], title: 'Post-Swift-removal loose ends: hook reinstall after the app swap'}),
+      ], {newIssue: true}),
+    ], spec: {
+      task: gh(199), title: 'Read the remote primary checkout over device connections', stage: '백로그', updated: '9월 26일',
+      failure: '이슈를 읽지 못함 · 이유는 로그에', body: [], comments: [],
+    }});
     const dependencies = frame(`ov-deps-${suffix}`, 'Project Overview · Issues › Dependencies', {layout: 'vertical', gap: '$--spacing-lg', width: boardWidth}, [
       overviewHeader(tokens, 'ov-dhead', suffix, {project: 'herdr-ide', facts: HERDR_FACTS, view: 'issues', mode: 'dependencies', width: boardWidth}),
       legend(`ov-dlegend-${suffix}`),
@@ -1173,7 +1386,8 @@ function buildProjectOverview(tokens) {
     ]);
     return [
       frame(`ov-agentside-${suffix}`, 'Agents', {layout: 'vertical', gap: '$--spacing-xl'}, [checkouts, lineages]),
-      frame(`ov-issueside-${suffix}`, 'Issues', {layout: 'vertical', gap: '$--spacing-xl'}, [issues, dependencies]),
+      frame(`ov-issueside-${suffix}`, 'Issues', {layout: 'vertical', gap: '$--spacing-xl'}, [issues, states, dependencies]),
+      frame(`ov-panelside-${suffix}`, 'Issue panel', {layout: 'vertical', gap: '$--spacing-xl'}, [github, localPanel, editing, failed]),
     ];
   }
   return screenSheet('screen-project-overview', 'Screen / Project Overview', OVERVIEW_SPEC, build, build);
