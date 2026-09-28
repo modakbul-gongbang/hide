@@ -727,6 +727,39 @@ An Overview agent row reuses the same agent identity and state presentation as t
 The header wash marks the pane Hide is showing, while the outer primary indicator marks the terminal that owns keyboard focus; moving keyboard focus into Overview keeps the shown wash and removes the terminal outline.
 Unread weight is never reused to mean parent, child, delegated, or selected.
 
+## Mobile companion
+
+### Settings > Mobile
+
+Settings has a Mobile tab after Devices.
+Its switch, 폰에서 hide 열기, is off at first, and its description says hide turns tailscale serve on and removes only the entry it made.
+While the switch is off hide runs no Tailscale command.
+Turned on, it shows four steps in order: Tailscale installed on this Mac, logged in with the Mac's name, MagicDNS and HTTPS on for the tailnet, and Tailscale on the phone with the same account.
+A passed step shows a check; only the first failing step shows a warning with its action (a download link, "Tailscale 앱에서 로그인", or the admin console's DNS page with a link), and the steps after it wait.
+The phone step is guidance hide cannot check: it waits until the QR shows and then reads as done.
+The tab rechecks every three seconds while it is open, so logging in or turning HTTPS on continues without reopening it.
+Once every Mac step passes and hide has confirmed its serve entry, the tab shows the QR, 폰 카메라로 찍으세요, the ts.net address, the code's m:ss countdown and 새 코드.
+An HTTPS entry hide did not make shows its target in one line and no QR; a failed serve command shows the failed step and its message in one line.
+Opening the tab, pressing 새 코드, or a phone pairing shows a new code, and the previous code stops working.
+The phones group is titled 연결된 폰 · n / 4; each row shows the phone's name, when it was last seen, whether notifications are on or off, the days left before the seven-day revoke once it has been away a day, and 해지, which closes that phone at once.
+푸시 알림 offers 끔 (the default), 앱이 닫혀 있을 때만 and 항상, and the choice survives a restart.
+
+### The phone app
+
+The QR opens a page with the hide icon, "<Mac>와 연결", a line on what the phone can do, 연결, and a note that the code expires in five minutes.
+연결 opens the list and a one-time hint to keep hide on the Home Screen; an expired or spent code says so, a fifth phone is told the limit and to revoke one on the Mac, and a page opened with no code or credential says to scan the QR in Settings > Mobile.
+The list's header shows hide, the Mac's name, how many other phones are connected, and a connection dot.
+Agents sit in 내 확인 대기, 끝, 진행 중 and 확인함 with their counts, each row with its status mark, provider mark, task name, project and branch, the SSH device's chip, the elapsed time and the request or news line, and the list updates live.
+With no agents the list is one line, 실행 중인 에이전트가 없어요.
+When hided is out of reach the last list stays dimmed under "연결 안 됨 · 맥의 hide가 꺼져 있거나 폰의 Tailscale이 꺼져 있어요. 다시 시도 중", the app retries on its own, and it shows the same line when opened without a network.
+A row opens its detail: ← 목록, the elapsed time, the row's head, and the pane's recent rows read-only in the terminal's colours with the newest at the bottom; pulling to the top loads older rows until the pane has no more.
+Every detail has the quick keys (Enter, Escape, 위 화살표, 아래 화살표, Ctrl-C by accessible name) and a one-line reply with 보내기; a reply is sent with Enter after it and clears on success, a failure keeps the text with the reason under it, and a reply over 2,000 characters is named before it is sent.
+A closed pane shows "이 pane은 더 이상 열려 있지 않아요" and disables the reply bar; a disconnected SSH device shows that its device is not connected.
+With push on, the list offers 알림 켜기; a Safari tab without push is told to open hide from the Home Screen first, and a refused permission shows "알림이 꺼져 있어요 · 설정 > 알림에서 hide를 켜세요".
+A notification's title is the task name and its body 내 확인 대기 or 끝 with the project; tapping it opens that agent's detail.
+A revoked phone shows "이 폰의 연결이 해지됐어요. 맥에서 QR을 다시 여세요." and drops its own push subscription.
+The app follows the phone's light or dark setting, draws text a quarter larger than the desktop, and keeps every control at least 44 points tall.
+
 ## Keycaps, tooltips, and icon buttons
 
 Every icon-only control has a tooltip and an accessible name carrying the same words as the tooltip.

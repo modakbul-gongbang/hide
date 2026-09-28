@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { headerLine, macNameOf, notificationRow, openKey, parseFragment, replyProblem, staleTags, toBase64Url, type AgentGroup, type PhoneAgent } from "./protocol";
+import { headerLine, macNameOf, notificationRow, openKey, parseFragment, replyProblem, rowsProblem, staleTags, toBase64Url, type AgentGroup, type PhoneAgent } from "./protocol";
 
 const CREDENTIAL = "a".repeat(64);
 
@@ -82,5 +82,13 @@ describe("header", () => {
     expect(macNameOf("https://hoyeon-mbp.tailnet.ts.net")).toBe("hoyeon-mbp");
     expect(headerLine("mac", 1)).toBe("mac · 폰 1대 더 연결됨");
     expect(headerLine("mac", 0)).toBe("mac");
+  });
+});
+
+describe("rowsProblem", () => {
+  it("names a closed pane and a device that is not connected (B28)", () => {
+    expect(rowsProblem("ok")).toBeNull();
+    expect(rowsProblem("gone")).toBe("이 pane은 더 이상 열려 있지 않아요.");
+    expect(rowsProblem("device_unreachable")).toBe("이 에이전트의 기기가 연결돼 있지 않아요.");
   });
 });
