@@ -103,7 +103,7 @@ Agent tabs cannot enter the View column, and a sole tab cannot split its own are
 Invalid size, area or depth limits show the forbidden cursor without an overlay; Escape, outside release and a vanished target leave the layout unchanged.
 Each area scrolls its selected tab into view; when the column is too narrow, an area switcher shows one area without changing the saved tree.
 
-New tab, Split right/left/up/down, available directional Move commands, Rename…, Copy tab name and Close tab… form each tab menu.
+New tab, Split right/left/up/down, available directional Move commands, Rename…, Copy name and Close tab… form each tab menu.
 A disabled split explains its reason, and opening the menu changes no selection.
 The palette opened from an Agent pane adds these area commands and next/previous area focus and grow/shrink commands, including unavailable reasons.
 An area's New tab adds at its end; ⌘T/⌥T uses the active area.

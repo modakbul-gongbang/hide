@@ -37,7 +37,7 @@ test("focused agent titles, inline rename, clear and reconnect", async ({ page }
         /^Split up/,
         /^Split down/,
         "Rename…",
-        "Copy tab name",
+        "Copy name",
         "Close tab…",
       ]);
       await menu.getByRole("menuitem", { name: "Rename…", exact: true }).click();

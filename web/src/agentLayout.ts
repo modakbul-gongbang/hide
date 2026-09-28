@@ -21,7 +21,7 @@ export function agentMenu(frame: AgentFrame, id: string, palette = false): MenuE
     if (neighbour || palette) entries.push({ id: `move_${edge}`, label: `Move ${edge}`, unavailable: neighbour ? null : `There is no Agent area ${edge}.` });
   }
   if (!palette) entries.push({ id: "rename_tab", label: "Rename…", unavailable: null });
-  entries.push({ id: "copy_name", label: "Copy tab name", unavailable: null, separated: true }, { id: "close_tab", label: "Close tab…", unavailable: null, separated: true });
+  entries.push({ id: "copy_name", label: "Copy name", unavailable: null, separated: true }, { id: "close_tab", label: "Close tab…", unavailable: null, separated: true });
   return entries;
 }
 export function agentCommands(frame: AgentFrame): MenuEntry<AgentCommand>[] {
