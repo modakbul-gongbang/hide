@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { closeShortcutPolicy, type KeyboardOwner } from "./viewFocus";
+import { closeShortcutPolicy, newTabPolicy, type KeyboardOwner } from "./viewFocus";
 
 describe("close shortcut policy", () => {
   const decide = (owner: KeyboardOwner, displayId: string | null = "d1", paneIds = ["p1", "p2"]) =>
@@ -22,5 +22,29 @@ describe("close shortcut policy", () => {
     expect(decide({ kind: "view", workspace: "workspace", areaId: "gone" }, null)).toMatchObject({ kind: "nothing" });
     expect(decide({ kind: "pane", workspace: "workspace", paneId: "gone" })).toMatchObject({ kind: "nothing" });
     expect(decide({ kind: "pane", workspace: "elsewhere", paneId: "p1" })).toMatchObject({ kind: "nothing" });
+  });
+});
+
+describe("new tab policy", () => {
+  const decide = (owner: KeyboardOwner, viewAreaIds = ["v1", "v2"], workspace: string | null = "workspace") =>
+    newTabPolicy({ owner, workspace, viewAreaIds, paneAreas: { p1: "a1", p2: "a2" } });
+
+  it("opens in the View area that holds the keyboard, not the View active area", () => {
+    expect(decide({ kind: "view", workspace: "workspace", areaId: "v2" })).toEqual({ kind: "view", areaId: "v2" });
+  });
+
+  it("opens in the Agent area showing the keyboard's pane", () => {
+    expect(decide({ kind: "pane", workspace: "workspace", paneId: "p2" })).toEqual({ kind: "agent", areaId: "a2" });
+  });
+
+  it("keeps the Agent active area for anything else", () => {
+    const active = { kind: "agent", areaId: null };
+    expect(decide({ kind: "none" })).toEqual(active);
+    expect(decide({ kind: "tool", workspace: "workspace" })).toEqual(active);
+    expect(decide({ kind: "agent", workspace: "workspace" })).toEqual(active);
+    expect(decide({ kind: "view", workspace: "workspace", areaId: "v1" }, [])).toEqual(active);
+    expect(decide({ kind: "view", workspace: "workspace", areaId: "v1" }, ["v1"], null)).toEqual(active);
+    expect(decide({ kind: "pane", workspace: "elsewhere", paneId: "p1" })).toEqual(active);
+    expect(decide({ kind: "pane", workspace: "workspace", paneId: "gone" })).toEqual(active);
   });
 });

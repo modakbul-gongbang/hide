@@ -20,8 +20,8 @@ export type Daemon = {
   stateDir: string;
   hostId: string;
   stop: () => void;
-  /** `beforeStart` runs on the daemon's state directory while it is down. */
-  restart: (beforeStart?: (stateDir: string) => void) => Promise<Daemon>;
+  /** `beforeStart` runs on the daemon's state directory while it is down, and may wait. */
+  restart: (beforeStart?: (stateDir: string) => void | Promise<void>) => Promise<Daemon>;
 };
 
 /** `extraEnv` is laid over the daemon's environment; an undefined value leaves that variable unset. */
@@ -51,13 +51,13 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
       HIDED_UI_DIR: path.resolve("dist"),
       HERDR_SOCKET_PATH: herdr.socket,
       HERDR_BIN_PATH: herdr.bin,
+      // hided refuses to start an agent whose binary is not on its own PATH,
+      // so the fixture's `claude` shim leads it: the CI runner has no claude.
+      // A spec that passes its own PATH names the shim there itself.
+      PATH: `${path.join(herdr.root, "bin")}:${env.PATH ?? "/usr/bin:/bin"}`,
       // `open_external` must not launch a GUI application on the runner.
       HIDE_OPEN_COMMAND: "/usr/bin/true",
       ...extraEnv,
-      // hided refuses to start an agent whose binary is not on its own PATH,
-      // so the fixture's `claude` shim leads it, ahead of a spec's own PATH:
-      // the CI runner has no claude.
-      PATH: `${path.join(herdr.root, "bin")}:${extraEnv.PATH ?? env.PATH ?? "/usr/bin:/bin"}`,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -94,10 +94,10 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
         const origin = `http://127.0.0.1:${state.port}`;
         if ((await fetch(`${origin}/health`)).ok) {
           const hostId = fs.readFileSync(path.join(dir, "hide", "host-id"), "utf8").trim();
-          const restart = async (beforeStart?: (stateDir: string) => void) => {
+          const restart = async (beforeStart?: (stateDir: string) => void | Promise<void>) => {
             child.kill();
             await exited;
-            beforeStart?.(path.join(dir, "hide"));
+            await beforeStart?.(path.join(dir, "hide"));
             return launch(herdr, label, dir, home, String(state.port), extraEnv);
           };
           return { origin, token: state.token, home: fs.realpathSync(home), stateDir: path.join(dir, "hide"), hostId, stop, restart };

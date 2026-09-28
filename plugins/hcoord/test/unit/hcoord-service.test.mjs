@@ -106,10 +106,11 @@ test("spawn reservation has room for the full first-turn progress and registrati
   const state = emptyLedger(at);
   const run = (operation, args) => execute(state, operation, args, at).value;
   const parent = run("agent.register", { machine: "local", hostScope: "default", session: "parent", instance: "parent-terminal", name: "parent", pane: "parent-pane", runtime: "idle" });
-  state.events.length = MAX_EVENTS - 7;
+  state.events.length = MAX_EVENTS - 8;
   run("agent.spawn.reserve", { parent: parent.id, intent: "near-cap", machine: "local", session: "parent", name: "child", kind: "codex", nativeArgs: [] });
   run("agent.spawn.unknown", { intent: "near-cap", reason: "tab creation reserved; outcome pending", workspace: "workspace", cwd: "/fixture" });
   run("agent.spawn.pane", { intent: "near-cap", pane: "child-pane" });
+  run("agent.spawn.started", { intent: "near-cap", instance: "child-terminal" });
   run("agent.spawn.initialization", { intent: "near-cap", phase: "reserved", instance: "child-terminal" });
   run("agent.spawn.identity", { intent: "near-cap", runtimeSession: "child-session", instance: "child-terminal" });
   const result = run("agent.spawn.complete", { intent: "near-cap", runtimeSession: "child-session", instance: "child-terminal", runtime: "idle" });

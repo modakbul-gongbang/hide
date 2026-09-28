@@ -2,7 +2,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { HcoordError, LETTER_OPERATIONS, LETTER_SCHEMA, MAX_OUTBOX_LETTERS, REMOTE_PROTOCOL } from "./model";
+import { DEFAULT_SPAWN_KIND, HcoordError, LETTER_OPERATIONS, LETTER_SCHEMA, MAX_OUTBOX_LETTERS, REMOTE_PROTOCOL, SPAWN_KINDS, validateSpawnSpec } from "./model";
 import { outboxCount, readOutboxRaw, removeLetters, writeLetter } from "./outbox";
 import { readHq, writeHq } from "./remote";
 import { openWork } from "./service";
@@ -38,13 +38,33 @@ const duration = (value: string): number => {
   if (!match) throw new HcoordError("invalid_argument", "duration must use s, m, h, or d, for example 5m");
   return Number(match[1]) * ({ s: 1000, m: 60_000, h: 3_600_000, d: 86_400_000 } as Record<string, number>)[match[2]!]!;
 };
+const USAGE = "usage: hcoord status | agent register [--check]/spawn/link/list/show/end | watch start/check/assign/stop/list | request send/show/reply/relay/ack/cancel/escalate | inbox | graph | events | daemon start/stop/status; hcoord agent spawn --help describes a spawn";
+const SPAWN_USAGE = `usage: hcoord agent spawn --parent <participant|here> --name <name> --intent <key> [--kind <kind>] [--session <id>] [--machine <name>] [--repo <path> --branch <branch> [--path <path>]] [--no-watch] [--reconcile-pane <pane>] [--resume-start] [--json] [-- <native args>]
+
+Starts a Herdr agent as a child of --parent and records its lineage.
+
+  --parent here    the agent in this Herdr pane, registered first when needed; its session is the default --session
+  --session        the parent's session; required unless --parent here supplies it
+  --name           the child's Herdr agent name: a lowercase letter, then lowercase letters, digits, _ or -, up to 32 characters
+  --intent         a key for this spawn; rerunning the same command with it resumes this spawn and never starts a second agent
+  --kind           ${SPAWN_KINDS.join(", ")} (default ${DEFAULT_SPAWN_KIND})
+  --repo --branch  create a new worktree and Herdr workspace for the child; --path places the worktree
+  --machine        a saved Herdr machine to start the child on; another machine than the parent's needs --repo and --branch there
+
+Arguments after -- go to the --kind executable itself; do not repeat its name.
+  claude: -- <claude flags> "<prompt>"   the prompt is Claude's first message
+  codex:  -- <codex flags> ["<task>"]    the task must be the last argument; hcoord submits it as the first turn once Codex is ready
+
+Arguments are checked before anything is created, so a refused spawn leaves no worktree, workspace, or pane.`;
+const spawnKind = (args: Parsed): string => flag(args, "kind") ?? DEFAULT_SPAWN_KIND;
+
 function route(args: Parsed): { operation: string; data: Record<string, unknown> } {
   const [topic, action, target] = args.words;
   if (topic === "status") return { operation: "status", data: {} };
   if (topic === "config" && action === "show") return { operation: "status", data: {} };
   if (topic === "config" && action === "set") return { operation: "config.set", data: { key: needed(args, "key"), value: duration(needed(args, "value")) } };
   if (topic === "agent" && action === "register") return { operation: args.flags.has("check") ? "agent.check" : "agent.register", data: { machine: needed(args, "machine"), hostScope: flag(args, "host-scope") ?? process.env["HERDR_SOCKET_PATH"] ?? "default", session: needed(args, "session"), instance: needed(args, "instance"), name: needed(args, "name"), project: flag(args, "project"), parent: flag(args, "parent"), pane: flag(args, "pane") } };
-  if (topic === "agent" && action === "spawn") return { operation: "agent.spawn", data: { parent: needed(args, "parent"), machine: flag(args, "machine"), repo: flag(args, "repo"), branch: flag(args, "branch"), path: flag(args, "path"), session: needed(args, "session"), name: needed(args, "name"), kind: flag(args, "kind") ?? "codex", intent: needed(args, "intent"), noWatch: args.flags.has("no-watch"), reconcilePane: flag(args, "reconcile-pane"), resumeStart: args.flags.has("resume-start"), nativeArgs: args.tail } };
+  if (topic === "agent" && action === "spawn") return { operation: "agent.spawn", data: { parent: needed(args, "parent"), machine: flag(args, "machine"), repo: flag(args, "repo"), branch: flag(args, "branch"), path: flag(args, "path"), session: needed(args, "session"), name: needed(args, "name"), kind: spawnKind(args), intent: needed(args, "intent"), noWatch: args.flags.has("no-watch"), reconcilePane: flag(args, "reconcile-pane"), resumeStart: args.flags.has("resume-start"), nativeArgs: args.tail } };
   if (topic === "agent" && action === "list") return { operation: "agent.list", data: { project: flag(args, "project") } };
   if (topic === "agent" && action === "show") return { operation: "agent.show", data: { id: target } };
   if (topic === "agent" && action === "end") return { operation: "agent.end", data: { id: target, actor: needed(args, "actor") } };
@@ -63,7 +83,7 @@ function route(args: Parsed): { operation: string; data: Record<string, unknown>
   if (topic === "inbox") return { operation: "inbox", data: {} };
   if (topic === "graph") return { operation: "graph", data: {} };
   if (topic === "events") return { operation: "events", data: { cursor: flag(args, "cursor") ?? "0" } };
-  throw new HcoordError("invalid_argument", "usage: hcoord status | agent register [--check]/list/show/end | watch start/check/assign/stop/list | request send/show/reply/relay/ack/cancel/escalate | inbox | graph | events | daemon start/stop/status");
+  throw new HcoordError("invalid_argument", USAGE);
 }
 
 /**
@@ -259,6 +279,13 @@ async function setHq(value: string | undefined): Promise<WireResult> {
 export async function main(argv: string[]): Promise<number> {
   const args = parse(argv), json = args.flags.has("json");
   try {
+    if (args.flags.has("help") || args.words[0] === "help") {
+      const usage = args.words[0] === "agent" && args.words[1] === "spawn" ? SPAWN_USAGE : USAGE;
+      if (json) print(ok({ usage }), json); else process.stdout.write(`${usage}\n`);
+      return 0;
+    }
+    // A refused spawn creates nothing: not the parent registration, the letter, the worktree, or the pane (#237).
+    if (args.words[0] === "agent" && args.words[1] === "spawn") validateSpawnSpec(needed(args, "name"), spawnKind(args), args.tail);
     if (args.words[0] === "version") { print(ok({ hcoordVersion: HCOORD_VERSION, apiVersion: API_VERSION }), json); return 0; }
     if (args.words[0] === "remote") { const result = await remoteSide(args); process.stdout.write(`${JSON.stringify(result)}\n`); return 0; }
     if (args.words[0] === "config" && args.words[1] === "set" && args.words[2] === "hq") { const result = await setHq(args.words[3]); print(result, json); return 0; }

@@ -30,10 +30,10 @@ Pin docks the panel instead: the agents end at its left edge and their terminals
 Pin is not a fourth state: it is stored per Workspace with the width, and a pinned panel still closes, opens, and expands, its agents keeping their docked width under an expanded panel so expanding and restoring resize nothing.
 The gap on the panel's left is its resize grip (`Component / Side panel grip`): nothing at rest, and on hover, keyboard focus and while dragging a hairline centred in the gap with a small ⇆ pill at its middle that overlaps the card's edge; the grip travels with the pointer as the guide and lands once on release, one step per arrow key while focused, and neither the panel nor the agents to its left narrower than the area minimum.
 Every panel that has a width resizes this way, floating or pinned, the tools-only panel included; the tools-only panel keeps a width of its own, the tool column's until it is first resized, and both widths are the Workspace's shares of the body and survive a restart.
-The agents left of the panel are live: clicking a pane or a tab there focuses it and typing goes to it while the panel stays up, and chords such as ⌘F and ⌥W act where the keyboard is, the panel's View area or the pane.
+The agents left of the panel are live: clicking a pane or a tab there focuses it and typing goes to it while the panel stays up, and chords such as ⌘F, ⌘T and ⌥W act where the keyboard is, the panel's View area or the pane.
 While an expanded panel covers them, the agents take no pointer or keyboard, so Tab never walks into a terminal out of sight.
 
-The panel's first row sits at the toolbar row's height and holds each top area's View tabs with their kind marks, each area's tabs followed by its own New tab (the file palette, into that area), and, at its right end, the panel actions: the tool column's toggle (pressed while the tools show), Expand (only while a view is open), Pin, and the panel toggle.
+The panel's first row sits at the toolbar row's height and holds each top area's View tabs with their kind marks, each area's tabs followed by its own New tab (a new browser display in that area, see Browser displays), and, at its right end, the panel actions: the tool column's toggle (pressed while the tools show), Expand (only while a view is open), Pin, and the panel toggle.
 Its second row is level with the agents' tab strip: the active document's header over each View area, naming a file from its checkout and cutting a long path at its start so the file name stays, and over the tool column the Explorer and History icon tabs, the shown one marked, named Explorer and History in their tooltips and accessible names.
 The tool column holds one tool at a time, with no title row and no close: a tab swaps the tool, and the column's toggle hides and shows it, keeping the tool it held.
 With stacked View areas each area keeps its own tab strip, and the first row holds the top area's tabs and the panel actions.
@@ -67,6 +67,7 @@ A dirty view shows a warning-colored mark after its title.
 Closing a view is always called Close view, distinct from moving a file to the Trash and from closing a pane or tab.
 The close chord, ⌘W in the desktop app and ⌥W in a browser, closes the smallest unit that holds the keyboard: the focused View area's active display, or the focused terminal pane.
 The page records its last focused region as View area, pane, tools, or none from focus events, including native browser-page focus; the chord does not walk the active DOM element or choose a region from panel size.
+When the desktop app hands the keyboard back from a native page to deliver a menu command, the focus the shell's last element regains is not a move while that command runs, so ⌘W and ⌘T pressed in a page act on that page's View area; once the command has run, the keyboard's owner is the shell element holding it, so after any other command from a page the next chord acts where the operator now types.
 With tools or nothing focused, nothing closes and a diagnostic states why.
 Tabs close only from their own close control or menu; closing a tab's only pane still removes its tab through Herdr.
 An unavailable or retired keyboard target never falls through to closing a different pane or a whole tab.
@@ -106,7 +107,9 @@ Each area scrolls its selected tab into view; when the column is too narrow, an 
 New tab, Split right/left/up/down, available directional Move commands, Rename…, Copy name and Close tab… form each tab menu.
 A disabled split explains its reason, and opening the menu changes no selection.
 The palette opened from an Agent pane adds these area commands and next/previous area focus and grow/shrink commands, including unavailable reasons.
-An area's New tab adds at its end; ⌘T/⌥T uses the active area.
+An area's New tab adds at its end.
+The new tab chord, ⌘T in the desktop app and ⌥T in a browser, opens where the keyboard is: with a panel View area focused it is that area's New tab, with an Agent pane focused it adds an agent tab at the end of the area showing that pane, and anywhere else (the sidebar, the Overview, the tools, the Agent controls) it adds one to the Agent active area.
+The View and Agent columns keep separate active areas, so the chord follows the recorded keyboard owner, never whichever column's active area changed last.
 Externally created tabs append to the active area without changing the shown tab; Herdr's own reorder never changes Hide's area order.
 Delegated-only tabs remain absent from every bar and occupy the active canvas when chosen from the sidebar.
 Choosing a normal tab elsewhere activates its owning area.
@@ -191,8 +194,8 @@ A Workspace stored before the side panel, with a layout instead of a panel state
 
 ### Browser displays
 
-View 영역의 새 탭은 display가 될 수 있는 것만 제안한다. tool과 pane은 아니다.
-The View strip’s + and New tab menu item open a distinct browser display in that area with no address and the address field focused.
+A View area's new tab offers only what can become a display, never a tool or a pane.
+The View strip’s +, its New tab menu item, and the new tab chord while the area holds the keyboard open a distinct browser display in that area with no address and the address field focused.
 Its body shows Open with File (⌘P), opening the file palette, and Diff only while the checkout has changes, opening a palette of changed files.
 Picking either replaces that empty tab in place; entering a URL navigates the same tab, and closing an untouched tab creates no recovery entry.
 The new-tab page offers no tools or panes; ⌘P remains the file palette everywhere.
@@ -840,6 +843,41 @@ An uninstrumented mark (agent detected but its subagents not visible to Hide) is
 An Overview agent row reuses the same agent identity and state presentation as the sidebar and relationship sheet; a missing row means the current live projection has no agent there, and an uninstrumented mark never means zero.
 The header wash marks the pane Hide is showing, while the outer primary indicator marks the terminal that owns keyboard focus; moving keyboard focus into Overview keeps the shown wash and removes the terminal outline.
 Unread weight is never reused to mean parent, child, delegated, or selected.
+
+## Mobile companion
+
+### Settings > Mobile
+
+Settings has a Mobile tab after Devices.
+Its switch, 폰에서 hide 열기, is off at first, and its description says hide turns tailscale serve on and removes only the entry it made.
+While the switch is off hide runs no Tailscale command.
+Turned on, it shows four steps in order: Tailscale installed on this Mac, logged in with the Mac's name, MagicDNS and HTTPS on for the tailnet, and Tailscale on the phone with the same account.
+A passed step shows a check; only the first failing step shows a warning with its action (a download link, "Tailscale 앱에서 로그인", or the admin console's DNS page with a link), and the steps after it wait.
+The phone step is guidance hide cannot check: it waits until the QR shows and then reads as done.
+The tab rechecks every three seconds while it is open, so logging in or turning HTTPS on continues without reopening it.
+Once every Mac step passes and hide has confirmed its serve entry, the tab shows the QR, 폰 카메라로 찍으세요, the ts.net address, the code's m:ss countdown and 새 코드.
+An HTTPS entry hide did not make shows its target in one line and no QR; a failed serve command shows the failed step and its message in one line, and so does a Funnel that would publish the address, which also disconnects every phone when it is turned on later.
+A removal that fails when the switch goes off keeps that line under the switch until hide finishes it.
+Opening the tab, pressing 새 코드, or a phone pairing shows a new code, and the previous code stops working.
+The phones group is titled 연결된 폰 · n / 4; each row shows the phone's name, when it was last seen, whether notifications are on or off, the days left before the seven-day revoke once it has been away a day, and 해지, which closes that phone at once.
+푸시 알림 offers 끔 (the default), 앱이 닫혀 있을 때만 and 항상, and the choice survives a restart.
+
+### The phone app
+
+The QR opens a page with the hide icon, "<Mac>와 연결", a line on what the phone can do, 연결, and a note that the code expires in five minutes.
+연결 opens the list and a one-time hint to keep hide on the Home Screen; an expired or spent code says so, a fifth phone is told the limit and to revoke one on the Mac, and a page opened with no code or credential says to scan the QR in Settings > Mobile.
+The list's header shows hide, the Mac's name, how many other phones are connected, and a connection dot.
+Agents sit in 내 확인 대기, 끝, 진행 중 and 확인함 with their counts, each row with its status mark, provider mark, task name, project and branch, the SSH device's chip, the elapsed time and the request or news line, and the list updates live.
+With no agents the list is one line, 실행 중인 에이전트가 없어요.
+When hided is out of reach the last list stays dimmed under "연결 안 됨 · 맥의 hide가 꺼져 있거나 폰의 Tailscale이 꺼져 있어요. 다시 시도 중", the app retries on its own, and it shows the same line when opened without a network.
+A row opens its detail: ← 목록, the elapsed time, the row's head, and the pane's recent rows read-only in the terminal's colours with the newest at the bottom; pulling to the top loads older rows until the pane has no more.
+Every detail has the quick keys (Enter, Escape, 위 화살표, 아래 화살표, Ctrl-C by accessible name) and a one-line reply with 보내기; a reply is sent with Enter after it and clears on success, a failure keeps the text with the reason under it, and a reply over 2,000 characters is named before it is sent.
+When hide cannot tell whether a reply reached the pane, the line says so and asks the operator to check the terminal before sending it again.
+A closed pane shows "이 pane은 더 이상 열려 있지 않아요" and disables the reply bar; a disconnected SSH device shows that its device is not connected.
+With push on, the list offers 알림 켜기; a Safari tab without push is told to open hide from the Home Screen first, and a refused permission shows "알림이 꺼져 있어요 · 설정 > 알림에서 hide를 켜세요".
+A notification's title is the task name and its body 내 확인 대기 or 끝 with the project; tapping it opens that agent's detail.
+A revoked phone shows "이 폰의 연결이 해지됐어요. 맥에서 QR을 다시 여세요." and drops its own push subscription.
+The app follows the phone's light or dark setting, draws text a quarter larger than the desktop, and keeps every control at least 44 points tall.
 
 ## Keycaps, tooltips, and icon buttons
 

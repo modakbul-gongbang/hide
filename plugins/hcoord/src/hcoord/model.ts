@@ -3,9 +3,10 @@ export const API_VERSION = 1;
 export const MAX_AGENTS = 2048;
 export const MAX_REQUESTS = 10000;
 export const MAX_EVENTS = 20000;
-// A spawn can write six progress events; one extra slot records a rejected
+// A spawn can write seven progress events; one extra slot records a rejected
 // first-turn submission without stranding the saved intent at the event cap.
-export const SPAWN_EVENT_SLOTS = { reserve: 7, beforeExternalStart: 4, beforeFirstTurn: 4, beforeRegistration: 2 } as const;
+// `started` is the one event agent start itself adds, the observed execution.
+export const SPAWN_EVENT_SLOTS = { reserve: 8, started: 1, beforeExternalStart: 4, beforeFirstTurn: 4, beforeRegistration: 2 } as const;
 export const MAX_BODY_BYTES = 16 * 1024;
 /** A watch brief rides on every watch check, so it stays a few lines (D-21). */
 export const MAX_BRIEF_BYTES = 2 * 1024;
@@ -111,9 +112,42 @@ export function put<T>(records: Record<string, T>, key: string, value: T): void 
 export class HcoordError extends Error {
   constructor(readonly code: string, message: string, readonly detail?: Record<string, unknown>) { super(message); this.name = "HcoordError"; }
 }
-export function validateSpawnSpec(name: string, kind: string): void {
-  if (!/^[a-z][a-z0-9_-]{0,31}$/.test(name)) throw new HcoordError("invalid_argument", "Herdr agent name must use lowercase letters, digits, _ or -, up to 32 characters");
-  if (!["codex", "claude", "opencode", "gemini"].includes(kind)) throw new HcoordError("unsupported_runtime", "this Herdr agent kind has not been verified for coordinator spawn");
+export const SPAWN_KINDS = ["codex", "claude", "opencode", "gemini"] as const;
+export const DEFAULT_SPAWN_KIND = "codex";
+
+/**
+ * Splits Codex native arguments into its launch flags and the task hcoord
+ * submits as the first turn after start; a null task means none was given.
+ */
+export function codexArgs(nativeArgs: string[]): { startArgs: string[]; task: string | null } {
+  const valueFlags = new Set(["-c", "--config", "-i", "--image", "-m", "--model", "-p", "--profile", "-s", "--sandbox", "-C", "--cd", "--add-dir", "-a", "--ask-for-approval", "--remote", "--remote-auth-token-env", "--local-provider", "--enable", "--disable"]);
+  for (let index = 0; index < nativeArgs.length; index += 1) {
+    const arg = nativeArgs[index]!;
+    if (arg === "--") {
+      if (nativeArgs.length - index !== 2) throw new HcoordError("invalid_argument", "Codex accepts one task argument after --");
+      return { startArgs: nativeArgs.slice(0, index), task: nativeArgs[index + 1]! };
+    }
+    if (valueFlags.has(arg)) { index += 1; continue; }
+    if (arg.startsWith("-")) continue;
+    if (index !== nativeArgs.length - 1) throw new HcoordError("invalid_argument", "Codex task must be the final native argument");
+    return { startArgs: nativeArgs.slice(0, index), task: arg };
+  }
+  return { startArgs: nativeArgs, task: null };
+}
+
+/**
+ * Everything about a spawn that can be refused without Herdr, checked before
+ * any external effect so a refused spawn creates nothing (#237).
+ */
+export function validateSpawnSpec(name: string, kind: string, nativeArgs: string[]): void {
+  if (!/^[a-z][a-z0-9_-]{0,31}$/.test(name)) throw new HcoordError("invalid_argument", "Herdr agent name must start with a lowercase letter and use lowercase letters, digits, _ or -, up to 32 characters");
+  if (!(SPAWN_KINDS as readonly string[]).includes(kind)) throw new HcoordError("unsupported_runtime", "this Herdr agent kind has not been verified for coordinator spawn");
+  const executable = nativeArgs[0];
+  // A lone word is a prompt or task; only an executable name followed by its flags is refused.
+  if (executable !== undefined && nativeArgs.length > 1 && (SPAWN_KINDS as readonly string[]).includes(executable)) {
+    throw new HcoordError("invalid_argument", `arguments after -- go to the ${kind} executable itself, so drop the leading "${executable}"${executable === kind ? "" : ` and pass --kind ${executable} to start ${executable}`}; see hcoord agent spawn --help`);
+  }
+  if (kind === "codex") codexArgs(nativeArgs);
 }
 export function id(prefix: string): string { return `${prefix}_${require("node:crypto").randomUUID()}`; }
 export function event(state: Ledger, at: string, type: string, subjectId: string, correlationId: string | null = null, detail: Event["detail"] = {}): void {
