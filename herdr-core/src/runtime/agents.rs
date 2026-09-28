@@ -560,9 +560,20 @@ impl Runtime {
                             )
                         });
                 if let Some(registration) = registered {
-                    RemoteControlAction::CreateWorkspace {
+                    let is_git = session
+                        .workspaces
+                        .iter()
+                        .find(|project| project.id == registration.id)
+                        .is_some_and(|project| project.is_git);
+                    RemoteControlAction::OpenOwner {
+                        owner: OwnerOpen::for_checkout(
+                            &target_id,
+                            &registration.path,
+                            is_git,
+                            &registration.label,
+                        ),
                         cwd: registration.path.clone(),
-                        label: registration.label.clone(),
+                        label,
                         area_id: None,
                         admission_id: None,
                     }

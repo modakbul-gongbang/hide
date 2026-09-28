@@ -359,6 +359,37 @@ impl Runtime {
             }
         }
 
+        // Each checkout's owner is read off Herdr's own binding and Hide's
+        // mark, never off where its tabs sit (PRD checkout-workspace-binding
+        // D-06); this session already carries both, so it costs no call.
+        let owner_facts = payload
+            .workspaces
+            .iter()
+            .map(|workspace| crate::checkout_owner::WorkspaceFacts {
+                workspace_id: &workspace.workspace_id,
+                bound_path: workspace
+                    .worktree
+                    .as_ref()
+                    .map(|worktree| worktree.checkout_path.as_str()),
+                mark: workspace
+                    .tokens
+                    .get(crate::checkout_owner::OWNER_TOKEN)
+                    .and_then(serde_json::Value::as_str),
+            })
+            .collect::<Vec<_>>();
+        for workspace in &mut workspaces {
+            let is_git = workspace.is_git;
+            for checkout in &mut workspace.checkouts {
+                checkout.owner_workspace_id = crate::checkout_owner::owner_of(
+                    workspace::LOCAL_DEVICE_ID,
+                    &checkout.path,
+                    is_git,
+                    owner_facts.iter().copied(),
+                )
+                .map(str::to_owned);
+            }
+        }
+
         for workspace in &mut workspaces {
             for checkout in &mut workspace.checkouts {
                 checkout.next_tab_label = crate::model::next_tab_label(
@@ -3630,7 +3661,7 @@ impl Runtime {
                     admission_id: Some(id),
                     ..
                 }
-                | RemoteControlAction::CreateWorkspace {
+                | RemoteControlAction::OpenOwner {
                     cwd,
                     admission_id: Some(id),
                     ..
@@ -3679,7 +3710,7 @@ impl Runtime {
                             area_id: Some(area),
                             ..
                         }
-                        | RemoteControlAction::CreateWorkspace {
+                        | RemoteControlAction::OpenOwner {
                             cwd,
                             area_id: Some(area),
                             ..
@@ -3705,7 +3736,7 @@ impl Runtime {
                 let can_show_created = match (&action, created_tab_id.as_deref()) {
                     (
                         RemoteControlAction::CreateTab { cwd, .. }
-                        | RemoteControlAction::CreateWorkspace { cwd, .. },
+                        | RemoteControlAction::OpenOwner { cwd, .. },
                         Some(id),
                     ) => self.agent_can_show_created(cwd, id),
                     _ => true,
@@ -3714,7 +3745,7 @@ impl Runtime {
                     && matches!(
                         action,
                         RemoteControlAction::CreateTab { .. }
-                            | RemoteControlAction::CreateWorkspace { .. }
+                            | RemoteControlAction::OpenOwner { .. }
                     )
                     && let Some(pane_id) = created_pane_id.as_ref()
                 {
@@ -3765,7 +3796,7 @@ impl Runtime {
                         RemoteControlAction::CreateTab {
                             admission_id: Some(_),
                             ..
-                        } | RemoteControlAction::CreateWorkspace {
+                        } | RemoteControlAction::OpenOwner {
                             admission_id: Some(_),
                             ..
                         }
@@ -3791,10 +3822,17 @@ impl Runtime {
                     format!("{action_kind} failed: {message}"),
                     true,
                 );
+                // A failed creation names the checkout it was for (B3).
+                let checkout_path = match &action {
+                    RemoteControlAction::CreateTab { cwd, .. }
+                    | RemoteControlAction::OpenOwner { cwd, .. } => Some(cwd.as_str()),
+                    _ => None,
+                };
                 crate::diagnostic!(serde_json::json!({
                     "component": "tab_control",
                     "kind": "tab.control.failed",
                     "action": action_kind,
+                    "checkout_path": checkout_path,
                     "message": message,
                     "duration_ms": elapsed_ms,
                 }));

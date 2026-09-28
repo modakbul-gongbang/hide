@@ -2534,65 +2534,173 @@ fn close_context_keeps_project_lookup_separate_from_session_workspace() {
     assert_eq!(context.tab_index, 1);
 }
 
-#[test]
-fn a_session_workspace_shared_by_two_projects_is_not_reused_for_new_tabs() {
-    let mut runtime = runtime();
-    let mut target = workspace(
-        "project:hide",
-        "hide",
-        "/repo/hide",
-        vec![checkout(
-            "project:hide",
-            "checkout:hide",
-            "/repo/hide",
-            Some(pane("shared:p1", "/repo/hide")),
-        )],
-    );
-    target.session_workspace_ids = vec!["shared".to_owned()];
-    target.checkouts[0].tabs[0].id = Some("shared:t1".to_owned());
-    target.checkouts[0].tabs[0].workspace_id = Some("shared".to_owned());
-    target.checkouts[0].active_tab_id = Some("shared:t1".to_owned());
+/// A fixture folder under the temp root, by its real path (the catalog keys
+/// checkouts by it), made its own repository when `git` is set.
+fn owner_fixture(name: &str, git: bool) -> String {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .expect("clock")
+        .as_nanos();
+    let directory =
+        workspace::temp_base_outside_any_repository().join(format!("hide-owner-{name}-{stamp}"));
+    std::fs::create_dir_all(&directory).expect("fixture directory");
+    let directory = directory.canonicalize().expect("a real fixture path");
+    if git {
+        assert!(
+            std::process::Command::new("git")
+                .args(["init", "-q", "-b", "main"])
+                .current_dir(&directory)
+                .status()
+                .expect("git init runs")
+                .success()
+        );
+    }
+    directory.to_string_lossy().into_owned()
+}
 
-    let mut neighbor = workspace(
-        "project:task-factory",
-        "task-factory",
-        "/repo/task-factory",
-        vec![checkout(
-            "project:task-factory",
-            "checkout:task-factory",
-            "/repo/task-factory",
-            Some(pane("shared:p2", "/repo/task-factory")),
-        )],
-    );
-    neighbor.session_workspace_ids = vec!["shared".to_owned()];
-    runtime.snapshot.navigator.workspaces = vec![target, neighbor];
+/// One tab in `w8P` (unbound, its label a neighbor's) holding a pane in
+/// `path`, plus `bound`: a second workspace whose only pane is elsewhere.
+fn owner_payload(path: &str, bound: serde_json::Value) -> SessionSnapshotPayload {
+    let layout = |workspace: &str, tab: &str, pane: &str| {
+        serde_json::json!({
+            "workspace_id": workspace,
+            "tab_id": tab,
+            "zoomed": false,
+            "area": {"x": 0, "y": 0, "width": 80, "height": 24},
+            "focused_pane_id": pane,
+            "panes": [{"pane_id": pane, "rect": {"x": 0, "y": 0, "width": 80, "height": 24}}],
+            "splits": []
+        })
+    };
+    serde_json::from_value(serde_json::json!({
+        "agents": [],
+        "workspaces": [{"workspace_id": "w8P", "label": "home-graph"}, bound],
+        "panes": [
+            {"pane_id": "w8P:p1", "cwd": path},
+            {"pane_id": "w9J:p1", "cwd": "/"}
+        ],
+        "tabs": [
+            {"workspace_id": "w8P", "tab_id": "w8P:t1", "label": ""},
+            {"workspace_id": "w9J", "tab_id": "w9J:t1", "label": ""}
+        ],
+        "layouts": [layout("w8P", "w8P:t1", "w8P:p1"), layout("w9J", "w9J:t1", "w9J:p1")]
+    }))
+    .expect("owner fixture payload")
+}
+
+fn checkout_at(runtime: &Runtime, path: &str) -> (String, String) {
     runtime
-        .visible_tab_ids
-        .insert("checkout:hide".to_owned(), "shared:t1".to_owned());
-    runtime.snapshot.pane_layouts = vec![PaneLayoutSnapshot {
-        workspace_id: "shared".to_owned(),
-        tab_id: "shared:t1".to_owned(),
-        focused_pane_id: "shared:p1".to_owned(),
-        zoomed: false,
-        root: PaneLayoutNodeSnapshot::Pane {
-            pane_id: "shared:p1".to_owned(),
-        },
-    }];
+        .snapshot()
+        .navigator
+        .workspaces
+        .iter()
+        .find_map(|workspace| {
+            workspace
+                .checkouts
+                .iter()
+                .find(|checkout| checkout.path == path)
+                .map(|checkout| (workspace.id.clone(), checkout.id.clone()))
+        })
+        .expect("the fixture checkout is listed")
+}
 
+/// B1, D-06..D-08: a new tab goes to the workspace Herdr binds to the
+/// checkout, even while every tab the checkout shows sits in another, unbound
+/// workspace; with no bound workspace open, Hide opens one at the checkout.
+#[test]
+fn a_new_tab_goes_to_the_workspace_herdr_binds_to_the_checkout_not_where_its_tabs_sit() {
+    let path = owner_fixture("git", true);
+    let bound = serde_json::json!({
+        "workspace_id": "w9J",
+        "label": "herdr-ide",
+        "worktree": {
+            "repo_key": path, "repo_name": "repo", "repo_root": path,
+            "checkout_path": path, "is_linked_worktree": false
+        }
+    });
+    let mut runtime = runtime();
+    assert!(runtime.ingest_session(Ok(owner_payload(&path, bound))));
+    let (project, checkout) = checkout_at(&runtime, &path);
+    let tab_workspaces = runtime
+        .snapshot()
+        .navigator
+        .workspaces
+        .iter()
+        .flat_map(|workspace| &workspace.checkouts)
+        .filter(|row| row.id == checkout)
+        .flat_map(|row| &row.tabs)
+        .map(|tab| tab.id.clone().unwrap_or_default())
+        .collect::<Vec<_>>();
     assert_eq!(
-        runtime.reusable_session_workspace_id("project:hide", "checkout:hide"),
-        None,
-        "a new tab must create a project-owned Herdr workspace instead of inheriting the neighbor's label"
+        tab_workspaces,
+        ["w8P:t1"],
+        "the checkout shows only the unbound workspace's tab"
     );
 
-    runtime.snapshot.navigator.workspaces[1].session_workspace_ids = vec!["neighbor".to_owned()];
     assert_eq!(
-        runtime
-            .reusable_session_workspace_id("project:hide", "checkout:hide")
-            .as_deref(),
-        Some("shared"),
-        "an exclusive workspace remains reusable"
+        runtime.local_tab_host(&project, &checkout),
+        Some(TabHost::Workspace("w9J".to_owned()))
     );
+
+    // The bound workspace closed: the next tab opens the owner first, named
+    // as the sidebar names the primary checkout, never reusing w8P.
+    assert!(runtime.ingest_session(Ok(owner_payload(
+        &path,
+        serde_json::json!({"workspace_id": "w9J", "label": "elsewhere"})
+    ))));
+    let (project, checkout) = checkout_at(&runtime, &path);
+    let label = runtime
+        .snapshot()
+        .navigator
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.id == project)
+        .map(|workspace| workspace.label.clone())
+        .expect("project");
+    assert_eq!(
+        runtime.local_tab_host(&project, &checkout),
+        Some(TabHost::Open(OwnerOpen::Worktree {
+            path: path.clone(),
+            label
+        }))
+    );
+    let _ = std::fs::remove_dir_all(&path);
+}
+
+/// B13, D-11: a plain folder's owner is only the workspace carrying Hide's
+/// mark for it; without one the next tab makes and marks a new owner.
+#[test]
+fn a_plain_folder_tab_goes_to_its_marked_workspace_and_marks_a_new_one_when_the_mark_is_gone() {
+    let path = owner_fixture("folder", false);
+    let mark = crate::checkout_owner::owner_mark(workspace::LOCAL_DEVICE_ID, &path);
+    let mut runtime = runtime();
+    assert!(runtime.ingest_session(Ok(owner_payload(
+        &path,
+        serde_json::json!({"workspace_id": "w9J", "label": "notes", "tokens": {"hide_owner": mark}})
+    ))));
+    let (project, checkout) = checkout_at(&runtime, &path);
+    assert_eq!(
+        runtime.local_tab_host(&project, &checkout),
+        Some(TabHost::Workspace("w9J".to_owned()))
+    );
+
+    assert!(runtime.ingest_session(Ok(owner_payload(
+        &path,
+        serde_json::json!({"workspace_id": "w9J", "label": "notes"})
+    ))));
+    let (project, checkout) = checkout_at(&runtime, &path);
+    match runtime.local_tab_host(&project, &checkout) {
+        Some(TabHost::Open(OwnerOpen::Folder {
+            path: owner_path,
+            mark: owner_mark,
+            ..
+        })) => {
+            assert_eq!(owner_path, path);
+            assert_eq!(owner_mark, mark);
+        }
+        other => panic!("expected a new marked owner, got {other:?}"),
+    }
+    let _ = std::fs::remove_dir_all(&path);
 }
 
 /// The chosen agent starts after the creation is published, and its answer

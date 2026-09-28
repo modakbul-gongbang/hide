@@ -39,6 +39,7 @@ use operations::*;
 use view_areas::{BrowserOpenPayload, BrowserStatePayload, ViewLayoutPayload};
 use workspace_view::{AreaIntent, PanelCoversPayload, WorkspaceViewPayload, WorkspaceViewStore};
 
+use crate::checkout_owner::{OwnerOpen, TabHost};
 use crate::fork::{ForkRequest, ForkableAgent, fork_name, is_forkable};
 use crate::handle::ChangeNotifier;
 use crate::live::{
@@ -866,10 +867,12 @@ fn remote_tab_creation_key(
             cwd.clone(),
             label.clone(),
         )),
-        // A workspace created for a registered project is keyed by its folder.
-        RemoteControlAction::CreateWorkspace { cwd, label, .. } => Some((
+        // An owner being opened is keyed by its folder.
+        RemoteControlAction::OpenOwner {
+            owner, cwd, label, ..
+        } => Some((
             target_id.to_owned(),
-            cwd.clone(),
+            owner.path().to_owned(),
             cwd.clone(),
             label.clone(),
         )),

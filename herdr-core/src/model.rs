@@ -979,6 +979,12 @@ pub struct CheckoutSnapshot {
     /// so the shell never has to read a number back out of a label it was
     /// given to draw.
     pub next_tab_label: String,
+    /// The host's own id of the Herdr workspace that owns this checkout, where
+    /// every tab Hide creates here goes (`checkout_owner`); `None` while no
+    /// owner is open. Read from the session Hide already holds, never sent to
+    /// the shell.
+    #[serde(skip_serializing)]
+    pub owner_workspace_id: Option<String>,
 }
 
 /// One entry in a checkout's tab strip.

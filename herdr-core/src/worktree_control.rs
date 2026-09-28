@@ -728,19 +728,17 @@ pub fn spawn_remote_purpose_write(
         .map_err(|error| format!("remote purpose worker could not be started: {error}"))
 }
 
-/// `New agent here`: one new tab whose cwd is the checkout, in the Herdr
-/// workspace that already holds the checkout's panes, or a new workspace on
-/// the checkout when Herdr holds none (Herdr drops a workspace with its last
-/// pane, so a listed checkout can have no workspace behind it). The result
-/// lands in the same task operation slot the worktree sheet uses, and the
-/// shell starts the provider in the returned pane exactly as it does there.
+/// `New agent here`: one new tab whose cwd is the checkout, in the checkout's
+/// owner Herdr workspace, opened first when none is open (PRD
+/// checkout-workspace-binding D-07). The result lands in the same task
+/// operation slot the worktree sheet uses, and the shell starts the provider
+/// in the returned pane exactly as it does there.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CheckoutTabRequest {
     pub id: u64,
     pub checkout_path: String,
     pub label: String,
-    /// The Herdr workspace to open the tab in; `None` creates a workspace.
-    pub session_workspace_id: Option<String>,
+    pub host: crate::checkout_owner::TabHost,
 }
 
 /// How starting the chosen agent in a task's created pane ended.
@@ -876,27 +874,26 @@ fn create_checkout_tab(
     connector: &dyn ApiConnector,
     request: &CheckoutTabRequest,
 ) -> Result<WorktreeTaskOutcome, String> {
-    let pane_id = match &request.session_workspace_id {
-        Some(workspace_id) => {
-            let result = control_request(
-                connector,
-                "tab.create",
-                wire::tab_create_params(workspace_id, &request.checkout_path, &request.label)?,
-            )?;
-            wire::created_tab(result)?.1
-        }
-        None => {
-            let result = control_request(
-                connector,
-                "workspace.create",
-                wire::workspace_create_params(&request.checkout_path, &request.label)?,
-            )?;
-            wire::created_workspace_pane(result)?
-        }
-    };
+    let tab = match &request.host {
+        crate::checkout_owner::TabHost::Workspace(workspace_id) => super::create_tab_in(
+            connector,
+            workspace_id,
+            &request.checkout_path,
+            &request.label,
+            Default::default(),
+        ),
+        crate::checkout_owner::TabHost::Open(owner) => super::open_owner_tab(
+            connector,
+            owner,
+            &request.checkout_path,
+            &request.label,
+            Default::default(),
+        ),
+    }
+    .map_err(|failure| failure.message().to_owned())?;
     Ok(WorktreeTaskOutcome {
         path: request.checkout_path.clone(),
-        pane_id,
+        pane_id: tab.pane_id,
         purpose_error: None,
         unconfirmed_purpose_token: None,
     })

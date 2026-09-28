@@ -2334,7 +2334,7 @@ impl Runtime {
             );
             return true;
         };
-        let (workspace_path, checkout_label, next_tab_label) = {
+        let (workspace_path, next_tab_label) = {
             let workspace = self
                 .snapshot
                 .navigator
@@ -2347,17 +2347,11 @@ impl Runtime {
                 .iter()
                 .find(|checkout| checkout.id == checkout_id)
                 .expect("local_checkout_ids named a listed checkout");
-            (
-                workspace.path.clone(),
-                checkout.label.clone(),
-                checkout.next_tab_label.clone(),
-            )
+            (workspace.path.clone(), checkout.next_tab_label.clone())
         };
-        let session_workspace_id = self.reusable_session_workspace_id(&workspace_id, &checkout_id);
-        let label = session_workspace_id
-            .as_ref()
-            .map(|_| next_tab_label)
-            .unwrap_or_else(|| format!("hide {checkout_label}"));
+        let host = self
+            .local_tab_host(&workspace_id, &checkout_id)
+            .expect("local_checkout_ids named a listed checkout");
         let id = match self.begin_task_operation(
             "agent_start",
             Some(workspace_path),
@@ -2374,8 +2368,8 @@ impl Runtime {
         let request = live::CheckoutTabRequest {
             id,
             checkout_path: payload.checkout_path,
-            label,
-            session_workspace_id,
+            label: next_tab_label,
+            host,
         };
         let Some(context) = self.live.as_ref().cloned() else {
             return self.ingest_task_operation_result(
@@ -2406,19 +2400,11 @@ impl Runtime {
             })
     }
 
-    /// Returns a live Herdr workspace that belongs only to this Hide project.
-    ///
-    /// A Herdr workspace can contain panes from several repository roots. Its
-    /// label and future tabs then belong to none of those projects reliably,
-    /// so opening another tab there would carry a neighboring project's name
-    /// and keep mixing the two catalogs. Prefer the checkout's visible tab,
-    /// then its other tabs, then the project's remaining session workspaces,
-    /// but reuse a candidate only while this project is its sole owner.
-    pub(super) fn reusable_session_workspace_id(
-        &self,
-        project_id: &str,
-        checkout_id: &str,
-    ) -> Option<String> {
+    /// Where a new tab in one local checkout goes: its owner Herdr workspace,
+    /// or that owner opened first (PRD checkout-workspace-binding D-07). A
+    /// workspace that merely holds the checkout's tabs is never the answer
+    /// (D-08).
+    pub(super) fn local_tab_host(&self, project_id: &str, checkout_id: &str) -> Option<TabHost> {
         let project = self
             .snapshot
             .navigator
@@ -2429,37 +2415,7 @@ impl Runtime {
             .checkouts
             .iter()
             .find(|checkout| checkout.id == checkout_id)?;
-        let mut candidates = Vec::new();
-        if let Some(workspace_id) = self
-            .visible_tab_ids
-            .get(checkout_id)
-            .and_then(|tab_id| {
-                self.snapshot
-                    .pane_layouts
-                    .iter()
-                    .find(|layout| &layout.tab_id == tab_id)
-            })
-            .map(|layout| layout.workspace_id.clone())
-        {
-            candidates.push(workspace_id);
-        }
-        candidates.extend(
-            checkout
-                .tabs
-                .iter()
-                .filter_map(|tab| tab.workspace_id.clone()),
-        );
-        candidates.extend(project.session_workspace_ids.iter().cloned());
-        candidates.into_iter().find(|candidate| {
-            project.session_workspace_ids.contains(candidate)
-                && self
-                    .snapshot
-                    .navigator
-                    .workspaces
-                    .iter()
-                    .filter(|workspace| workspace.session_workspace_ids.contains(candidate))
-                    .all(|workspace| workspace.id == project_id)
-        })
+        Some(tab_host(project, checkout, workspace::LOCAL_DEVICE_ID))
     }
 
     pub(super) fn migrate_main_branch(&mut self, payload: MigrateMainBranchPayload) -> bool {
@@ -2644,4 +2600,29 @@ mod purpose_version_tests {
         assert!(herdr_version_supports_purpose(Some("1.0.0-beta.1")));
         assert!(!herdr_version_supports_purpose(Some("unknown")));
     }
+}
+
+/// Where a new tab in `checkout` of `project` on `device_id` goes: the owner
+/// the session names, else the owner to open. A workspace Hide opens is named
+/// as the sidebar names the checkout: a linked worktree by its branch, the
+/// primary checkout and a plain folder by the project (D-14).
+pub(super) fn tab_host(
+    project: &WorkspaceSnapshot,
+    checkout: &crate::model::CheckoutSnapshot,
+    device_id: &str,
+) -> TabHost {
+    if let Some(owner) = &checkout.owner_workspace_id {
+        return TabHost::Workspace(owner.clone());
+    }
+    let label = if checkout.is_worktree {
+        &checkout.label
+    } else {
+        &project.label
+    };
+    TabHost::Open(OwnerOpen::for_checkout(
+        device_id,
+        &checkout.path,
+        project.is_git,
+        label,
+    ))
 }
