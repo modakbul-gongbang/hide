@@ -2,6 +2,8 @@ node_modules/
 web/node_modules/
 dist/
 web/dist/
+# TypeScript incremental caches a typecheck leaves beside a tsconfig.
+*.tsbuildinfo
 out/
 .vite/
 .DS_Store
