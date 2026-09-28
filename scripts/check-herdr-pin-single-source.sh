@@ -19,8 +19,10 @@ manifest=$project_root/contracts/herdr-bundle.json
 repo=$(jq -er '.repo | strings | select(length > 0)' "$manifest")
 version=$(jq -er '.version' "$manifest")
 sha256=$(jq -er '.sha256' "$manifest")
+linux_sha256=$(jq -er '.linux_x86_64.sha256' "$manifest")
 
 derived_sources=(
+  .github/workflows/pr.yml
   scripts/fetch-herdr-runtime.sh
   desktop/scripts/package.mjs
   desktop/src/main/cli.ts
@@ -47,7 +49,7 @@ for relative in $derived_sources; do
     print -u2 -- "error: $relative restates the pinned repository; read it from the manifest"
     failed=1
   fi
-  if grep -Fq -- "$sha256" "$source_path"; then
+  if grep -Fq -- "$sha256" "$source_path" || grep -Fq -- "$linux_sha256" "$source_path"; then
     print -u2 -- "error: $relative restates the pinned digest; read it from the manifest"
     failed=1
   fi
