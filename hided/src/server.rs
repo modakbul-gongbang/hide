@@ -872,6 +872,11 @@ fn handle_client_text(
                 project_target(&state.boundary, &event).to_string().into(),
             )]));
         }
+        Some("clone_target") => {
+            return Ok(ClientAction::Replies(vec![Message::Text(
+                clone_target(&state.boundary, &event).to_string().into(),
+            )]));
+        }
         Some("attachment_stage") => {
             return Ok(ClientAction::Replies(handle_attachment_stage(
                 state, &event, connection,
@@ -1883,6 +1888,7 @@ fn apply_boundary(boundary: &Boundary, event: &mut Value) -> Option<Value> {
             new_project(boundary, event, &kind)
         }
         "create_workspace" => rewrite(event, &kind, "path", |raw| boundary.resolve_workspace(raw)),
+        "clone_repository" => clone_admit(boundary, event, &kind),
         "file_list" => explorer_listing(boundary, event, &kind),
         "file_open" | "reveal_path" => explorer_open(boundary, event, &kind),
         "file_save" => explorer_save(boundary, event, &kind),
@@ -2023,6 +2029,44 @@ fn rewrite(
         }
         Err(refusal) => Some(refused(kind, &raw, refusal)),
     }
+}
+
+/// A clone's `parent` is checked on the `$HOME` line with the folder `name`
+/// will create, and rewritten to the canonical spelling; a refusal names the
+/// folder as `parent/name`.
+fn clone_admit(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Value> {
+    let parent = payload_str(event, "parent");
+    let name = payload_str(event, "name");
+    match boundary.resolve_clone_target(&parent, &name) {
+        Ok(real) => {
+            event["payload"]["parent"] = Value::String(real.display().to_string());
+            None
+        }
+        Err(refusal) => Some(refused(
+            kind,
+            &format!("{}/{name}", parent.trim_end_matches('/')),
+            refusal,
+        )),
+    }
+}
+
+/// Add a project asks whether a clone could land at `parent/name` while the
+/// operator types, so Clone is offered only for a folder that is free. The
+/// answer is this frame and nothing reaches the core; a refusal is not
+/// logged, because it is a question, not an attempt.
+fn clone_target(boundary: &Boundary, event: &Value) -> Value {
+    let parent = payload_str(event, "parent");
+    let name = payload_str(event, "name");
+    let answer = boundary.resolve_clone_target(&parent, &name);
+    json!({
+        "type": "clone_target",
+        "payload": {
+            "parent": parent,
+            "name": name,
+            "path": answer.as_ref().ok().map(|real| real.join(&name).display().to_string()),
+            "reason": answer.err().map(Refusal::code),
+        },
+    })
 }
 
 /// A `create_workspace` for Create new project names a folder that does not
@@ -2759,6 +2803,58 @@ mod tests {
             let before = event.clone();
             assert_eq!(apply_boundary(&boundary, &mut event), None);
             assert_eq!(event, before);
+        }
+    }
+
+    /// A clone's folder is checked on the `$HOME` line before the core sees
+    /// the event, and a `clone_target` question is answered on the same line.
+    #[test]
+    fn clone_events_meet_the_home_line() {
+        let home = tempfile::tempdir().unwrap();
+        let projects = home.path().join("projects");
+        std::fs::create_dir_all(projects.join("taken")).unwrap();
+        let boundary = Boundary::new(home.path()).unwrap();
+        let real = projects.canonicalize().unwrap();
+
+        let mut event = json!({"schema_version": 2, "kind": "clone_repository", "payload": {
+            "url": "https://example.com/org/fresh.git", "parent": "~/projects/", "name": "fresh"
+        }});
+        assert_eq!(apply_boundary(&boundary, &mut event), None);
+        assert_eq!(event["payload"]["parent"], real.display().to_string());
+        assert_eq!(event["payload"]["url"], "https://example.com/org/fresh.git");
+
+        let mut event = json!({"schema_version": 2, "kind": "clone_repository", "payload": {
+            "url": "https://example.com/org/taken.git", "parent": "~/projects", "name": "taken"
+        }});
+        let answer = apply_boundary(&boundary, &mut event).expect("refused");
+        assert_eq!(answer["type"], "path_refused", "{answer}");
+        assert_eq!(answer["payload"]["kind"], "clone_repository");
+        assert_eq!(answer["payload"]["path"], "~/projects/taken");
+        assert_eq!(answer["payload"]["reason"], "already_exists");
+
+        let answer = clone_target(
+            &boundary,
+            &json!({"schema_version": 2, "kind": "clone_target", "payload": {"parent": "~/projects", "name": "fresh"}}),
+        );
+        assert_eq!(answer["type"], "clone_target");
+        assert_eq!(
+            answer["payload"]["path"],
+            real.join("fresh").display().to_string()
+        );
+        assert_eq!(answer["payload"]["reason"], Value::Null);
+
+        for (parent, name, reason) in [
+            ("~/projects", "taken", "already_exists"),
+            ("/", "fresh", "outside_home"),
+            ("~/missing", "fresh", "not_found"),
+            ("~/projects", "../fresh", "invalid_path"),
+        ] {
+            let answer = clone_target(
+                &boundary,
+                &json!({"schema_version": 2, "kind": "clone_target", "payload": {"parent": parent, "name": name}}),
+            );
+            assert_eq!(answer["payload"]["reason"], reason, "{answer}");
+            assert_eq!(answer["payload"]["path"], Value::Null, "{answer}");
         }
     }
 

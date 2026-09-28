@@ -1,14 +1,15 @@
 // Add a project: a Host selector and, on this Mac, Browse folder, which opens
 // macOS's own folder picker through the desktop app, and the other ways to
-// add below it, each its own view of this dialog. A device's folders are not
-// this Mac's to browse, so a device gets a `~/` path field its own helper
-// judges. Every way sends one `create_workspace` and reads its answer through
+// add below it (Clone from URL, Create new project), each its own view of
+// this dialog. A device's folders are not this Mac's to browse, so a device
+// gets a `~/` path field its own helper judges. Every way sends one `create_workspace` and reads its answer through
 // `useRegistration`. A browser tab has no picker and never opens this dialog.
 
-import { CornerDownLeftIcon, FolderOpenIcon, FolderPlusIcon, type LucideIcon } from "lucide-react";
+import { CornerDownLeftIcon, FolderOpenIcon, FolderPlusIcon, LinkIcon, type LucideIcon } from "lucide-react";
 import { useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { addProjectHosts, alreadyRegistered, folderLabel, initialHost, trimFolder } from "./addProject";
+import { CloneFromUrl, cloneRunning } from "./CloneFromUrl";
 import { CreateProjectView } from "./CreateProjectView";
 import { Button } from "./components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "./components/ui/dialog";
@@ -29,9 +30,10 @@ export function AddProjectDialog({ actions }: { actions: Actions }) {
 }
 
 /** The other ways to add on this Mac, each a view of this dialog. */
-type OtherWay = { id: "create"; label: string; detail: string; icon: LucideIcon };
+type OtherWay = { id: "clone" | "create"; label: string; detail: string; icon: LucideIcon };
 
 const OTHER_WAYS: readonly OtherWay[] = [
+  { id: "clone", label: "Clone from URL", detail: "A Git repository copied into a new folder", icon: LinkIcon },
   { id: "create", label: "Create new project", detail: "A new folder with its own Git repository", icon: FolderPlusIcon },
 ];
 
@@ -43,7 +45,8 @@ function AddProject({ actions }: { actions: Actions }) {
   const hosts = addProjectHosts(devices);
   const [chosen, setChosen] = useState(() => initialHost(hosts, focused));
   const host = hosts.find((row) => row.id === chosen) ?? hosts[0]!;
-  const [view, setView] = useState<"add" | OtherWay["id"]>("add");
+  // A clone still running when the dialog opens is shown where it started.
+  const [view, setView] = useState<"add" | OtherWay["id"]>(() => (cloneRunning(useShellStore.getState().rest?.repository_clone) ? "clone" : "add"));
   const [text, setText] = useState("~/");
   const registration = useRegistration(registrations);
   const { pending } = registration;
@@ -93,6 +96,8 @@ function AddProject({ actions }: { actions: Actions }) {
       >
         {view === "create" ? (
           <CreateProjectView actions={actions} registrations={registrations} onBack={() => open("add")} />
+        ) : view === "clone" ? (
+          <CloneFromUrl actions={actions} registrations={registrations} onBack={() => open("add")} />
         ) : (
           <>
             <DialogHeader>

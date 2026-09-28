@@ -1497,6 +1497,20 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "create_workspace", payload: { ...deviceField(deviceId), path, label, initialize_git: false } });
     },
 
+    /** Asks hided whether a clone could land at `parent/name`; answered as a `clone_target` frame. */
+    checkCloneTarget(parent: string, name: string) {
+      dispatch({ schema_version: 2, kind: "clone_target", payload: { parent, name } });
+    },
+
+    /** Clones `url` into `parent/name` on this machine; the core reports it as `repository_clone`. */
+    cloneRepository(url: string, parent: string, name: string) {
+      dispatch({ schema_version: 2, kind: "clone_repository", payload: { url, parent, name } });
+    },
+
+    cancelRepositoryClone(id: number) {
+      dispatch({ schema_version: 2, kind: "cancel_repository_clone", payload: { id } });
+    },
+
     /** Asks hided where Create new project would make `name` in `parent`; answered as a `project_target` frame. */
     probeProjectTarget(parent: string, name: string) {
       dispatch({ schema_version: 2, kind: "project_target", payload: { parent, name } });

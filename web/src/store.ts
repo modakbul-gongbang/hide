@@ -40,6 +40,8 @@ export type DirectoryList = {
 /** A device folder its helper could not list now (`directory_unavailable`); the reason is the helper's. */
 export type DirectoryUnavailable = { device_id: string; root_path: string; code: string; message: string };
 export type PathRefusal = { kind: string; path: string; reason: string };
+/** hided's answer to where a clone would land: `path` when it may, `reason` when it may not. */
+export type CloneTarget = { parent: string; name: string; path: string | null; reason: string | null };
 /**
  * hided's answer to a `project_target` probe: where Create new project would
  * make `name` in `parent`, as sent, and what the create would be refused for.
@@ -151,6 +153,8 @@ type Store = {
   listings: Record<string, DirectoryList>;
   /** The last path hided refused; Add a project clears it before it sends a folder. */
   pathRefusal: PathRefusal | null;
+  /** The last `clone_target` answer; Clone from URL reads the one for its own parent and name. */
+  cloneTarget: CloneTarget | null;
   /** hided's last answer about where Create new project would make its folder. */
   projectTarget: ProjectTarget | null;
   /** The last device folder that could not be listed, until a listing for it arrives. */
@@ -257,6 +261,7 @@ export const useShellStore = create<Store>((set, get) => ({
   find: null,
   listings: {},
   pathRefusal: null,
+  cloneTarget: null,
   projectTarget: null,
   directoryUnavailable: null,
   fileIndex: null,
@@ -375,6 +380,13 @@ export const useShellStore = create<Store>((set, get) => ({
     if (frame.type === "path_refused") {
       set({
         pathRefusal: { kind: payload.kind ?? "", path: payload.path ?? "", reason: payload.reason ?? "" },
+      });
+      return [];
+    }
+    if (frame.type === "clone_target") {
+      const answer = payload as Partial<CloneTarget>;
+      set({
+        cloneTarget: { parent: answer.parent ?? "", name: answer.name ?? "", path: answer.path ?? null, reason: answer.reason ?? null },
       });
       return [];
     }

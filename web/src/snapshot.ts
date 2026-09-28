@@ -735,6 +735,23 @@ export type TaskOperation = {
   agent_message: string | null;
 };
 
+/**
+ * The core's one repository clone, from Add a project's Clone from URL. The
+ * URL is never here (it can carry credentials); `host` is what is shown.
+ */
+export type RepositoryClone = {
+  id: number;
+  host: string;
+  /** The folder the clone creates, canonical; the registration carries the same path. */
+  path: string;
+  /** `cloning`, `cancelling`, then `finished`, `failed` or `cancelled`. */
+  phase: string;
+  /** Git's own stage, `Receiving objects` and the like. */
+  stage: string | null;
+  percent: number | null;
+  message: string | null;
+};
+
 /** One worktree deletion: `closing` panes, `removing` on the core's worker, then `finished` or `failed`. */
 export type WorktreeRemoval = {
   id: number;
@@ -831,6 +848,7 @@ export type SnapshotRest = {
   };
   connection?: { kind: string; state: string; target_id: string | null };
   task_operation?: TaskOperation | null;
+  repository_clone?: RepositoryClone | null;
   worktree_removal?: WorktreeRemoval | null;
   tab?: Tab;
   zoomed?: string | null;
