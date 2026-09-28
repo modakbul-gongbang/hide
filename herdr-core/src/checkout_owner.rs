@@ -53,6 +53,22 @@ pub(crate) struct WorkspaceFacts<'a> {
     pub(crate) mark: Option<&'a str>,
 }
 
+impl<'a> From<&'a crate::sidebar::SessionWorkspacePayload> for WorkspaceFacts<'a> {
+    fn from(workspace: &'a crate::sidebar::SessionWorkspacePayload) -> Self {
+        Self {
+            workspace_id: &workspace.workspace_id,
+            bound_path: workspace
+                .worktree
+                .as_ref()
+                .map(|worktree| worktree.checkout_path.as_str()),
+            mark: workspace
+                .tokens
+                .get(OWNER_TOKEN)
+                .and_then(serde_json::Value::as_str),
+        }
+    }
+}
+
 /// The workspace that owns the checkout at `path` on `device_id`, among the
 /// host's workspaces, or `None` when none is open.
 pub(crate) fn owner_of<'a>(
@@ -64,17 +80,7 @@ pub(crate) fn owner_of<'a>(
     if path.trim().is_empty() {
         return None;
     }
-    let path = comparable(path);
-    let mark = (!is_git).then(|| owner_mark(device_id, path));
-    workspaces
-        .into_iter()
-        .find(|workspace| match &mark {
-            None => workspace
-                .bound_path
-                .is_some_and(|bound| comparable(bound) == path),
-            Some(mark) => workspace.mark == Some(mark.as_str()),
-        })
-        .map(|workspace| workspace.workspace_id)
+    OwnerOpen::for_checkout(device_id, path, is_git, "").find_in(workspaces)
 }
 
 /// How a checkout with no open owner gets one.
@@ -108,6 +114,24 @@ impl OwnerOpen {
                 mark: owner_mark(device_id, path),
             }
         }
+    }
+
+    /// The open workspace that is this checkout's owner, among the host's
+    /// workspaces: the one Herdr binds to the path, or the one carrying the
+    /// folder's mark.
+    pub(crate) fn find_in<'a>(
+        &self,
+        workspaces: impl IntoIterator<Item = WorkspaceFacts<'a>>,
+    ) -> Option<&'a str> {
+        workspaces
+            .into_iter()
+            .find(|workspace| match self {
+                Self::Worktree { path, .. } => workspace
+                    .bound_path
+                    .is_some_and(|bound| comparable(bound) == comparable(path)),
+                Self::Folder { mark, .. } => workspace.mark == Some(mark.as_str()),
+            })
+            .map(|workspace| workspace.workspace_id)
     }
 
     pub(crate) fn path(&self) -> &str {

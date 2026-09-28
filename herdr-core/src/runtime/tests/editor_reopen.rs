@@ -1680,6 +1680,7 @@ fn recent_closed_failure_retains_and_missing_file_consumes() {
         workspace_exists: true,
         tab_exists: true,
         fallback_pane_id: None,
+        owner: None,
     };
 
     runtime.reopen_in_flight = Some("reopen-fixture".to_owned());
@@ -1719,6 +1720,7 @@ fn reopen_completion_preserves_a_newer_close() {
         workspace_exists: true,
         tab_exists: true,
         fallback_pane_id: None,
+        owner: None,
     };
 
     assert!(runtime.ingest_reopen_result(
@@ -1753,6 +1755,7 @@ fn every_consuming_reopen_result_removes_only_its_request_key() {
             workspace_exists: true,
             tab_exists: true,
             fallback_pane_id: None,
+            owner: None,
         };
         assert!(runtime.ingest_reopen_result(&request, Ok(result)));
         assert_eq!(runtime.snapshot().recent_closed.count, 1);
@@ -1808,6 +1811,7 @@ fn completion_is_safe_after_the_in_flight_item_was_evicted() {
         workspace_exists: true,
         tab_exists: true,
         fallback_pane_id: None,
+        owner: None,
     };
 
     assert!(runtime.ingest_reopen_result(

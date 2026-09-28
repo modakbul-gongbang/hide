@@ -737,6 +737,7 @@ fn reopen_unknown_claim_survives_error_and_retry_launch_failure_then_transfers_t
         workspace_exists: true,
         tab_exists: false,
         fallback_pane_id: None,
+        owner: None,
     };
     assert!(runtime.reserve_agent_effect("/agent-groups", "reopen:uncertain-reopen"));
     runtime.reopen_in_flight = Some(close.key.clone());

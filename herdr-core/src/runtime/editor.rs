@@ -2231,6 +2231,49 @@ impl Runtime {
             ),
             ClosedItem::File { .. } => (true, true, None),
         };
+        // A tab made again lands in its checkout's owner (D-16), found by the
+        // checkout the item was closed from, else by its folder.
+        let owner = match &item {
+            ClosedItem::Pane { context, .. } | ClosedItem::Tab { context, .. } => {
+                let located = self
+                    .snapshot
+                    .navigator
+                    .workspaces
+                    .iter()
+                    .filter(|workspace| workspace.remote_target_id.is_none())
+                    .find_map(|workspace| {
+                        workspace
+                            .checkouts
+                            .iter()
+                            .find(|checkout| checkout.id == context.checkout_id)
+                            .or_else(|| {
+                                workspace
+                                    .checkouts
+                                    .iter()
+                                    .find(|checkout| checkout.path == context.checkout_path)
+                            })
+                            .map(|checkout| (workspace, checkout))
+                    });
+                let Some((workspace, checkout)) = located else {
+                    self.set_reopen_notices(vec![live::ReopenNotice {
+                        pane_id: None,
+                        message: format!(
+                            "{} can't reopen: its checkout {} is no longer listed",
+                            item.label(),
+                            context.checkout_path
+                        ),
+                    }]);
+                    self.sync_recent_closed_snapshot();
+                    return true;
+                };
+                Some(super::projects::owner_open(
+                    workspace,
+                    checkout,
+                    workspace::LOCAL_DEVICE_ID,
+                ))
+            }
+            ClosedItem::File { .. } => None,
+        };
         // With View areas the reopened file takes a display, so a Workspace
         // at its display cap refuses it here and the item stays.
         if self.separate_view_areas()
@@ -2284,6 +2327,7 @@ impl Runtime {
             workspace_exists,
             tab_exists,
             fallback_pane_id,
+            owner,
         };
         let spawned = if let ClosedItem::File {
             workspace_id,

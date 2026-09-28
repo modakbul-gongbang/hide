@@ -652,32 +652,47 @@ pub(crate) fn open_owner_tab(
     label: &str,
     env: std::collections::BTreeMap<String, String>,
 ) -> Result<OwnedTab, ControlFailure> {
-    let owned = match owner {
-        OwnerOpen::Worktree {
-            path,
-            label: workspace_label,
-        } => {
+    let (workspace_id, first_tab) = ensure_owner(connector, owner, env.clone())?;
+    let owned = match first_tab {
+        Some((tab_id, pane_id)) => OwnedTab {
+            workspace_id,
+            tab_id,
+            pane_id,
+        },
+        None => create_tab_in(connector, &workspace_id, cwd, label, env)?,
+    };
+    crate::diagnostic!(json!({
+        "component": "checkout_owner",
+        "kind": "owner.tab_created",
+        "path": owner.path(),
+        "method": owner.kind(),
+        "workspace_id": owned.workspace_id,
+        "tab_id": owned.tab_id,
+    }));
+    Ok(owned)
+}
+
+/// The checkout's owner workspace, opened when none is open, and the tab and
+/// pane Herdr made with it when this call opened it (`None` when it was
+/// already open). `env` reaches the first pane only where Herdr takes it
+/// (`workspace.create`); `worktree.open` takes none.
+fn ensure_owner(
+    connector: &dyn ApiConnector,
+    owner: &OwnerOpen,
+    env: std::collections::BTreeMap<String, String>,
+) -> Result<(String, Option<(String, String)>), ControlFailure> {
+    match owner {
+        OwnerOpen::Worktree { path, label } => {
             let opened = wire::opened_worktree(mutation_request(
                 connector,
                 "worktree.open",
-                wire::worktree_open_params(path, workspace_label)?,
+                wire::worktree_open_params(path, label)?,
             )?)
             .map_err(ControlFailure::Ambiguous)?;
-            if opened.already_open {
-                create_tab_in(connector, &opened.workspace_id, cwd, label, env)?
-            } else {
-                OwnedTab {
-                    workspace_id: opened.workspace_id,
-                    tab_id: opened.tab_id,
-                    pane_id: opened.pane_id,
-                }
-            }
+            let first_tab = (!opened.already_open).then_some((opened.tab_id, opened.pane_id));
+            Ok((opened.workspace_id, first_tab))
         }
-        OwnerOpen::Folder {
-            path,
-            label: workspace_label,
-            mark,
-        } => {
+        OwnerOpen::Folder { path, label, mark } => {
             let _serialized = FOLDER_OWNER_OPEN
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -692,54 +707,37 @@ pub(crate) fn open_owner_tab(
                 wire::listed_workspace_tokens(value, crate::checkout_owner::OWNER_TOKEN)
                     .map_err(ControlFailure::Definite)
             })?;
-            match listed
+            if let Some((workspace_id, _)) = listed
                 .into_iter()
                 .find(|(_, value)| value.as_deref() == Some(mark.as_str()))
             {
-                Some((workspace_id, _)) => {
-                    create_tab_in(connector, &workspace_id, cwd, label, env)?
-                }
-                None => {
-                    let created = mutation_request(
-                        connector,
-                        "workspace.create",
-                        wire::workspace_create_with_env_params(path, workspace_label, env)?,
-                    )?;
-                    let (workspace_id, tab_id, pane_id) =
-                        wire::created_workspace(created).map_err(ControlFailure::Ambiguous)?;
-                    // The tab is real either way; without its mark only the
-                    // next tab in this folder makes another owner.
-                    if let Err(error) = mutation_request(
-                        connector,
-                        "workspace.report_metadata",
-                        wire::workspace_owner_mark_params(&workspace_id, mark)?,
-                    ) {
-                        crate::diagnostic!(json!({
-                            "component": "checkout_owner",
-                            "kind": "owner.mark_failed",
-                            "workspace_id": workspace_id,
-                            "path": path,
-                            "message": error.message(),
-                        }));
-                    }
-                    OwnedTab {
-                        workspace_id,
-                        tab_id,
-                        pane_id,
-                    }
-                }
+                return Ok((workspace_id, None));
             }
+            let created = mutation_request(
+                connector,
+                "workspace.create",
+                wire::workspace_create_with_env_params(path, label, env)?,
+            )?;
+            let (workspace_id, tab_id, pane_id) =
+                wire::created_workspace(created).map_err(ControlFailure::Ambiguous)?;
+            // The tab is real either way; without its mark only the next tab
+            // in this folder makes another owner.
+            if let Err(error) = mutation_request(
+                connector,
+                "workspace.report_metadata",
+                wire::workspace_owner_mark_params(&workspace_id, mark)?,
+            ) {
+                crate::diagnostic!(json!({
+                    "component": "checkout_owner",
+                    "kind": "owner.mark_failed",
+                    "workspace_id": workspace_id,
+                    "path": path,
+                    "message": error.message(),
+                }));
+            }
+            Ok((workspace_id, Some((tab_id, pane_id))))
         }
-    };
-    crate::diagnostic!(json!({
-        "component": "checkout_owner",
-        "kind": "owner.opened",
-        "path": owner.path(),
-        "method": owner.kind(),
-        "workspace_id": owned.workspace_id,
-        "tab_id": owned.tab_id,
-    }));
-    Ok(owned)
+    }
 }
 
 fn create_tab_in(
@@ -1166,6 +1164,10 @@ pub struct ReopenRequest {
     pub workspace_exists: bool,
     pub tab_exists: bool,
     pub fallback_pane_id: Option<String>,
+    /// The owner of the checkout the closed item belongs to: a tab that has to
+    /// be made again lands there, never in the workspace it was closed from
+    /// (PRD checkout-workspace-binding D-16). `None` for a file.
+    pub owner: Option<OwnerOpen>,
 }
 
 const REOPEN_INTENT_ENV: &str = "HIDE_REOPEN_INTENT";
@@ -1286,6 +1288,12 @@ fn restore_tab_position(
     layout: crate::recent_closed::ClosedLayout,
     notices: &mut Vec<String>,
 ) -> crate::recent_closed::ClosedLayout {
+    // The position is an index among the tabs of the workspace it was closed
+    // from; a tab that reopened in the checkout's owner elsewhere keeps the
+    // place Herdr gave it.
+    if layout.workspace_id != context.workspace_id {
+        return layout;
+    }
     let params = match wire::tab_move_params(&layout.tab_id, context.tab_index) {
         Ok(params) => params,
         Err(message) => {
@@ -1417,7 +1425,14 @@ fn run_herdr_reopen(
             context,
             layout,
             panes,
-        } => reopen_tab(connector, key, context, &layout.root, panes),
+        } => reopen_tab(
+            connector,
+            key,
+            context,
+            reopen_owner(request)?,
+            &layout.root,
+            panes,
+        ),
         ClosedItem::File { .. } => unreachable!("file reopen uses the filesystem worker"),
     }
 }
@@ -1426,6 +1441,7 @@ fn ensure_workspace_and_tab(
     connector: &dyn ApiConnector,
     key: &str,
     context: &ClosedContext,
+    owner: &OwnerOpen,
     tab_exists: bool,
     root: &ClosedLayoutNode,
     notices: &mut Vec<String>,
@@ -1435,16 +1451,22 @@ fn ensure_workspace_and_tab(
     }
     let snapshot = fetch_session_with_connector(connector)
         .map_err(|error| format!("session.snapshot before reopen failed: {}", error.message()))?;
-    let original_workspace_exists = snapshot
-        .workspaces
-        .iter()
-        .any(|workspace| workspace.workspace_id == context.workspace_id);
+    // The tab goes to the checkout's owner. A retry adopts only a layout or a
+    // workspace seed carrying this intent's marker: in the owner when it is
+    // open, else in a workspace that appeared since the close.
+    let open_owner = owner
+        .find_in(
+            snapshot
+                .workspaces
+                .iter()
+                .map(crate::checkout_owner::WorkspaceFacts::from),
+        )
+        .map(str::to_owned);
     let workspace_marker = reopen_intent_marker(key, ReopenIntentStage::Workspace);
     let layout_marker = reopen_intent_marker(key, ReopenIntentStage::Layout);
-    let candidate_workspace_ids = if original_workspace_exists {
-        vec![context.workspace_id.clone()]
-    } else {
-        snapshot
+    let candidate_workspace_ids = match &open_owner {
+        Some(owner) => vec![owner.clone()],
+        None => snapshot
             .workspaces
             .iter()
             .filter(|workspace| {
@@ -1453,7 +1475,7 @@ fn ensure_workspace_and_tab(
                     .contains(&workspace.workspace_id)
             })
             .map(|workspace| workspace.workspace_id.clone())
-            .collect()
+            .collect(),
     };
     let mut recovered_layouts = Vec::new();
     let mut recovered_workspace_seeds = Vec::new();
@@ -1486,23 +1508,19 @@ fn ensure_workspace_and_tab(
             recovered_workspace_seeds.len()
         ));
     }
-    let (workspace_id, seed_tab_id) = if original_workspace_exists {
-        (context.workspace_id.clone(), None)
-    } else if let Some(seed) = recovered_workspace_seeds.pop() {
+    let (workspace_id, seed_tab_id) = if let Some(seed) = recovered_workspace_seeds.pop() {
         (seed.0, Some(seed.1))
+    } else if let Some(owner) = open_owner {
+        (owner, None)
     } else {
-        let created = reopen_request(
+        // The owner's first tab is the seed the layout replaces.
+        let (workspace_id, first_tab) = ensure_owner(
             connector,
-            &format!("herdr-core:{key}:workspace"),
-            "workspace.create",
-            wire::workspace_create_with_env_params(
-                &context.checkout_path,
-                &context.workspace_label,
-                reopen_intent_env(key, ReopenIntentStage::Workspace),
-            )?,
-        )?;
-        let (workspace_id, tab_id, _) = wire::created_workspace(created)?;
-        (workspace_id, Some(tab_id))
+            owner,
+            reopen_intent_env(key, ReopenIntentStage::Workspace),
+        )
+        .map_err(|failure| failure.message().to_owned())?;
+        (workspace_id, first_tab.map(|(tab_id, _)| tab_id))
     };
     let tagged_root = tag_reopen_layout(root, key, ReopenIntentStage::Layout);
     let applied = reopen_request(
@@ -1677,7 +1695,15 @@ fn reopen_pane(
             command: None,
             env: Default::default(),
         };
-        let layout = ensure_workspace_and_tab(connector, key, context, false, &root, &mut notices)?;
+        let layout = ensure_workspace_and_tab(
+            connector,
+            key,
+            context,
+            reopen_owner(request)?,
+            false,
+            &root,
+            &mut notices,
+        )?;
         (layout.focused_pane_id, layout.tab_id)
     };
     if let Some(agent) = &pane.agent {
@@ -1759,10 +1785,18 @@ fn wrap_surviving_subtree(
     })
 }
 
+fn reopen_owner(request: &ReopenRequest) -> Result<&OwnerOpen, String> {
+    request
+        .owner
+        .as_ref()
+        .ok_or_else(|| "the closed item names no checkout to reopen in".to_owned())
+}
+
 fn reopen_tab(
     connector: &dyn ApiConnector,
     key: &str,
     context: &ClosedContext,
+    owner: &OwnerOpen,
     root: &ClosedLayoutNode,
     panes: &[ClosedPane],
 ) -> Result<ReopenOutcome, String> {
@@ -1777,8 +1811,15 @@ fn reopen_tab(
     else {
         return Err("the closed tab contained no panes".into());
     };
-    let layout =
-        ensure_workspace_and_tab(connector, key, context, false, &root, &mut common_notices)?;
+    let layout = ensure_workspace_and_tab(
+        connector,
+        key,
+        context,
+        owner,
+        false,
+        &root,
+        &mut common_notices,
+    )?;
     let mut new_ids = Vec::new();
     layout.root.pane_ids(&mut new_ids);
     let terminal_panes = terminal_ids
@@ -3967,6 +4008,7 @@ mod tests {
             workspace_exists: true,
             tab_exists: true,
             fallback_pane_id: Some("outer-left".into()),
+            owner: None,
         };
 
         let outcome = reopen_pane(
@@ -4145,6 +4187,7 @@ mod tests {
             workspace_exists: true,
             tab_exists: true,
             fallback_pane_id: Some("w1:p1".into()),
+            owner: None,
         };
 
         let outcome = reopen_pane(
@@ -4230,7 +4273,10 @@ mod tests {
                     }})
                 }
             }
-            "tab.move" => json!({"type":"tab_list","tabs":[]}),
+            "workspace.list" => json!({"type":"workspace_list","workspaces":[
+                {"workspace_id":"w2","number":2,"label":"other","focused":true,"pane_count":1,"tab_count":1,"active_tab_id":"w2:t1","agent_status":"idle"}
+            ]}),
+            "workspace.report_metadata" => json!({"type":"ok"}),
             _ => unreachable!(),
         });
         let context = ClosedContext {
@@ -4270,6 +4316,11 @@ mod tests {
             &herdr.connector(),
             "layout-intent",
             &context,
+            &OwnerOpen::Folder {
+                path: "/tmp".into(),
+                label: "Fixture".into(),
+                mark: crate::checkout_owner::owner_mark("local", "/tmp"),
+            },
             false,
             &layout_root,
             &mut notices,
@@ -4286,13 +4337,17 @@ mod tests {
         );
         assert_eq!(
             herdr.methods(),
+            // The closed tab's workspace is gone, so it reopens in the
+            // folder's owner, made and marked here; the old index names a
+            // place in another workspace and is not restored.
             [
                 "session.snapshot",
                 "layout.export",
+                "workspace.list",
                 "workspace.create",
+                "workspace.report_metadata",
                 "layout.apply",
-                "layout.apply",
-                "tab.move"
+                "layout.apply"
             ]
         );
     }
@@ -4304,7 +4359,8 @@ mod tests {
             move |method, params| match method {
                 "session.snapshot" => json!({"type":"session_snapshot","snapshot": {
                     "version":"fixture", "protocol":HERDR_PROTOCOL_REVISION,
-                    "workspaces":[{"workspace_id":"w1","label":"Fixture","active_tab_id":"w1:t2","number":1,"focused":true,"pane_count":1,"tab_count":1,"agent_status":"idle"}],
+                    "workspaces":[{"workspace_id":"w1","label":"Fixture","active_tab_id":"w1:t2","number":1,"focused":true,"pane_count":1,"tab_count":1,"agent_status":"idle",
+                        "worktree":{"repo_key":"/tmp","repo_name":"tmp","repo_root":"/tmp","checkout_path":"/tmp","is_linked_worktree":false}}],
                     "tabs":[{"workspace_id":"w1","tab_id":"w1:t2","label":"Tab","number":1,"focused":true,"pane_count":1,"agent_status":"idle"}],
                     "panes":[], "layouts":[], "agents":[]
                 }}),
@@ -4374,6 +4430,10 @@ mod tests {
             &herdr.connector(),
             "recovered-intent",
             &context,
+            &OwnerOpen::Worktree {
+                path: "/tmp".into(),
+                label: "Fixture".into(),
+            },
             false,
             &root,
             &mut notices,

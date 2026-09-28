@@ -2603,26 +2603,30 @@ mod purpose_version_tests {
 }
 
 /// Where a new tab in `checkout` of `project` on `device_id` goes: the owner
-/// the session names, else the owner to open. A workspace Hide opens is named
-/// as the sidebar names the checkout: a linked worktree by its branch, the
-/// primary checkout and a plain folder by the project (D-14).
+/// the session names, else the owner to open.
 pub(super) fn tab_host(
     project: &WorkspaceSnapshot,
     checkout: &crate::model::CheckoutSnapshot,
     device_id: &str,
 ) -> TabHost {
-    if let Some(owner) = &checkout.owner_workspace_id {
-        return TabHost::Workspace(owner.clone());
+    match &checkout.owner_workspace_id {
+        Some(owner) => TabHost::Workspace(owner.clone()),
+        None => TabHost::Open(owner_open(project, checkout, device_id)),
     }
+}
+
+/// How `checkout` of `project` gets its owner opened. A workspace Hide opens
+/// is named as the sidebar names the checkout: a linked worktree by its
+/// branch, the primary checkout and a plain folder by the project (D-14).
+pub(super) fn owner_open(
+    project: &WorkspaceSnapshot,
+    checkout: &crate::model::CheckoutSnapshot,
+    device_id: &str,
+) -> OwnerOpen {
     let label = if checkout.is_worktree {
         &checkout.label
     } else {
         &project.label
     };
-    TabHost::Open(OwnerOpen::for_checkout(
-        device_id,
-        &checkout.path,
-        project.is_git,
-        label,
-    ))
+    OwnerOpen::for_checkout(device_id, &checkout.path, project.is_git, label)
 }

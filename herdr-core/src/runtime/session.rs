@@ -365,17 +365,7 @@ impl Runtime {
         let owner_facts = payload
             .workspaces
             .iter()
-            .map(|workspace| crate::checkout_owner::WorkspaceFacts {
-                workspace_id: &workspace.workspace_id,
-                bound_path: workspace
-                    .worktree
-                    .as_ref()
-                    .map(|worktree| worktree.checkout_path.as_str()),
-                mark: workspace
-                    .tokens
-                    .get(crate::checkout_owner::OWNER_TOKEN)
-                    .and_then(serde_json::Value::as_str),
-            })
+            .map(crate::checkout_owner::WorkspaceFacts::from)
             .collect::<Vec<_>>();
         for workspace in &mut workspaces {
             let is_git = workspace.is_git;
