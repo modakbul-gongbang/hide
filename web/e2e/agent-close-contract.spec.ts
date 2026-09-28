@@ -7,6 +7,9 @@ import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace, screenshot } from "./wire";
 
+// Private Herdr, linked worktrees and close probes all run before the UI assertions.
+test.describe.configure({ timeout: 180_000 });
+
 test("primary last tab and last pane close retain the linked workspace boundary", async ({ page }) => {
   const herdr = await startHerdr({ agents: false });
   let daemon: Daemon | null = null;
