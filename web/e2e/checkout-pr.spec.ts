@@ -222,9 +222,28 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     const menu = page.getByRole("menu", { name: `${BRANCH} actions` });
     await expect(menu).toBeVisible();
     await expect(card).toHaveCount(0);
-    await expect(menu.getByRole("menuitem")).toHaveText(["Open pull request #180", "Set purpose…", "Delete worktree…"]);
-    await page.keyboard.press("ArrowDown");
-    await expect(menu.getByRole("menuitem", { name: "Open pull request #180" })).toBeFocused();
+    await expect(menu.locator("[data-menu-label]")).toHaveText([
+      "Open",
+      "New tab here",
+      "Open pull request #180",
+      "Set purpose…",
+      "Set as default checkout",
+      "Copy branch name",
+      "Copy path",
+      "Delete worktree…",
+    ]);
+    // The pull request comes after Open and New tab here; arrow down to it.
+    // The menu moves focus to the next item on a timer after each key, so
+    // each press waits for the move before the next.
+    const focusedItem = () => page.evaluate(() => document.activeElement?.getAttribute("data-menu-item") ?? null);
+    let focused = await focusedItem();
+    for (let press = 0; press < 8 && focused !== "open_pull_request"; press += 1) {
+      const before = focused;
+      await page.keyboard.press("ArrowDown");
+      await expect.poll(focusedItem).not.toBe(before);
+      focused = await focusedItem();
+    }
+    await expect(menu.getByRole("menuitem", { name: /^Open pull request #180/ })).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(menu).toHaveCount(0);
     await expect(page.locator('[data-view-tab-bar] [role="tab"]')).toHaveCount(1);

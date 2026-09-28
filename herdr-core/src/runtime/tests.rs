@@ -3,6 +3,7 @@ use std::time::Duration;
 
 use crate::fake_herdr::FakeHerdr;
 
+mod agent_areas;
 #[path = "tests/agent_sleep.rs"]
 mod agent_sleep;
 #[path = "tests/agents_settings_remote.rs"]
@@ -1174,6 +1175,8 @@ fn close_capture_request(key: &str) -> live::CloseCaptureRequest {
             tab_id: format!("tab:{key}"),
             tab_label: key.to_owned(),
             tab_index: 0,
+            agent_area: None,
+            replacement_shell: false,
         },
         panes: vec![],
         target: live::CloseCaptureTarget::Tab {

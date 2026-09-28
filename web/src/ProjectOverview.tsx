@@ -73,7 +73,7 @@ export function ProjectOverview({ projectId, actions }: { projectId: string; act
     return (
       <section className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-caption text-muted-foreground" data-overview-missing={projectId}>
         <p>This project is no longer in the catalog.</p>
-        <Button variant="secondary" onClick={() => setScreen({ kind: "main" })}>Back to All projects</Button>
+        <Button variant="secondary" onClick={() => setScreen({ kind: "main" })}>Back to Overview</Button>
       </section>
     );
   }
@@ -115,7 +115,7 @@ export function ProjectOverview({ projectId, actions }: { projectId: string; act
         <div className="flex min-w-0 items-center gap-lg">
           <nav aria-label="Location" className="flex min-w-0 items-center gap-xs">
             <button type="button" className="shrink-0 rounded-xs px-xs text-caption text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setScreen({ kind: "main" })}>
-              All projects
+              Overview
             </button>
             <span aria-hidden="true" className="text-caption text-muted-foreground">/</span>
             <Hint label={project.path} reveals>

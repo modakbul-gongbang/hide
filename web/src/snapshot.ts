@@ -44,6 +44,8 @@ export type AgentRow = {
   lineage_worktree_badge?: string | null;
   /** Present only while Hide holds this agent asleep (PRD agent-sleep); absent when awake. */
   sleep?: AgentSleep;
+  /** The conversation id Herdr recorded for this agent; absent when it recorded none. */
+  session_id?: string | null;
 };
 
 /** A sleeping agent's state (`AgentSleepSnapshot`): the row and the pane draw it. */
@@ -535,20 +537,10 @@ export type ViewDisplaySnapshot = {
   load?: number | null;
 };
 
-export type ViewAreaSnapshot = { id: string; active: string | null; displays: ViewDisplaySnapshot[] };
-
-/** `row`: first left, second right; `column`: first top, second bottom. `ratio` is the first child's share. */
-export type ViewSplitSnapshot = { id: string; axis: "row" | "column"; ratio: number; first: ViewNode; second: ViewNode };
-
-export type ViewNode = { area: ViewAreaSnapshot } | { split: ViewSplitSnapshot };
-
-/** The front Workspace's View areas as the core owns them (S7 D-11). */
-export type ViewLayoutSnapshot = {
-  root: ViewNode;
-  active_area: string;
-  limits: { areas: number; depth: number; displays: number };
-  display_count: number;
-};
+export type ViewAreaSnapshot = import("./areaLayout").Area<ViewDisplaySnapshot>;
+export type ViewSplitSnapshot = import("./areaLayout").AreaSplit<ViewDisplaySnapshot>;
+export type ViewNode = import("./areaLayout").AreaNode<ViewDisplaySnapshot>;
+export type ViewLayoutSnapshot = import("./areaLayout").AreaLayout<ViewDisplaySnapshot>;
 
 export type DiffSnapshot = { path: string; committed: boolean; text: string; notice: string | null };
 

@@ -531,9 +531,10 @@ impl Runtime {
         if !self.device_in_front(workspace::LOCAL_DEVICE_ID) {
             return HashSet::new();
         }
-        self.focused_visible_tab_id()
-            .map(|tab_id| self.agent_sleep_tab_panes(&tab_id).into_iter().collect())
-            .unwrap_or_default()
+        self.shown_agent_tabs()
+            .iter()
+            .flat_map(|tab_id| self.agent_sleep_tab_panes(tab_id))
+            .collect()
     }
 
     fn agent_sleep_tab_panes(&self, tab_id: &str) -> Vec<String> {

@@ -10,7 +10,7 @@ const ROWS = [
   ["agent", "li[data-pane]", "data-pane"],
   ["checkout", "[data-checkout-menu]", "data-checkout-menu"],
   ["project", "[data-project-menu]", "data-project-menu"],
-  ["all-projects", "[data-all-projects]", "data-all-projects"],
+  ["overview-destination", "[data-overview-destination]", "data-overview-destination"],
   ["inactive-checkouts", "[data-inactive-checkouts]", "data-inactive-checkouts"],
   ["inactive-projects", "[data-inactive-projects]", "data-inactive-projects"],
 ];

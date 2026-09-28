@@ -1,5 +1,5 @@
 // The ⌘K palette in the search view's form (GitHub issue 154) on an
-// isolated pinned Herdr and hided: the sidebar Search field and ⌘K open the
+// isolated pinned Herdr and hided: the sidebar's Search icon and ⌘K open the
 // same overlay; results sit under `<project> > AGENTS`, `WORKSPACES >
 // PROJECTS` and `WORKSPACES > CHECKOUTS`; an agent row is its mark, its title
 // and its state line under it; ↵ follows the selection across groups; Enter
@@ -25,7 +25,7 @@ function headings(page: Page) {
   return page.locator('[data-palette="Search"] [cmdk-group-heading]');
 }
 
-test("⌘K groups agents, projects and checkouts, and the sidebar field opens the same palette", async ({ page }) => {
+test("⌘K groups agents, projects and checkouts, and the sidebar Search icon opens the same palette", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -35,14 +35,15 @@ test("⌘K groups agents, projects and checkouts, and the sidebar field opens th
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await expect(page.locator('[data-sidebar="agents"]')).toBeVisible({ timeout: 20_000 });
+    // The sidebar opens on Projects; these rows are the Agents list's.
+    await page.locator('[data-sidebar-mode="agents"]').click({ timeout: 20_000 });
+    await expect(page.locator('[data-sidebar="agents"]')).toBeVisible();
     report(herdr, one, { status_working: "●", progress: "팔레트 그룹 검증 중" });
     await expect(page.locator(`[data-agent-list] [data-pane="${one}"]`)).toContainText("팔레트 그룹 검증 중", { timeout: 20_000 });
 
-    // The sidebar field opens the palette with the query focused.
+    // The sidebar's Search icon opens the palette with the query focused.
     const field = page.locator("[data-sidebar-search]");
-    await expect(field).toContainText("Search");
-    await expect(field).toContainText("⌘K");
+    await expect(field).toHaveAccessibleName("Search");
     await field.click();
     const input = page.locator('[data-palette="Search"] [data-palette-input]');
     await expect(input).toBeFocused();

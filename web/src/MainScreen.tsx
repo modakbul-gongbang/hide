@@ -17,8 +17,9 @@ import { scopeView, useUiStore, type ProjectView } from "./ui";
 import { hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
 
-// All projects (PRD S6 D-02, B1-B4, B21; `screen.kind === "main"`), the scope
-// the sidebar's top row opens. Its facts line totals what every Project can
+// The Overview of every project (PRD S6 D-02, B1-B4, B21; `screen.kind ===
+// "main"`, titled Overview by PRD sidebar-shell D-02), the scope the sidebar's
+// global Overview row opens. Its facts line totals what every Project can
 // give; its views are every Project's tasks on one board (every project has
 // an issue source, so every project's issues are there), every agent as one
 // inbox, and the registered Projects by device (PRD task-agents-views D-01,
@@ -82,10 +83,10 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const scrolls = view !== "projects";
   const unavailable = sections.filter((section) => section.availability.state !== "ready");
   return (
-    <section className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-background", scrolls && "overflow-y-auto")} aria-label="All projects" data-main-screen="true" data-main-view={view}>
+    <section className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-background", scrolls && "overflow-y-auto")} aria-label="Overview" data-main-screen="true" data-main-view={view}>
       <header className="flex shrink-0 flex-col gap-xs border-b border-border px-lg py-sm">
         <div className="flex min-w-0 items-center gap-lg">
-          <h1 className="min-w-0 flex-1 truncate text-headline font-semibold text-foreground">All projects</h1>
+          <h1 className="min-w-0 flex-1 truncate text-headline font-semibold text-foreground">Overview</h1>
           <Button variant="ghost" onClick={() => actions.openNewWorkspace()} data-main-add-project="true">
             <PlusIcon aria-hidden="true" />
             Add project <span className="text-muted-foreground">{displayCommand("new_workspace", hostKind())}</span>
@@ -103,7 +104,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
       <OpeningStatus actions={actions} />
       <div className="flex shrink-0 items-center justify-between gap-md px-lg py-sm">
         <Tabs value={view} onValueChange={(value) => setView(value as ProjectView)}>
-          <TabsList aria-label="All projects view">
+          <TabsList aria-label="Overview view">
             {VIEWS.map((choice) => (
               <TabsTrigger key={choice.view} value={choice.view} data-main-tab={choice.view}>
                 {choice.label}

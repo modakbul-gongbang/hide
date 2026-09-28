@@ -207,6 +207,7 @@ pub struct WorkspaceViewSnapshot {
     /// (D-11).
     pub resumed: bool,
     pub layout: ViewLayoutSnapshot,
+    pub agent_layout: AgentLayoutSnapshot,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -214,6 +215,17 @@ pub struct BrowserViewInventoryRow {
     pub device_id: String,
     pub path: String,
     pub view_id: String,
+}
+
+/// Agent tab identities only; pane contents remain in checkout.tabs.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct AgentLayoutSnapshot {
+    pub waiting: usize,
+    pub root: crate::split_tree::Node<crate::agent_layout::Tab>,
+    pub active_area: String,
+    pub canvases: BTreeMap<String, String>,
+    pub limits: ViewLimitsSnapshot,
+    pub display_count: usize,
 }
 
 /// The front Workspace's View areas (PRD S7): the tree the shell draws, the
@@ -652,8 +664,10 @@ pub struct SidebarAgentSnapshot {
     pub state_change_seq: Option<u64>,
     /// The conversation id this agent is running, kept only when Herdr recorded
     /// the session as an id. A session recorded as a path is dropped here,
-    /// because neither agent's fork command takes one.
-    #[serde(skip_serializing)]
+    /// because neither agent's fork command takes one. The agent row's Copy
+    /// session id reads it (PRD sidebar-context-menus D-06); absent from the
+    /// wire when Herdr recorded none.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
     /// The pane this agent was spawned from: Herdr's own lineage record, or
     /// the `parent_pane` token its spawner declared when Herdr recorded none.

@@ -1,0 +1,113 @@
+// The sidebar's shell on an isolated pinned Herdr and hided (PRD sidebar-shell
+// B1-B7): the fixed Overview row above the Projects | Agents strip opens the
+// Overview and carries its fill only while that screen is in front; Projects
+// is the first tab and the default; Search at the strip's end opens the ⌘K
+// palette and New workspace before it opens its flow on Projects only; the
+// Search field row, the bottom new-workspace button and the All projects row
+// inside the list are gone. Captured in Dark and Light.
+
+import { expect, test, type Page } from "@playwright/test";
+import { startHerdr } from "./herdr-fixture";
+import { startHided, type Daemon } from "./hided-fixture";
+import { screenshot } from "./wire";
+
+test.describe.configure({ timeout: 120_000 });
+
+async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
+  await page.keyboard.press("Alt+Comma");
+  await expect(page.locator('[data-settings="true"]')).toBeVisible();
+  await page.locator('[data-settings-tab="appearance"]').click();
+  await page.locator(`[data-theme-option="${theme}"]`).click();
+  await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
+  // Controls fade their colors into the new theme; a capture waits them out.
+  await page.waitForTimeout(400);
+}
+
+test("the Overview row, the Projects | Agents strip and its Search and New workspace icons", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    daemon = await startHided(herdr, "sidebar-shell");
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    const sidebar = page.locator("nav[data-sidebar]");
+    // B3: Projects is the first tab and the one shown.
+    await expect(sidebar).toHaveAttribute("data-sidebar", "projects", { timeout: 20_000 });
+    await expect(page.locator("[data-sidebar-mode]")).toHaveText(["Projects", "Agents"]);
+    await expect(page.locator('[data-sidebar-mode="projects"]')).toHaveAttribute("aria-pressed", "true");
+    const list = page.locator("[data-project-list]");
+    await expect(list.locator("[data-checkout]").first()).toBeVisible({ timeout: 20_000 });
+
+    // B1, B2: the Overview row above the strip opens the Overview, titled so, and is marked.
+    const overview = page.locator("[data-overview-destination]");
+    await expect(overview).toContainText("Overview");
+    await expect(overview.locator("[data-overview-count]")).toHaveText(/^\d+ projects?$/);
+    await overview.click();
+    const main = page.locator("[data-main-screen]");
+    await expect(main).toBeVisible();
+    await expect(main.locator("h1")).toHaveText("Overview");
+    await expect(overview).toHaveAttribute("aria-current", "page");
+    // The row is not part of the scrolling list, and it ends on the list rows' column.
+    expect(await overview.evaluate((row) => row.closest("[data-project-list], [data-agent-list]") === null)).toBe(true);
+    const overviewRight = (await overview.boundingBox())!;
+    const firstRow = (await list.locator(":scope > li").first().boundingBox())!;
+    expect(Math.abs(overviewRight.x + overviewRight.width - (firstRow.x + firstRow.width))).toBeLessThan(0.5);
+
+    // B7 and the removed controls: the list starts at a project, and no field or bottom button is left.
+    await expect(list).not.toContainText("All projects");
+    await expect(sidebar.locator("input")).toHaveCount(0);
+    await expect(sidebar).not.toContainText("새 워크스페이스");
+
+    for (const theme of ["dark", "light"] as const) {
+      await chooseTheme(page, theme);
+      await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+      await screenshot(page, `sidebar-shell-overview-${theme}`);
+    }
+
+    // B2: a Workspace in front takes the fill away; Enter on the row brings the Overview back.
+    await list.locator("[data-checkout]").first().click();
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
+    await expect(overview).not.toHaveAttribute("aria-current", "page");
+    await expect(page.locator("[data-go-main]")).toHaveText("Overview");
+    await overview.focus();
+    await page.keyboard.press("Enter");
+    await expect(main).toBeVisible();
+    await expect(overview).toHaveAttribute("aria-current", "page");
+
+    // B4: Search at the strip's end, hinted with its chord, opens the palette.
+    const search = page.locator("[data-sidebar-search]");
+    await expect(search).toHaveAccessibleName("Search");
+    await search.hover();
+    await expect(page.locator('[data-slot="tooltip-content"]')).toContainText("Search⌘K");
+    await screenshot(page, "sidebar-shell-search-hint-light");
+    await search.click();
+    await expect(page.locator('[data-palette="Search"] [data-palette-input]')).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.locator('[data-palette="Search"]')).toHaveCount(0);
+
+    // B5: New workspace before it, on Projects only, opens the new-workspace flow.
+    const add = page.locator("[data-sidebar-new-workspace]");
+    await expect(add).toHaveAccessibleName("New workspace");
+    const [addBox, searchBox] = [(await add.boundingBox())!, (await search.boundingBox())!];
+    expect(addBox.x).toBeLessThan(searchBox.x);
+    await add.click();
+    await expect(page.locator("[data-new-workspace]")).toBeVisible();
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-new-workspace]")).toHaveCount(0);
+
+    // B3, B5: the Agents tab swaps the list and leaves Search alone at the end; the Overview row stays.
+    await page.locator('[data-sidebar-mode="agents"]').click();
+    await expect(sidebar).toHaveAttribute("data-sidebar", "agents");
+    await expect(page.locator("[data-agent-list]")).toBeVisible();
+    await expect(add).toHaveCount(0);
+    await expect(search).toBeVisible();
+    await expect(overview).toBeVisible();
+    await page.mouse.move(640, 700);
+    await screenshot(page, "sidebar-shell-agents-light");
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});

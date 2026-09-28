@@ -131,6 +131,19 @@ impl Runtime {
         payload: &SessionSnapshotPayload,
         precomputed: Option<session_sync::PrecomputedCatalog>,
     ) -> bool {
+        // Catalog reconstruction precedes canonical machine-qualified lineage.
+        // Preserve known ownership until that pass, so admission cannot evict
+        // the keyboard from an unchanged delegated canvas at the normal cap.
+        let delegated_tabs = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .flat_map(|checkout| &checkout.tabs)
+            .filter(|tab| tab.delegated)
+            .filter_map(|tab| tab.id.clone())
+            .collect::<HashSet<_>>();
         self.last_session_spaces = Self::session_spaces(payload);
         self.issue_tokens = crate::wire::issue_tokens(payload);
         // The catalog and the root index shell out to git, so the sync
@@ -186,6 +199,13 @@ impl Runtime {
         // is split across checkouts. A tab whose layout has not arrived yet is
         // in it, because Herdr counts it when it indexes a move. Rebuilt whole
         // each reconcile so a closed workspace leaves no stale order behind.
+        self.herdr_worktrees = payload
+            .workspaces
+            .iter()
+            .filter_map(|workspace| {
+                Some((workspace.workspace_id.clone(), workspace.worktree.clone()?))
+            })
+            .collect();
         self.herdr_workspace_tab_order = payload.tabs.iter().fold(
             BTreeMap::<String, Vec<String>>::new(),
             |mut order, session_tab| {
@@ -311,7 +331,7 @@ impl Runtime {
                     process,
                 )),
                 empty: panes.is_empty(),
-                delegated: false,
+                delegated: delegated_tabs.contains(&session_tab.tab_id),
                 panes,
             };
             self.apply_tab_rename(&mut tab);
@@ -464,6 +484,21 @@ impl Runtime {
     /// Herdr reports the order it actually has, and a refusal leaves the strip
     /// on the order Herdr last reported.
     pub(super) fn reorder_tab(&mut self, payload: ReorderTabPayload) -> bool {
+        // Only the legacy single-surface host still arranges local strip
+        // entries. The web host persists Agent order through agent_layout;
+        // never let an obsolete local request move Herdr's tabs there.
+        if self.separate_view_areas()
+            && self.snapshot.navigator.workspaces.iter().any(|workspace| {
+                workspace.id == payload.workspace_id && workspace.remote_target_id.is_none()
+            })
+        {
+            self.set_error(
+                "tab.area_order_required",
+                "Use the Agent area to move this tab",
+                false,
+            );
+            return true;
+        }
         // The checkout is this machine's or a device's; a device's strip is
         // placed by the same rule, and its Herdr tabs move on its own Herdr.
         let local = self
@@ -989,11 +1024,19 @@ impl Runtime {
         let mut followed: Vec<(String, String, String)> = Vec::new();
         let mut follow_pane: Option<String> = None;
         let mut confirmed_pending = false;
-        // Herdr's focus moved since the last update. Only then is its focused
-        // tab an action to follow; an unchanged focus that differs from
-        // Hide's tab is the state a timed-out notification leaves behind, and
-        // Hide keeps its value through that.
-        let herdr_focus_moved = herdr.focused_tab_id != self.herdr_focused_tab_seen;
+        // A changed value or a new focus event is an action to follow. Repeated
+        // projections of the same event are only state; a later explicit focus
+        // on the same Herdr tab still carries a fresh intent after creation.
+        let herdr_focus_moved = herdr.focused_tab_id != self.herdr_focused_tab_seen
+            || herdr
+                .focus_event
+                .as_ref()
+                .is_some_and(|event| self.herdr_tab_focus_seen.as_ref() != Some(event));
+        // Raw close/status snapshots have no stream stamp. They cannot make a
+        // previously consumed event fresh; a new replica has a new generation.
+        if let Some(event) = &herdr.focus_event {
+            self.herdr_tab_focus_seen = Some(event.clone());
+        }
         self.herdr_focused_tab_seen = herdr.focused_tab_id.clone();
         let selected_pane_id = self.snapshot.terminal.pane_id.clone();
         // The catalog is rebuilt whole on every pass, so a checkout absent
@@ -1006,23 +1049,155 @@ impl Runtime {
             .collect::<HashSet<_>>();
         self.visible_tab_ids
             .retain(|checkout_id, _| live_checkout_ids.contains(checkout_id));
+        let mut agent_layout_changed = false;
+        let mut agent_layout_errors = Vec::new();
+        if let Some(store) = self.workspace_views.as_mut() {
+            let keys = workspaces
+                .iter()
+                .flat_map(|workspace| {
+                    workspace
+                        .checkouts
+                        .iter()
+                        .map(|checkout| (workspace.device_id.clone(), checkout.path.clone()))
+                })
+                .collect::<HashSet<_>>();
+            store.agent_live.retain(|key| keys.contains(key));
+            // A timeout does not prove an external creation did not happen.
+            store
+                .agent_admissions
+                .retain(|key, pending| keys.contains(key) && !pending.is_empty());
+            store
+                .agent_placements
+                .retain(|_, (key, _, _)| keys.contains(key));
+        }
         for workspace in workspaces.iter_mut() {
             for checkout in workspace.checkouts.iter_mut() {
+                let key = (workspace.device_id.clone(), checkout.path.clone());
+                let mut restored_agent_tab = None;
+                let mut placed_tabs: Option<HashSet<String>> = None;
+                if workspace.device_id == workspace::LOCAL_DEVICE_ID
+                    && self.workspace_views.is_some()
+                {
+                    let topology = checkout
+                        .tabs
+                        .iter()
+                        .filter_map(|tab| Some((tab.id.clone()?, tab.delegated)))
+                        .collect::<Vec<_>>();
+                    match self.reconcile_agent_topology(&key, &topology) {
+                        Ok(changed) => agent_layout_changed |= changed,
+                        Err(error) => {
+                            agent_layout_errors.push(format!("{}: {error:?}", checkout.id))
+                        }
+                    }
+                    let store = self.workspace_views.as_mut().expect("checked above");
+                    let first = store.agent_live.insert(key.clone());
+                    let layout = &mut store.views.entry(&key.0, &key.1).agent_layout;
+                    placed_tabs = Some(
+                        layout
+                            .tree
+                            .displays()
+                            .map(|tab| tab.id.clone())
+                            .chain(
+                                topology
+                                    .iter()
+                                    .filter(|(_, delegated)| *delegated)
+                                    .map(|(id, _)| id.clone()),
+                            )
+                            .collect(),
+                    );
+                    let placements = store
+                        .agent_placements
+                        .iter()
+                        .filter(|(id, (scope, _, _))| {
+                            scope == &key && layout.tree.display(id).is_some()
+                        })
+                        .map(|(id, (_, area, index))| (id.clone(), area.clone(), *index))
+                        .collect::<Vec<_>>();
+                    for (id, area, index) in placements {
+                        let target = layout
+                            .tree
+                            .area(&area)
+                            .unwrap_or_else(|| layout.tree.active_area());
+                        let area = target.id.clone();
+                        let index = index.unwrap_or(target.displays.len());
+                        match layout.tree.move_display(
+                            &id,
+                            &area,
+                            index,
+                            layout.tree.next_stamp(unix_milliseconds()),
+                        ) {
+                            Ok(changed) => {
+                                agent_layout_changed |= changed;
+                                store.agent_placements.remove(&id);
+                            }
+                            Err(error) => {
+                                agent_layout_errors.push(format!("Created tab {id}: {error:?}"))
+                            }
+                        }
+                    }
+                    if first
+                        || self.visible_tab_ids.get(&checkout.id).is_some_and(|id| {
+                            placed_tabs
+                                .as_ref()
+                                .is_some_and(|placed| !placed.contains(id))
+                        })
+                    {
+                        restored_agent_tab = layout.active().map(str::to_owned);
+                    }
+                }
                 let has_tab = |tab_id: &str| {
                     checkout
                         .tabs
                         .iter()
                         .any(|tab| tab.id.as_deref() == Some(tab_id))
+                        && placed_tabs
+                            .as_ref()
+                            .is_none_or(|placed| placed.contains(tab_id))
                 };
-                let hide_tab = self
-                    .visible_tab_ids
-                    .get(&checkout.id)
-                    .filter(|tab_id| has_tab(tab_id))
-                    .cloned();
+                if herdr_focus_moved
+                    && herdr.focused_tab_id.as_ref().is_some_and(|id| {
+                        placed_tabs
+                            .as_ref()
+                            .is_some_and(|placed| !placed.contains(id))
+                            && checkout.tabs.iter().any(|tab| tab.id.as_ref() == Some(id))
+                    })
+                {
+                    agent_layout_errors.push(format!(
+                        "Ignored Herdr focus on waiting Agent tab in {}",
+                        checkout.id
+                    ));
+                }
+                let hide_tab = restored_agent_tab.clone().or_else(|| {
+                    self.visible_tab_ids
+                        .get(&checkout.id)
+                        .filter(|tab_id| has_tab(tab_id))
+                        .cloned()
+                });
                 let herdr_tab = herdr
                     .focused_tab_id
                     .as_deref()
-                    .filter(|tab_id| herdr_focus_moved && has_tab(tab_id))
+                    .filter(|tab_id| {
+                        restored_agent_tab.is_none()
+                            && herdr_focus_moved
+                            && has_tab(tab_id)
+                            // Creation provenance keeps external admissions from
+                            // stealing the canvas. Snapshots without event metadata
+                            // use first membership; local creates carry a claim.
+                            && (workspace.device_id != workspace::LOCAL_DEVICE_ID
+                                || self.workspace_views.is_none()
+                                || self.pending_tab_focus.as_ref().is_some_and(|pending| {
+                                    pending.target_id == *tab_id
+                                })
+                                || (herdr.focus_event.as_ref().is_some_and(|event| !event.creation))
+                                || (herdr.focus_event.is_none() && self.snapshot.navigator.workspaces.iter().any(|previous| {
+                                    previous.checkouts.iter().any(|previous| {
+                                        previous.id == checkout.id
+                                            && previous.tabs.iter().any(|tab| {
+                                                tab.id.as_deref() == Some(*tab_id)
+                                            })
+                                    })
+                                })))
+                    })
                     .map(str::to_owned);
                 let pending_tab = self
                     .pending_tab_focus
@@ -1047,13 +1222,17 @@ impl Runtime {
                         .iter()
                         .find(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
                         .and_then(|tab| tab.id.clone())
+                        .filter(|id| has_tab(id))
                 });
                 // A pending tab Herdr has not listed yet (one just created)
                 // keeps its claim on the checkout instead of being replaced
                 // by whichever tab is drawn while it arrives.
-                let pending_tab_unlisted = pending_tab
-                    .as_deref()
-                    .is_some_and(|tab_id| !has_tab(tab_id));
+                let pending_tab_unlisted = pending_tab.as_deref().is_some_and(|tab_id| {
+                    !checkout
+                        .tabs
+                        .iter()
+                        .any(|tab| tab.id.as_deref() == Some(tab_id))
+                });
                 let visible = match (hide_tab, herdr_tab) {
                     (Some(hide_tab), Some(herdr_tab)) if hide_tab == herdr_tab => Some(hide_tab),
                     (Some(hide_tab), Some(herdr_tab)) => {
@@ -1101,6 +1280,24 @@ impl Runtime {
                 };
                 match visible {
                     Some(tab_id) => {
+                        let selected_waiting = selected_pane_id.as_deref().is_some_and(|pane| {
+                            checkout.tabs.iter().any(|tab| {
+                                tab.panes.iter().any(|p| p.id == pane)
+                                    && tab.id.as_deref().is_some_and(|id| !has_tab(id))
+                            })
+                        });
+                        if selected_waiting
+                            && self.snapshot.navigator.focused_checkout_id.as_deref()
+                                == Some(&checkout.id)
+                        {
+                            follow_pane = checkout
+                                .tabs
+                                .iter()
+                                .find(|tab| tab.id.as_deref() == Some(&tab_id))
+                                .and_then(|tab| tab.panes.first())
+                                .map(|pane| pane.id.clone());
+                            confirmed_pending = true;
+                        }
                         if !pending_tab_unlisted {
                             self.visible_tab_ids
                                 .insert(checkout.id.clone(), tab_id.clone());
@@ -1115,6 +1312,12 @@ impl Runtime {
                     }
                 }
             }
+        }
+        if agent_layout_changed {
+            self.persist_workspace_views();
+        }
+        for error in agent_layout_errors {
+            self.push_diagnostic("agent_layout.reconcile_refused", error);
         }
         if confirmed_pending {
             self.pending_tab_focus = None;
@@ -2005,10 +2208,9 @@ impl Runtime {
                 self.snapshot.navigator.agents = agents;
                 changed = true;
             }
-            changed |= self.sync_pane_lineage();
-            changed |= self.relocate_delegated_child_panes();
         }
         changed |= self.refresh_agent_lineage();
+        changed |= self.relocate_delegated_child_panes();
         for (tab_id, reason) in &rejected_layouts {
             crate::diagnostic!(serde_json::json!({
                 "component": "session",
@@ -2121,6 +2323,26 @@ impl Runtime {
         origin: PaneFocusOrigin,
         request_id: Option<String>,
     ) {
+        if self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|w| &w.checkouts)
+            .flat_map(|c| &c.tabs)
+            .any(|tab| {
+                tab.panes.iter().any(|pane| pane.id == pane_id)
+                    && tab.id.as_ref().is_some_and(|id| self.agent_tab_waiting(id))
+            })
+        {
+            self.set_error(
+                "agent_layout.display_limit",
+                "This Agent tab is waiting. Close a tab to make room.",
+                false,
+            );
+            return;
+        }
+
         let request_id = request_id.filter(|value| !value.trim().is_empty());
         if let Some(request_id) = request_id.as_deref() {
             if self
@@ -3446,6 +3668,21 @@ impl Runtime {
         elapsed_ms: u128,
     ) -> bool {
         let action_kind = action.kind();
+        if !result.as_ref().is_err_and(|error| error.is_ambiguous()) {
+            match &action {
+                RemoteControlAction::CreateTab {
+                    cwd,
+                    admission_id: Some(id),
+                    ..
+                }
+                | RemoteControlAction::CreateWorkspace {
+                    cwd,
+                    admission_id: Some(id),
+                    ..
+                } => self.finish_agent_admission(cwd, *id),
+                _ => {}
+            }
+        }
         if let RemoteControlAction::RenameTab { request_id, .. } = &action {
             return self.ingest_tab_rename_result(
                 request_id,
@@ -3480,11 +3717,51 @@ impl Runtime {
                 created_tab_id,
                 created_pane_id,
             }) => {
-                if matches!(
-                    action,
-                    RemoteControlAction::CreateTab { .. }
-                        | RemoteControlAction::CreateWorkspace { .. }
-                ) && let Some(pane_id) = created_pane_id.as_ref()
+                if let Some(tab_id) = created_tab_id.as_ref() {
+                    let placement = match &action {
+                        RemoteControlAction::CreateTab {
+                            cwd,
+                            area_id: Some(area),
+                            ..
+                        }
+                        | RemoteControlAction::CreateWorkspace {
+                            cwd,
+                            area_id: Some(area),
+                            ..
+                        } => Some((cwd.clone(), area.clone())),
+                        _ => None,
+                    };
+                    if let Some((path, area)) = placement
+                        && let Some(store) = self.workspace_views.as_mut()
+                    {
+                        if store.agent_placements.len() < 64 {
+                            store.agent_placements.insert(
+                                tab_id.clone(),
+                                ((workspace::LOCAL_DEVICE_ID.to_owned(), path), area, None),
+                            );
+                        } else {
+                            self.push_diagnostic(
+                                "agent_layout.placement_limit",
+                                "Too many pending Agent tab placements",
+                            );
+                        }
+                    }
+                }
+                let can_show_created = match (&action, created_tab_id.as_deref()) {
+                    (
+                        RemoteControlAction::CreateTab { cwd, .. }
+                        | RemoteControlAction::CreateWorkspace { cwd, .. },
+                        Some(id),
+                    ) => self.agent_can_show_created(cwd, id),
+                    _ => true,
+                };
+                if can_show_created
+                    && matches!(
+                        action,
+                        RemoteControlAction::CreateTab { .. }
+                            | RemoteControlAction::CreateWorkspace { .. }
+                    )
+                    && let Some(pane_id) = created_pane_id.as_ref()
                 {
                     // tab.create returns the authoritative root pane before
                     // the ordered event projection catches up. Preserve that
@@ -3525,6 +3802,26 @@ impl Runtime {
                     "created_pane_id": created_pane_id,
                     "duration_ms": elapsed_ms,
                 }));
+            }
+            Err(error)
+                if error.is_ambiguous()
+                    && matches!(
+                        action,
+                        RemoteControlAction::CreateTab {
+                            admission_id: Some(_),
+                            ..
+                        } | RemoteControlAction::CreateWorkspace {
+                            admission_id: Some(_),
+                            ..
+                        }
+                    ) =>
+            {
+                self.push_diagnostic(
+                    "tab.create.unknown",
+                    format!("{action_kind}: {}", error.message()),
+                );
+                self.set_error("agent_layout.display_limit",
+                    "Tab creation is unconfirmed; its place stays reserved. Close a tab to make room.", false);
             }
             Err(error) => {
                 let message = error.message().to_owned();

@@ -1,19 +1,16 @@
 import { ArrowLeftRightIcon, Maximize2Icon, Minimize2Icon, PanelRightDashedIcon, PanelRightIcon, PinIcon, PinOffIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
-import { AreaEmpty } from "./AreaEmpty";
 import { EntryContextMenu, type MenuEntry } from "./components/entry-menu";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
-import { FindBar } from "./Overlays";
-import { PaneCanvas, RemotePaneCanvas } from "./PaneGrid";
-import { RelationStatus } from "./PaneRelations";
+import { RemotePaneCanvas } from "./PaneGrid";
 import { remoteView } from "./remote";
 import { canRetryDevice, deviceLine } from "./settings";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, type Checkout } from "./snapshot";
 import { useShellStore } from "./store";
 import { focusTerminal } from "./terminals";
-import { AgentTabBar } from "./TabBar";
+import { AgentAreas } from "./AgentAreas";
 import { Tools } from "./Tools";
 import { useUiStore } from "./ui";
 import { ViewAreas } from "./ViewAreas";
@@ -208,7 +205,7 @@ function WorkspaceToolbar({ checkout, view, panelShown, actions }: { checkout: C
       <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border bg-sidebar pl-sm pr-sm text-caption" data-workspace-toolbar="true">
         <nav aria-label="Location" className="flex min-w-0 flex-1 items-center gap-xs">
           <button type="button" className="shrink-0 rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setScreen({ kind: "main" })}>
-            All projects
+            Overview
           </button>
           <span aria-hidden="true" className="text-muted-foreground">/</span>
           {project ? (
@@ -469,23 +466,7 @@ function AgentArea({ checkout, actions }: { checkout: Checkout; actions: Actions
  * not empty. The empty state means there is no tab at all.
  */
 function LocalAgentArea({ checkout, actions }: { checkout: Checkout; actions: Actions }) {
-  const hasTabs = checkout.tabs.length > 0;
-  return (
-    <>
-      <AgentTabBar checkout={checkout} activeTabId={checkout.active_tab_id} actions={actions} />
-      <RelationStatus actions={actions} />
-      <FindBar actions={actions} />
-      {hasTabs ? (
-        <PaneCanvas actions={actions} />
-      ) : (
-        <AreaEmpty state="no-agent-tab" text="No agent tab is open in this Workspace.">
-          <Button variant="secondary" onClick={() => actions.createTab()} data-empty-new-tab="true">
-            New tab <span className="text-muted-foreground">{displayCommand("new_tab", hostKind())}</span>
-          </Button>
-        </AreaEmpty>
-      )}
-    </>
-  );
+  return <AgentAreas checkout={checkout} actions={actions} />;
 }
 
 /**
@@ -546,10 +527,7 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
           ) : null}
         </div>
       )}
-      <AgentTabBar checkout={view.checkout} activeTabId={view.tab?.id ?? null} device actions={actions} />
-      <RelationStatus actions={actions} />
-      <FindBar actions={actions} />
-      <RemotePaneCanvas view={view} connected={connected} actions={actions} />
+      <AgentAreas checkout={view.checkout} deviceId={device.id} actions={actions} remoteBody={<RemotePaneCanvas view={view} connected={connected} actions={actions} />} />
     </>
   );
 }

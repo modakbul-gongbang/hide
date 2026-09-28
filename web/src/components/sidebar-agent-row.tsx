@@ -4,8 +4,10 @@ import { AgentMark } from "../AgentMark";
 import { branchChip, lineTone, markTone, rowAccessibleName, sidebarLine } from "../agentRow";
 import { cn } from "../lib/utils";
 import type { AgentRow } from "../snapshot";
+import type { AgentMenuItem } from "../workspaceManage";
 import type { FoldedLineage } from "../lineageSummary";
 import { DescendantBadge } from "./agent-row";
+import { EntryContextMenu, type MenuEntry } from "./entry-menu";
 import { DeviceChip } from "./device-chip";
 import { StatusMark } from "./status-mark";
 import { Badge } from "./ui/badge";
@@ -15,13 +17,22 @@ import { Hint } from "./ui/tooltip";
 /**
  * A control on the right of a sidebar row that waits for the pointer: its
  * slot is always there, so the title and the time never move, and it shows
- * under the pointer, while focus is anywhere inside the row, and always on
- * an input with no hover (PRD sidebar-readability D-3, B2, B3). An agent row
- * has no menu of its own; the Projects rows' `ROW_REVEALED` in sidebar.tsx
- * adds the case of an open right-click menu for rows that have one.
+ * under the pointer, while focus is anywhere inside the row, while the row's
+ * menu is open, and always on an input with no hover (PRD sidebar-readability
+ * D-3, B2, B3), as the Projects rows' `ROW_REVEALED` in sidebar.tsx does.
  */
 export const REVEALED_CONTROL =
-  "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 focus-visible:opacity-100 hoverless:opacity-100";
+  "opacity-0 group-hover/row:opacity-100 group-focus-within/row:opacity-100 group-data-[state=open]/row:opacity-100 focus-visible:opacity-100 hoverless:opacity-100";
+
+/**
+ * An agent row's right-click menu (PRD sidebar-context-menus D-04): its items
+ * are read when it opens, and the choice names the row it was opened on. One
+ * object serves every row of a list, so the rows stay memoized.
+ */
+export type AgentRowMenu = {
+  items: (agent: AgentRow) => MenuEntry<AgentMenuItem["id"]>[];
+  onSelect: (agent: AgentRow, id: AgentMenuItem["id"]) => void;
+};
 
 /**
  * The fold slot of a sidebar row with nothing to fold. Every row, agent,
@@ -66,6 +77,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   branchShown = true,
   foldedLineage,
   number = null,
+  menu,
 }: {
   agent: AgentRow;
   device: string | null;
@@ -88,6 +100,8 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   foldedLineage?: FoldedLineage;
   /** The digit a modifier hold shows on this row, or null while none shows. */
   number?: number | null;
+  /** The row's right-click menu; the menu key or ⇧F10 on the focused row opens it too. */
+  menu: AgentRowMenu;
 }) {
   const main = useRef<HTMLButtonElement>(null);
   const line = sidebarLine(agent);
@@ -99,6 +113,13 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   const hint = [device ? `${agent.identity_label} · ${device}` : agent.identity_label, agent.detail?.trim(), place].filter(Boolean).join("\n");
   const Chevron = folded ? ChevronRightIcon : ChevronDownIcon;
   return (
+    <EntryContextMenu
+      asChild
+      label={`${agent.identity_label} actions`}
+      items={() => menu.items(agent)}
+      onSelect={(id) => menu.onSelect(agent, id)}
+      data-agent-menu={agent.pane_id}
+    >
     <li
       data-pane={agent.pane_id}
       data-attention={attention ? "true" : "false"}
@@ -202,5 +223,6 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
       </span>
       {number !== null ? <Keycap number={number} /> : null}
     </li>
+    </EntryContextMenu>
   );
 });

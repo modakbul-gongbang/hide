@@ -134,8 +134,8 @@ node scripts/pen-transplant.mjs --from <branch-file> --into <main-file> --sheet 
 Each sheet carries a `Light` and a `Dark` frame and uses realistic content, including Korean labels and a long path, to show real wrapping and truncation rather than an abstract state.
 `scripts/check-hide-screens.mjs` enforces the shape (`Screen / ` naming, both theme frames, every reference resolving against the library, every cross-library color restated locally, and local variables matching `design/tokens.json`) and `scripts/gen-screens.mjs` regenerates the file from `scripts/pen-screens.mjs`.
 
-All projects is `Screen / Main`, named after its web file and screen kind.
-It draws the agent and project sidebar beside All projects: its title with Add project and `새 이슈` as the primary action, its facts line with the open issues, and the `Tasks · Agents · Projects` tabs with the waiting count on Agents.
+The Overview of every project is `Screen / Main`, named after its web file and screen kind.
+It draws the agent and project sidebar beside the Overview, the sidebar's Overview row marked: its title with Add project and `새 이슈` as the primary action, its facts line with the open issues, and the `Tasks · Agents · Projects` tabs with the waiting count on Agents.
 Its Tasks board holds every project's issues and worktrees in `백로그 · 진행 중 · 리뷰 · 완료`, each card with its project beside its id, `시작` on a backlog card under the pointer, the idle worktrees folded at the foot of 진행 중, and 완료 folded to one line per project with its count.
 Below it, the Dependencies mode draws an arrow that crosses projects, with the blocker named by its repository on the lock line.
 Its web files are `web/src/App.tsx`, `web/src/sidebar.tsx`, `web/src/MainScreen.tsx`, `web/src/TaskBoards.tsx`, and `web/src/projectBoard.ts`.
@@ -160,8 +160,8 @@ It draws the seven tabs (General, Appearance, Agents, Issues, Devices, Performan
 Its web files are `web/src/SettingsSheet.tsx` and `web/src/settings.ts`.
 
 Palette is `Screen / Palette`.
-It draws the sidebar Search field, the ⌘K palette with its grouped two-line results and its no-match and nothing-to-search states, and the ⌘P file palette on the same shell.
-Its web files are `web/src/Palette.tsx`, `web/src/search.ts`, and `web/src/components/search-field.tsx`.
+It draws the sidebar's Search icon with its `Search ⌘K` hint, the ⌘K palette with its grouped two-line results and its no-match and nothing-to-search states, and the ⌘P file palette on the same shell.
+Its web files are `web/src/Palette.tsx`, `web/src/search.ts`, and `web/src/components/sidebar-header.tsx`.
 
 Dialogs and Sheets is `Screen / Dialogs and Sheets`.
 It draws every Dialog and AlertDialog surface the shell opens: New worktree, Delete worktree, Remove project, Purpose, Unsaved drafts, New workspace, Keyboard shortcuts, New issue (with `만들고 바로 시작` unchecked and checked), and Start from an issue.
@@ -172,10 +172,10 @@ It draws the sidebar row menu, the Explorer context menu, the device picker, and
 Its web files are `web/src/entry-menu.tsx` and `web/src/DevicePicker.tsx`.
 
 Projects Sidebar is `Screen / Projects Sidebar`.
-It draws the sidebar's Projects tab as the scope picker: the All projects row on top, pinned and activity-ordered projects with the row of the scope on screen selected, a Git project’s first Overview child as a checkout-row master instance with a layout-dashboard glyph and empty trailing slots, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds.
+It draws the sidebar's Projects tab as the scope picker: above it the fixed Overview row with the house glyph and the project count, then the `Projects | Agents` strip ending in New workspace and Search; in the list, pinned and activity-ordered projects with the row of the scope on screen selected, a Git project’s first Overview child as a checkout-row master instance with a layout-dashboard glyph and empty trailing slots, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds.
 The Overview child owns selection on Overview; a checkout row opens and unfolds, then folds on activation while already selected and unfolded.
 Beside each theme's sidebar it draws a pull-request row under the pointer with its card (`Component / PR hover card`) opened to the right, the state the row's tooltip has become.
-Its web files are `web/src/sidebar.tsx`, `web/src/projects.ts` and `web/src/components/pr-card.tsx`.
+Its web files are `web/src/sidebar.tsx`, `web/src/components/sidebar-header.tsx`, `web/src/projects.ts` and `web/src/components/pr-card.tsx`.
 
 ## How to add a token
 

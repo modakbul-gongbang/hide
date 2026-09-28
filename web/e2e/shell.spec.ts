@@ -3,7 +3,7 @@ import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { startHerdr } from "./herdr-fixture";
+import { herdrBinary, startHerdr } from "./herdr-fixture";
 import { enterWorkspace } from "./wire";
 
 type Daemon = {
@@ -31,6 +31,9 @@ async function startHided(extra: Record<string, string> = {}): Promise<Daemon> {
       HIDE_KEEP_ALIVE: "1",
       HIDE_PORT: "0",
       HIDED_UI_DIR: uiDir,
+      // Resolve the fixture binary even when this test creates no server.
+      // An inherited app-bundle override may have moved since this shell began.
+      HERDR_BIN_PATH: herdrBinary(),
       ...extra,
     },
     stdio: ["ignore", "pipe", "pipe"],
@@ -117,6 +120,8 @@ test("a sidebar row click switches the pane and typed text echoes there", async 
     const [first, second] = herdr.panes;
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
     await enterWorkspace(page);
+    // The sidebar opens on Projects; the rows this test clicks are the Agents list's.
+    await page.locator('[data-sidebar-mode="agents"]').click();
     await expect(page.locator(`[data-pane="${first}"]`)).toContainText("Agent one");
     await expect(page.locator(`[data-pane="${second}"]`)).toContainText("Agent two");
     await expect(page.locator('[data-pane-view][data-focused="true"]')).toHaveAttribute("data-pane-view", first);

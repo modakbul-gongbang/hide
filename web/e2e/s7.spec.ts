@@ -433,7 +433,8 @@ test("Open to the side from the only area is refused with its reason until that 
     await expect(item).toBeDisabled();
     await expect(item).toContainText(BESIDE_TOO_NARROW);
     await page.keyboard.press("Escape");
-    await page.mouse.click(5, 5);
+    // A click on the tab strip's empty padding, which holds no control, takes focus off the Explorer.
+    await page.locator("[data-sidebar-strip]").click({ position: { x: 2, y: 2 } });
     await page.keyboard.press("Meta+KeyK");
     await page.keyboard.type("Open file to the side");
     const command = page.locator('[data-palette-row="command:open_beside"]');
@@ -868,8 +869,9 @@ type MenuRow = { id: string; label: string; reason: string | null; disabled: boo
 async function menuRows(page: Page): Promise<MenuRow[]> {
   return page.locator('[role="menu"] [data-menu-item]').evaluateAll((items) =>
     items.map((button) => {
-      const lines = [...button.querySelectorAll("span")].map((span) => span.textContent ?? "");
-      return { id: button.getAttribute("data-menu-item") ?? "", label: lines[0] ?? "", reason: lines[1] ?? null, disabled: button.getAttribute("aria-disabled") === "true" };
+      const label = button.querySelector("[data-menu-label]")?.textContent ?? "";
+      const reason = button.querySelector("[data-menu-reason]")?.textContent ?? null;
+      return { id: button.getAttribute("data-menu-item") ?? "", label, reason, disabled: button.getAttribute("aria-disabled") === "true" };
     }),
   );
 }
@@ -1025,6 +1027,9 @@ test("the tab menu offers only what a view can do, and each cap refuses with its
     await page.goto("about:blank");
     await open(page, stack.daemon);
     await expect(page.locator('[data-view-area-id] [role="tab"][data-view-state="open"]')).toHaveCount(64, { timeout: 30_000 });
+    // Explorer virtualizes this long list: reveal its last rows before clicking one.
+    await page.getByRole("tree", { name: "Checkout files" }).hover();
+    await page.mouse.wheel(0, 2000);
     await explorerRow(page, stack, "f65.txt").click();
     await expect(page.locator("[data-notice]")).toContainText("This Workspace has 64 views open. Close a view to open another.");
     await expect(page.locator('[data-view-area-id] [role="tab"]')).toHaveCount(64);
@@ -1178,7 +1183,8 @@ test("a narrow window gives the side panel the whole body, floats the tools, sho
     // agent chosen from the sidebar uncovers them: the panel closes and
     // stays pinned (issue 170).
     await expect.poll(() => stack.events.filter((event) => event.kind === "panel_covers").at(-1)?.payload).toMatchObject({ workspace: { device_id: "local", path: stack.root }, covers: true });
-    const agent = page.locator("[data-agent-open]").first();
+    await page.locator('[data-sidebar-mode="agents"]').click();
+    const agent = page.locator("[data-agent-list] [data-agent-open]").first();
     const pane = await agent.getAttribute("data-agent-open");
     await agent.click();
     await expect(workspace).toHaveAttribute("data-panel", "closed");

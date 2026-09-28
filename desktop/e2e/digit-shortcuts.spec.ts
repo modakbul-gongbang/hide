@@ -190,6 +190,7 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
 
     // B5, B2: holding ⌥ alone numbers the Agents rows top to bottom; the
     // time and the fold slot stay put; ⌥2 opens the second row.
+    await page.locator('[data-sidebar-mode="agents"]').click();
     const rows = page.locator("[data-agent-list] [data-pane]");
     await expect(rows).toHaveCount(2);
     const firstRow = rows.first();

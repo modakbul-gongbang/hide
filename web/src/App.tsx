@@ -1,3 +1,4 @@
+import { agentCapacityNotice } from "./agentLayout";
 import { useEffect, useMemo, useRef } from "react";
 import { createActions, type Actions } from "./actions";
 import { identity, moveBuffer, tabBufferKey, type BufferKey } from "./buffers";
@@ -8,7 +9,7 @@ import { ConnectionBadge } from "./badge";
 import { configureFileBytes } from "./fileBytes";
 import { installKeyboard, observeRecent, reconcileHeldCycle } from "./keyboard";
 import { MainScreen } from "./MainScreen";
-import { ConfirmClose, ConfirmTrash, CycleOverlay, NoticeBar } from "./Overlays";
+import { AgentCloseNotice, ConfirmClose, ConfirmTrash, CycleOverlay, NoticeBar } from "./Overlays";
 import { Palette } from "./Palette";
 import { ProjectOverview } from "./ProjectOverview";
 import { installProbe, probeEnabled } from "./probe";
@@ -109,6 +110,12 @@ export function App() {
       if (refusal) {
         useUiStore.getState().setNotice({ text: refusal, refreshable: false });
         useUiStore.getState().setViewFocusRequest(null);
+      }
+      const waiting = state.rest?.workspace_view?.agent_layout?.waiting ?? 0;
+      const previouslyWaiting = previous.rest?.workspace_view?.agent_layout?.waiting ?? 0;
+      if (waiting !== previouslyWaiting || state.rest?.workspace_view?.path !== previous.rest?.workspace_view?.path) {
+        if (waiting > 0) useUiStore.getState().setNotice({ text: agentCapacityNotice(waiting), refreshable: false });
+        else if (previouslyWaiting > 0 && useUiStore.getState().notice?.text === agentCapacityNotice(previouslyWaiting)) useUiStore.getState().setNotice(null);
       }
       // A refused commit brings nothing forward, so the next surface in use is a visit again.
       if (fresh) expectSurface(null);
@@ -223,6 +230,7 @@ export function App() {
       <div className="relative flex h-full flex-col bg-background text-foreground">
         <ConnectionBadge />
         <NoticeBar actions={actions} />
+        <AgentCloseNotice actions={actions} />
         <DraftRecoveryLine actions={actions} />
         <WorkspaceNotices actions={actions} />
         <div className="flex min-h-0 flex-1">

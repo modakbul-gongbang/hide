@@ -562,6 +562,8 @@ impl Runtime {
                     RemoteControlAction::CreateWorkspace {
                         cwd: registration.path.clone(),
                         label: registration.label.clone(),
+                        area_id: None,
+                        admission_id: None,
                     }
                 } else {
                     let Some(source_id) = remote_herdr_workspace(
@@ -591,6 +593,8 @@ impl Runtime {
                         workspace_id: source_id.to_owned(),
                         cwd,
                         label,
+                        area_id: None,
+                        admission_id: None,
                     }
                 }
             }
@@ -1224,6 +1228,7 @@ impl Runtime {
         }
         if delegated_tabs_changed {
             self.rebuild_tab_strips();
+            self.sync_agent_lineage_layouts();
         }
         // The lineage decided `delegated` after the read pass named the
         // strip entries, so the chip they carry is refreshed here.
@@ -2043,7 +2048,7 @@ impl Runtime {
                 }
             }
         }
-        before_local != self.snapshot.navigator.agents
+        let changed = before_local != self.snapshot.navigator.agents
             || before_remote.iter().any(|(target, before)| {
                 self.snapshot
                     .status
@@ -2053,7 +2058,10 @@ impl Runtime {
                     .and_then(|remote| remote.session.as_ref())
                     .map(|session| &session.agents)
                     != before.as_ref()
-            })
+            });
+        // Machine identity, remote arrival and local arrival all publish the
+        // same ownership transition, including normal tab placement.
+        changed | self.sync_pane_lineage()
     }
 
     /// Logs the descendants whose activity Herdr cannot classify, once per

@@ -336,8 +336,9 @@ pub(crate) const REGISTERED_CHECKOUT: &str = "#registered";
 /// A registered project keeps its row while Herdr has no workspace in it: its
 /// main checkout is listed without tabs, under a checkout id that names no
 /// Herdr workspace, so nothing is sent to the host for it by mistake. A
-/// registered row carries its pin and what `Remove project…` would close,
-/// counted from the device's own session; an unregistered row is neither.
+/// registered row carries its pin, and every row what `Remove project…`
+/// would close, counted from the device's own session: a row without a
+/// registration offers the removal too (PRD sidebar-context-menus D-14).
 pub(crate) fn apply_registrations(
     target: &str,
     session: &mut RemoteSessionSnapshot,
@@ -411,17 +412,15 @@ pub(crate) fn apply_registrations(
         .collect::<BTreeSet<_>>();
     for project in &mut session.workspaces {
         let mut removal = crate::model::WorkspaceRemovalGateSnapshot::default();
-        if project.registered {
-            for pane in project
-                .checkouts
-                .iter()
-                .flat_map(|checkout| &checkout.tabs)
-                .flat_map(|tab| &tab.panes)
-            {
-                removal.pane_count += 1;
-                if running.contains(&pane.id) {
-                    removal.running_agent_count += 1;
-                }
+        for pane in project
+            .checkouts
+            .iter()
+            .flat_map(|checkout| &checkout.tabs)
+            .flat_map(|tab| &tab.panes)
+        {
+            removal.pane_count += 1;
+            if running.contains(&pane.id) {
+                removal.running_agent_count += 1;
             }
         }
         project.removal = removal;

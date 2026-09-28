@@ -1327,6 +1327,136 @@ fn pinning_a_registration_reorders_the_row_and_persists_the_flag() {
     );
 }
 
+fn pin_event(workspace_id: &str, pinned: bool) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION, "kind": "workspace_pin_set",
+        "payload": {"workspace_id": workspace_id, "pinned": pinned}
+    }))
+    .unwrap()
+}
+
+/// PRD sidebar-context-menus B3, D-14. A row Herdr shows without a
+/// registration is pinned by registering it with the id, label, root and
+/// device the row carries, in the same event, and the next catalog rebuild
+/// adopts that registration as the same one row. Unpinning a row that was
+/// never registered is already the target state.
+#[test]
+fn pinning_an_unregistered_row_registers_and_pins_it_in_one_event() {
+    let mut runtime = runtime();
+    runtime.ingest_session(Ok(context_payload()));
+    let row = |runtime: &Runtime, label: &str| {
+        runtime
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.label == label)
+            .cloned()
+            .expect("the row Herdr shows")
+    };
+    let alpha = row(&runtime, "hide-context-alpha");
+    assert!(!alpha.registered && !alpha.pinned);
+    assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
+
+    assert!(runtime.dispatch_json(&pin_event(&alpha.id, true)));
+    assert_eq!(
+        runtime.snapshot.ui_state.workspace_registrations,
+        vec![WorkspaceRegistration {
+            primary_checkout_id: None,
+            id: alpha.id.clone(),
+            label: alpha.label.clone(),
+            path: alpha.path.clone(),
+            device_id: "local".to_owned(),
+            pinned: true,
+        }]
+    );
+    let pinned = row(&runtime, "hide-context-alpha");
+    assert!(pinned.registered && pinned.pinned);
+    assert_eq!(
+        runtime.snapshot.navigator.workspaces[0].id, alpha.id,
+        "a pinned row leads"
+    );
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&runtime.state_path).unwrap()).unwrap();
+    assert_eq!(saved["workspace_registrations"][0]["id"], alpha.id.as_str());
+    assert_eq!(saved["workspace_registrations"][0]["pinned"], true);
+    assert!(runtime.snapshot.status.last_error.is_none());
+
+    // The rebuild adopts the registration: still one row, registered and pinned.
+    runtime.ingest_session(Ok(context_payload()));
+    let rows = runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter()
+        .filter(|workspace| workspace.path == alpha.path)
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].id, alpha.id);
+    assert!(rows[0].registered && rows[0].pinned);
+    assert!(
+        rows[0]
+            .checkouts
+            .iter()
+            .all(|checkout| checkout.workspace_id == alpha.id)
+    );
+
+    let zeta = row(&runtime, "hide-context-zeta");
+    assert!(
+        !runtime.dispatch_json(&pin_event(&zeta.id, false)),
+        "an unregistered row is unpinned already"
+    );
+    assert_eq!(runtime.snapshot.ui_state.workspace_registrations.len(), 1);
+    assert!(runtime.snapshot.status.last_error.is_none());
+}
+
+/// PRD sidebar-context-menus B3, D-14. `Remove project…` on a row without a
+/// registration counts and closes its panes like a registered project's; a
+/// timeout says so without claiming a registration, a retry closes what
+/// remains, and success retires nothing because nothing was registered: the
+/// row leaves when Herdr drops its workspace.
+#[test]
+fn removing_an_unregistered_row_closes_its_panes_and_registers_nothing() {
+    let mut runtime = live_runtime();
+    runtime.ingest_session(Ok(context_payload()));
+    let alpha = runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.label == "hide-context-alpha")
+        .cloned()
+        .expect("the row Herdr shows");
+    assert!(!alpha.registered);
+    assert_eq!(alpha.removal.pane_count, 1);
+    assert_eq!(alpha.removal.running_agent_count, 1);
+
+    assert!(runtime.dispatch_json(&remove_event(&alpha.id)));
+    assert!(runtime.workspace_removals_in_flight.contains(&alpha.id));
+    assert!(
+        !runtime.dispatch_json(&remove_event(&alpha.id)),
+        "a repeat while the close is in flight is a no-op"
+    );
+    assert!(runtime.ingest_workspace_close_result(
+        &alpha.id,
+        Err("Timed out waiting for Herdr to confirm closed panes: w1:p1".to_owned())
+    ));
+    let error = runtime.snapshot.status.last_error.clone().unwrap();
+    assert_eq!(error.kind, "workspace.remove_failed");
+    assert!(error.message.contains("Timed out"));
+    assert!(!error.message.contains("registered"));
+
+    runtime.snapshot.status.last_error = None;
+    assert!(runtime.dispatch_json(&remove_event(&alpha.id)));
+    assert!(
+        !runtime.ingest_workspace_close_result(&alpha.id, Ok(())),
+        "there is no registration to retire"
+    );
+    assert!(runtime.snapshot.ui_state.workspace_registrations.is_empty());
+    assert!(runtime.snapshot.status.last_error.is_none());
+    assert!(!runtime.workspace_removals_in_flight.contains(&alpha.id));
+}
+
 #[test]
 fn removing_registration_converges_without_git_or_repeat_publication() {
     let mut runtime = runtime();

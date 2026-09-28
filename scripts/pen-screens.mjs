@@ -436,12 +436,25 @@ function screenUsageChip(id, {provider, value}) {
 // Workspace) includes it so a reader sees the whole thing, not just its
 // own feature in isolation. It is --size-sidebar-ideal wide, as sidebar.tsx
 // draws it, so its footer holds the device picker, the usage chips and the
-// Settings gear side by side.
-function screenSidebar(tokens, id, suffix, agents) {
+// Settings gear side by side. Its top is the global Overview row, marked while
+// `overview` is the screen beside it, over the Projects | Agents strip on
+// Agents, where Search alone ends the strip (PRD sidebar-shell D-02..D-04).
+function screenSidebar(tokens, id, suffix, agents, {overview = false} = {}) {
   return frame(`${id}-${suffix}`, 'Sidebar', {width: num(tokens, '--size-sidebar-ideal'), layout: 'vertical', gap: '$--spacing-md', fill: '$--sidebar', padding: '$--spacing-md', cornerRadius: '$--radius-md'}, [
-    frame(`${id}-tabs-${suffix}`, 'Tabs', {layout: 'horizontal', gap: '$--spacing-md'}, [
-      text(`${id}-agentstab-${suffix}`, 'Agents', {weight: '600'}),
-      text(`${id}-projectstab-${suffix}`, 'Projects', {fill: '$--muted-foreground'}),
+    frame(`${id}-overview-${suffix}`, 'Overview', {
+      width: 'fill_container', height: num(tokens, '--size-project-row'), layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-sm'], cornerRadius: '$--radius-sm',
+      ...(overview ? {fill: '$--secondary'} : {}),
+    }, [
+      icon(`${id}-overviewi-${suffix}`, 'house', {size: num(tokens, '--size-checkout-icon'), fill: '$--subtle-foreground'}),
+      text(`${id}-overviewt-${suffix}`, 'Overview', {size: '$--text-subhead', weight: '600'}),
+      frame(`${id}-overviewgap-${suffix}`, 'Spacer', {width: 'fill_container', height: 1}, []),
+      text(`${id}-overviewn-${suffix}`, '12 projects', {fill: '$--muted-foreground'}),
+    ]),
+    frame(`${id}-tabs-${suffix}`, 'Tabs', {width: 'fill_container', layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, [
+      text(`${id}-projectstab-${suffix}`, 'Projects', {size: '$--text-caption', fill: '$--muted-foreground'}),
+      text(`${id}-agentstab-${suffix}`, 'Agents', {size: '$--text-caption'}),
+      frame(`${id}-tabsgap-${suffix}`, 'Spacer', {width: 'fill_container', height: 1}, []),
+      screenIconButton(`${id}-search-${suffix}`, 'search'),
     ]),
     text(`${id}-seen-${suffix}`, 'Seen · 2', {size: '$--text-micro', fill: '$--muted-foreground', weight: '500'}),
     // Agents' rows name their project and checkout on a fixed context line.
@@ -452,10 +465,6 @@ function screenSidebar(tokens, id, suffix, agents) {
         width: num(tokens, '--size-sidebar-ideal') - 2 * num(tokens, '--spacing-md'),
       }),
       ...(agent.summaries ?? []).map((summary, summaryIndex) => screenLineageSummary(tokens, `${id}-agent${index}-summary${summaryIndex}-${suffix}`, summary)),
-    ]),
-    frame(`${id}-newws-${suffix}`, 'New workspace', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: ['$--spacing-sm', 0]}, [
-      icon(`${id}-newwsi-${suffix}`, 'plus', {size: 12, fill: '$--muted-foreground'}),
-      text(`${id}-newwst-${suffix}`, '새 워크스페이스 ⌥⇧N', {size: '$--text-caption', fill: '$--muted-foreground'}),
     ]),
     frame(`${id}-footer-${suffix}`, 'Footer', {width: 'fill_container', gap: '$--spacing-xs', alignItems: 'center'}, [
       screenSelect(`${id}-device-${suffix}`, {content: 'This Mac', width: 84}),
@@ -550,7 +559,7 @@ function overviewHeader(tokens, id, suffix, {project, facts, view, width, mode, 
   return frame(`${id}-${suffix}`, 'Header', {layout: 'vertical', gap: '$--spacing-sm', width}, [
     frame(`${id}-title-${suffix}`, 'Title row', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'center', width}, [
       frame(`${id}-crumb-${suffix}`, 'Path', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-        text(`${id}-crumb1-${suffix}`, 'All projects', {size: '$--text-caption', fill: '$--subtle-foreground'}),
+        text(`${id}-crumb1-${suffix}`, 'Overview', {size: '$--text-caption', fill: '$--subtle-foreground'}),
         text(`${id}-crumb2-${suffix}`, '/', {size: '$--text-caption', fill: '$--muted-foreground'}),
         text(`${id}-crumb3-${suffix}`, project, {size: '$--text-headline', weight: '600'}),
       ]),
@@ -640,7 +649,7 @@ function issueBoardParts(tokens) {
   }
 
   // TaskCardView, top to bottom as the work flows: the id (or, with no issue,
-  // the branch) and on All projects the project beside it; the title in at
+  // the branch) and on the Overview the project beside it; the title in at
   // most two lines; the lock line; where the work is and what it delivered;
   // at most two agents and +N 에이전트; on hover the card's next step. Needs
   // You is the warning border; a done, idle or (in Dependencies) blocked card
@@ -710,7 +719,7 @@ function issueBoardParts(tokens) {
   }
 
   // Done starts folded (DoneColumn): its head is the toggle, then one line per
-  // card, its branch, or on All projects one line per project with its count.
+  // card, its branch, or on the Overview one line per project with its count.
   function doneColumn(id, count, lines, more) {
     return frame(id, '완료', {layout: 'vertical', gap: '$--spacing-sm', width: column}, [
       frame(`${id}-head`, 'Head', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: column, height: num(tokens, '--size-control'), padding: [0, '$--spacing-xs']}, [
@@ -812,7 +821,7 @@ const ISSUE_186 = {task: gh(186), title: 'Set the Projects sidebar’s type ladd
   {mark: 'done', title: 'observer-sidebar-typography', line: 'Implementor가 PR #208 준비 완료', tone: 'news', age: '1m'},
   {mark: 'seen', title: '사이드바 타이포그래피 구현', age: '26m'},
 ]};
-// A Local issue an agent works on in a project's primary checkout, on All projects.
+// A Local issue an agent works on in a project's primary checkout, on the Overview of every project.
 const LOCAL_5 = {task: local(5), project: 'creator', title: '소프트웨어 팩토리 경험담 글쓰기', branch: 'main', primary: true, needsYou: true, agents: [
   {mark: 'done', title: '경험담 초안 윤문', line: 'AI 티 윤문 완료, 빠진 문장 3곳 확인 대기', tone: 'news', age: '3m'},
 ]};
@@ -820,17 +829,18 @@ const AGENT_TAB_GROUPS = {branch: 'prd/agent-tab-groups', title: 'Agent tab grou
   {mark: 'work', provider: 'codex', title: '세션초기화작업대기', age: '14m'},
 ]};
 
-const MAIN_SPEC = 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx, TaskBoards.tsx, projectBoard.ts: All projects, the scope the sidebar’s top row opens. Its title carries Add project and 새 이슈 as the primary action (C); its facts line the project count, the open issues once every source has answered, and the open-PR and merged totals only when every project can give its part; its Tasks · Agents · Projects tabs the count of agents waiting on the operator on Agents. Every project’s issues and worktrees share one board, 백로그 · 진행 중 · 리뷰 · 완료, each card with its project beside its id (a Local issue as L-N, a primary checkout as a house): 시작 on a backlog card under the pointer, the needs-you cards in the warning border, the idle worktrees folded at the foot of 진행 중, and 완료 folded to one line per project with its count. Every project has an issue source, so no project is set apart as unconnected. Its Dependencies mode draws an arrow that crosses projects, the blocker named with its repository on the lock line. The Projects view is the project list grouped by device.';
+const MAIN_SPEC = 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx, TaskBoards.tsx, projectBoard.ts: Overview, the scope the sidebar’s global Overview row opens and marks. Its title carries Add project and 새 이슈 as the primary action (C); its facts line the project count, the open issues once every source has answered, and the open-PR and merged totals only when every project can give its part; its Tasks · Agents · Projects tabs the count of agents waiting on the operator on Agents. Every project’s issues and worktrees share one board, 백로그 · 진행 중 · 리뷰 · 완료, each card with its project beside its id (a Local issue as L-N, a primary checkout as a house): 시작 on a backlog card under the pointer, the needs-you cards in the warning border, the idle worktrees folded at the foot of 진행 중, and 완료 folded to one line per project with its count. Every project has an issue source, so no project is set apart as unconnected. Its Dependencies mode draws an arrow that crosses projects, the blocker named with its repository on the lock line. The Projects view is the project list grouped by device.';
 
 const OVERVIEW_SPEC = 'web/src/ProjectOverview.tsx, TaskBoards.tsx, projectBoard.ts, components/agent-row.tsx: a project’s Overview, issue first. The header carries the path back, New agent as the quiet action and 새 이슈 as the primary one (C), the facts line starting with the open issues and their source, and the Tasks · Agents · Sessions tabs with the count of agents waiting on the operator in warning on Agents; there is no waiting band. The Tasks board is four columns, 백로그 · 진행 중 · 리뷰 · 완료, on a page that scrolls as one. 백로그 always stands with + in its head, and a backlog card offers 시작 S under the pointer. A card reads its source glyph and id (or, with no issue, its branch), the title in at most two lines, the lock line, then the PR chip with its CI mark and review word, the branch, ↑N and N files, then at most two agents on the sidebar agent row and +N 에이전트. A needs-you card wears the warning border; a worktree with no issue leads with its branch and offers 이슈 연결 and ⋯ under the pointer; the worktrees with no issue and no agent fold into one line at the foot of 진행 중; 완료 starts folded to branch names. Beside it, the Dependencies mode (the same cards with a stage word, blockers left of what they block, a blocked card dimmed, unrelated tasks below) and the Agents inbox, rows grouped 내 차례 · 실행 중 · 쉬는 중 · 정리할 것: the mark, provider and title, the line an agent asks or reports, and on the right its issue id or checkout, its PR chip and its age, a delegated agent one step in under its parent.';
 
 // -- Screen / Main ------------------------------------------------------------
 
-// All projects (MainScreen.tsx, PRD task-agents-views D-10, reworked issue
-// first): the title with Add project and 새 이슈, the facts line, the Tasks ·
-// Agents · Projects tabs, every project's issues and worktrees on one board
-// with the project beside each id, Done folded per project, and the
-// Dependencies mode with an arrow that crosses projects.
+// The Overview of every project (MainScreen.tsx, PRD task-agents-views D-10,
+// titled Overview by PRD sidebar-shell D-02, reworked issue first): the
+// sidebar's Overview row marked, the title with Add project and 새 이슈, the
+// facts line, the Tasks · Agents · Projects tabs, every project's issues and
+// worktrees on one board with the project beside each id, Done folded per
+// project, and the Dependencies mode with an arrow that crosses projects.
 function buildMain(tokens) {
   const {column, taskCard, stageColumn, doneColumn, foldLine, arrow, legend, chain} = issueBoardParts(tokens);
   const width = 4 * column + 3 * num(tokens, '--spacing-md');
@@ -838,7 +848,7 @@ function buildMain(tokens) {
   function header(key, mode) {
     return frame(`main-hdr-${key}`, 'Header', {layout: 'vertical', gap: '$--spacing-sm', width}, [
       frame(`main-titlerow-${key}`, 'Title row', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'center', width}, [
-        text(`main-title-${key}`, 'All projects', {size: '$--text-headline', weight: '600'}),
+        text(`main-title-${key}`, 'Overview', {size: '$--text-headline', weight: '600'}),
         frame(`main-titlegap-${key}`, 'Spacer', {width: 'fill_container', height: 1}, []),
         screenButton(`main-addproj-${key}`, 'Add project  ⇧⌘N', {variant: 'ghost', height: num(tokens, '--size-control'), icon: 'plus'}),
         newIssueButton(tokens, `main-issue-${key}`),
@@ -862,9 +872,9 @@ function buildMain(tokens) {
       {title: '조용한 순찰 기능 개발', status: 'Seen', symbol: '○', statusColor: '$--muted-foreground', fold: 'folded', summaries: [
         {status: 'done', branch: 'hcoord-decouple', device: 'mini'},
       ]},
-    ]);
+    ], {overview: true});
     const card = (id, value) => taskCard(`main-${id}-${suffix}`, value);
-    const board = frame(`main-list-${suffix}`, 'All projects · Tasks › Board', {width, layout: 'vertical', gap: '$--spacing-md'}, [
+    const board = frame(`main-list-${suffix}`, 'Overview · Tasks › Board', {width, layout: 'vertical', gap: '$--spacing-md'}, [
       header(suffix, 'board'),
       frame(`main-cols-${suffix}`, 'Columns', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
         stageColumn(`main-backlog-${suffix}`, '백로그', 4, [
@@ -888,7 +898,7 @@ function buildMain(tokens) {
       ]),
     ]);
     // A blocker in another project is an arrow too; its lock line names it with its repository.
-    const dependencies = frame(`main-deps-${suffix}`, 'All projects · Tasks › Dependencies', {width, layout: 'vertical', gap: '$--spacing-lg'}, [
+    const dependencies = frame(`main-deps-${suffix}`, 'Overview · Tasks › Dependencies', {width, layout: 'vertical', gap: '$--spacing-lg'}, [
       header(`d${suffix}`, 'dependencies'),
       legend(`main-dlegend-${suffix}`),
       chain(`main-dchain-${suffix}`, [
@@ -1072,11 +1082,10 @@ function buildWorkspace(tokens) {
 
   // The agent column: the toolbar, the agents' tab strip, the pane, the terminal.
   // The panel never resizes it while it floats over it.
-  function agentColumn(key, count) {
-    return frame(`ws-agents-${key}`, 'Agent column', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0, fill: '$--background', clip: true}, [
-      toolbar(key, count),
+  function agentArea(key, active = true) {
+    return frame(`ws-agentarea-${key}`, 'Agent area', {width: 'fill_container', height: 'fill_container', layout: 'vertical', gap: 0, fill: '$--background', clip: true}, [
       frame(`ws-agtabs-${key}`, 'Tab bar', {width: 'fill_container', height: ROW, layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
-        screenPanelTab(`ws-agtab1-${key}`, 'square-terminal', '탭 이름과 구성 개선', true, 'claude'),
+        screenPanelTab(`ws-agtab1-${key}`, 'square-terminal', active ? '탭 이름과 구성 개선' : '검증 결과 확인', active, 'claude'),
         screenIconButton(`ws-agtabclose-${key}`, 'x', {size: 20}),
         screenIconButton(`ws-agtabadd-${key}`, 'plus', {size: 20}),
       ]),
@@ -1085,6 +1094,17 @@ function buildWorkspace(tokens) {
       frame(`ws-terminal-${key}`, 'Terminal', {width: 'fill_container', height: 'fill_container', fill: '$--background', padding: '$--spacing-sm', layout: 'vertical', gap: '$--spacing-xxs'},
         TERMINAL.map(([line, fill], index) => text(`ws-term${index}-${key}`, line, {fill, mono: true, size: '$--text-caption'}))),
     ]);
+  }
+
+  function agentColumn(key, count, groups = false) {
+    const areas = groups
+      ? frame(`ws-agentareas-${key}`, 'Two Agent areas', {width: 'fill_container', height: 'fill_container', layout: 'horizontal', gap: 0}, [
+        agentArea(`${key}-left`),
+        frame(`ws-agentdivider-${key}`, 'Agent area divider', {width: '$--size-resize-handle', height: 'fill_container', fill: '$--border'}),
+        agentArea(`${key}-right`, false),
+      ])
+      : agentArea(key);
+    return frame(`ws-agents-${key}`, 'Agent column', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0, fill: '$--background', clip: true}, [toolbar(key, count), areas]);
   }
 
   // Component / Side panel (issue 170, "Side panel hierarchy, revised"), from
@@ -1166,15 +1186,15 @@ function buildWorkspace(tokens) {
   // One composition: the sidebar, then the Workspace. Open, the panel runs its
   // full height over the agent column; closed, the toolbar carries the panel
   // toggle with the open-view count.
-  function workspace(key, open) {
+  function workspace(key, open, groups = false) {
     const sidebar = screenSidebar(tokens, 'ws-sidebar', key, [
       {title: 'Agent two', status: 'Working'},
       {title: 'Agent one', status: 'Seen', symbol: '○', statusColor: '$--muted-foreground'},
     ]);
     const main = open
       ? frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'none', clip: true}, [{...agentColumn(key, 0), x: 0, y: 0}, sidePanel(key)])
-      : frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0}, [agentColumn(key, 2)]);
-    return frame(`ws-wrap-${key}`, open ? 'Side panel open' : 'Side panel closed, two views open', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [sidebar, main]);
+      : frame(`ws-main-${key}`, 'Workspace', {width: MAIN_W, height: MAIN_H, layout: 'vertical', gap: 0}, [agentColumn(key, 2, groups)]);
+    return frame(`ws-wrap-${key}`, groups ? 'Two Agent areas, independent tab bars and live terminals' : open ? 'Side panel open' : 'Side panel closed, two views open', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [sidebar, main]);
   }
   function newTab(key, changed) {
     const choice = (name, glyph, shortcut = '') => frame(`ws-newtab-${name}-${key}`, name, {width: 'fill_container', height: num(tokens, '--size-control-lg'), layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: [0, '$--spacing-lg'], fill: '$--secondary', cornerRadius: '$--radius-sm'}, [
@@ -1197,8 +1217,8 @@ function buildWorkspace(tokens) {
       ]),
     ]);
   }
-  const build = suffix => [workspace(`${suffix}o`, true), workspace(`${suffix}c`, false), newTab(`${suffix}n`, true), newTab(`${suffix}e`, false)];
-  return screenSheet('screen-workspace', 'Screen / Workspace', 'web/src/WorkspaceScreen.tsx, TabBar.tsx, ViewAreas.tsx, Tools.tsx: the Workspace with its side panel (Component / Side panel, issue 170) open at full height over the agent column, then closed with two views still open. The toolbar spans only the agent column and holds no tool toggles; row 1 of the panel holds the area tabs and their New tab, then the tool-column toggle, Expand, Pin and the panel toggle, which the toolbar carries with the open-view count while the panel is closed; row 2 holds the document header and the Explorer and History tool tabs. A Korean file name verifies B11 wrapping.', build, build);
+  const build = suffix => [workspace(`${suffix}o`, true), workspace(`${suffix}c`, false), workspace(`${suffix}g`, false, true), newTab(`${suffix}n`, true), newTab(`${suffix}e`, false)];
+  return screenSheet('screen-workspace', 'Screen / Workspace', 'web/src/WorkspaceScreen.tsx, AreaTree.tsx, AgentAreas.tsx, TabBar.tsx, ViewAreas.tsx, Tools.tsx: the Workspace with its side panel (Component / Side panel, issue 170) open at full height over the agent column, then closed with two views still open, and with two Agent areas using the shared divider and independent tab bars. The toolbar spans only the agent column and holds no tool toggles; row 1 of the panel holds the area tabs and their New tab, then the tool-column toggle, Expand, Pin and the panel toggle, which the toolbar carries with the open-view count while the panel is closed; row 2 holds the document header and the Explorer and History tool tabs. A Korean file name verifies B11 wrapping.', build, build);
 }
 
 // -- Screen / Project Sessions --------------------------------------------------
@@ -1356,22 +1376,19 @@ function buildPalette(tokens) {
       node,
     ]);
 
-    // The sidebar's top: the mode row, then the Search field that opens ⌘K.
+    // The sidebar's tab strip on Agents: Search, the icon at its end, opens
+    // ⌘K, and its hint names the chord (PRD sidebar-shell D-03, D-07).
     const sidebar = frame(id('side'), 'Sidebar', {width: SIDEBAR, layout: 'vertical', gap: '$--spacing-xs', fill: '$--sidebar', padding: [0, 0, '$--spacing-md', 0], cornerRadius: '$--radius-md'}, [
-      frame(id('side-modes'), 'Modes', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: SIDEBAR, height: num(tokens, '--size-tab-strip'), padding: [0, '$--spacing-md']}, [
-        text(id('side-agents'), 'Agents', {size: '$--text-caption'}),
+      frame(id('side-modes'), 'Modes', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: SIDEBAR, height: num(tokens, '--size-tab-strip'), padding: [0, '$--spacing-xs', 0, '$--spacing-md']}, [
         text(id('side-projects'), 'Projects', {size: '$--text-caption', fill: '$--muted-foreground'}),
+        text(id('side-agents'), 'Agents', {size: '$--text-caption'}),
         frame(id('side-gap'), 'Spacer', {width: 'fill_container', height: 1}, []),
-        text(id('side-e'), '⌘E', {size: '$--text-caption', fill: '$--muted-foreground'}),
+        screenIconButton(id('side-search'), 'search'),
       ]),
-      frame(id('side-searchwrap'), 'Search', {width: SIDEBAR, padding: [0, '$--spacing-md']}, [
-        frame(id('side-search'), 'Search field', {
-          width: 'fill_container', height: num(tokens, '--size-control'), layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-sm'],
-          cornerRadius: '$--radius-sm', fill: '$--background', stroke: '$--input', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
-        }, [
-          icon(id('side-searchi'), 'search', {size: num(tokens, '--size-icon'), fill: '$--muted-foreground'}),
-          frame(id('side-searcht'), 'Label', {width: 'fill_container'}, [text(id('side-searchl'), 'Search', {fill: '$--muted-foreground'})]),
-          kbd('side-searchk', '⌘K'),
+      frame(id('side-hintwrap'), 'Search hint', {width: SIDEBAR, layout: 'horizontal', justifyContent: 'end', padding: [0, '$--spacing-xs']}, [
+        frame(id('side-hint'), 'Hint', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: ['$--spacing-xs', '$--spacing-sm'], cornerRadius: '$--radius-sm', fill: '$--popover', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'}, [
+          text(id('side-hintl'), 'Search', {size: '$--text-caption', fill: '$--popover-foreground'}),
+          text(id('side-hintk'), '⌘K', {size: '$--text-caption', fill: '$--muted-foreground'}),
         ]),
       ]),
       frame(id('side-sectwrap'), 'Section', {padding: ['$--spacing-sm', '$--spacing-md', 0, '$--spacing-md']}, [
@@ -1411,7 +1428,7 @@ function buildPalette(tokens) {
     ]});
 
     return [
-      labelled('side-cell', 'Sidebar · the Search field opens ⌘K', sidebar),
+      labelled('side-cell', 'Sidebar · the Search icon opens ⌘K', sidebar),
       labelled('default-cell', '⌘K · default', results),
       frame(id('states'), 'States', {layout: 'vertical', gap: '$--spacing-lg'}, [
         labelled('commands-cell', '⌘K · a Workspace on screen, typed', commands),
@@ -1421,7 +1438,7 @@ function buildPalette(tokens) {
       ]),
     ];
   }
-  return screenSheet('screen-palette', 'Screen / Palette', 'web/src/Palette.tsx over Command/CommandDialog (issue #154): the sidebar Search field (⌘K), the query row with its Esc keycap, results grouped under <project> > AGENTS, WORKSPACE > COMMANDS, WORKSPACES > PROJECTS and WORKSPACES > CHECKOUTS in the order of each group’s best match, two-line rows with the agent’s own mark and its state sentence, ↵ on the selected row, the no-match and nothing-to-search states, and ⌘P on the same shell.', build, build);
+  return screenSheet('screen-palette', 'Screen / Palette', 'web/src/Palette.tsx over Command/CommandDialog (issue #154): the sidebar’s Search icon with its ⌘K hint, the query row with its Esc keycap, results grouped under <project> > AGENTS, WORKSPACE > COMMANDS, WORKSPACES > PROJECTS and WORKSPACES > CHECKOUTS in the order of each group’s best match, two-line rows with the agent’s own mark and its state sentence, ↵ on the selected row, the no-match and nothing-to-search states, and ⌘P on the same shell.', build, build);
 }
 
 // -- Screen / Dialogs and Sheets -------------------------------------------------
@@ -1562,13 +1579,19 @@ function buildDialogs(tokens) {
 
 function buildMenus() {
   function build(suffix) {
-    // workspaceManage.ts projectMenu(): Pin/Unpin, New worktree…, Remove project…
-    // (no Rename/Duplicate - those belong to no menu this shell has today, and
-    // Remove project carries no destructive style in the real menu either).
-    const rowMenu = screenMenuContent(`mn-row-${suffix}`, 200, [
-      screenMenuItem(`mn-row0-${suffix}`, 'Pin'),
+    // workspaceManage.ts projectMenu() in a browser tab, which has no Finder
+    // (PRD sidebar-context-menus D-02, D-07); Remove project carries no
+    // destructive style in the real menu either. The desktop app's menu, with
+    // Reveal in Finder, is on Screen / Projects Sidebar.
+    const rowMenu = screenMenuContent(`mn-row-${suffix}`, 220, [
+      screenMenuItem(`mn-row0-${suffix}`, 'Open Overview'),
       screenMenuItem(`mn-row1-${suffix}`, 'New worktree…'),
-      screenMenuItem(`mn-row2-${suffix}`, 'Remove project…'),
+      screenMenuItem(`mn-row2-${suffix}`, 'New tab in main', {shortcut: '⌥T'}),
+      screenMenuSeparator(`mn-rowsep1-${suffix}`),
+      screenMenuItem(`mn-row3-${suffix}`, 'Copy path'),
+      screenMenuSeparator(`mn-rowsep2-${suffix}`),
+      screenMenuItem(`mn-row4-${suffix}`, 'Pin'),
+      screenMenuItem(`mn-row5-${suffix}`, 'Remove project…'),
     ]);
     // ExplorerTree.tsx's row-context branch (a file row, not the empty-area
     // branch that offers New File/New Folder instead): Open to the side (with
@@ -1658,13 +1681,14 @@ function buildProjectsSidebar(tokens) {
     });
   }
 
-  // sidebar.tsx's AllProjectsRow: the project row's columns with the fold slot
-  // empty, the layout-grid glyph, and the project count where a badge stands.
-  function allProjectsRow(id, {count}) {
-    return themedXref(id, 'qdhY0', 'All projects', {width: row, height: num(tokens, '--size-project-row')}, {
+  // sidebar-header.tsx's Overview row, the one global destination above the
+  // strip: the project row's columns with the fold slot empty, the house glyph,
+  // and the project count where a badge stands.
+  function overviewDestination(id, {count, selected = false}) {
+    return themedXref(id, 'qdhY0', 'Overview', {width: row, height: num(tokens, '--size-project-row'), ...(selected ? {fill: '$--secondary'} : {})}, {
       wgtfo: {opacity: 0},
-      mIzlX: {icon: 'layout-grid'},
-      JkPyX: {content: 'All projects'},
+      mIzlX: {icon: 'house'},
+      JkPyX: {content: 'Overview'},
       nZkan: {enabled: true, content: count},
       'project-status': {enabled: false},
     });
@@ -1750,16 +1774,23 @@ function buildProjectsSidebar(tokens) {
   }
 
   function build(s) {
-    const header = frame(`psb-hdr-${s}`, 'Tabs', {width, height: num(tokens, '--size-tab-strip'), padding: [0, '$--spacing-md'], gap: '$--spacing-sm', alignItems: 'center'}, [
-      text(`psb-agents-${s}`, 'Agents', {size: '$--text-caption', fill: '$--muted-foreground'}),
-      text(`psb-projects-${s}`, 'Projects', {size: '$--text-caption'}),
-      frame(`psb-hgap-${s}`, 'Spacer', {width: 'fill_container', height: 1}, []),
-      text(`psb-kbd-${s}`, '⌘E', {size: '$--text-caption', fill: '$--muted-foreground'}),
-      screenIconButton(`psb-settings-${s}`, 'settings'),
+    // The global destinations, fixed above the strip (D-02, D-06); the count is
+    // what the rows below can produce: one pinned, herdr-ide and sasu, and
+    // three folded inactive projects.
+    const destinations = frame(`psb-dest-${s}`, 'Destinations', {width, layout: 'vertical', padding: xs}, [
+      overviewDestination(`psb-all-${s}`, {count: '6 projects'}),
     ]);
+    // Projects | Agents, then New workspace (Projects only) and Search at the end (D-03, D-04).
+    const strip = frame(`psb-hdr-${s}`, 'Tabs', {width, height: num(tokens, '--size-tab-strip'), padding: [0, xs, 0, '$--spacing-md'], gap: '$--spacing-sm', alignItems: 'center'}, [
+      text(`psb-projects-${s}`, 'Projects', {size: '$--text-caption'}),
+      text(`psb-agents-${s}`, 'Agents', {size: '$--text-caption', fill: '$--muted-foreground'}),
+      frame(`psb-hgap-${s}`, 'Spacer', {width: 'fill_container', height: 1}, []),
+      screenIconButton(`psb-new-${s}`, 'plus'),
+      screenIconButton(`psb-search-${s}`, 'search'),
+    ]);
+    const rule = (key) => frame(`psb-${key}-${s}`, 'Rule', {width, height: 1, fill: '$--border'}, []);
+    const header = frame(`psb-top-${s}`, 'Top', {width, layout: 'vertical'}, [destinations, rule('rule0'), strip, rule('rule1')]);
     const list = frame(`psb-list-${s}`, 'Projects list', {width, layout: 'vertical', padding: [0, xs]}, [
-      // Counts the rows below can produce: one pinned, herdr-ide and sasu, and three folded inactive projects.
-      allProjectsRow(`psb-all-${s}`, {count: '6 projects'}),
       section(`psb-sec-pin-${s}`, 'Pinned · 1'),
       folderRow(`psb-p-notes-${s}`, {name: 'team-notes', marks: {idle: 1}, purpose: '회의록 요약 정리'}),
       section(`psb-sec-recent-${s}`, 'Projects · Recent activity · 5'),
@@ -1789,11 +1820,6 @@ function buildProjectsSidebar(tokens) {
       fold(`psb-f-proj-${s}`, 'Inactive projects 3', 'project'),
     ]);
     const footer = frame(`psb-ftr-${s}`, 'Footer', {width, layout: 'vertical'}, [
-      frame(`psb-rule1-${s}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
-      frame(`psb-new-${s}`, 'New workspace', {width, padding: ['$--spacing-sm', '$--spacing-md'], gap: '$--spacing-xs', alignItems: 'center'}, [
-        text(`psb-newt-${s}`, '+ 새 워크스페이스', {size: '$--text-caption', fill: '$--subtle-foreground'}),
-        text(`psb-newk-${s}`, '⇧⌘N', {size: '$--text-caption', fill: '$--muted-foreground'}),
-      ]),
       frame(`psb-rule2-${s}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
       frame(`psb-dev-${s}`, 'Device picker', {width, padding: ['$--spacing-sm', '$--spacing-md'], gap: '$--spacing-xs', alignItems: 'center'}, [
         icon(`psb-devi-${s}`, 'laptop', {size: 12, fill: '$--subtle-foreground'}),
@@ -1801,7 +1827,62 @@ function buildProjectsSidebar(tokens) {
         icon(`psb-devc-${s}`, 'chevrons-up-down', {size: 12, fill: '$--muted-foreground'}),
       ]),
     ]);
-    return [frame(`psb-sidebar-${s}`, 'Sidebar', {width, layout: 'vertical', fill: '$--sidebar', clip: true}, [header, list, footer]), hoverState(s)];
+    return [frame(`psb-sidebar-${s}`, 'Sidebar', {width, layout: 'vertical', fill: '$--sidebar', clip: true}, [header, list, footer]), hoverState(s), menuStates(s)];
+  }
+
+  // A row's right-click menu, one per row kind (PRD sidebar-context-menus
+  // D-02..D-04, D-10): a cut of the list around the row on the hover wash,
+  // and the menu (Component / Menu parts) opened under the pointer. The items,
+  // their order and separators are workspaceManage.ts's projectMenu,
+  // checkoutMenu and agentMenu as the desktop app draws them.
+  function menuStates(s) {
+    const I = (id, label, options) => screenMenuItem(`${id}-${s}`, label, options);
+    const S = id => screenMenuSeparator(`${id}-${s}`);
+    const cut = (id, rows) => frame(`psb-m-${id}-list-${s}`, 'Projects list, cut', {width, layout: 'vertical', padding: [xs, xs], fill: '$--sidebar', cornerRadius: '$--radius-sm', clip: true}, rows);
+    const opened = (id, title, rows, menuWidth, items) => frame(`psb-m-${id}-${s}`, title, {layout: 'vertical', gap: 0}, [
+      cut(id, rows),
+      frame(`psb-m-${id}-at-${s}`, 'Menu under the pointer', {layout: 'horizontal', padding: [0, 0, 0, 3 * num(tokens, '--spacing-lg')]}, [screenMenuContent(`psb-m-${id}-menu-${s}`, menuWidth, items)]),
+    ]);
+    return frame(`psb-menus-${s}`, 'Row menus', {layout: 'vertical', gap: '$--spacing-lg'}, [
+      opened('proj', 'Project row menu', [
+        projectRow(`psb-m-proj-row-${s}`, {name: 'herdr-ide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
+      ], 220, [
+        I('psb-m-proj-0', 'Open Overview'),
+        I('psb-m-proj-1', 'New worktree…'),
+        I('psb-m-proj-2', 'New tab in main', {shortcut: '⌘T'}),
+        S('psb-m-proj-s1'),
+        I('psb-m-proj-3', 'Reveal in Finder'),
+        I('psb-m-proj-4', 'Copy path'),
+        S('psb-m-proj-s2'),
+        I('psb-m-proj-5', 'Pin'),
+        I('psb-m-proj-6', 'Remove project…'),
+      ]),
+      opened('co', 'Checkout row menu', [
+        checkoutRow(`psb-m-co-row-${s}`, {name: 'electron-shortcut-bindings', kind: 'open', age: '2h', marks: {working: 1}, purpose: 'Electron desktop host for the we…', hovered: true}),
+      ], 240, [
+        I('psb-m-co-0', 'Open'),
+        I('psb-m-co-1', 'New tab here', {shortcut: '⌘T'}),
+        I('psb-m-co-2', 'Open pull request #149'),
+        S('psb-m-co-s1'),
+        I('psb-m-co-3', 'Set purpose…'),
+        I('psb-m-co-4', 'Set as default checkout'),
+        I('psb-m-co-5', 'Copy branch name'),
+        I('psb-m-co-6', 'Copy path'),
+        I('psb-m-co-7', 'Reveal in Finder'),
+        S('psb-m-co-s2'),
+        I('psb-m-co-8', 'Delete worktree…', {state: 'destructive'}),
+      ]),
+      opened('ag', 'Agent row menu', [
+        agentRow(`psb-m-ag-row-${s}`, {title: '배포 전 확인', status: 'asking', age: '30s', line: '프로덕션 배포 전에 변경 내용을 확인해…', bright: true}),
+      ], 220, [
+        I('psb-m-ag-0', 'Show', {shortcut: '⌥3'}),
+        S('psb-m-ag-s1'),
+        I('psb-m-ag-1', 'Copy title'),
+        I('psb-m-ag-2', 'Copy session id'),
+        S('psb-m-ag-s2'),
+        I('psb-m-ag-3', 'Close tab…'),
+      ]),
+    ]);
   }
 
   // The pull-request row under the pointer with its card beside it (PRD
@@ -1842,7 +1923,7 @@ function buildProjectsSidebar(tokens) {
     });
     return frame(`psb-hover-${s}`, 'Checkout row under the pointer, with its card', {width: width + gap + cardW, height: listH}, [{...list, x: 0, y: 0}, card]);
   }
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, projects.ts: the Projects tab, the scope picker. All projects heads the list and opens All projects; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it. A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent; a checkout without either is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. A folded parent keeps its own-checkout descendants in the badge and draws one C-style line per other checkout, with the R1 server-glyph device chip. A checkout raised by an external root prefixes line two with the parent checkout. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.', build, build);
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, sidebar-header.tsx, projects.ts: the Projects tab, the scope picker. Above it, fixed, the global destinations: one Overview row with the house glyph and the project count, which opens the every-project Overview and carries the selected fill only while that screen is in front; under it the Projects | Agents tab strip, Projects first, ending in New workspace (Projects only) and Search, the icon that opens ⌘K. The list starts at the first project; the row of the scope the center shows carries the selected fill, here the Overview child under herdr-ide, and a checkout only while its Workspace is in front. A project’s primary checkout comes first, then the rest by activity. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each; a folded chevron is drawn and an unfolded one waits for the pointer. A row’s menu opens on a right-click, with nothing drawn for it; beside the sidebar each row kind is drawn with its menu open (Project: Open Overview, New worktree…, New tab in main, Reveal in Finder, Copy path, Pin, Remove project…; Checkout: Open, New tab here, Open pull request, Set purpose…, Set as default checkout, Copy branch name, Copy path, Reveal in Finder, Delete worktree…; Agent: Show, Copy title, Copy session id, Close tab…). A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A project row opens the Overview and wears its checkouts’ badges added up, open or folded, and no time. The first row under an expanded Git project is Overview, an instance of the checkout row with a layout-dashboard glyph and empty trailing slots. A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it. The chevron changes disclosure alone. While its agent rows are folded its badge ends line one, and its chevron, there only while agents run, opens them on one group fill in place of the badge. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent; a checkout without either is one line with its age there. A parent agent folds its children with the same chevron and speaks for them with its badge. A folded parent keeps its own-checkout descendants in the badge and draws one C-style line per other checkout, with the R1 server-glyph device chip. A checkout raised by an external root prefixes line two with the parent checkout. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.', build, build);
 }
 
 // -- assembly ---------------------------------------------------------------------

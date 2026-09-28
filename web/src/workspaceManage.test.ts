@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Checkout, TaskOperation, Workspace } from "./snapshot";
-import { branchProblem, checkoutMenu, folderMenu, normalizePurpose, projectMenu, purposeCountLabel, purposeIsLong, purposeScope, removalFor, scalarCount, taskFor } from "./workspaceManage";
+import { agentMenu, branchProblem, checkoutMenu, folderMenu, normalizePurpose, projectMenu, projectRemovalConsequences, purposeCountLabel, purposeIsLong, purposeScope, removalFor, scalarCount, taskFor } from "./workspaceManage";
 
 const workspace = (patch: Partial<Workspace> = {}): Workspace => ({
   id: "w1",
@@ -83,53 +83,128 @@ describe("branch names", () => {
 });
 
 describe("row menus", () => {
-  it("offers pin and removal for a registration and new worktree for a Git project on any device", () => {
-    expect(projectMenu(workspace()).map((item) => [item.id, item.unavailable])).toEqual([
-      ["pin", null],
-      ["new_worktree", null],
-      ["remove_project", null],
+  const desktop = { finder: true, newTabChord: "⌘T" };
+  const browser = { finder: false, newTabChord: "⌥T" };
+  /** Each item as the menu draws it: a separator line before it, its label, and its reason when disabled. */
+  const drawn = (items: { label: string; separated?: boolean; unavailable: string | null; shortcut?: string }[]) =>
+    items.flatMap((item) => [...(item.separated ? ["─"] : []), item.shortcut ? `${item.label} ${item.shortcut}` : item.label]);
+  const primary = (patch: Partial<Checkout> = {}) => checkout({ id: "c0", label: "main", branch: "main", path: "/Users/example/hide", is_worktree: false, is_primary: true, ...patch });
+
+  it("draws a project's menu in the board's order, Finder only on the desktop (B1)", () => {
+    const project = workspace({ checkouts: [primary(), checkout()] });
+    expect(drawn(projectMenu(project, desktop))).toEqual([
+      "Open Overview",
+      "New worktree…",
+      "New tab in main ⌘T",
+      "─",
+      "Reveal in Finder",
+      "Copy path",
+      "─",
+      "Pin",
+      "Remove project…",
     ]);
-    expect(projectMenu(workspace({ pinned: true }))[0]?.id).toBe("unpin");
-    const remote = projectMenu(workspace({ device_id: "studio", remote_target_id: "studio" }));
-    expect(remote.map((item) => [item.id, item.unavailable === null])).toEqual([
-      ["pin", true],
-      ["new_worktree", true],
-      ["remove_project", true],
-    ]);
-    expect(projectMenu(workspace({ registered: false })).map((item) => item.id)).toEqual(["new_worktree"]);
-    expect(projectMenu(workspace({ is_git: false }))[1]?.unavailable).toMatch(/not a Git/);
+    expect(drawn(projectMenu(project, browser))).toEqual(["Open Overview", "New worktree…", "New tab in main ⌥T", "─", "Copy path", "─", "Pin", "Remove project…"]);
+    expect(projectMenu(workspace({ pinned: true, checkouts: [primary()] }), desktop).find((item) => item.id === "unpin")?.label).toBe("Unpin");
+    expect(projectMenu(workspace({ is_git: false, checkouts: [primary({ is_primary: false })] }), desktop).find((item) => item.id === "new_worktree")?.unavailable).toMatch(/not a Git/);
   });
 
-  it("offers deletion for a linked worktree on any device whose gate allows it", () => {
-    expect(checkoutMenu(checkout()).map((item) => item.id)).toEqual(["set_purpose", "delete_worktree"]);
-    // A checkout GitHub knows a pull request for opens it first (checkout-pr-glyph-card B10).
+  it("offers Pin and Remove on a row Herdr shows without a registration (B3, D-14)", () => {
+    const unregistered = projectMenu(workspace({ registered: false, checkouts: [primary()] }), desktop);
+    expect(unregistered.filter((item) => item.id === "pin" || item.id === "remove_project").map((item) => [item.label, item.unavailable])).toEqual([
+      ["Pin", null],
+      ["Remove project…", null],
+    ]);
+  });
+
+  it("opens the new tab in the checkout the home glyph marks", () => {
+    const menu = (project: Workspace) => projectMenu(project, desktop).find((item) => item.id === "new_tab_primary")!;
+    expect(menu(workspace({ checkouts: [checkout(), primary()] })).unavailable).toBeNull();
+    expect(menu(workspace({ checkouts: [checkout()] })).unavailable).toMatch(/no default checkout/);
+    expect(menu(workspace({ checkouts: [primary({ exists: false })] })).unavailable).toMatch(/missing/);
+  });
+
+  it("draws a checkout's menu in the board's order with the pull request after New tab (B4)", () => {
     const pr = { number: 180, title: "Sidebar readability", url: "https://example.invalid/pull/180", badge: "open" as const, review: null, is_draft: false };
-    expect(checkoutMenu(checkout({ pull_request: pr })).map((item) => item.label)).toEqual(["Open pull request #180", "Set purpose…", "Delete worktree…"]);
+    expect(drawn(checkoutMenu(workspace(), checkout({ pull_request: pr }), desktop))).toEqual([
+      "Open",
+      "New tab here ⌘T",
+      "Open pull request #180",
+      "─",
+      "Set purpose…",
+      "Set as default checkout",
+      "Copy branch name",
+      "Copy path",
+      "Reveal in Finder",
+      "─",
+      "Delete worktree…",
+    ]);
+    // No pull request, no Finder, and a checkout that is not a linked worktree.
+    expect(drawn(checkoutMenu(workspace(), primary({ is_primary: false }), browser))).toEqual([
+      "Open",
+      "New tab here ⌥T",
+      "─",
+      "Set purpose…",
+      "Set as default checkout",
+      "Copy branch name",
+      "Copy path",
+    ]);
+    expect(checkoutMenu(workspace(), checkout(), desktop).find((item) => item.id === "delete_worktree")?.destructive).toBe(true);
+    // A pull request GitHub cannot vouch for now is not offered (checkout-pr-glyph-card B10).
     const unavailable = { failure_category: "auth", available: false, loading: false, stale: false, last_success_at_unix_ms: null, unavailable_reason: "gh is not signed in" };
-    expect(checkoutMenu(checkout({ pull_request: pr, github: unavailable })).map((item) => item.id)).toEqual(["set_purpose", "delete_worktree"]);
-    expect(checkoutMenu(checkout({ is_worktree: false })).map((item) => item.id)).toEqual(["set_purpose"]);
+    expect(checkoutMenu(workspace(), checkout({ pull_request: pr, github: unavailable }), desktop).some((item) => item.id === "open_pull_request")).toBe(false);
+  });
+
+  it("says why a checkout cannot become the default (B6, D-09)", () => {
+    const reason = (project: Workspace, row: Checkout) => checkoutMenu(project, row, desktop).find((item) => item.id === "set_primary")!.unavailable;
+    expect(reason(workspace(), checkout())).toBeNull();
+    expect(reason(workspace(), primary())).toBe("Already the default checkout.");
+    expect(reason(workspace({ is_git: false }), checkout())).toMatch(/plain folder/);
+    expect(reason(workspace({ device_id: "studio", remote_target_id: "studio" }), checkout())).toMatch(/another device/);
+    expect(reason(workspace({ registered: false }), checkout())).toMatch(/Pin the project first/);
+    expect(reason(workspace(), checkout({ exists: false }))).toMatch(/missing/);
+  });
+
+  it("greys out Finder, the default and deletion on a device's checkout and keeps the rest (B9)", () => {
+    const remote = checkoutMenu(workspace({ device_id: "studio", remote_target_id: "studio" }), checkout(), desktop);
+    expect(remote.filter((item) => item.unavailable !== null).map((item) => [item.id, item.unavailable])).toEqual([
+      ["set_primary", "Not available for a checkout on another device."],
+      ["reveal_finder", "Only for folders on this Mac."],
+      ["delete_worktree", "Not available for a checkout on another device."],
+    ]);
+    const project = projectMenu(workspace({ device_id: "studio", remote_target_id: "studio", checkouts: [primary()] }), desktop);
+    expect(project.filter((item) => item.unavailable !== null).map((item) => item.id)).toEqual(["reveal_finder"]);
+  });
+
+  it("keeps the worktree gate's reason and a detached checkout's missing branch", () => {
     const blocked = checkout();
     if (blocked.worktree) blocked.worktree.deletion_gate.blocked_reason = "The main worktree cannot be deleted";
-    expect(checkoutMenu(blocked)[1]?.unavailable).toBe("The main worktree cannot be deleted");
-    expect(checkoutMenu(checkout({ worktree: null }))[1]?.unavailable).toMatch(/not been read/);
+    expect(checkoutMenu(workspace(), blocked, desktop).find((item) => item.id === "delete_worktree")?.unavailable).toBe("The main worktree cannot be deleted");
+    expect(checkoutMenu(workspace(), checkout({ worktree: null }), desktop).find((item) => item.id === "delete_worktree")?.unavailable).toMatch(/not been read/);
+    expect(checkoutMenu(workspace(), checkout({ branch: null }), desktop).find((item) => item.id === "copy_branch")?.unavailable).toMatch(/Detached/);
   });
 
-  it("puts a folder's checkout items after its project items, past a separator", () => {
-    const menu = folderMenu(workspace({ is_git: false }), checkout({ is_worktree: false }));
-    expect(menu.map((item) => [item.id, item.separated ?? false])).toEqual([
-      ["pin", false],
-      ["new_worktree", false],
-      ["remove_project", false],
-      ["set_purpose", true],
-    ]);
+  it("puts a folder's own checkout items after its project items, past a separator", () => {
+    const folder = primary({ is_primary: false, branch: null });
+    const menu = folderMenu(workspace({ is_git: false, checkouts: [folder] }), folder, desktop);
+    expect(drawn(menu)).toEqual(["Open Overview", "New worktree…", "New tab in main ⌘T", "─", "Reveal in Finder", "Copy path", "─", "Pin", "Remove project…", "─", "Open", "Set purpose…"]);
     const pr = { number: 7, title: "", url: "https://example.invalid/pull/7", badge: "open" as const, review: null, is_draft: false };
-    expect(folderMenu(workspace(), checkout({ is_worktree: false, pull_request: pr })).map((item) => [item.id, item.separated ?? false])).toEqual([
-      ["pin", false],
-      ["new_worktree", false],
-      ["remove_project", false],
-      ["open_pull_request", true],
-      ["set_purpose", false],
+    expect(drawn(folderMenu(workspace({ checkouts: [folder] }), { ...folder, pull_request: pr }, browser)).slice(-4)).toEqual(["─", "Open", "Open pull request #7", "Set purpose…"]);
+  });
+
+  it("says what removing a project closes and that an unregistered row leaves with Herdr's workspace (B3)", () => {
+    const counted = { removal: { pane_count: 2, running_agent_count: 1 } };
+    expect(projectRemovalConsequences(workspace(counted))).toEqual([
+      "2 panes in this project close first, stopping 1 running agent.",
+      "Only the registration is removed: the folder, its repository and its worktrees stay on disk.",
     ]);
+    expect(projectRemovalConsequences(workspace({ ...counted, registered: false }))[1]).toMatch(/keeps no registration .* row leaves once Herdr closes the workspace/);
+  });
+
+  it("draws an agent's menu with its ⌥n and without Mark as seen or Stop agent (B7, B8)", () => {
+    const agent = { id: "a", pane_id: "p1", identity_label: "배포 전 확인", agent_kind: "claude", symbol: "●", group: "working", status_label: "working", elapsed: "2m", emphasized: false, unread: false, session_id: "0b5e-session" };
+    expect(drawn(agentMenu(agent, "⌥3"))).toEqual(["Show ⌥3", "─", "Copy title", "Copy session id", "─", "Close tab…"]);
+    expect(drawn(agentMenu(agent, ""))[0]).toBe("Show");
+    expect(agentMenu({ ...agent, session_id: null }, "").find((item) => item.id === "copy_session_id")?.unavailable).toMatch(/no session id/);
   });
 });
 

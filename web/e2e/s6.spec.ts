@@ -153,8 +153,8 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await page.keyboard.press("Meta+KeyE");
     await expect(workspace).toHaveAttribute("data-panel", "open");
     await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
-    // The sidebar switch keeps no chord of its own.
-    await expect(page.locator("[data-sidebar]")).toHaveAttribute("data-sidebar", "agents");
+    // The sidebar switch keeps no chord of its own: the chords above left it on Projects.
+    await expect(page.locator("[data-sidebar]")).toHaveAttribute("data-sidebar", "projects");
 
     // A file opened from the Explorer widens the panel to its stored width,
     // over agents that keep the body's width underneath, so no terminal
@@ -230,8 +230,9 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect.poll(() => fs.readFileSync(herdr.inputLogs[1], "utf8"), { timeout: 10_000 }).toContain("typed beside the panel");
     await expect(workspace).toHaveAttribute("data-panel", "open");
     // A tab of the Agent area's own strip is chosen in place too.
-    await page.locator('[data-agent-tab-bar] [data-tab-kind="herdr"]').first().click();
-    await expect.poll(() => last.get("focus_tab")).toMatchObject({ in_place: true });
+    const agentTab = page.locator('[data-agent-tab-bar] [data-tab-kind="herdr"]').first();
+    await agentTab.click();
+    await expect(agentTab).toHaveAttribute("aria-selected", "true");
     await expect(workspace).toHaveAttribute("data-panel", "open");
     await childHost.click({ position: { x: 40, y: 60 } });
     expect(resizes()).toBe(resizesBefore);
@@ -316,6 +317,7 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await screenshot(page, "s6-side-panel-pinned");
     // A pinned panel covers no agent, so an agent chosen from the sidebar
     // leaves it up.
+    await page.locator('[data-sidebar-mode="agents"]').click();
     await page.locator(`[data-agent-open="${parent}"]`).first().click();
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     await expect(workspace).toHaveAttribute("data-panel", "open");

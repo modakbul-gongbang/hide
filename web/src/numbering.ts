@@ -4,17 +4,22 @@
 // tabs left to right, the Agents list's drawn rows top to bottom. A tenth
 // item has no number, and a number with nothing at it selects nothing.
 
+import { areasOf } from "./areaLayout";
+import type { AgentLayout } from "./agentLayout";
 import type { TreeRow } from "./agentRow";
+import { agentListRows, agentTree, allAgents } from "./navigation";
 import { DIGITS, type Digit } from "./shortcuts";
-import type { Checkout } from "./snapshot";
+import type { AgentRow, Checkout, SnapshotRest } from "./snapshot";
 import { agentEntries } from "./workspace";
 
-/** The tab source id at each number of the strip `checkout` draws, in number order. */
-export function numberedTabs(checkout: Checkout): Map<Digit, string> {
+/** Local area tree order, then each bar left to right; devices retain their strip order. */
+export function numberedTabs(checkout: Checkout, layout?: AgentLayout | null): Map<Digit, string> {
   const numbered = new Map<Digit, string>();
-  agentEntries(checkout)
+  const entries = agentEntries(checkout);
+  const placed = layout ? areasOf(layout.root).flatMap((area) => area.displays.map((item) => item.id)) : entries.map((entry) => entry.source_id);
+  placed.filter((id) => entries.some((entry) => entry.source_id === id))
     .slice(0, DIGITS.length)
-    .forEach((entry, index) => numbered.set(DIGITS[index]!, entry.source_id));
+    .forEach((id, index) => numbered.set(DIGITS[index]!, id));
   return numbered;
 }
 
@@ -29,4 +34,14 @@ export function numberedAgents(rows: readonly TreeRow[]): Map<Digit, string> {
 export function numberOf(numbered: Map<Digit, string>, id: string): Digit | null {
   for (const [digit, held] of numbered) if (held === id) return digit;
   return null;
+}
+
+/** The Agents list's rows in draw order, the list ⌥n numbers whichever list is on screen (B2). */
+export function agentListOrder(state: { rest: SnapshotRest | null; agents: AgentRow[] }): TreeRow[] {
+  return agentListRows(agentTree(allAgents(state.rest?.status?.remote, state.rest?.navigator?.devices, state.agents)));
+}
+
+/** The number ⌥n selects an agent by now, or null past the ninth row. */
+export function agentNumber(state: { rest: SnapshotRest | null; agents: AgentRow[] }, paneId: string): Digit | null {
+  return numberOf(numberedAgents(agentListOrder(state)), paneId);
 }

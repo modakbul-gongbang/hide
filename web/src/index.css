@@ -92,16 +92,22 @@
  * A View tab drag (PRD S7 B8): the pointer says whether the place under it
  * would land, whatever it passes over, and no text is selected on the way.
  */
+html[data-agent-drag],
+html[data-agent-drag] *,
 html[data-view-drag],
 html[data-view-drag] * {
   user-select: none !important;
 }
 
+html[data-agent-drag="move"],
+html[data-agent-drag="move"] *,
 html[data-view-drag="move"],
 html[data-view-drag="move"] * {
   cursor: grabbing !important;
 }
 
+html[data-agent-drag="forbidden"],
+html[data-agent-drag="forbidden"] *,
 html[data-view-drag="forbidden"],
 html[data-view-drag="forbidden"] * {
   cursor: not-allowed !important;

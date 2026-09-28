@@ -14,7 +14,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { app, BrowserWindow, ipcMain, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import type { CommandId } from "../../../web/src/shortcuts";
-import { BINDINGS_CHANNEL, COMMAND_CHANNEL } from "../channel";
+import { BINDINGS_CHANNEL, COMMAND_CHANNEL, REVEAL_CHANNEL } from "../channel";
 import { BrowserViews, type ResolvedPage } from "./browser";
 import {
   loginPathCommand,
@@ -37,6 +37,7 @@ import { bundledHcoord, hcoordEnvironment, installHcoordShim, parseHcoordEnsure 
 import { loadFailureFields, type HostLog } from "./log";
 import { ChildRunner, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
+import { revealablePath } from "./reveal";
 
 declare const __HIDE_BACKGROUND__: string;
 
@@ -107,6 +108,7 @@ export class DesktopHost {
       (workspace, id, load) => this.resolveBrowserRoute(workspace, id, load),
       (workspace, id, load) => this.releaseBrowserRoute(workspace, id, load),
     );
+    this.listenReveal();
     this.openWindow();
     void this.prepareHcoord().finally(() => this.discover("launch"));
   }
@@ -142,6 +144,28 @@ export class DesktopHost {
         return;
       }
       apply(reported);
+    });
+  }
+
+  /**
+   * Reveal in Finder from a sidebar row (PRD sidebar-context-menus D-07):
+   * Finder selects the folder and opens nothing, so no program on this Mac
+   * starts from it. Only this window's page on the daemon origin is heard,
+   * and only an absolute path; the log records the outcome, never the path.
+   */
+  private listenReveal(): void {
+    ipcMain.on(REVEAL_CHANNEL, (event: IpcMainEvent, reported: unknown) => {
+      if (!this.fromShell(event)) {
+        this.log.event("reveal.refused", { reason: "sender" });
+        return;
+      }
+      const path = revealablePath(reported);
+      if (path === null) {
+        this.log.event("reveal.refused", { reason: "path" });
+        return;
+      }
+      shell.showItemInFolder(path);
+      this.log.event("reveal.finder", {});
     });
   }
 

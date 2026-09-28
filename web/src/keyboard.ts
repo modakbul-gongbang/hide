@@ -20,14 +20,14 @@
 import type { Actions } from "./actions";
 import { advanceHint, clearHint, holdModifiers, idleHint, modifiersOf, NO_MODIFIERS, revealedFamily, type HintState } from "./hints";
 import { hostBridge, hostKind } from "./host";
-import { numberedAgents, numberedTabs } from "./numbering";
-import { agentListRows, agentTree, allAgents } from "./navigation";
+import { agentListOrder, numberedAgents, numberedTabs } from "./numbering";
 import { availableEntries, currentEntry, expectSurface, observeEntries, observeProject, panelItem, placeLabel, projectItem, reconcileCycle, recentEntries, recentProjectOrder, type CycleItem } from "./recent";
 import { contextWorkspaces, remoteContext, remoteView } from "./remote";
 import { hostRegistry, isNumberedCommand, matchHost, numberedCommand, REGISTRY, storedBindings, type CommandId, type Digit, type NumberedFamily } from "./shortcuts";
-import { editorFor, focusedCheckout, type SnapshotRest } from "./snapshot";
+import { editorFor, focusedCheckout, type AgentRow, type SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore, type Cycle } from "./ui";
+import { workspaceViewOf } from "./workspace";
 import { drawnViews, installKeyboardOwner, keyboardOwner } from "./viewFocus";
 
 /**
@@ -116,18 +116,15 @@ function stripCheckout(rest: SnapshotRest | null) {
   return focusedCheckout(rest);
 }
 
-/** The Agents list's rows in draw order, the same list the sidebar builds (B2). */
-function agentRows(state: { rest: SnapshotRest | null; agents: Parameters<typeof allAgents>[2] }) {
-  return agentListRows(agentTree(allAgents(state.rest?.status?.remote, state.rest?.navigator?.devices, state.agents)));
-}
-
 /** What ⌘n or ⌥n selects now, or null when nothing holds that number. */
-export function numberedTarget(family: NumberedFamily, number: Digit, state: { rest: SnapshotRest | null; agents: Parameters<typeof allAgents>[2] }): string | null {
+export function numberedTarget(family: NumberedFamily, number: Digit, state: { rest: SnapshotRest | null; agents: AgentRow[] }): string | null {
   if (family === "tabs") {
     const checkout = stripCheckout(state.rest);
-    return checkout ? (numberedTabs(checkout).get(number) ?? null) : null;
+    const view = workspaceViewOf(state.rest);
+    const layout = !remoteContext(state.rest) && view?.device_id === "local" && view.path === checkout?.path ? view.agent_layout : null;
+    return checkout ? (numberedTabs(checkout, layout).get(number) ?? null) : null;
   }
-  return numberedAgents(agentRows(state)).get(number) ?? null;
+  return numberedAgents(agentListOrder(state)).get(number) ?? null;
 }
 
 /**

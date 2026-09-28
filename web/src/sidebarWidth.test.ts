@@ -1,3 +1,5 @@
+import { createActions } from "./actions";
+import { useShellStore } from "./store";
 import { describe, expect, it } from "vitest";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
 
@@ -21,4 +23,20 @@ describe("sidebarWidthToSend", () => {
     expect(sidebarWidthToSend(292, 292)).toBeNull();
     expect(sidebarWidthToSend(360, 292)).toBe(292);
   });
+});
+
+it("an unrelated UI change cannot echo an older width over a completed drag", () => {
+  const sent: { kind: string; payload: Record<string, unknown> }[] = [];
+  useShellStore.setState({ rest: { ui_state: { sidebar_width: 292, left_sidebar_visible: true } } });
+  const actions = createActions((event) => {
+    sent.push(event as { kind: string; payload: Record<string, unknown> });
+    return true;
+  });
+  actions.setSidebarWidth(440);
+  // The core's echo has not arrived when another UI action is dispatched.
+  actions.toggleLeftSidebar();
+  expect(sent[0]?.payload.sidebar_width).toBe(440);
+  expect(sent[1]?.payload).not.toHaveProperty("sidebar_width");
+  expect(sent[1]?.payload.left_sidebar_visible).toBe(false);
+  useShellStore.setState({ rest: null });
 });
