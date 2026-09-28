@@ -247,7 +247,7 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     execFileSync(herdr.bin, ["pane", "report-agent", fixingPane, "--source", "e2e", "--agent", "claude", "--state", "working"], { env: herdr.env, timeout: 30_000 });
 
     const gh = fakeGh(herdr.root);
-    daemon = await startHided(herdr, "overview-prs", undefined, { PATH: `${gh.bin}:${process.env.PATH ?? ""}` });
+    daemon = await startHided(herdr, "overview-prs", undefined, { PATH: `${gh.bin}:${path.join(herdr.root, "bin")}:${process.env.PATH ?? ""}` });
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
