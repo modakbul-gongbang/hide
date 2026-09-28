@@ -12,13 +12,14 @@
 //
 // A hidden page past `MAX_LIVE_VIEWS` is closed and loads again when shown.
 
-import { BrowserWindow, ipcMain, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type Session } from "electron";
+import { BrowserWindow, ipcMain, Menu, session, shell, WebContentsView, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type Session } from "electron";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { BrowserHostEvent, BrowserPageState, BrowserPlacement } from "../../../web/src/host";
+import type { CommandId } from "../../../web/src/shortcuts";
 import { BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL } from "../channel";
-import { loadable, MAX_LIVE_VIEWS, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds, viewKey } from "./browserSync";
+import { loadable, MAX_LIVE_VIEWS, nextZoomFactor, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds, viewKey, type PageZoom } from "./browserSync";
 import type { HostLog } from "./log";
 
 /** Page state reports coalesce to one per view in this window, so a title ticking every frame costs one event. */
@@ -26,6 +27,12 @@ const REPORT_COALESCE_MS = 100;
 /** Chromium's code for a load a newer one replaced; not a failure. */
 const ERR_ABORTED = -3;
 const PAGE_PERMISSIONS = new Set(["clipboard-sanitized-write"]);
+/** The text-size commands, which zoom a focused page the way Chrome's ⌘= / ⌘- / ⌘0 do. */
+const PAGE_ZOOM_COMMANDS: Readonly<Partial<Record<CommandId, PageZoom>>> = { text_larger: "in", text_smaller: "out", text_reset: "reset" };
+/** Chrome's second zoom-in chord, ⌘+ (⌘⇧= on a US keyboard), as an app-menu accelerator. */
+const ZOOM_IN_ALIAS = "Shift+Command+=";
+/** Pinch zoom on a page, as visual zoom levels; Electron turns it off by default. */
+const PINCH_ZOOM_LIMITS = [1, 3] as const;
 
 type Page = {
   key: string;
@@ -109,8 +116,30 @@ export class BrowserViews {
 
   /** Whether a page holds the keyboard, so an app-menu command gives it back to the shell first. */
   hasFocus(): boolean {
-    for (const page of this.pages.values()) if (page.visible && page.view.webContents.isFocused()) return true;
-    return false;
+    return this.focused() !== undefined;
+  }
+
+  /**
+   * A text-size command while a page holds the keyboard zooms that page and
+   * leaves it the keyboard; any other command, or no focused page, is not
+   * handled here. Routed by command, so a rebound chord zooms too.
+   */
+  zoomFocused(command: CommandId): boolean {
+    const zoom = PAGE_ZOOM_COMMANDS[command];
+    const page = zoom && this.focused();
+    if (!zoom || !page) return false;
+    this.zoom(page, zoom);
+    return true;
+  }
+
+  private focused(): Page | undefined {
+    for (const page of this.pages.values()) if (page.visible && page.view.webContents.isFocused()) return page;
+    return undefined;
+  }
+
+  private zoom(page: Page, zoom: PageZoom): void {
+    const contents = page.view.webContents;
+    contents.setZoomFactor(nextZoomFactor(contents.getZoomFactor(), zoom));
   }
 
   private sync(workspace: string | null, displays: BrowserPlacement[], retained: { workspace: string; id: string }[]): void {
@@ -228,7 +257,20 @@ export class BrowserViews {
     const history = () => ({ canGoBack: contents.navigationHistory.canGoBack(), canGoForward: contents.navigationHistory.canGoForward() });
     contents.on("did-start-loading", () => this.update(page, { loading: true, failure: null }));
     contents.on("did-stop-loading", () => this.update(page, { loading: false, ...history() }));
-    contents.on("did-navigate", (_event, url) => this.update(page, { url: this.sourceAddress(page, url), ...history() }));
+    contents.on("did-navigate", (_event, url) => {
+      this.update(page, { url: this.sourceAddress(page, url), ...history() });
+      // The limits live in the page's renderer, so each committed document,
+      // which may be a new renderer, gets them again.
+      void contents.setVisualZoomLevelLimits(...PINCH_ZOOM_LIMITS).catch((error: unknown) => this.log.event("browser.pinch_zoom_failed", { detail: String(error) }));
+    });
+    contents.on("before-input-event", (event, input) => {
+      // ⌘+ reaches no menu item (the menu's zoom in is ⌘=), so the page
+      // answers it here unless the operator bound that chord to a command.
+      if (input.type !== "keyDown" || input.code !== "Equal" || !input.meta || !input.shift || input.alt || input.control) return;
+      if (menuHas(Menu.getApplicationMenu()?.items ?? [], ZOOM_IN_ALIAS)) return;
+      event.preventDefault();
+      this.zoom(page, "in");
+    });
     contents.on("did-navigate-in-page", (_event, url, isMainFrame) => {
       if (isMainFrame) this.update(page, { url: this.sourceAddress(page, url), ...history() });
     });
@@ -334,6 +376,10 @@ function protocolOf(url: string): string {
   } catch {
     return "unparsable";
   }
+}
+
+function menuHas(items: readonly MenuItem[], accelerator: string): boolean {
+  return items.some((item) => item.accelerator === accelerator || (item.submenu ? menuHas(item.submenu.items, accelerator) : false));
 }
 
 function isFileAddress(url: string): boolean {

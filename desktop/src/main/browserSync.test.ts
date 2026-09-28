@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadable, MAX_SYNCED_DISPLAYS, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds } from "./browserSync";
+import { loadable, MAX_SYNCED_DISPLAYS, nextZoomFactor, overCap, parseCommand, parseSync, parseTarget, remoteRequest, toBounds } from "./browserSync";
 
 const rect = { x: 0, y: 40, width: 800, height: 600 };
 const display = { id: "d1", url: "https://a.test/", load: 3, rect, visible: true };
@@ -73,5 +73,19 @@ describe("keeping pages alive", () => {
     expect(toBounds({ x: 10.4, y: 20.6, width: 100.2, height: 50 }, 1)).toEqual({ x: 10, y: 21, width: 101, height: 50 });
     expect(toBounds({ x: 10, y: 20, width: 100, height: 50 }, 1.25)).toEqual({ x: 13, y: 25, width: 125, height: 63 });
     expect(toBounds(rect, Number.NaN)).toEqual(rect);
+  });
+});
+
+describe("page zoom", () => {
+  it("steps through Chrome's zoom levels and stays at either end", () => {
+    const walk = (from: number, zoom: "in" | "out", steps: number) => Array.from({ length: steps }).reduce<number>((factor) => nextZoomFactor(factor, zoom), from);
+    expect([1, 2, 3].map((steps) => walk(1, "in", steps))).toEqual([1.1, 1.25, 1.5]);
+    expect([1, 2, 3].map((steps) => walk(1, "out", steps))).toEqual([0.9, 0.8, 0.75]);
+    expect(walk(1, "in", 20)).toBe(5);
+    expect(walk(1, "out", 20)).toBe(0.25);
+    expect(nextZoomFactor(0.3333333, "in")).toBe(0.5);
+    expect(nextZoomFactor(1.2, "in")).toBe(1.25);
+    expect(nextZoomFactor(1.2, "out")).toBe(1.1);
+    expect(nextZoomFactor(2.5, "reset")).toBe(1);
   });
 });
