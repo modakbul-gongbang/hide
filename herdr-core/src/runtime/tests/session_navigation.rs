@@ -137,20 +137,19 @@ fn local_tab_creation_acknowledgement_preserves_the_created_pane_focus() {
 // session update re-sent it: one refusal per tick for as long as the
 // tab stayed zoomed (2026-09-10 audit, ~2 refusals per second).
 #[test]
-fn a_refused_relocation_keeps_its_stamp_and_a_completed_one_drops_it() {
+fn a_refused_relocation_keeps_its_stamp() {
     let mut runtime = runtime();
-    let action = || PaneControlAction::MoveToNewTab {
-        pane_id: "w1:p2".to_owned(),
-        workspace_id: "w1".to_owned(),
-        label: "Child".to_owned(),
-    };
     let asked_at = unix_milliseconds();
     runtime
         .pane_relocations_in_flight
         .insert("w1:p2".to_owned(), asked_at);
 
     runtime.ingest_pane_control_result(
-        action(),
+        PaneControlAction::MoveToNewTab {
+            pane_id: "w1:p2".to_owned(),
+            workspace_id: "w1".to_owned(),
+            label: "Child".to_owned(),
+        },
         Err("Herdr declined the move: ZoomedTab".to_owned()),
         3,
     );
@@ -159,17 +158,62 @@ fn a_refused_relocation_keeps_its_stamp_and_a_completed_one_drops_it() {
         Some(&asked_at),
         "a refusal waits out the retry interval"
     );
+}
+
+// Herdr acknowledges `pane.move` before the layout that shows the child in
+// its own tab reaches Hide. Dropping the stamp on the acknowledgement let the
+// session update in between move the child a second time, from its new tab
+// into another (issue 231, a loaded CI runner).
+#[test]
+fn an_acknowledged_relocation_stays_in_flight_until_the_layout_shows_the_move() {
+    let mut runtime = runtime();
+    runtime.ingest_session(Ok(serde_json::from_value(
+        super::lineage::split_lineage_json(),
+    )
+    .expect("split payload")));
+    let asked_at = unix_milliseconds();
+    runtime
+        .pane_relocations_in_flight
+        .insert("w1:p2".to_owned(), asked_at);
 
     runtime.ingest_pane_control_result(
-        action(),
+        PaneControlAction::MoveToNewTab {
+            pane_id: "w1:p2".to_owned(),
+            workspace_id: "w1".to_owned(),
+            label: "Implementor".to_owned(),
+        },
         Ok(live::PaneControlOutcome::Acknowledged {
             created_pane_id: None,
         }),
         3,
     );
+    runtime.ingest_session(Ok(serde_json::from_value(
+        super::lineage::split_lineage_json(),
+    )
+    .expect("split payload")));
+    assert_eq!(
+        runtime.pane_relocations_in_flight.get("w1:p2"),
+        Some(&asked_at),
+        "a layout that still shares the parent's tab is the move not yet shown"
+    );
+
+    let mut moved = super::lineage::split_lineage_json();
+    moved["tabs"] = serde_json::json!([
+        {"workspace_id":"w1","tab_id":"t1","label":""},
+        {"workspace_id":"w1","tab_id":"t2","label":"Implementor"}
+    ]);
+    moved["layouts"] = serde_json::json!([
+        {"workspace_id":"w1","tab_id":"t1","zoomed":false,
+         "area":{"x":0,"y":0,"width":80,"height":24},"focused_pane_id":"w1:p1",
+         "panes":[{"pane_id":"w1:p1","rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]},
+        {"workspace_id":"w1","tab_id":"t2","zoomed":false,
+         "area":{"x":0,"y":0,"width":80,"height":24},"focused_pane_id":"w1:p2",
+         "panes":[{"pane_id":"w1:p2","rect":{"x":0,"y":0,"width":80,"height":24}}],"splits":[]}
+    ]);
+    runtime.ingest_session(Ok(serde_json::from_value(moved).expect("moved payload")));
     assert!(
         !runtime.pane_relocations_in_flight.contains_key("w1:p2"),
-        "a completed move is no longer in flight"
+        "the child in its own tab is the move done"
     );
 }
 

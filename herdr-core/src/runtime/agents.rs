@@ -1270,6 +1270,7 @@ impl Runtime {
             .collect::<BTreeMap<_, _>>();
         let now = unix_milliseconds();
         let mut requests = Vec::new();
+        let mut settled = Vec::new();
         for agent in &self.snapshot.navigator.agents {
             if !agent.delegated || crate::agent_hooks::is_remote_pane(&agent.pane_id) {
                 continue;
@@ -1283,6 +1284,7 @@ impl Runtime {
                 continue;
             };
             if tab_id != parent_tab_id {
+                settled.push(agent.pane_id.clone());
                 continue;
             }
             if self
@@ -1298,10 +1300,13 @@ impl Runtime {
                 agent.id.clone(),
             ));
         }
-        // A pane Herdr no longer reports can never answer, so its record is
-        // dropped rather than held forever.
+        // A move is done when Herdr's layout shows the child in its own tab,
+        // not when Herdr acknowledges the request: the acknowledgement can
+        // arrive before that layout, and a pass in between would move the
+        // child a second time. A pane Herdr no longer reports can never
+        // answer, so its record is dropped rather than held forever.
         self.pane_relocations_in_flight
-            .retain(|pane_id, _| placement.contains_key(pane_id));
+            .retain(|pane_id, _| placement.contains_key(pane_id) && !settled.contains(pane_id));
         if requests.is_empty() {
             return false;
         }

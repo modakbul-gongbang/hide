@@ -2210,7 +2210,6 @@ impl Runtime {
             }
         }
         changed |= self.refresh_agent_lineage();
-        changed |= self.relocate_delegated_child_panes();
         for (tab_id, reason) in &rejected_layouts {
             crate::diagnostic!(serde_json::json!({
                 "component": "session",
@@ -2224,6 +2223,9 @@ impl Runtime {
             );
         }
         changed |= self.store_pane_layouts(layouts);
+        // After the layouts this update carries, so a move they already show
+        // is not asked for again from the previous update's placement.
+        changed |= self.relocate_delegated_child_panes();
         if let Some(signatures) = fresh_layout_signatures {
             self.confirmed_pane_layout_signatures = signatures;
         }

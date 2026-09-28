@@ -213,6 +213,9 @@ test("Delegated canvas returns to its normal tab and Agent controls keep palette
     execFileSync(herdr.bin, ["pane", "report-metadata", child, "--source", "e2e-lineage", "--token", `parent_pane=${parent}`], { env: herdr.env, timeout: 30_000 });
     const chip = page.locator(`[data-child-chip="${child}"]`).first();
     await expect(chip).toBeVisible({ timeout: 20_000 });
+    // The chip shows once the lineage is known; the delegated canvas exists
+    // once the core has moved the child out of its parent's tab.
+    await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveCount(0);
     await chip.click();
     await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveAttribute("data-focused", "true");
     const before = sent.get("agent_layout.focus") ?? 0;
