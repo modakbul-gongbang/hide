@@ -2,14 +2,14 @@
 // panes, a private hided the app starts through `hide connect`, and the
 // real Electron build. Each test owns its state directory and so its daemon.
 
-import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { expect, type ElectronApplication, type Page } from "@playwright/test";
 import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import "../../web/src/host";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
-import { detachedApp, DESKTOP_DIR, HIDE_CLI, hostLog, isolate, launch, relaunch, screenshot, type Isolated } from "./fixture";
+import { detachedApp, DESKTOP_DIR, HIDE_CLI, hostLog, isolate, launch, relaunch, screenshot, test, type Isolated } from "./fixture";
 
 let herdr: HerdrFixture;
 let run: Isolated;
@@ -122,10 +122,8 @@ test("lifetime: a second launch brings the first back, closing the window keeps 
   await shellShown(page);
   const pid = run.daemonPid();
   expect(pid).not.toBeNull();
-  // Issue 232: an e2e launch never makes its app the active one, so no window holds the keyboard.
-  const keyWindow = () => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getFocusedWindow() !== null);
+  // Issue 232: the host heard the e2e switch; the fixture's focus guard fails the test if the app still came forward.
   expect(hostLog(run.env).find((line) => line.event === "host.start")?.show_inactive).toBe(true);
-  expect(await keyWindow()).toBe(false);
 
   // B6: a second launch on the same profile exits and the first comes forward
   // (under e2e, shown again without taking the keyboard; the first instance's switch decides that).
@@ -135,7 +133,6 @@ test("lifetime: a second launch brings the first back, closing the window keeps 
   expect(code).toBe(0);
   await expect.poll(() => hostLog(run.env).some((line) => line.event === "host.reopen" && line.trigger === "second-instance")).toBe(true);
   expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
-  expect(await keyWindow()).toBe(false);
 
   // B7: closing the last window keeps the app; a Dock click (activate) brings a window back.
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());

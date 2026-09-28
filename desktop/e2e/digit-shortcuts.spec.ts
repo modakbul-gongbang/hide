@@ -9,14 +9,14 @@
 // opens the second row, and in Projects a raised Needs You agent carries its
 // number once. A private Herdr server, hided and Electron app.
 
-import { expect, test, type ElectronApplication, type Locator, type Page } from "@playwright/test";
+import { expect, type ElectronApplication, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import "../../web/src/host";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
-import { hostLog, isolate, launch, type Isolated } from "./fixture";
+import { hostLog, isolate, launch, test, type Isolated } from "./fixture";
 
 let herdr: HerdrFixture;
 let run: Isolated;

@@ -3,13 +3,13 @@
 // answers, so a pick, a cancel and a refused folder run with no native sheet.
 // Clone from URL clones a local bare repository through the same dialog.
 
-import { expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { expect, type ElectronApplication, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { sendEvent } from "../../web/e2e/wire";
-import { isolate, launch } from "./fixture";
+import { isolate, launch, test } from "./fixture";
 
 type Pick = { canceled: boolean; filePaths: string[] };
 

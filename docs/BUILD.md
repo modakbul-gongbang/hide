@@ -80,6 +80,6 @@ A packaged app does not need `hide` on `PATH`: it ships its own CLI and Herdr, a
 macOS may refuse the unsigned app's first launch until it is opened once with Open from the context menu.
 
 The desktop e2e runs beside the operator's own work on the same Mac (issue 232).
-Every launch through `desktop/e2e/fixture.ts` passes `--hide-show-inactive`, so the host shows its window without activating the app and a second launch never focuses it, and `--disable-backgrounding-occluded-windows`, so a window behind the operator's keeps painting and a capture by window id is current.
-A test window may still appear above other windows when it first shows, but it never takes the keyboard or becomes the frontmost app.
+Every launch through `desktop/e2e/fixture.ts` passes `--hide-show-inactive`, so the host shows its window behind every other window without activating the app and a second launch never focuses it, and `--disable-backgrounding-occluded-windows`, so the window keeps painting behind the operator's and a capture by window id is current.
+The fixture also preloads `desktop/e2e/focus-guard.cjs` into the app, which reports each time the app becomes active or a window takes the keyboard, and fails any test not tagged `@needs-focus` that saw one; specs take `test` from the fixture, and `launch` refuses a test that did not.
 A spec that needs the key window or native input (a page holding the keyboard, a pinch, a native drag) carries the `@needs-focus` tag (`NEEDS_FOCUS` in the fixture) and focuses the window itself; `pnpm --dir desktop e2e --grep-invert @needs-focus` runs everything that leaves the operator's keyboard alone, and CI runs the whole suite.

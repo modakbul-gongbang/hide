@@ -6,7 +6,7 @@
 // relaunch, and is a quiet notice in a plain browser tab. Everything runs on
 // a private Herdr server, hided and Electron profile (see `fixture.ts`).
 
-import { chromium, expect, test, type ElectronApplication, type Page } from "@playwright/test";
+import { chromium, expect, type ElectronApplication, type Page } from "@playwright/test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -14,7 +14,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
-import { hostLog, isolate, launch, NEEDS_FOCUS, relaunch, screenshot, shellPage, type Isolated } from "./fixture";
+import { hostLog, isolate, launch, NEEDS_FOCUS, relaunch, screenshot, shellPage, test, type Isolated } from "./fixture";
 
 test.describe.configure({ timeout: 240_000 });
 test.use({ actionTimeout: 15_000 });

@@ -1,10 +1,10 @@
-import { expect, test, type ElectronApplication } from "@playwright/test";
+import { expect, type ElectronApplication } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
-import { isolate, launch } from "./fixture";
+import { isolate, launch, test } from "./fixture";
 
 test("native tab composition and Korean inline naming", async () => {
   const herdr = await startHerdr();

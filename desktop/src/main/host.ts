@@ -447,12 +447,15 @@ export class DesktopHost {
   /**
    * Shows the window, and with `focus` gives it the keyboard. `show()` and
    * `focus()` activate the app, which takes the screen and the keyboard from
-   * whatever the operator is using; under `SHOW_INACTIVE_SWITCH` the window
-   * is only ordered in, and the app stays in the background.
+   * whatever the operator is using. Under `SHOW_INACTIVE_SWITCH` the window
+   * is ordered in without activating the app (`showInactive()` alone would
+   * still put it above every other window), then sent behind the operator's
+   * windows (`blur()` orders it to the back on macOS).
    */
   private present(window: BrowserWindow, focus: boolean): void {
     if (this.showInactive) {
       window.showInactive();
+      window.blur();
       return;
     }
     window.show();
