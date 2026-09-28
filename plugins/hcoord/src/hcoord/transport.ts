@@ -226,18 +226,21 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
         createdNow = true;
       }
     }
-    const restoreName = (): void => {
-      if (nameSpawnedAgent(intent)) process.stderr.write(`${JSON.stringify({ event: "hcoord.spawn_name_restored", at: new Date().toISOString(), intent: intent.key, pane: intent.pane, machine: intent.machine })}\n`);
+    const restoreName = (justStarted: boolean): void => {
+      if (nameSpawnedAgent(intent, justStarted)) process.stderr.write(`${JSON.stringify({ event: "hcoord.spawn_name_restored", at: new Date().toISOString(), intent: intent.key, pane: intent.pane, machine: intent.machine })}\n`);
     };
     // A retry repairs a name Herdr dropped from the execution this intent started.
-    if (!createdNow) restoreName();
+    if (!createdNow) restoreName(false);
     let identity = inspectSpawnedAgent(intent);
     if (identity.state === "absent") {
       if (!createdNow && args["resumeStart"] !== true) throw new HcoordError("spawn_uncertain", "saved pane has no confirmed agent; inspect it and retry this intent with --resume-start", { intent: intent.key, pane: intent.pane, unfinishedStep: "agent_start" });
       if (!createdNow) confirmSpawnPane(intent, intent.placement ?? parentPlacement(ledger.participants[intent.parent]!));
-      const startSlots = SPAWN_EVENT_SLOTS.started + (intent.kind === "codex" ? SPAWN_EVENT_SLOTS.beforeExternalStart : SPAWN_EVENT_SLOTS.beforeRegistration);
+      // A deliberate --resume-start replaces the start recorded for an agent that is gone.
+      const resetStart = !createdNow && intent.observedInstance != null;
+      const startSlots = (resetStart ? 1 : 0) + SPAWN_EVENT_SLOTS.started + (intent.kind === "codex" ? SPAWN_EVENT_SLOTS.beforeExternalStart : SPAWN_EVENT_SLOTS.beforeRegistration);
       requireEventSlots(startSlots, "agent_start");
       requireSpawnStorage(startSlots, "agent_start");
+      if (resetStart) intent = commit("agent.spawn.start_reset", { intent: intent.key }, new Date().toISOString()) as SpawnIntent;
       // An unconfirmed start (a timeout, agent_not_ready, a lost reply) may
       // still have started the agent; it continues exactly as a retry of
       // this intent would. Only Herdr's busy refusal proves nothing started.
@@ -255,7 +258,7 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
           throw new HcoordError("spawn_uncertain", "the agent was started but its execution could not be recorded; repair storage and retry this intent", { intent: intent.key, pane: intent.pane, unfinishedStep: "record_start", code: error instanceof HcoordError ? error.code : "storage_failed" });
         }
       }
-      restoreName();
+      restoreName(true);
       identity = inspectSpawnedAgent(intent);
       if (identity.state === "absent") throw unconfirmed ?? new HcoordError("spawn_uncertain", "agent start returned but its named execution is unavailable", { intent: intent.key, pane: intent.pane });
     }

@@ -267,6 +267,13 @@ export function execute(state: Ledger, operation: string, args: Args, at: string
     event(state, at, "agent.spawn_started", record.parent, record.key, { pane: record.pane });
     return { changed: true, value: record };
   }
+  if (operation === "agent.spawn.start_reset") {
+    const record = own(state.spawnIntents, required(args, "intent"));
+    if (!record || record.pane === null || record.status === "complete") throw new HcoordError("invalid_state", "spawn start reset has no active saved pane");
+    record.observedInstance = null; record.observedSession = null;
+    event(state, at, "agent.spawn_start_reset", record.parent, record.key, { pane: record.pane });
+    return { changed: true, value: record };
+  }
   if (operation === "agent.spawn.identity") {
     const record = own(state.spawnIntents, required(args, "intent"));
     if (!record || record.pane === null || record.status === "complete") throw new HcoordError("invalid_state", "spawn has no active saved pane");

@@ -20,7 +20,7 @@ const fs=require('node:fs'), path=require('node:path');
 const target=process.argv[4];
 fs.appendFileSync(path.join(process.env.HOME,'herdr-calls.log'),process.argv.slice(2).join(' ')+'\\n');
 if(process.argv[2]==='agent' && process.argv[3]==='get') {
-  const row=target==='parent-pane'?{name:'parent',session:'one',instance:'a'}:target==='child-pane'?{name:'child',session:'two',instance:'b'}:target?.endsWith('-pane') && fs.existsSync(path.join(process.env.HOME,target+'.started'))?{name:target.slice(0,-5),session:target+'-session',instance:target+'-instance'}:null;
+  const row=target==='parent-pane'?{name:'parent',session:'one',instance:'a'}:target==='child-pane'?{name:'child',session:'two',instance:'b'}:target?.endsWith('-pane') && fs.existsSync(path.join(process.env.HOME,target+'.started'))?{name:target.slice(0,-5),session:fs.existsSync(path.join(process.env.HOME,target+'.session'))?fs.readFileSync(path.join(process.env.HOME,target+'.session'),'utf8').trim():target+'-session',instance:target+'-instance'}:null;
   if(!row){process.stderr.write(JSON.stringify({error:{code:'agent_not_found'}}));process.exitCode=1;}
   else {const statusFile=path.join(process.env.HOME,target+'.status');const status=fs.existsSync(statusFile)?fs.readFileSync(statusFile,'utf8').trim():'idle';const instanceFile=path.join(process.env.HOME,target+'.instance');const instance=fs.existsSync(instanceFile)?fs.readFileSync(instanceFile,'utf8').trim():row.instance;const initializing=target.endsWith('-pane')&&!['parent-pane','child-pane'].includes(target)&&!fs.existsSync(path.join(process.env.HOME,row.name+'.initialized'));const nameLost=process.env.HCOORD_FAKE_NAME_LOST==='1'&&!['parent-pane','child-pane'].includes(target)&&!fs.existsSync(path.join(process.env.HOME,target+'.renamed'));process.stdout.write(JSON.stringify({result:{type:'agent_info',agent:{pane_id:target,name:process.env.HCOORD_FAKE_OBSERVER_REPLACED==='1'&&target==='parent-pane'?'replacement':nameLost?null:row.name,agent:process.env.HCOORD_FAKE_WRONG_KIND==='1'&&target==='kind-check-pane'?'claude':'codex',agent_session:initializing?undefined:{value:process.env.HCOORD_FAKE_OBSERVER_REPLACED==='1'&&target==='parent-pane'?'replacement-session':row.session},terminal_id:instance,agent_status:status,interactive_ready:process.env.HCOORD_FAKE_NOT_READY!=='1'}}}));}
 } else if(process.argv[2]==='pane' && process.argv[3]==='get') {
@@ -282,9 +282,14 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   await start();
   const lostArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "uncertain-lost", "--intent", "uncertain-lost"];
   assert.equal(JSON.parse(command(...lostArgs).stdout).error.code, "spawn_uncertain");
+  // Codex reports no session at start, and the pane's terminal survives an agent restarted in it.
   fs.rmSync(path.join(home, "uncertain-lost-pane.renamed"));
-  assert.equal(ok(...lostArgs).participant.name, "uncertain-lost", "a retry names the recorded execution again when Herdr drops its name after the rename");
-  assert.equal(fs.existsSync(path.join(home, "uncertain-lost-pane.renamed")), true);
+  const lostOnRetry = JSON.parse(command(...lostArgs).stdout).error;
+  assert.equal(lostOnRetry.code, "identity_conflict", "without a recorded session a retry cannot tell the started agent from one restarted in the same terminal");
+  assert.match(lostOnRetry.message, /herdr agent rename uncertain-lost-pane uncertain-lost/);
+  assert.equal(fs.existsSync(path.join(home, "uncertain-lost-pane.renamed")), false, "a retry without a recorded session never renames");
+  fs.writeFileSync(path.join(home, "uncertain-lost-pane.renamed"), "operator");
+  assert.equal(ok(...lostArgs).participant.name, "uncertain-lost", "the agent a person names binds on the same intent");
   env.HCOORD_FAKE_REPLACE_TERMINAL_ON_UNKNOWN = "1";
   await stop();
   await start();
@@ -300,13 +305,23 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   env.HCOORD_FAKE_RENAME_FAIL = "1";
   await stop();
   await start();
+  // A session reported at start, as Claude Code's is, lets a retry tell the started agent from a replacement.
+  for (const name of ["rename-refused", "resumed-start"]) fs.writeFileSync(path.join(home, `${name}.initialized`), "1");
+  const resumedArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "resumed-start", "--intent", "resumed-start"];
+  assert.equal(JSON.parse(command(...resumedArgs).stdout).error.detail.unfinishedStep, "name_agent");
   const renameArgs = ["agent", "spawn", "--parent", parent.id, "--machine", "local", "--session", "one", "--name", "rename-refused", "--intent", "rename-refused"];
   const renameRefused = JSON.parse(command(...renameArgs).stdout).error;
   assert.deepEqual([renameRefused.code, renameRefused.detail.unfinishedStep], ["spawn_uncertain", "name_agent"], "a rename Herdr refuses leaves the intent to retry");
   delete env.HCOORD_FAKE_RENAME_FAIL;
   await stop();
   await start();
-  assert.equal(ok(...renameArgs).participant.name, "rename-refused", "the retry names and binds the same execution");
+  assert.equal(ok(...renameArgs).participant.name, "rename-refused", "a retry names the recorded session again and binds it");
+  // The first agent exits; a deliberate --resume-start replaces the recorded start with the new session.
+  fs.rmSync(path.join(home, "resumed-start-pane.started"));
+  fs.writeFileSync(path.join(home, "resumed-start-pane.session"), "second-session");
+  assert.equal(JSON.parse(command(...resumedArgs).stdout).error.detail.unfinishedStep, "agent_start", "a gone agent is restarted only on --resume-start");
+  const restarted = ok(...resumedArgs, "--resume-start");
+  assert.deepEqual([restarted.participant.name, restarted.participant.session], ["resumed-start", "second-session"], "--resume-start is not held to the start it replaces");
   await stop();
   delete env.HCOORD_FAKE_NAME_LOST;
   env.HCOORD_FAKE_START_FAIL = "1";
