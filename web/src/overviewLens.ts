@@ -254,9 +254,11 @@ function laneActivity(lane: Lane): string {
 
 /**
  * The checkout lanes (D-05, D-38, B13, B14, B20). A lane is a checkout and
- * its agents; the primary checkout stands first (on All projects, each
- * project's while it has agents), then lanes with an agent whose turn it is,
- * working lanes, resting lanes, the most recently active first inside each.
+ * its agents; the primary checkout stands first, then lanes with an agent
+ * whose turn it is, working lanes, resting lanes, the most recently active
+ * first inside each. On All projects every project's primary checkout is
+ * ranked by its agents like any lane, first among equals, so one project's
+ * resting main never stands above another's turn; an idle one folds.
  * Inside a lane the nodes go turn, working, waiting on children, resting.
  * A node delegated from a node in an earlier lane takes its parent's column
  * when that column is still free, so the line runs straight down; nothing
@@ -277,7 +279,7 @@ export function buildLanes(projects: readonly BoardProject[], scope: "project" |
       const members = (byCheckout.get(checkout.id) ?? []).slice().sort((a, b) => byBucketThenActivity(a.agent, b.agent));
       const primary = checkout.id === primaryId;
       const buckets = new Set(members.map((value) => value.bucket));
-      const rank: LaneRank = primary ? "primary" : buckets.has("turn") ? "turn" : buckets.has("working") || buckets.has("delegating") ? "working" : "resting";
+      const rank: LaneRank = primary && scope === "project" ? "primary" : buckets.has("turn") ? "turn" : buckets.has("working") || buckets.has("delegating") ? "working" : "resting";
       const lane: Lane = {
         id: checkout.id,
         project: workspace,
@@ -294,24 +296,45 @@ export function buildLanes(projects: readonly BoardProject[], scope: "project" |
       else lanes.push(lane);
     }
   }
-  lanes.sort((a, b) => RANK_ORDER[a.rank] - RANK_ORDER[b.rank] || laneActivity(b).localeCompare(laneActivity(a)));
+  lanes.sort((a, b) => RANK_ORDER[a.rank] - RANK_ORDER[b.rank] || Number(b.primary) - Number(a.primary) || laneActivity(b).localeCompare(laneActivity(a)));
   // Columns over the lanes in the order they are drawn, the folded cleanup
-  // lanes last, so a line stays straight once they are unfolded too.
+  // lanes last, so a line stays straight once they are unfolded too. A line
+  // down to a later lane keeps its column free in every lane it crosses, so
+  // it never runs through another agent's node (efs2).
+  const drawn = [...lanes, ...cleanup];
+  const laneOf = new Map<string, string>();
+  const laneIndex = new Map<string, number>();
+  drawn.forEach((lane, index) => {
+    for (const node of lane.nodes) {
+      laneOf.set(node.agent.pane_id, lane.id);
+      laneIndex.set(node.agent.pane_id, index);
+    }
+  });
+  const spans = agents.flatMap(({ agent }) => {
+    const parent = agent.lineage_parent_pane_id;
+    const from = parent ? laneIndex.get(parent) : undefined;
+    const to = laneIndex.get(agent.pane_id);
+    return parent && from !== undefined && to !== undefined && to > from + 1 ? [{ parent, from, to }] : [];
+  });
   const column = new Map<string, number>();
   let columns = 0;
-  for (const lane of [...lanes, ...cleanup]) {
+  drawn.forEach((lane, index) => {
+    const crossing = new Set(spans.filter((span) => span.from < index && index < span.to).map((span) => column.get(span.parent)));
     let next = 0;
     for (const node of lane.nodes) {
       const parent = node.agent.lineage_parent_pane_id;
       const wanted = parent !== null && parent !== undefined ? column.get(parent) : undefined;
-      node.column = wanted !== undefined && wanted >= next ? wanted : next;
+      if (wanted !== undefined && wanted >= next) {
+        node.column = wanted;
+      } else {
+        node.column = next;
+        while (crossing.has(node.column)) node.column += 1;
+      }
       column.set(node.agent.pane_id, node.column);
       next = node.column + 1;
     }
     columns = Math.max(columns, next);
-  }
-  const laneOf = new Map<string, string>();
-  for (const lane of [...lanes, ...cleanup]) for (const node of lane.nodes) laneOf.set(node.agent.pane_id, lane.id);
+  });
   const delegations: Delegation[] = [];
   for (const { agent } of agents) {
     const parent = agent.lineage_parent_pane_id;

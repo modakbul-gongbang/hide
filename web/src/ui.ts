@@ -74,9 +74,13 @@ export type OverviewLens = {
   focusTask: string | null;
 };
 
-/** Where every way into a Project's Overview lands (D-04, D-17): Agents › checkouts, the given lane selected. */
-export function entryLens(lane: string | null): OverviewLens {
-  return { tab: "agents", agentsMode: "checkouts", tasksMode: "board", lane, folds: [], focusTask: null };
+/**
+ * Where every way into a Project's Overview lands (D-04, D-17): Agents ›
+ * checkouts, the given lane selected. The Issues mode is the page's, the one
+ * All projects' Tasks shows too (task-agents-views D-10).
+ */
+export function entryLens(lane: string | null, tasksMode: TasksMode): OverviewLens {
+  return { tab: "agents", agentsMode: "checkouts", tasksMode, lane, folds: [], focusTask: null };
 }
 
 /**
@@ -298,9 +302,11 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setAgentsMode: (agentsMode) => set({ agentsMode }),
   // A lens change is a new screen value, so Recent Panels records the
   // Overview as it now is; the open request stays, since nothing moved away.
+  // An Issues mode chosen here is the page's as well.
   setLens: (patch) => {
     const screen = get().screen;
-    if (screen?.kind === "overview") set({ screen: { ...screen, lens: { ...screen.lens, ...patch } } });
+    if (screen?.kind !== "overview") return;
+    set({ screen: { ...screen, lens: { ...screen.lens, ...patch } }, ...(patch.tasksMode ? { tasksMode: patch.tasksMode } : {}) });
   },
   setRelation: (relation) => set({ relation }),
   setSidebarMode: (sidebarMode) => set({ sidebarMode }),

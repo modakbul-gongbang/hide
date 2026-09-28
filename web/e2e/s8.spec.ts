@@ -92,14 +92,14 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     const sent = countSent(page, last);
     await open(page, daemon);
 
-    // The Overview's Sessions tab shows the Project's Sessions (B1); before
+    // The Overview's Sessions tile shows the Project's Sessions (B1); before
     // any agent has written a session here the list says so.
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
     await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: "fixture" }).click();
     await expect(page.locator("[data-overview-screen]")).toBeVisible();
     await expect(page.locator("[data-overview-screen]")).not.toContainText(/memory/i);
-    await page.locator('[data-overview-tab="sessions"]').click();
+    await page.locator('[data-lens-tile-button="sessions"]').click();
     const screen = page.locator("[data-sessions-screen]");
     await expect(screen).toBeVisible();
     await expect(page.locator("[data-sessions-state]")).toHaveAttribute("data-sessions-state", "empty", { timeout: 20_000 });
@@ -112,8 +112,8 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     // Arriving again reads the history afresh: newest first, the Project's own
     // sessions only, the unreadable one dated by its file (B1, B2).
     const files = writeSessions(daemon.home, root, alpha);
-    await page.locator('[data-overview-tab="tasks"]').click();
-    await page.locator('[data-overview-tab="sessions"]').click();
+    await page.locator('[data-lens-tile-button="issues"]').click();
+    await page.locator('[data-lens-tile-button="sessions"]').click();
     const rows = page.locator("[data-session-row]");
     await expect(rows).toHaveCount(4, { timeout: 20_000 });
     expect(await rows.evaluateAll((items) => items.map((item) => item.getAttribute("data-session-row")))).toEqual([
@@ -259,9 +259,8 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await expect(other.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
     await other.locator('[data-main-tab="projects"]').click();
     await other.locator("[data-main-project]", { hasText: "fixture" }).click();
-    await other.locator('[data-overview-tab="agents"]').click();
-    const [, second] = herdr.panes;
-    await other.locator(`[data-overview-screen] [data-agent-open="${second}"]`).click();
+        const [, second] = herdr.panes;
+    await other.locator(`[data-overview-screen] [data-lens-open="${second}"]`).click();
     await expect(other.locator("[data-workspace-screen]")).toBeVisible();
     await expect(other.locator(`[data-pane-view="${second}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     // This window has seen the focus move, and its Project and list stayed.
@@ -283,7 +282,7 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await other.locator('[data-main-tab="projects"]').click();
     await expect(other.locator("[data-main-project]", { hasText: "alpha" })).toBeVisible({ timeout: 20_000 });
     await other.locator("[data-main-project]", { hasText: "alpha" }).click();
-    await other.locator('[data-overview-tab="sessions"]').click();
+    await other.locator('[data-lens-tile-button="sessions"]').click();
     await expect(other.locator("[data-session-row]")).toHaveCount(1, { timeout: 20_000 });
     await expect(other.locator('[data-session="claude-alpha"]')).toContainText("alpha only request");
     await screenshot(other, "s8-second-window");

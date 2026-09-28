@@ -93,7 +93,6 @@ export function MainScreen({ actions }: { actions: Actions }) {
     openAgent: actions.openAgent,
     openIssue: (_owner, task) => {
       setView("tasks");
-      setTasksMode("board");
       setFocusTask(task.key);
     },
     openGitHub: (url, deviceId) => actions.openPullRequest(url, deviceId, true),

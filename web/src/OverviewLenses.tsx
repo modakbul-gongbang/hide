@@ -571,12 +571,9 @@ function LaneHead({ lane, scope, handlers, now }: { lane: Lane; scope: "project"
 
 function LaneRow({ lane, scope, selected, columns, handlers, now }: { lane: Lane; scope: "project" | "all"; selected: boolean; columns: number; handlers: LensHandlers; now: number }) {
   return (
-    <div
-      className={cn("flex min-w-0 border-b border-border", selected && "rounded-sm ring-1 ring-primary")}
-      data-lens-lane={lane.id}
-      data-lane-rank={lane.rank}
-      data-selected={selected ? "true" : undefined}
-    >
+    <div className="relative flex min-w-0 border-b border-border" data-lens-lane={lane.id} data-lane-rank={lane.rank} data-selected={selected ? "true" : undefined}>
+      {/* The selected outline sits over the sticky head, which would otherwise paint over it. */}
+      {selected ? <span aria-hidden="true" className="pointer-events-none absolute inset-0 z-30 rounded-sm ring-1 ring-inset ring-primary" /> : null}
       <div className="sticky left-0 z-20 w-(--lens-lane-head) shrink-0 border-r border-border bg-background">
         <LaneHead lane={lane} scope={scope} handlers={handlers} now={now} />
       </div>

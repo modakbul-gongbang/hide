@@ -167,7 +167,7 @@ describe("Recent Panels over the every-project Overview and each Project's Overv
     useUiStore.setState({ screen: null, cycle: null, opening: null });
   });
 
-  const overview = (projectId: string, lens: OverviewLens = entryLens(null)): Screen => ({ kind: "overview", projectId, lens });
+  const overview = (projectId: string, lens: OverviewLens = entryLens(null, "board")): Screen => ({ kind: "overview", projectId, lens });
 
   /** The page showing `screen` over `rest`, observed as the page observes a move. */
   function show(rest: SnapshotRest, screen: Screen) {

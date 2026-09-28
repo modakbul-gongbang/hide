@@ -173,6 +173,15 @@ describe("the checkout lanes", () => {
     expect(board.columns).toBe(3);
   });
 
+  it("keeps a line's column free in the lanes it crosses, so it never runs through another agent's node (B14)", () => {
+    const project = workspace([checkout("main", { primary: true, panes: ["observer"] }), checkout("asking", { panes: ["asking"] }), checkout("impl", { panes: ["impl"] })]);
+    const agents = [agent("observer", "working", { waiting_on_descendants: true }), agent("asking", "needs_you", { demand: "question" }), agent("impl", "working", { lineage_parent_pane_id: "observer" })];
+    const board = buildLanes(one(project, agents), "project");
+    expect(board.lanes.map((lane) => lane.id)).toEqual(["main", "asking", "impl"]);
+    expect(board.lanes.map((lane) => lane.nodes.map((node) => node.column))).toEqual([[0], [1], [0]]);
+    expect(board.columns).toBe(2);
+  });
+
   it("folds worktrees with no agent, and merged or folder-less ones whose agents rest, into their own lines; a merged one with working agents stays a lane (B18, B20)", () => {
     const project = workspace([
       checkout("main", { primary: true }),
@@ -187,11 +196,24 @@ describe("the checkout lanes", () => {
     expect(board.cleanup.map((lane) => [lane.id, lane.cleanup])).toEqual([["merged-rest", "merged"], ["gone", "missing"]]);
   });
 
-  it("on All projects leads with each project's main while it has agents and folds an idle main with the idle worktrees (B30)", () => {
+  it("on All projects ranks each project's main by its agents, main first among equals, and folds an idle main with the idle worktrees (B30)", () => {
     const a = workspace([checkout("a-main", { primary: true, panes: ["a1"] })], { id: "a" });
     const b = workspace([{ ...checkout("b-main", { primary: true }), workspace_id: "b" }, { ...checkout("b-wt", { panes: ["b1"] }), workspace_id: "b" }], { id: "b" });
-    const board = buildLanes([{ workspace: a, agents: [agent("a1", "seen")], device: null }, { workspace: b, agents: [agent("b1", "needs_you")], device: null }], "all");
-    expect(board.lanes.map((lane) => [lane.project.id, lane.id])).toEqual([["a", "a-main"], ["b", "b-wt"]]);
+    const c = workspace([{ ...checkout("c-wt", { panes: ["c1"] }), workspace_id: "c" }, { ...checkout("c-main", { primary: true, panes: ["c2"] }), workspace_id: "c" }], { id: "c" });
+    const board = buildLanes(
+      [
+        { workspace: a, agents: [agent("a1", "seen")], device: null },
+        { workspace: b, agents: [agent("b1", "needs_you")], device: null },
+        { workspace: c, agents: [agent("c1", "working", { last_activity: "0000000000009" }), agent("c2", "working")], device: null },
+      ],
+      "all",
+    );
+    expect(board.lanes.map((lane) => [lane.project.id, lane.id, lane.rank])).toEqual([
+      ["b", "b-wt", "turn"],
+      ["c", "c-main", "working"],
+      ["c", "c-wt", "working"],
+      ["a", "a-main", "resting"],
+    ]);
     expect(board.empty.map((lane) => lane.id)).toEqual(["b-main"]);
   });
 });

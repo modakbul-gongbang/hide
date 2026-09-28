@@ -111,7 +111,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   const lensHandlers: LensHandlers = {
     openCheckout: (owner, checkout) => actions.openWorkspace(owner.device_id, checkout.workspace_id, checkout.id),
     openAgent: actions.openAgent,
-    openIssue: (_owner, task) => setLens({ tab: "issues", tasksMode: "board", focusTask: task.key }),
+    openIssue: (_owner, task) => setLens({ tab: "issues", focusTask: task.key }),
     openGitHub: (url, deviceId) => actions.openPullRequest(url, deviceId, true),
     cleanup: (owner, checkout) => useUiStore.getState().setWorkspaceDialog({ kind: "delete_worktree", workspaceId: owner.id, checkoutId: checkout.id }),
     toggleFold: (fold: LensFold) => setLens({ folds: lens.folds.includes(fold) ? lens.folds.filter((open) => open !== fold) : [...lens.folds, fold] }),
