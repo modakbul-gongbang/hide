@@ -31,6 +31,7 @@ export function CheckoutCardHint({
   card,
   description,
   onOpenPullRequest,
+  onOpenWorkspace,
   children,
 }: {
   card: CheckoutCard;
@@ -38,10 +39,12 @@ export function CheckoutCardHint({
   description: string;
   /** Opens the pull request the header names; `external` asks for the default browser. */
   onOpenPullRequest: (url: string, external: boolean) => void;
+  /** Where the card was opened from goes to the checkout's Workspace; the card then offers `↵ Workspace`, the same move (PRD overview-lenses-tiles-agents B16). */
+  onOpenWorkspace?: () => void;
   children: ReactNode;
 }) {
   const { open, onOpenChange, triggerProps } = useHintOpen();
-  const single = cardSingleValue(card);
+  const single = onOpenWorkspace ? null : cardSingleValue(card);
   if (single !== null) return <Hint label={single}>{children}</Hint>;
   const header = card.header;
   return (
@@ -62,6 +65,19 @@ export function CheckoutCardHint({
             <div className="text-subhead font-medium text-destructive" data-checkout-card-missing="true">
               {header.label}
             </div>
+          ) : null}
+          {onOpenWorkspace ? (
+            <button
+              type="button"
+              data-checkout-card-workspace="true"
+              className="inline-flex items-center gap-xxs self-start rounded-xs text-caption font-medium text-foreground outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring"
+              onClick={(event) => {
+                event.stopPropagation();
+                onOpenWorkspace();
+              }}
+            >
+              ↵ Workspace
+            </button>
           ) : null}
           {header?.kind === "pull_request" ? <div className="border-t border-border" /> : null}
           <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-md gap-y-xs text-caption">

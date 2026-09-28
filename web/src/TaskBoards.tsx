@@ -17,13 +17,12 @@ import {
   LockIcon,
   PlayIcon,
   PlusIcon,
-  ServerIcon,
   XIcon,
 } from "lucide-react";
-import { useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { createContext, useContext, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { Actions } from "./actions";
-import { AgentMark } from "./AgentMark";
-import { lineTone, markTone, rowAccessibleName, rowLine } from "./agentRow";
+import { markTone } from "./agentRow";
+import { useMeasuredPaths } from "./measuredPaths";
 import { AgentRowItem } from "./components/agent-row";
 import { StatusMark } from "./components/status-mark";
 import { Badge } from "./components/ui/badge";
@@ -35,14 +34,9 @@ import { Hint } from "./components/ui/tooltip";
 import { LinkIssuePopover } from "./IssueDialogs";
 import { cn } from "./lib/utils";
 import {
-  INBOX_GROUPS,
   STAGES,
-  agentGroupCards,
   buildDependencies,
-  prChip,
   stageCards,
-  type AgentCard,
-  type AgentsBoard,
   type BoardScope,
   type DependencyGraph,
   type PrChip,
@@ -52,11 +46,11 @@ import {
 } from "./projectBoard";
 import { relativeActivity } from "./projects";
 import type { AgentRow, Task } from "./snapshot";
-import { useUiStore, type TasksMode } from "./ui";
+import type { TasksMode } from "./ui";
 
-// The Tasks and Agents views (PRD task-agents-views, reworked issue-first on
+// The Tasks views (PRD task-agents-views, reworked issue-first on
 // 2026-09-28), drawn the same for a Project and for All projects:
-// `buildTasks`, `buildDependencies` and `buildAgents` decide every card and
+// `buildTasks` and `buildDependencies` decide every card and
 // row, and this file only draws them and routes the clicks. A card's title
 // opens its checkout, an agent row its pane, the id its issue and the PR chip
 // its pull request; a backlog card starts work, a worktree with no issue
@@ -71,6 +65,13 @@ const DONE_NAMES = 6;
 
 /** A card draws its agents without their descendants' fold. */
 const NO_ROWS: AgentRow[] = [];
+
+/**
+ * The issue an issue chip elsewhere on the Overview asked for (PRD
+ * overview-lenses-tiles-agents B17, B24): its card wears the selection ring
+ * and is brought into view.
+ */
+export const FocusedTask = createContext<string | null>(null);
 
 /** What a board's cards ask of the page around them. */
 export type BoardHandlers = {
@@ -350,12 +351,10 @@ function DoneColumn({
   );
 }
 
-/** `Board | List | Dependencies` on the right of the tab row, a mode of the Tasks view rather than a tab (D-02). */
-export function TasksModeToggle() {
-  const mode = useUiStore((s) => s.tasksMode);
-  const setMode = useUiStore((s) => s.setTasksMode);
+/** `Board | List | Dependencies`, a mode of the Tasks view rather than a tab (D-02): on the right of All projects' tab row, and of a Project's facts line while its Issues tile is chosen. */
+export function TasksModeToggle({ mode, onChange }: { mode: TasksMode; onChange: (mode: TasksMode) => void }) {
   return (
-    <ToggleGroup type="single" value={mode} onValueChange={(value) => value && setMode(value as TasksMode)} aria-label="Tasks mode" data-tasks-mode={mode}>
+    <ToggleGroup type="single" value={mode} onValueChange={(value) => value && onChange(value as TasksMode)} aria-label="Tasks mode" data-tasks-mode={mode}>
       <ToggleGroupItem value="board" data-tasks-mode-item="board">
         Board
       </ToggleGroupItem>
@@ -370,7 +369,7 @@ export function TasksModeToggle() {
 }
 
 /** The mark a task's id carries: an issue's circle-dot, a local issue's page (D-06). */
-function TaskGlyph({ task, className }: { task: Task; className?: string }) {
+export function TaskGlyph({ task, className }: { task: Task; className?: string }) {
   const Glyph = task.source === "github" ? CircleDotIcon : FileTextIcon;
   return <Glyph aria-hidden="true" className={cn("size-(--size-icon-sm) shrink-0", className)} />;
 }
@@ -412,13 +411,16 @@ export function TaskCardView({
   graph?: { status: string | null };
 }) {
   const { checkout, task, facts } = card;
+  const focusedTask = useContext(FocusedTask);
+  const focused = focusedTask !== null && focusedTask === task?.key;
   const halo = card.needsYou ? (card.error ? "border-destructive shadow-[0_0_var(--home-halo-radius)_var(--destructive)]" : "border-warning shadow-[0_0_var(--home-halo-radius)_var(--warning)]") : "border-border";
   const blocked = card.blockedBy.length > 0;
   const dimmed = card.stage === "done" || card.idle || (graph !== undefined && blocked);
   const hasFacts = facts.files !== null || facts.ahead !== null || facts.pr !== null || facts.behind !== null || (task !== null && card.branch !== null);
   return (
     <article
-      className={cn("group/card flex min-w-0 flex-col gap-xs rounded-md border bg-card p-sm outline-none focus-visible:ring-1 focus-visible:ring-ring", halo, dimmed && "opacity-(--opacity-secondary)")}
+      className={cn("group/card flex min-w-0 flex-col gap-xs rounded-md border bg-card p-sm outline-none focus-visible:ring-1 focus-visible:ring-ring", halo, dimmed && "opacity-(--opacity-secondary)", focused && "ring-1 ring-primary")}
+      data-focused-task={focused ? "true" : undefined}
       data-overview-card={card.id}
       data-stage={card.stage}
       data-needs-you={card.needsYou ? "true" : undefined}
@@ -601,7 +603,7 @@ function TaskId({ task, help }: { task: Task; help: string }) {
   );
 }
 
-const PR_TONE: Record<PrChip["tone"], string> = {
+export const PR_TONE: Record<PrChip["tone"], string> = {
   open: "text-pr-open",
   draft: "text-pr-draft",
   merged: "text-pr-merged",
@@ -886,22 +888,17 @@ export function DependenciesView({
   );
 }
 
-type Arrow = { id: string; d: string };
-
 /** The layered graph: one column per depth of blockers, and the arrows drawn over it from each card's right middle to the next one's left middle. */
 function DependencyGraphView({ graph, draw }: { graph: DependencyGraph; draw: (value: TaskCard) => ReactNode }) {
   const box = useRef<HTMLDivElement>(null);
   const marker = `dependency-arrow-${useId()}`;
-  const [arrows, setArrows] = useState<Arrow[]>([]);
-  useLayoutEffect(() => {
-    const root = box.current;
-    if (!root) return;
-    const measure = () => {
-      const origin = root.getBoundingClientRect();
-      const at = (id: string) => root.querySelector(`[data-dependency-node="${CSS.escape(id)}"]`)?.getBoundingClientRect() ?? null;
-      const next = graph.edges.flatMap((edge): Arrow[] => {
-        const from = at(edge.from);
-        const to = at(edge.to);
+  const arrows = useMeasuredPaths(
+    box,
+    "[data-dependency-node]",
+    (origin, at) =>
+      graph.edges.flatMap((edge) => {
+        const from = at("data-dependency-node", edge.from);
+        const to = at("data-dependency-node", edge.to);
         if (!from || !to) return [];
         const x1 = from.right - origin.left;
         const y1 = from.top + from.height / 2 - origin.top;
@@ -909,16 +906,9 @@ function DependencyGraphView({ graph, draw }: { graph: DependencyGraph; draw: (v
         const y2 = to.top + to.height / 2 - origin.top;
         const bend = (x2 - x1) / 2;
         return [{ id: `${edge.from}>${edge.to}`, d: `M ${x1} ${y1} C ${x1 + bend} ${y1}, ${x2 - bend} ${y2}, ${x2} ${y2}` }];
-      });
-      setArrows((current) => (JSON.stringify(current) === JSON.stringify(next) ? current : next));
-    };
-    measure();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(measure);
-    observer.observe(root);
-    for (const node of root.querySelectorAll("[data-dependency-node]")) observer.observe(node);
-    return () => observer.disconnect();
-  }, [graph]);
+      }),
+    [graph],
+  );
   return (
     <div ref={box} className="relative flex w-fit items-start gap-(--home-dependency-gap)" data-dependency-graph="true" data-dependency-edges={graph.edges.length}>
       {graph.layers.map((layer, index) => (
@@ -937,120 +927,5 @@ function DependencyGraphView({ graph, draw }: { graph: DependencyGraph; draw: (v
         ))}
       </svg>
     </div>
-  );
-}
-
-/**
- * The Agents view, an inbox: the agents waiting on the operator first (a
- * question, or a result not yet looked at), then the ones working, then the
- * resting ones, and folded last the resting ones in a merged worktree, which
- * are there only to be closed. A delegated agent sits under its parent. A
- * row opens its pane; its task or branch and pull request sit on the right.
- */
-export function AgentsView({ board, focusedPaneId, actions }: { board: AgentsBoard; focusedPaneId: string | null; actions: Actions }) {
-  const [closed, setClosed] = useState<Set<string>>(() => new Set(["cleanup"]));
-  if (board.cards.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-overview-empty="true" data-agents-empty="true">
-        <p>실행 중인 에이전트가 없습니다</p>
-      </div>
-    );
-  }
-  return (
-    <div className="flex flex-col gap-md px-lg pb-xl" data-overview-columns="agents" data-agents-inbox="true">
-      {INBOX_GROUPS.map(({ group, label }) => {
-        const cards = agentGroupCards(board, group);
-        if (cards.length === 0) return null;
-        const open = !closed.has(group);
-        return (
-          <section key={group} aria-label={label} data-inbox-group={group} className="flex flex-col">
-            <GroupHead
-              open={open}
-              onToggle={() => setClosed((current) => toggled(current, group))}
-              label={label}
-              count={cards.filter((value) => value.depth === 0).length}
-              tone={group === "needs" ? "text-warning" : undefined}
-              data={{ "data-inbox-toggle": group }}
-            >
-              {group === "cleanup" ? <span className="ml-auto text-caption font-normal text-muted-foreground">머지된 워크트리에서 쉬는 에이전트</span> : null}
-            </GroupHead>
-            {open ? (
-              <ul className="flex flex-col" role="list">
-                {cards.map((value) => (
-                  <AgentInboxRow key={`${value.place.projectId}:${value.agent.pane_id}`} card={value} selected={value.agent.pane_id === focusedPaneId} onOpen={actions.openAgent} />
-                ))}
-              </ul>
-            ) : null}
-          </section>
-        );
-      })}
-    </div>
-  );
-}
-
-/**
- * One agent: its mark, provider and title, the line it asks or reports
- * under it; on the right its task (the issue id, else the checkout), the
- * pull request and its age. The whole row opens the pane; the task chip and
- * the PR chip open what they name.
- */
-function AgentInboxRow({ card, selected, onOpen }: { card: AgentCard; selected: boolean; onOpen: (paneId: string) => void }) {
-  const { agent, task } = card;
-  const line = rowLine(agent);
-  const request = line && line.mode !== "quiet" ? line : null;
-  const attention = agent.group === "needs_you" || agent.group === "done";
-  const pr = card.checkout?.pull_request ? prChip(card.checkout.pull_request) : null;
-  return (
-    <li
-      className={cn("relative flex min-w-0 items-start gap-sm rounded-sm py-xs pr-xs", attention && card.depth === 0 && "bg-card", selected && "bg-secondary")}
-      style={{ paddingLeft: `calc(var(--spacing-xs) + ${card.depth} * var(--size-lineage-indent))` }}
-      data-agent-card={agent.pane_id}
-      data-overview-root={card.depth === 0 ? agent.pane_id : undefined}
-      data-depth={card.depth}
-    >
-      <button type="button" aria-label={rowAccessibleName(agent, card.device)} data-agent-open={agent.pane_id} className="absolute inset-0 rounded-sm outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring" onClick={() => onOpen(agent.pane_id)} />
-      <span className="pointer-events-none relative flex min-w-0 flex-1 flex-col gap-xxs" aria-hidden="true">
-        <span className="flex min-w-0 items-center gap-xs">
-          <StatusMark symbol={agent.symbol} className={markTone(agent)} />
-          <AgentMark kind={agent.agent_kind} />
-          <span className={cn("min-w-0 truncate text-body text-foreground", attention && "font-semibold")}>{agent.identity_label}</span>
-        </span>
-        {request ? <span className={cn("line-clamp-2 break-words pl-(--size-checkout-metadata-inset) text-caption", lineTone(request, agent.demand))}>{request.text}</span> : null}
-      </span>
-      <span className="relative flex shrink-0 items-center gap-sm pt-xxs font-mono text-caption text-muted-foreground">
-        {card.device ? (
-          <Badge variant="outline" className="pointer-events-none" data-device-chip={card.device}>
-            <ServerIcon aria-hidden="true" />
-            {card.device}
-          </Badge>
-        ) : null}
-        {task ? <AgentTaskChip task={task} help={card.taskHelp ?? task.title} /> : card.where ? <span className="pointer-events-none max-w-(--home-collapsed-width) truncate">{card.where}</span> : null}
-        {pr ? <PrChipView pr={pr} review={false} /> : null}
-        <span className="pointer-events-none min-w-(--size-control-compact) text-right">{agent.elapsed}</span>
-      </span>
-    </li>
-  );
-}
-
-/** The task an agent works on, by its id; it opens the issue (D-12). */
-function AgentTaskChip({ task, help }: { task: Task; help: string }) {
-  const chip = (
-    <span className="inline-flex max-w-(--size-pane-child-chip-max) items-center gap-xxs">
-      <TaskGlyph task={task} />
-      <span className="truncate">{task.id ?? task.title}</span>
-    </span>
-  );
-  return (
-    <Hint label={help}>
-      {task.url ? (
-        <a href={task.url} target="_blank" rel="noopener noreferrer" className="rounded-xs outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring" data-agent-task-chip={task.key}>
-          {chip}
-        </a>
-      ) : (
-        <span className="rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring" data-agent-task-chip={task.key} tabIndex={0}>
-          {chip}
-        </span>
-      )}
-    </Hint>
   );
 }

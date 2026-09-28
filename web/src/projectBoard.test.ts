@@ -1,10 +1,10 @@
 // The Tasks and Agents views (PRD task-agents-views, reworked issue-first on
 // 2026-09-28): four stages from Git, a card per issue and per worktree, the
 // backlog that starts work, the pull request as the result, at most two
-// agents per card, the Agents inbox, and both scopes.
+// agents per card, and both scopes.
 
 import { describe, expect, it } from "vitest";
-import { agentGroupCards, allProjectsStats, buildAgents, buildDependencies, buildTasks, formatBytes, projectStats, shownAgents, stageCards, stageOf, waitingCount, type BoardProject } from "./projectBoard";
+import { allProjectsStats, buildDependencies, buildTasks, formatBytes, projectStats, shownAgents, stageCards, stageOf, type BoardProject } from "./projectBoard";
 import type { AgentRow, Checkout, PullRequest, Task, Workspace } from "./snapshot";
 
 const NOW = 1_800_000_000_000;
@@ -283,51 +283,6 @@ describe("the Dependencies mode", () => {
       ["#12", "#11", "#20"],
     ]);
     expect(graph.edges.filter((edge) => edge.from.includes("#2") && edge.to.includes("#2"))).toHaveLength(1);
-  });
-});
-
-describe("the Agents board", () => {
-  it("draws every agent, a delegated one right under its parent in the parent's column, with its task and its PR in the chip's tooltip (B11)", () => {
-    const project = workspace([checkout("feat/waiting-band", { panes: ["a", "a2"], task: "github:acme/project#170", pr: pr("open") }), checkout("quick", { panes: ["b"] })], { tasks: [task(170)] });
-    const board = buildAgents(one(project, [agent("a", "needs_you", { lineage_child_pane_ids: ["a2"] }), agent("a2", "working", { lineage_parent_pane_id: "a", delegated: true }), agent("b", "seen"), agent("elsewhere", "working")]), "project");
-    expect(board.cards.map((card) => [card.agent.pane_id, card.depth])).toEqual([
-      ["a", 0],
-      ["a2", 1],
-      ["b", 0],
-    ]);
-    expect(agentGroupCards(board, "needs").map((card) => card.agent.pane_id)).toEqual(["a", "a2"]);
-    expect(agentGroupCards(board, "resting").map((card) => card.agent.pane_id)).toEqual(["b"]);
-    expect(agentGroupCards(board, "working")).toEqual([]);
-    const [first] = board.cards;
-    expect(first?.task?.id).toBe("#170");
-    expect(first?.taskHelp).toBe("Task 170 · feat/waiting-band · PR #7");
-    expect(first?.where).toBe("feat/waiting-band");
-    expect(board.cards[2]?.task).toBeNull();
-  });
-
-  it("puts the agents waiting on the operator first, an error before a question before a result, and counts each lineage once", () => {
-    const project = workspace([checkout("feat", { panes: ["ask", "fail", "done", "busy", "child"] }), checkout("old", { panes: ["rest"], merged: true })]);
-    const agents = [
-      agent("done", "done", { unread: true }),
-      agent("ask", "needs_you", { demand: "question", lineage_child_pane_ids: ["child"] }),
-      agent("child", "working", { lineage_parent_pane_id: "ask", delegated: true }),
-      agent("busy"),
-      agent("fail", "needs_you", { demand: "error" }),
-      agent("rest", "seen"),
-    ];
-    const board = buildAgents(one(project, agents), "project");
-    expect(agentGroupCards(board, "needs").map((card) => card.agent.pane_id)).toEqual(["fail", "ask", "child", "done"]);
-    expect(agentGroupCards(board, "working").map((card) => card.agent.pane_id)).toEqual(["busy"]);
-    // A resting agent in a merged worktree is there only to be closed.
-    expect(agentGroupCards(board, "resting")).toEqual([]);
-    expect(agentGroupCards(board, "cleanup").map((card) => card.agent.pane_id)).toEqual(["rest"]);
-    expect(waitingCount(board)).toBe(3);
-  });
-
-  it("names the project before the checkout on All projects and the device of a remote agent (B12)", () => {
-    const board = buildAgents([{ workspace: workspace([checkout("main", { worktree: false, panes: ["r"] })], { id: "sasu" }), agents: [agent("r")], device: "mini" }], "all");
-    expect(board.cards[0]?.where).toBe("sasu · main");
-    expect(board.cards[0]?.device).toBe("mini");
   });
 });
 

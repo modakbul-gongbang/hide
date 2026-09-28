@@ -17,7 +17,7 @@ import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow, type AgentRowMenu } from "./components/sidebar-agent-row";
 import { StatusBadge } from "./components/status-badge";
 import { WeeklyUsage } from "./components/weekly-usage";
-import { agentPlaces, agentSections, allAgents, allLineageWorkspaces, allProjectsCount, type ListedAgent } from "./navigation";
+import { agentPlaces, agentSections, allAgents, allLineageWorkspaces, allProjectsCount, overviewScreen, type ListedAgent } from "./navigation";
 import { foldedLineage, type FoldedLineage } from "./lineageSummary";
 import {
   activeCheckouts,
@@ -667,7 +667,7 @@ function OverviewRow({ workspace, selected }: { workspace: Workspace; selected: 
           selected ? "bg-secondary font-medium" : "hover:bg-accent",
         )}
         style={{ paddingLeft: CHECKOUT_COLUMN }}
-        onClick={() => useUiStore.getState().setScreen({ kind: "overview", projectId: workspace.id })}
+        onClick={() => useUiStore.getState().setScreen(overviewScreen(useShellStore.getState().rest, workspace.id))}
       >
         <LayoutDashboardIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
         <span className="min-w-0 flex-1 truncate">Overview</span>
@@ -1063,7 +1063,7 @@ function menuHost(): MenuHost {
 function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["id"]) {
   switch (item) {
     case "open_overview":
-      return useUiStore.getState().setScreen({ kind: "overview", projectId: workspace.id });
+      return useUiStore.getState().setScreen(overviewScreen(useShellStore.getState().rest, workspace.id));
     case "new_worktree":
       return useUiStore.getState().setWorkspaceDialog({ kind: "new_worktree", workspaceId: workspace.id });
     case "new_tab_primary": {

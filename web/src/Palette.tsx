@@ -10,6 +10,7 @@ import { changedFiles } from "./newTab";
 import { fileIcon } from "./fileIcons";
 import { filterEntries, groupEntries, searchEntries, type SearchEntry } from "./search";
 import { explorerContext } from "./snapshot";
+import { overviewScreen } from "./navigation";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { drawnViews, keyboardOwner } from "./viewFocus";
@@ -217,7 +218,7 @@ function SearchPalette({ actions }: { actions: Actions }) {
     } else if (entry.kind === "agent" && entry.paneId) {
       actions.openAgent(entry.paneId);
     } else if (entry.kind === "project" && entry.workspaceId) {
-      useUiStore.getState().setScreen({ kind: "overview", projectId: entry.workspaceId });
+      useUiStore.getState().setScreen(overviewScreen(useShellStore.getState().rest, entry.workspaceId));
     } else if (entry.workspaceId && entry.checkoutId) {
       useUiStore.getState().setScreen({ kind: "workspace" });
       actions.focusCheckout(entry.workspaceId, entry.checkoutId);

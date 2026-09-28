@@ -1,4 +1,4 @@
-import { FolderIcon, GitMergeIcon, GitPullRequestIcon, PlusIcon } from "lucide-react";
+import { CircleDotIcon, FolderIcon, GitMergeIcon, GitPullRequestIcon, PlusIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
@@ -6,14 +6,15 @@ import { Kbd } from "./components/ui/kbd";
 import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Hint } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
-import { AGENT_GROUPS, boardProjects, mainSections, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
+import { AGENT_GROUPS, boardProjects, mainSections, overviewScreen, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
 import { useNewIssueShortcut } from "./IssueDialogs";
-import { allProjectsStats, buildAgents, buildTasks, waitingCount, type AllProjectsStats, type SourceState, type TaskCard } from "./projectBoard";
-import { IssuesFact } from "./ProjectOverview";
+import { AgentsLens, AgentsModeToggle, type LensHandlers } from "./OverviewLenses";
+import { agentsTile, buildLanes, buildLineages, scopeAgents } from "./overviewLens";
+import { allProjectsStats, buildTasks, type AllProjectsStats, type SourceState, type TaskCard } from "./projectBoard";
 import { frontCheckout, type Device } from "./snapshot";
 import { useShellStore } from "./store";
-import { AgentsView, DependenciesView, TasksListView, TasksModeToggle, TasksView, type BoardHandlers } from "./TaskBoards";
-import { scopeView, useUiStore, type ProjectView } from "./ui";
+import { DependenciesView, FocusedTask, TasksListView, TasksModeToggle, TasksView, type BoardHandlers } from "./TaskBoards";
+import { useUiStore, type LensFold, type MainView } from "./ui";
 import { hostKind } from "./host";
 import { displayCommand } from "./shortcuts";
 
@@ -29,26 +30,32 @@ import { displayCommand } from "./shortcuts";
 // Everything drawn is a value the snapshot carries; a device that cannot
 // answer says why on its own section, with Retry where retrying can help.
 
-const VIEWS: readonly { view: ProjectView; label: string }[] = [
+const VIEWS: readonly { view: MainView; label: string }[] = [
   { view: "tasks", label: "Tasks" },
   { view: "agents", label: "Agents" },
   { view: "projects", label: "Projects" },
 ];
-const VIEW_IDS = VIEWS.map((row) => row.view);
 
 export function MainScreen({ actions }: { actions: Actions }) {
   const rest = useShellStore((s) => s.rest);
   const agents = useShellStore((s) => s.agents);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
-  const view = scopeView(useUiStore((s) => s.projectView), VIEW_IDS);
-  const setView = useUiStore((s) => s.setProjectView);
+  const view = useUiStore((s) => s.mainView);
+  const setView = useUiStore((s) => s.setMainView);
   const tasksMode = useUiStore((s) => s.tasksMode);
+  const setTasksMode = useUiStore((s) => s.setTasksMode);
+  const agentsMode = useUiStore((s) => s.agentsMode);
+  const setAgentsMode = useUiStore((s) => s.setAgentsMode);
   const [doneOpen, setDoneOpen] = useState(false);
+  const [folds, setFolds] = useState<readonly LensFold[]>([]);
+  const [focusTask, setFocusTask] = useState<string | null>(null);
   const sections = useMemo(() => mainSections(rest, agents), [rest, agents]);
   const stats = useMemo(() => allProjectsStats(sections.flatMap((section) => section.projects.map((project) => project.workspace))), [sections]);
   const projects = useMemo(() => boardProjects(rest, agents), [rest, agents]);
   const tasks = useMemo(() => buildTasks(projects, "all", Date.now()), [projects]);
-  const agentBoard = useMemo(() => buildAgents(projects, "all"), [projects]);
+  const lanes = useMemo(() => buildLanes(projects, "all"), [projects]);
+  const lineages = useMemo(() => buildLineages(projects), [projects]);
+  const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
   // Every local Git project's tasks are read once the boards are on screen.
   const localGit = useMemo(() => projects.filter(({ workspace }) => workspace.is_git && !workspace.remote_target_id).map(({ workspace }) => workspace.id).join("\n"), [projects]);
   const boards = view !== "projects";
@@ -79,7 +86,20 @@ export function MainScreen({ actions }: { actions: Actions }) {
     },
     newIssue,
   };
-  const waiting = waitingCount(agentBoard);
+  // The Agents tab keeps the count of agents whose turn it is, the Agents tile's badge.
+  const waiting = agentsTile(lensAgents, true).badge?.count ?? 0;
+  const lensHandlers: LensHandlers = {
+    openCheckout: (owner, checkout) => actions.openWorkspace(owner.device_id, checkout.workspace_id, checkout.id),
+    openAgent: actions.openAgent,
+    openIssue: (_owner, task) => {
+      setView("tasks");
+      setTasksMode("board");
+      setFocusTask(task.key);
+    },
+    openGitHub: (url, deviceId) => actions.openPullRequest(url, deviceId, true),
+    cleanup: (owner, checkout) => useUiStore.getState().setWorkspaceDialog({ kind: "delete_worktree", workspaceId: owner.id, checkoutId: checkout.id }),
+    toggleFold: (fold) => setFolds((open) => (open.includes(fold) ? open.filter((value) => value !== fold) : [...open, fold])),
+  };
   const scrolls = view !== "projects";
   const unavailable = sections.filter((section) => section.availability.state !== "ready");
   return (
@@ -103,7 +123,13 @@ export function MainScreen({ actions }: { actions: Actions }) {
       </header>
       <OpeningStatus actions={actions} />
       <div className="flex shrink-0 items-center justify-between gap-md px-lg py-sm">
-        <Tabs value={view} onValueChange={(value) => setView(value as ProjectView)}>
+        <Tabs
+          value={view}
+          onValueChange={(value) => {
+            setView(value as MainView);
+            setFocusTask(null);
+          }}
+        >
           <TabsList aria-label="Overview view">
             {VIEWS.map((choice) => (
               <TabsTrigger key={choice.view} value={choice.view} data-main-tab={choice.view}>
@@ -117,7 +143,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
             ))}
           </TabsList>
         </Tabs>
-        {view === "tasks" ? <TasksModeToggle /> : null}
+        {view === "tasks" ? <TasksModeToggle mode={tasksMode} onChange={setTasksMode} /> : view === "agents" ? <AgentsModeToggle mode={agentsMode} onChange={setAgentsMode} /> : null}
       </div>
       {boards ? (
         // A device that cannot answer keeps its last rows off these boards and says why here.
@@ -127,14 +153,18 @@ export function MainScreen({ actions }: { actions: Actions }) {
           </div>
         ))
       ) : null}
-      {view === "tasks" && tasksMode === "dependencies" ? (
-        <DependenciesView board={tasks} focusedPaneId={focusedPaneId} actions={actions} handlers={handlers} />
-      ) : view === "tasks" && tasksMode === "list" ? (
-        <TasksListView board={tasks} focusedPaneId={focusedPaneId} actions={actions} handlers={handlers} />
-      ) : view === "tasks" ? (
-        <TasksView board={tasks} scope="all" focusedPaneId={focusedPaneId} actions={actions} handlers={handlers} doneOpen={doneOpen} onToggleDone={() => setDoneOpen((open) => !open)} />
+      {view === "tasks" ? (
+        <FocusedTask.Provider value={focusTask}>
+          {tasksMode === "dependencies" ? (
+            <DependenciesView board={tasks} focusedPaneId={focusedPaneId} actions={actions} handlers={handlers} />
+          ) : tasksMode === "list" ? (
+            <TasksListView board={tasks} focusedPaneId={focusedPaneId} actions={actions} handlers={handlers} />
+          ) : (
+            <TasksView board={tasks} scope="all" focusedPaneId={focusedPaneId} actions={actions} handlers={handlers} doneOpen={doneOpen} onToggleDone={() => setDoneOpen((open) => !open)} />
+          )}
+        </FocusedTask.Provider>
       ) : view === "agents" ? (
-        <AgentsView board={agentBoard} focusedPaneId={focusedPaneId} actions={actions} />
+        <AgentsLens mode={agentsMode} lanes={lanes} lineages={lineages} scope="all" selectedLane={null} folds={folds} handlers={lensHandlers} now={Date.now()} />
       ) : total === 0 && sections.every((section) => section.availability.state === "ready") ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-main-empty="true">
           <p>No project is registered yet.</p>
@@ -156,6 +186,18 @@ export function MainScreen({ actions }: { actions: Actions }) {
 /** One fact of a scope's facts line, a glyph and its number. */
 export const FACT = "inline-flex items-center gap-xxs";
 export const FACTS_LINE = "flex flex-wrap items-center gap-md font-mono text-caption text-subtle-foreground";
+
+/** `20 open issues · GitHub`, once the source has answered. */
+function IssuesFact({ source }: { source: SourceState }) {
+  if (source.openIssues === null) return null;
+  return (
+    <span className={FACT} data-stat="open-issues">
+      <CircleDotIcon aria-hidden="true" className="size-(--size-icon)" />
+      {source.openIssues} open {source.openIssues === 1 ? "issue" : "issues"}
+      {source.label ? <span className="text-muted-foreground">· {source.label}</span> : null}
+    </span>
+  );
+}
 
 /** The Project count, and each total only once every Project gave its part (design #10). */
 function Facts({ stats, source }: { stats: AllProjectsStats; source: SourceState }) {
@@ -260,7 +302,7 @@ function ProjectRow({ project }: { project: ProjectEntry; actions: Actions }) {
         disabled={!reachable}
         data-main-project={project.id}
         className="flex w-full items-center gap-md rounded-sm px-sm py-xs text-left outline-none hover:bg-accent focus-visible:bg-accent disabled:cursor-default disabled:hover:bg-transparent"
-        onClick={() => setScreen({ kind: "overview", projectId: project.id })}
+        onClick={() => setScreen(overviewScreen(useShellStore.getState().rest, project.id))}
       >
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex items-baseline gap-xs text-body text-foreground">
