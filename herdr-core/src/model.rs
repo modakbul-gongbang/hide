@@ -26,6 +26,11 @@ pub struct CoreOptions {
     /// home. Absent means `remote::host::DEFAULT_HELPER_ROOT`.
     #[serde(default)]
     pub host_helper_root: Option<String>,
+    /// The folder on devices where `hide` is linked to the copy installed
+    /// with the helper; `~/` is the device account's home. Absent means
+    /// `remote::host::DEFAULT_CLI_DIR`.
+    #[serde(default)]
+    pub host_cli_dir: Option<String>,
     /// Where a shell that draws separate Agent and View areas keeps each
     /// Workspace's presentation (PRD S6 D-10). Its presence is what turns
     /// those semantics on: the web daemon passes it; a client that passes
@@ -553,6 +558,9 @@ pub struct DeviceHostSnapshot {
     /// row it is the root a new device consent would name, so the add form
     /// can say where the helper goes before the operator agrees.
     pub helper_root: Option<String>,
+    /// The folder the device's `hide` command is linked in, named the same
+    /// way as `helper_root`.
+    pub cli_dir: Option<String>,
     pub contract: u32,
     /// `user@host:port (SHA256:...)` the consent is bound to, once bound.
     pub bound_identity: Option<String>,
@@ -2224,15 +2232,20 @@ pub struct DeviceRegistration {
 }
 
 /// What the operator allowed on a device: install and update Hide's helper
-/// under `helper_root`, run it only for the life of an SSH connection, and
-/// perform file and Git work inside registered checkouts, with trash moves and
-/// worktree removals still confirmed one by one. `contract` names that scope;
+/// and its `hide` command under `helper_root`, link `hide` in `cli_dir` when
+/// that name is free or already Hide's, run the helper only for the life of
+/// an SSH connection, and perform file and Git work inside registered
+/// checkouts, with trash moves and worktree removals still confirmed one by
+/// one. `contract` names that scope;
 /// a build whose scope differs asks again, and so does a device that answers
 /// with another identity than the one the consent was first used on.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct HostConsent {
     pub contract: u32,
     pub helper_root: String,
+    /// Absent in a consent given before contract 2, which never covered it.
+    #[serde(default)]
+    pub cli_dir: Option<String>,
     pub granted_at_unix_ms: u64,
     /// The account, address and host key the helper first ran on; bound on
     /// the first connection after consent and never rewritten by one.

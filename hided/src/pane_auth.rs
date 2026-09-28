@@ -1196,6 +1196,7 @@ mod tests {
             app_state_path: directory.join("core-state.json").display().to_string(),
             host_helper_dir: None,
             host_helper_root: None,
+            host_cli_dir: None,
             workspace_views_path: None,
             shortcut_import_path: None,
         })

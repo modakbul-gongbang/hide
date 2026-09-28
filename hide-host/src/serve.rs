@@ -4,8 +4,8 @@
 
 use std::io::{self, BufRead, Read, Write};
 use std::path::Path;
-use std::sync::Mutex;
 use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
@@ -27,10 +27,16 @@ const MAX_REQUEST_BYTES: usize = 40 * 1024 * 1024;
 pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
     let output = Mutex::new(output);
     let (sender, receiver) = mpsc::sync_channel::<Request>(0);
-    let receiver = Mutex::new(receiver);
+    // Only the workers hold the receiver. A worker stops when its answer
+    // cannot be written, which means the SSH channel is gone; once the last
+    // one has stopped, the next request's send fails and the helper exits,
+    // rather than waiting on a rendezvous no worker will ever take.
+    let receiver = Arc::new(Mutex::new(receiver));
     std::thread::scope(|scope| {
         for _ in 0..CONCURRENCY {
-            scope.spawn(|| {
+            let receiver = Arc::clone(&receiver);
+            let output = &output;
+            scope.spawn(move || {
                 loop {
                     let request = match receiver.lock().map(|receiver| receiver.recv()) {
                         Ok(Ok(request)) => request,
@@ -43,12 +49,13 @@ pub fn serve(input: impl BufRead, output: impl Write + Send) -> io::Result<()> {
                             Err(error) => Outcome::Error(error),
                         },
                     };
-                    if write_line(&output, &response).is_err() {
+                    if write_line(output, &response).is_err() {
                         return;
                     }
                 }
             });
         }
+        drop(receiver);
         let result = read_requests(input, &sender, &output);
         drop(sender);
         result
@@ -318,5 +325,40 @@ pub fn handle(call: Call) -> HostResult<Value> {
                 &expected_revision,
             )?)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// The SSH channel is gone: nothing written reaches anyone.
+    struct Closed;
+
+    impl Write for Closed {
+        fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+            Err(io::ErrorKind::BrokenPipe.into())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::ErrorKind::BrokenPipe.into())
+        }
+    }
+
+    #[test]
+    fn a_closed_channel_ends_the_helper_with_requests_still_arriving() {
+        // More requests than workers: each worker stops on its first failed
+        // answer, and the rest must not leave the reader waiting forever.
+        let requests: String = (1..=CONCURRENCY as u64 * 3)
+            .map(|id| format!("{{\"id\":{id},\"op\":\"hello\"}}\n"))
+            .collect();
+        let (done, finished) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = done.send(serve(io::Cursor::new(requests.into_bytes()), Closed));
+        });
+        let result = finished
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the helper kept running after its channel closed");
+        assert!(result.is_ok(), "{result:?}");
     }
 }
