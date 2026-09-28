@@ -3,6 +3,7 @@ import { RefreshCwIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { isHtmlFile } from "./browserViews";
+import { holdShellDrag } from "./shellDrag";
 import { EntryPointMenu, type MenuEntry } from "./components/entry-menu";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
@@ -456,9 +457,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
                     event.preventDefault();
                     setMenu({ path: row.path, isDirectory: row.isDirectory, x: event.clientX, y: event.clientY });
                   }}
-                  onDragStart={() => {
-                    dragPath.current = row.path;
-                  }}
+                  onDragStart={() => beginDrag(row.path)}
                   onDrop={(from) => {
                     if (from && from !== row.path && !row.path.startsWith(`${from}/`)) actions.moveEntry(from, row.path);
                   }}
@@ -502,6 +501,26 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
 
 /** The one path a drag is carrying; a ref because a drag never re-renders. */
 const dragPath = { current: null as string | null };
+
+/**
+ * Starts carrying `path`. The drag marks the root while it runs, so a page it
+ * crosses gives way to its still and never takes the drop. The mark goes at
+ * the drag's end or drop, which reach the window from a row still drawn, or
+ * at the first pointer move after it, which a row scrolled away still gets.
+ */
+function beginDrag(path: string): void {
+  dragPath.current = path;
+  const release = holdShellDrag("file");
+  const end = () => {
+    release();
+    window.removeEventListener("dragend", end, true);
+    window.removeEventListener("drop", end, true);
+    window.removeEventListener("pointermove", end, true);
+  };
+  window.addEventListener("dragend", end, true);
+  window.addEventListener("drop", end, true);
+  window.addEventListener("pointermove", end, true);
+}
 
 function DraftRowView({
   depth,

@@ -96,7 +96,9 @@ An evicted page reports its disappearance as disconnected until shown again.
 ## Overlays
 
 A native view is drawn above the page's HTML, so the shell cannot draw over it.
-When the palette, a menu, a dialog, a popover, the Recent Panels or Recent Projects list, or a dragged tab meets a page's rectangle, the shell asks the host for a capture of the page, draws it in the page's place, and hides the page until the overlay is gone.
+When the palette, a menu, a dialog, a popover, or the Recent Panels or Recent Projects list meets a page's rectangle, the shell asks the host for a capture of the page, draws it in the page's place, and hides the page until the overlay is gone.
+A shell drag (a tab, a divider, the side panel's edge, an Explorer item) marks the document root with `data-view-drag` or `data-agent-drag` while it runs (`web/src/shellDrag.ts`), and every page of the front Workspace freezes the same way until the mark is gone, so the drag's guide or preview draws over the pages and its drop never reaches one.
+A new shell drag sets that mark rather than adding its guide to the overlay selector; a drag inside a page never touches the shell and is the page's own.
 Tooltips are left alone, so a tooltip over a page is drawn under it.
 
 ## States
@@ -116,7 +118,7 @@ pnpm --dir desktop e2e
 ```
 
 `desktop/e2e/browser.spec.ts` drives a desktop app it launched itself against a private hided and an isolated Herdr, never the operator's.
-It opens a page with `hide browser open`, checks the native view sits on its slot, types Hangul into the page, splits and resizes without a reload, freezes the pages under the palette and the Recent Panels list, navigates and goes back, shows a failed load, opens an HTML file from the Explorer, refuses a file outside the checkout, ends a closed page's renderer, restores the page after a relaunch, and shows the notice in a plain browser tab.
+It opens a page with `hide browser open`, checks the native view sits on its slot, types Hangul into the page, splits and resizes without a reload, freezes the pages under the palette, the Recent Panels list and a divider drag, navigates and goes back, shows a failed load, opens an HTML file from the Explorer, refuses a file outside the checkout, ends a closed page's renderer, restores the page after a relaunch, and shows the notice in a plain browser tab.
 The test window sits behind the operator's windows, so it launches with `--disable-backgrounding-occluded-windows`, and captures of it are taken by window id.
 Keep screenshots and logs under local-only `agents/runs/`.
 `desktop/e2e/remote-workspace.spec.ts` additionally uses an isolated SSH server and two private Herdr servers to prove remote CLI origin, HTTP and WebSocket forwarding, absolute loopback subrequests, local and remote cookie separation, remote popup address ownership, relative HTML assets, refusal of undeclared files and external requests, explicit reveal, background View cleanup, and route cleanup on close and forced candidate exit.

@@ -89,8 +89,9 @@
 }
 
 /*
- * A View tab drag (PRD S7 B8): the pointer says whether the place under it
- * would land, whatever it passes over, and no text is selected on the way.
+ * A shell drag (`shellDrag.ts`; a View tab drag, PRD S7 B8): the pointer says
+ * whether the place under it would land, whatever it passes over, and no text
+ * is selected on the way.
  */
 html[data-agent-drag],
 html[data-agent-drag] *,
@@ -111,4 +112,19 @@ html[data-agent-drag="forbidden"] *,
 html[data-view-drag="forbidden"],
 html[data-view-drag="forbidden"] * {
   cursor: not-allowed !important;
+}
+
+/* A divider or the side panel's edge keeps its resize pointer wherever it is dragged. */
+html[data-agent-drag="col-resize"],
+html[data-agent-drag="col-resize"] *,
+html[data-view-drag="col-resize"],
+html[data-view-drag="col-resize"] * {
+  cursor: col-resize !important;
+}
+
+html[data-agent-drag="row-resize"],
+html[data-agent-drag="row-resize"] *,
+html[data-view-drag="row-resize"],
+html[data-view-drag="row-resize"] * {
+  cursor: row-resize !important;
 }
