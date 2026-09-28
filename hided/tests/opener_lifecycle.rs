@@ -90,7 +90,8 @@ fn assert_gone(pid: i32) {
 #[ignore = "subprocess entry point; the owner tests run it with --ignored --exact"]
 fn owner_process() {
     let marker = PathBuf::from(
-        std::env::var_os("HIDED_OWNED_OPENER_TEST_MARKER").expect("owner_process is spawned by a test, with its marker"),
+        std::env::var_os("HIDED_OWNED_OPENER_TEST_MARKER")
+            .expect("owner_process is spawned by a test, with its marker"),
     );
     let script = marker.parent().unwrap().join("fake-opener");
     let launched = hided::spawn::spawn_opener(supervisor(), script.as_os_str(), &marker);
