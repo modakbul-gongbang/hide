@@ -955,6 +955,11 @@ pub struct Runtime {
     /// are grouped from the helper's facts (`device_catalog`).
     device_raw_sessions: HashMap<String, RemoteSessionSnapshot>,
     device_facts: HashMap<String, crate::device_catalog::DeviceFacts>,
+    /// Each device checkout's last tab the device's Herdr had in focus, by
+    /// device then checkout id: what opening the row brings forward (PRD
+    /// checkout-workspace-binding B5, D-13), as `visible_tab_ids` is here.
+    /// Pruned to the checkouts the device's session lists.
+    device_recent_tabs: HashMap<String, HashMap<String, String>>,
     /// Each device's repositories' worktrees, read through its helper
     /// (`hide_host::worktrees`); the device's rows carry them.
     device_worktrees: HashMap<String, crate::device_catalog::DeviceWorktrees>,
@@ -1433,6 +1438,7 @@ impl Runtime {
             changes_published_key: None,
             device_raw_sessions: HashMap::new(),
             device_facts: HashMap::new(),
+            device_recent_tabs: HashMap::new(),
             device_worktrees: HashMap::new(),
             local_host: Arc::new(crate::host_access::InProcessHost),
             document_places: HashMap::new(),

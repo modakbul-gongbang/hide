@@ -372,7 +372,8 @@ pub(crate) fn group(
             merge_checkout(project, checkout);
         }
     }
-    // The tab a merged checkout brings forward (D-13): Herdr's focused tab
+    // The tab a merged checkout brings forward when the runtime remembers
+    // none for it (`bring_recent_device_tabs`, D-13): Herdr's focused tab
     // when it is there, else its owner's active tab, else the first
     // workspace's.
     let mut active_tab_ids = BTreeMap::new();

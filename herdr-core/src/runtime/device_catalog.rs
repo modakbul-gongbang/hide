@@ -53,6 +53,7 @@ impl Runtime {
         let empty = DeviceFacts::default();
         let catalog =
             device_catalog::catalog_state(raw, self.device_facts.get(target).unwrap_or(&empty));
+        self.bring_recent_device_tabs(target, &mut session);
         let mut dropped_moves = Vec::new();
         self.place_device_strips(target, &mut session, &mut dropped_moves);
         if !dropped_moves.is_empty() {
@@ -83,6 +84,48 @@ impl Runtime {
             self.restore_front_when_ready();
         }
         changed
+    }
+
+    /// Remembers the tab the device's Herdr has in focus under the checkout
+    /// holding it, and makes each checkout's remembered tab, while it still
+    /// exists, the one its row brings forward; the grouping's own choice is
+    /// the fallback for a checkout with nothing remembered.
+    fn bring_recent_device_tabs(&mut self, target: &str, session: &mut RemoteSessionSnapshot) {
+        let recent = self
+            .device_recent_tabs
+            .entry(target.to_owned())
+            .or_default();
+        if let (Some(checkout), Some(tab)) = (
+            session.focused_checkout_id.as_ref(),
+            session.focused_tab_id.as_ref(),
+        ) {
+            recent.insert(checkout.clone(), tab.clone());
+        }
+        let listed = session
+            .workspaces
+            .iter()
+            .flat_map(|project| project.checkouts.iter())
+            .map(|checkout| checkout.id.as_str())
+            .collect::<HashSet<_>>();
+        recent.retain(|checkout, _| listed.contains(checkout.as_str()));
+        for checkout in session
+            .workspaces
+            .iter_mut()
+            .flat_map(|project| project.checkouts.iter_mut())
+        {
+            let Some(tab) = recent.get(&checkout.id).filter(|tab| {
+                checkout
+                    .tabs
+                    .iter()
+                    .any(|listed| listed.id.as_ref() == Some(*tab))
+            }) else {
+                continue;
+            };
+            checkout.active_tab_id = Some(tab.clone());
+            session
+                .active_tab_ids
+                .insert(checkout.id.clone(), tab.clone());
+        }
     }
 
     /// A file tab names its checkout's project; grouping moves a checkout
@@ -361,6 +404,7 @@ impl Runtime {
 
     pub(super) fn forget_device_catalog(&mut self, target: &str) {
         self.device_raw_sessions.remove(target);
+        self.device_recent_tabs.remove(target);
         self.device_facts.remove(target);
         self.device_worktrees.remove(target);
     }

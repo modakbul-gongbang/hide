@@ -1356,6 +1356,12 @@ fn one_device_folder_held_by_two_workspaces_is_one_row_whose_new_tabs_go_to_its_
     assert_eq!(request["method"], "tab.create");
     assert_eq!(request["params"]["workspace_id"], "w5N");
 
+    // Opening the row brings forward the tab last used there, in whichever
+    // workspace, after the device's focus has moved elsewhere (B5).
+    let mut used = raw();
+    used.focused_tab_id = Some("remote:mini:tab:c".to_owned());
+    runtime.ingest_remote_session(TARGET, Ok(used));
+    runtime.ingest_remote_session(TARGET, Ok(raw()));
     send(
         &mut runtime,
         "open-row",
@@ -1365,6 +1371,27 @@ fn one_device_folder_held_by_two_workspaces_is_one_row_whose_new_tabs_go_to_its_
         },
     );
     let request = next_request(&requests, 1);
+    assert_eq!(request["method"], "tab.focus");
+    assert_eq!(request["params"]["tab_id"], "c");
+    // Once that tab is gone, the owner's active tab.
+    let mut bound = herdr_workspace(TARGET, "w5N", &t.main, &[("a", &t.main)]);
+    bound.checkouts[0].owner_workspace_id = Some("w5N".to_owned());
+    runtime.ingest_remote_session(
+        TARGET,
+        Ok(session(vec![
+            bound,
+            herdr_workspace(TARGET, "w5T", &t.main, &[("b", &t.main)]),
+        ])),
+    );
+    send(
+        &mut runtime,
+        "open-row-again",
+        RemoteControlRequest::FocusWorkspace {
+            workspace_id: project.clone(),
+            checkout_id: Some(id.clone()),
+        },
+    );
+    let request = next_request(&requests, 2);
     assert_eq!(request["method"], "tab.focus");
     assert_eq!(request["params"]["tab_id"], "a");
 
@@ -1419,7 +1446,7 @@ fn one_device_folder_held_by_two_workspaces_is_one_row_whose_new_tabs_go_to_its_
     runtime.ingest_remote_session(TARGET, Ok(unbound()));
     new_tab(&mut runtime, "new-tab-2");
     assert_eq!(runtime.snapshot.status.last_error, None);
-    let request = next_request(&requests, 2);
+    let request = next_request(&requests, 3);
     assert_eq!(request["method"], "worktree.open");
     assert_eq!(request["params"]["path"], t.main.as_str());
 }
