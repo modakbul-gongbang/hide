@@ -5,7 +5,7 @@ import { SidebarHeader } from "./components/sidebar-header";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { useUiStore, type SidebarMode } from "./ui";
 
-function header({ mode = "projects" as SidebarMode, overviewSelected = false, projectCount = 12 as number | null, switchChord = null as string | null } = {}) {
+function header({ mode = "projects" as SidebarMode, overviewSelected = false, projectCount = 12 as number | null, switchChord = null as string | null, canAdd = true } = {}) {
   return renderToStaticMarkup(
     createElement(
       TooltipProvider,
@@ -20,7 +20,7 @@ function header({ mode = "projects" as SidebarMode, overviewSelected = false, pr
         onOverview: () => undefined,
         onMode: () => undefined,
         onSearch: () => undefined,
-        onNewWorkspace: () => undefined,
+        onNewWorkspace: canAdd ? () => undefined : null,
       }),
     ),
   );
@@ -60,11 +60,13 @@ describe("sidebar header (PRD sidebar-shell)", () => {
     expect(header({ projectCount: null })).not.toContain("data-overview-count");
   });
 
-  it("puts Search at the strip's end, and New workspace before it on Projects only (B4, B5)", () => {
+  it("puts Search at the strip's end, and Add project before it on Projects only (B4, B5)", () => {
     const projects = header();
     const newWorkspace = tag(projects, "data-sidebar-new-workspace");
     const search = tag(projects, "data-sidebar-search");
-    expect(newWorkspace).toContain('aria-label="New workspace"');
+    expect(newWorkspace).toContain('aria-label="Add project"');
+    // A browser tab has no folder picker, so it offers no Add project.
+    expect(header({ canAdd: false })).not.toContain("data-sidebar-new-workspace");
     expect(search).toContain('aria-label="Search"');
     expect(projects.indexOf("data-sidebar-new-workspace")).toBeLessThan(projects.indexOf("data-sidebar-search"));
     const agents = header({ mode: "agents" });

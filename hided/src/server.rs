@@ -1850,14 +1850,10 @@ async fn send_file_bytes(
 /// B10, S3 D-01 and B11). Two lines run here, one per flow, and every path
 /// that passes is rewritten to the spelling that was checked.
 ///
-/// The registration line reads `$HOME`: a `remote_file_list` for the `local`
-/// target or a `create_workspace` whose path does not resolve under home is
-/// answered with a `path_refused` frame and never reaches the core. The local
-/// listing is the web shell's directory autocomplete, which the core has no
-/// event for, so hided answers it as a `directory_list` frame; a
-/// `remote_file_list` for any other target names a path on that remote
-/// machine, which this boundary knows nothing about, and is forwarded as it
-/// came.
+/// The registration line reads `$HOME`: a `create_workspace` whose path does
+/// not resolve under home is answered with a `path_refused` frame and never
+/// reaches the core. A `remote_file_list` names a path on a remote machine,
+/// which this boundary knows nothing about, and is forwarded as it came.
 ///
 /// The Explorer line reads the registered checkout roots: every path an
 /// explorer event carries is checked against the root the event named, and a
@@ -1878,7 +1874,6 @@ async fn send_file_bytes(
 fn apply_boundary(boundary: &Boundary, event: &mut Value) -> Option<Value> {
     let kind = event.get("kind").and_then(Value::as_str)?.to_owned();
     match kind.as_str() {
-        "remote_file_list" => registration_listing(boundary, event, &kind),
         "create_workspace" => rewrite(event, &kind, "path", |raw| boundary.resolve_workspace(raw)),
         "file_list" => explorer_listing(boundary, event, &kind),
         "file_open" | "reveal_path" => explorer_open(boundary, event, &kind),
@@ -2022,23 +2017,6 @@ fn rewrite(
     }
 }
 
-/// A local `remote_file_list` is answered here; a remote one is not this
-/// boundary's to judge and is forwarded as it came.
-fn registration_listing(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Value> {
-    let local = event
-        .pointer("/payload/target_id")
-        .and_then(Value::as_str)
-        .is_some_and(|target| target == "local");
-    if !local {
-        return None;
-    }
-    let raw = payload_str(event, "root_path");
-    match boundary.list(&raw) {
-        Ok(listing) => Some(listing_frame(kind, listing)),
-        Err(refusal) => Some(refused(kind, &raw, refusal)),
-    }
-}
-
 /// A `file_list` names the checkout root and the folder under it, and is
 /// answered here: the Explorer reads folders lazily, so the frame carries one
 /// folder's children and the client asks again as the operator expands.
@@ -2055,8 +2033,7 @@ fn explorer_listing(boundary: &Boundary, event: &mut Value, kind: &str) -> Optio
 }
 
 /// The frame a listing is answered with. `kind` is the event that asked, so a
-/// client routes the answer to the flow that requested it: the registration
-/// autocomplete reads the last `remote_file_list` answer and the Explorer keeps
+/// client routes the answer to the flow that requested it: the Explorer keeps
 /// one listing per folder it has expanded.
 fn listing_frame(kind: &str, listing: Listing) -> Value {
     let mut frame = json!({"type": "directory_list", "payload": listing});

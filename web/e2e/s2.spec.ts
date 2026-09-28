@@ -8,7 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
-import { countSent, screenshot } from "./wire";
+import { countSent, registerFolder, screenshot, sendEvent } from "./wire";
 
 type Daemon = { origin: string; token: string; home: string; stop: () => void };
 
@@ -335,12 +335,13 @@ test("checkouts, tabs, splits, zoom, close and the sheet", async ({ page, contex
     const keysBeforeSheet = sent.get("key") ?? 0;
     await page.keyboard.press("Meta+Slash");
     await expect(page.locator("[data-shortcut-sheet]")).toBeVisible();
-    // The S5 Settings row (⌥, in place of Chrome's ⌘,) is the eighth move;
+    // The S5 Settings row (⌥, in place of Chrome's ⌘,) is a move and Add
+    // project (desktop app only) no longer is, so seven rows are moved;
     // Toggle Explorer (issue 170) is the 28th row, and the two numbered
     // families (Select tab 1-9, Select agent 1-9) fold into one row each,
     // absent on this host and never a Chrome move (electron-digit-shortcuts-hints B3).
     await expect(page.locator("[data-shortcut]")).toHaveCount(30);
-    await expect(page.locator("[data-shortcut-sheet]").getByText("moved for Chrome")).toHaveCount(8);
+    await expect(page.locator("[data-shortcut-sheet]").getByText("moved for Chrome")).toHaveCount(7);
     await screenshot(page, "s2-shortcut-sheet");
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-shortcut-sheet]")).toHaveCount(0);
@@ -406,51 +407,28 @@ test("registration under home succeeds; outside home and a .. path are refused",
     await page.locator('[data-sidebar-mode="projects"]').click();
     await expect(page.locator("[data-project]")).toHaveCount(1);
 
-    // The field lives in the sidebar, so ⌥⇧N with the sidebar hidden brings
-    // the sidebar back (one ui_state_update) and then opens the field.
-    await page.keyboard.press("Meta+KeyB");
-    await expect(page.locator("[data-sidebar]")).toHaveCount(0);
-    await expect.poll(() => sent.get("ui_state_update") ?? 0).toBe(1);
+    // A browser tab has no folder picker, so it offers no Add project: no
+    // strip button, no Overview button, and the chord opens nothing.
+    await expect(page.locator("[data-sidebar-new-workspace]")).toHaveCount(0);
+    await expect(page.locator("[data-main-add-project]")).toHaveCount(0);
     await page.keyboard.press("Alt+Shift+KeyN");
-    await expect(page.locator("[data-sidebar]")).toHaveCount(1);
-    await expect.poll(() => sent.get("ui_state_update") ?? 0).toBe(2);
-    const input = page.getByLabel("Workspace path");
-    await expect(input).toBeVisible();
-    await expect(input).toHaveValue(`${daemon.home}/`);
-    // The listing came from hided: only directories, no hidden one, no file.
-    await expect(page.locator("[data-suggestion]")).toHaveCount(1);
-    await expect(page.locator(`[data-suggestion="${daemon.home}/projects"]`)).toBeVisible();
+    await page.keyboard.press("Meta+Shift+KeyN");
+    await expect(page.locator("[data-add-project]")).toHaveCount(0);
 
-    // Outside home is refused by the shell before any event goes out.
-    await input.fill(herdr.root);
-    await page.keyboard.press("Enter");
-    await expect(page.locator("[data-registration-reason]")).toHaveAttribute("data-registration-reason", "outside_home");
-    await expect.poll(() => sent.get("create_workspace") ?? 0).toBe(0);
-    await screenshot(page, "s2-registration-refused-outside-home");
+    // hided's $HOME line judges every folder a client sends (the desktop
+    // app's picker included), answering a refusal with its reason code.
+    const refusal = async (folder: string) =>
+      ((await sendEvent(page, daemon!, "create_workspace", { path: folder, label: "x", initialize_git: false }, "path_refused"))?.payload as { reason: string; kind: string; path: string });
+    expect(await refusal(herdr.root)).toMatchObject({ kind: "create_workspace", reason: "outside_home", path: herdr.root });
+    expect(await refusal(`${daemon.home}/projects/../projects/alpha`)).toMatchObject({ reason: "invalid_path" });
+    expect(await refusal(`${daemon.home}/projects/notes.txt`)).toMatchObject({ reason: "not_a_directory" });
 
-    // A path that names its way with .. reaches hided, which refuses it with a reason code.
-    await input.fill(`${daemon.home}/projects/../projects/alpha`);
-    await page.keyboard.press("Enter");
-    await expect(page.locator("[data-registration-reason]")).toHaveAttribute("data-registration-reason", "invalid_path");
-    await expect.poll(() => sent.get("create_workspace")).toBe(1);
-
-    // A directory under home registers: one create_workspace, a new project in the sidebar.
-    await input.fill(`${daemon.home}/projects/`);
-    await expect(page.locator(`[data-suggestion="${daemon.home}/projects/alpha"]`)).toBeVisible();
-    await expect(page.locator("[data-suggestion]")).toHaveCount(1);
-    await input.fill(`${daemon.home}/projects/alpha`);
-    await page.keyboard.press("Enter");
-    await expect.poll(() => sent.get("create_workspace")).toBe(2);
+    // A directory under home registers: a new project in the sidebar.
+    await registerFolder(page, daemon, `${daemon.home}/projects/alpha`);
+    await expect.poll(() => sent.get("create_workspace")).toBe(4);
     await expect(page.locator("[data-project]")).toHaveCount(2, { timeout: 20_000 });
     await expect(page.locator("[data-project-list]")).toContainText("alpha");
-    await expect(page.locator("[data-registration-reason]")).toHaveCount(0);
     await screenshot(page, "s2-registration-alpha");
-
-    // Registering it again is refused by the shell from the snapshot.
-    await input.fill(`${daemon.home}/projects/alpha`);
-    await page.keyboard.press("Enter");
-    await expect(page.locator("[data-registration-reason]")).toHaveAttribute("data-registration-reason", "already_registered");
-    await expect.poll(() => sent.get("create_workspace")).toBe(2);
   } finally {
     daemon?.stop();
     herdr.stop();
