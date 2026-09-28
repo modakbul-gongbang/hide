@@ -640,6 +640,14 @@ const ATTENTION = new Set(['ask', 'done', 'error']);
 // no library master draws a task card; a card's agent row is the library's
 // Sidebar agent row, as agent-row.tsx is on the web, and every chip, button,
 // keycap and toggle is a library ref.
+// A pull request's CI mark once read: passing, failed or still running
+// (web/src/TaskBoards.tsx ChecksMark); nothing before GitHub answers.
+function ciMark(tokens, id, checks) {
+  if (checks === 'passing') return icon(id, 'check', {size: 12, fill: '$--success'});
+  if (checks === 'failed') return icon(id, 'x', {size: 12, fill: '$--destructive'});
+  return checks === 'pending' ? screenStatusMark(tokens, id, '●', '$--muted-foreground') : null;
+}
+
 function issueBoardParts(tokens) {
   const column = num(tokens, '--home-column-width');
   const inner = column - 2 * num(tokens, '--spacing-sm');
@@ -670,9 +678,7 @@ function issueBoardParts(tokens) {
   // the CI mark once read, and on a card the review GitHub asks for.
   function prChip(id, {number, tone = 'open', checks, review}) {
     const fill = PR_TONE[tone];
-    const ci = checks === 'passing' ? icon(`${id}-ci`, 'check', {size: 12, fill: '$--success'})
-      : checks === 'failed' ? icon(`${id}-ci`, 'x', {size: 12, fill: '$--destructive'})
-        : checks === 'pending' ? screenStatusMark(tokens, `${id}-ci`, '●', '$--muted-foreground') : null;
+    const ci = ciMark(tokens, `${id}-ci`, checks);
     return frame(id, `PR #${number}`, {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
       themedXref(`${id}-b`, 'eHAjc', `#${number}`, BADGE_VARIANTS.outline.overrides, {xXuNa: {enabled: true, icon: 'git-pull-request', fill}, n8L5dm: {content: `#${number}`, fill}}),
       ...(ci ? [ci] : []),
@@ -1247,7 +1253,7 @@ function prParts(tokens) {
       : pr.hover && pr.linkable ? icon(`${id}-issue`, 'link-2', {size: 12, fill: '$--foreground'})
         : icon(`${id}-issue`, 'circle-dashed', {size: 12, fill: '$--muted-foreground'});
     const marks = (pr.agents ?? []).slice(0, 3).map((agent, index) => screenStatusMark(tokens, `${id}-m${index}`, AGENT_MARK[agent.mark][0], AGENT_MARK[agent.mark][1]));
-    const ci = pr.checks === 'passing' ? icon(`${id}-ci`, 'check', {size: 12, fill: '$--success'}) : pr.checks === 'failed' ? icon(`${id}-ci`, 'x', {size: 12, fill: '$--destructive'}) : null;
+    const ci = ciMark(tokens, `${id}-ci`, pr.checks);
     const act = pr.hover === 'delegate' ? [screenButton(`${id}-take`, '맡기기', {variant: 'secondary', height: small, icon: 'play'})]
       : pr.hover === 'default' ? [screenIconButton(`${id}-gh`, 'external-link', {size: small}), screenIconButton(`${id}-more`, 'ellipsis', {size: small})]
         : [caption(`${id}-age`, pr.age, '$--muted-foreground', true)];

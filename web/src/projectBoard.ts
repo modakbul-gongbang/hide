@@ -118,7 +118,7 @@ export type TaskCard = {
 export type LooseWorktree = { branch: string };
 
 /** An open pull request with no issue, one of `이슈 없는 PR N` under 리뷰 (B4). */
-export type LoosePullRequest = { place: BoardPlace; owner: Workspace; number: number; title: string; url: string; tone: PrTone };
+export type LoosePullRequest = { owner: Workspace; number: number };
 
 export type Blocker = { key: string; label: string };
 
@@ -338,7 +338,7 @@ export function buildTasks(projects: readonly BoardProject[], scope: BoardScope,
       if (task || closes) continue;
       const pr = checkout.pull_request;
       if (stage === "working") worktrees.push({ branch: checkout.branch ?? checkout.label });
-      else if (stage === "review" && pr) pullRequests.push({ place: place(workspace), owner: workspace, number: pr.number, title: pr.title, url: pr.url, tone: prChip(pr).tone });
+      else if (stage === "review" && pr) pullRequests.push({ owner: workspace, number: pr.number });
     }
     for (const task of tasks.values()) {
       if (!task.open) continue;

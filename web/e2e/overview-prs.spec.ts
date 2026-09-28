@@ -309,7 +309,9 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     await expect(row(21).locator('[data-pr-actions="default"]')).toBeVisible();
     await expect(row(21).locator("[data-pr-age]")).toBeHidden();
     expect(await row(21).locator("[data-pr-branch]").boundingBox()).toEqual(titleBox);
+    await expect(row(21).locator("[data-pr-link-icon]")).toBeHidden();
     await row(21).locator('[data-pr-issue="none"]').hover();
+    await expect(row(21).locator("[data-pr-link-icon]")).toBeVisible();
     await expect(page.getByRole("tooltip")).toContainText("이 PR을 이슈에 잇는다");
     await row(21).locator("[data-pr-number]").hover();
     await expect(page.locator('[data-checkout-card="pull_request"]')).toContainText("#21");

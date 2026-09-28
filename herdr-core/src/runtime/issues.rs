@@ -725,19 +725,10 @@ impl Runtime {
         }));
         match self.project_source_kind(&workspace) {
             crate::tasks::SourceKind::Local => {
-                let created = match self.local_issues.as_mut() {
-                    Err(reason) => Err(format!(
-                        "로컬 이슈 파일을 읽지 못해 새 이슈를 만들 수 없습니다: {reason}"
-                    )),
-                    Ok(store) => store
-                        .create(&workspace.path, &title, &body, unix_milliseconds())
-                        .map(|number| crate::tasks::local_key(&workspace.path, number)),
-                };
-                if created.is_ok() {
-                    self.persist_local_issues();
-                }
+                let created = self
+                    .create_local_issue(&workspace.path, &title, &body)
+                    .map(|number| crate::tasks::local_key(&workspace.path, number));
                 self.settle_issue_create(id, created);
-                self.apply_pull_requests();
                 true
             }
             crate::tasks::SourceKind::Github => {
@@ -754,6 +745,27 @@ impl Runtime {
                 true
             }
         }
+    }
+
+    /// A Local issue made in `project_path`'s store, saved off the lock, and
+    /// on the project's board at once; the store checks the title and body.
+    pub(super) fn create_local_issue(
+        &mut self,
+        project_path: &str,
+        title: &str,
+        body: &str,
+    ) -> Result<u32, String> {
+        let number = match self.local_issues.as_mut() {
+            Err(reason) => {
+                return Err(format!(
+                    "로컬 이슈 파일을 읽지 못해 새 이슈를 만들 수 없습니다: {reason}"
+                ));
+            }
+            Ok(store) => store.create(project_path, title, body, unix_milliseconds())?,
+        };
+        self.persist_local_issues();
+        self.apply_pull_requests();
+        Ok(number)
     }
 
     pub(crate) fn ingest_created_issue(

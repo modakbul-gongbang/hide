@@ -73,7 +73,7 @@ import type { TasksMode } from "./ui";
 // hover shows its buttons in the id line's reserved slot, a half-second rest
 // on a part opens that part's card, and each part has one destination: the
 // card and its title the issue's panel, an agent row that agent's pane, the
-// checkout chip its Workspace, the PR chip the pull request, and ⌘-click
+// checkout chip its Workspace, the PR chip its row on the PRs tab, and ⌘-click
 // GitHub (D-09, D-10). Hover, focus and rest publish nothing (B22).
 
 /** A column shows this many cards, then the rest on request. */
@@ -106,7 +106,7 @@ export type BoardHandlers = {
   editIssue: (card: TaskCard) => void;
   /** The New issue dialog, for the page's Project or its default one. */
   newIssue: () => void;
-  /** A page on GitHub: the issue, a pull request (⌘-click, the GitHub control, a PR chip). */
+  /** A page on GitHub: the issue, a pull request (⌘-click, the GitHub control). */
   openGitHub: (url: string, deviceId: string) => void;
   /** `이슈 없는 워크트리 N`: Agents › 체크아웃 (B4). */
   showCheckouts: () => void;
@@ -224,17 +224,16 @@ function Count({ value }: { value: string | number }) {
 }
 
 /** A one-line button at a column's foot: `+N`, or the work with no issue folded. It passes a popover trigger's props through. */
-function FoldLine({ children, open, data, ...props }: Omit<ComponentProps<"button">, "type"> & { open?: boolean; data: Record<string, string> }) {
+function FoldLine({ children, data, ...props }: Omit<ComponentProps<"button">, "type"> & { data: Record<string, string> }) {
   return (
     <button
       {...props}
       type="button"
-      aria-expanded={open}
       className="flex w-full items-center gap-xs rounded-sm border border-border px-sm py-xxs text-left text-caption text-muted-foreground outline-none hover:bg-accent hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
       {...data}
     >
       <span className="min-w-0 flex-1 truncate">{children}</span>
-      {open ? <ChevronDownIcon aria-hidden="true" className="size-(--size-icon) shrink-0" /> : <ChevronRightIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />}
+      <ChevronRightIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
     </button>
   );
 }
@@ -736,7 +735,7 @@ export const PR_TONE: Record<PrChip["tone"], string> = {
   closed: "text-pr-closed",
 };
 
-export const CHECKS: Record<"passing" | "failed" | "pending", string> = {
+const CHECKS: Record<"passing" | "failed" | "pending", string> = {
   passing: "CI 통과",
   failed: "CI 실패",
   pending: "CI 진행 중",

@@ -127,33 +127,6 @@ impl Runtime {
         let local = self.project_source_kind(&workspace) == crate::tasks::SourceKind::Local;
         match (payload.issue_key, payload.new_issue) {
             (Some(key), None) if local => self.link_local_pr(link, &workspace, &pull_request, key),
-            (None, Some(new)) if local => {
-                let made = crate::local_issues::validated_title(&new.title)
-                    .and_then(|title| {
-                        crate::local_issues::validated_body(&new.body).map(|body| (title, body))
-                    })
-                    .and_then(|(title, body)| match self.local_issues.as_mut() {
-                        Err(reason) => Err(format!(
-                            "로컬 이슈 파일을 읽지 못해 새 이슈를 만들 수 없습니다: {reason}"
-                        )),
-                        Ok(store) => {
-                            store.create(&workspace.path, &title, &body, unix_milliseconds())
-                        }
-                    });
-                match made {
-                    Err(message) => self.fail_pr_link(link, "create", message),
-                    Ok(number) => {
-                        self.persist_local_issues();
-                        self.apply_pull_requests();
-                        let link = PrLinkSnapshot {
-                            created: true,
-                            ..link
-                        };
-                        let key = crate::tasks::local_key(&workspace.path, number);
-                        self.link_local_pr(link, &workspace, &pull_request, key)
-                    }
-                }
-            }
             (Some(key), None) => self.link_github_pr(link, &workspace, &pull_request, &key),
             (None, Some(new)) => {
                 let checked = crate::local_issues::validated_title(&new.title).and_then(|title| {
@@ -163,6 +136,19 @@ impl Runtime {
                     Ok(checked) => checked,
                     Err(message) => return self.fail_pr_link(link, "create", message),
                 };
+                if local {
+                    return match self.create_local_issue(&workspace.path, &title, &body) {
+                        Err(message) => self.fail_pr_link(link, "create", message),
+                        Ok(number) => {
+                            let link = PrLinkSnapshot {
+                                created: true,
+                                ..link
+                            };
+                            let key = crate::tasks::local_key(&workspace.path, number);
+                            self.link_local_pr(link, &workspace, &pull_request, key)
+                        }
+                    };
+                }
                 let request_id = link.request_id.clone();
                 self.snapshot.pr_work.link = Some(PrLinkSnapshot {
                     step: "create".into(),
@@ -435,18 +421,12 @@ impl Runtime {
         self.snapshot.pr_work.feedback = Some(slot);
         let root = PathBuf::from(&workspace.path);
         let number = payload.pr_number;
+        let answered = request_id.clone();
         if let Err(message) = self.spawn_issue_worker(
             "pr-feedback",
             move || crate::github::pr_feedback(&root, number),
-            move |runtime, answer| runtime.ingest_pr_feedback(&request_id, answer),
+            move |runtime, answer| runtime.ingest_pr_feedback(&answered, answer),
         ) {
-            let request_id = self
-                .snapshot
-                .pr_work
-                .feedback
-                .as_ref()
-                .map(|slot| slot.request_id.clone())
-                .unwrap_or_default();
             self.ingest_pr_feedback(&request_id, Err(message));
         }
         true

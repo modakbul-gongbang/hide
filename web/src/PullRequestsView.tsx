@@ -4,15 +4,13 @@ import {
   CircleDashedIcon,
   EllipsisIcon,
   ExternalLinkIcon,
-  GitMergeIcon,
-  GitPullRequestDraftIcon,
-  GitPullRequestIcon,
   Link2Icon,
   PlayIcon,
   SquareTerminalIcon,
 } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent, type MouseEvent, type ReactNode } from "react";
 import { lineTone, markTone, rowLine } from "./agentRow";
+import { CHECKOUT_KIND_ICON } from "./components/checkout-icon";
 import { CheckoutCardHint } from "./components/pr-card";
 import { StatusMark } from "./components/status-mark";
 import { Badge } from "./components/ui/badge";
@@ -24,7 +22,7 @@ import { Hint } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
 import { AgentMessagePopover, IssueChip, type LensHandlers } from "./OverviewLenses";
 import type { PrBoard, PrRow } from "./projectBoard";
-import { checkoutCard, laneCheckoutCard, pullRequestCard, relativeActivity, shownPullRequest } from "./projects";
+import { checkoutCard, laneCheckoutCard, pullRequestCard, pullRequestKind, relativeActivity, shownPullRequest } from "./projects";
 import type { Workspace } from "./snapshot";
 import { CardAgentRow, ChecksMark, PR_TONE, REVIEW, TaskGlyph } from "./TaskBoards";
 import { useUiStore, type PrLens } from "./ui";
@@ -38,8 +36,8 @@ import { useUiStore, type PrLens } from "./ui";
 // unfolding are the screen's own state and publish nothing (B24); a GitHub
 // write happens only after its dialog's one confirmation (`PrDialogs.tsx`).
 
-export const TAKE_HINT = "에이전트에게 맡기기\nPR 브랜치에서 시작 대화상자를 연다. 첫 지시 = 실패한 검사 · 리뷰 코멘트";
-export const LINK_HINT = "이슈 잇기\n이 PR을 이슈에 잇는다. 이을 이슈가 없으면 PR 제목 · 본문으로 새로 만든다";
+const TAKE_HINT = "에이전트에게 맡기기\nPR 브랜치에서 시작 대화상자를 연다. 첫 지시 = 실패한 검사 · 리뷰 코멘트";
+const LINK_HINT = "이슈 잇기\n이 PR을 이슈에 잇는다. 이을 이슈가 없으면 PR 제목 · 본문으로 새로 만든다";
 const CLEAN_HINT = "정리\n머지됐거나 폴더가 없는 워크트리와 거기서 쉬는 에이전트를 지운다. 확인 대화상자가 먼저 뜬다";
 const GITHUB_HINT = "GitHub\n리뷰하고 머지";
 const MARKS = 3;
@@ -130,7 +128,6 @@ export function PullRequestsView({ board, project, lens, onLens, handlers, now }
   );
 }
 
-const PR_GLYPH = { open: GitPullRequestIcon, draft: GitPullRequestDraftIcon, merged: GitMergeIcon, closed: GitPullRequestIcon } as const;
 
 /** Stops a part's click from also unfolding the row. */
 function own(handler: (event: MouseEvent) => void) {
@@ -150,7 +147,7 @@ function own(handler: (event: MouseEvent) => void) {
 function PullRequestRowView({ row, project, open, onToggle, onUnfold, handlers, now }: { row: PrRow; project: Workspace; open: boolean; onToggle: () => void; onUnfold: () => void; handlers: LensHandlers; now: number }) {
   const [picking, setPicking] = useState(false);
   const github = (url: string) => handlers.openGitHub(url, project.device_id);
-  const Glyph = PR_GLYPH[row.tone];
+  const Glyph = CHECKOUT_KIND_ICON[pullRequestKind(row.pr)];
   const place = row.checkout?.branch ?? row.branch;
   const checkoutHere = row.checkout !== null && row.checkout.exists;
   const numberCard = row.checkout && shownPullRequest(row.checkout)?.number === row.number ? checkoutCard(project, row.checkout, now) : pullRequestCard(row.pr);
@@ -258,9 +255,9 @@ function IssueCell({ row, project, picking, onPicking, handlers, now }: { row: P
   }
   return (
     <IssuePicker row={row} project={project} open={picking} onOpenChange={onPicking}>
-      <button type="button" aria-label="이슈 잇기" className="relative inline-flex w-(--size-icon) shrink-0 justify-center rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={own(() => onPicking(true))} data-pr-issue="none" data-pr-link-open={row.number}>
-        <span className="group-hover/pr-row:hidden group-focus-within/pr-row:hidden">{empty}</span>
-        <Link2Icon aria-hidden="true" className="hidden size-(--size-icon-sm) text-foreground group-hover/pr-row:block group-focus-within/pr-row:block" />
+      <button type="button" aria-label="이슈 잇기" className="group/pr-issue relative inline-flex w-(--size-icon) shrink-0 justify-center rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={own(() => onPicking(true))} data-pr-issue="none" data-pr-link-open={row.number}>
+        <span className={cn("group-hover/pr-issue:hidden group-focus-visible/pr-issue:hidden", picking && "hidden")}>{empty}</span>
+        <Link2Icon aria-hidden="true" className={cn("hidden size-(--size-icon-sm) text-foreground group-hover/pr-issue:block group-focus-visible/pr-issue:block", picking && "block")} data-pr-link-icon={row.number} />
       </button>
     </IssuePicker>
   );

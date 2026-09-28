@@ -227,7 +227,7 @@ function moveFocus(event: KeyboardEvent<HTMLElement>) {
 // --- chips -------------------------------------------------------------------
 
 /** ⌘-click means GitHub wherever it lands (D-09). */
-export function gitHubClick(event: MouseEvent, url: string | null | undefined, deviceId: string, handlers: LensHandlers): boolean {
+function gitHubClick(event: MouseEvent, url: string | null | undefined, deviceId: string, handlers: LensHandlers): boolean {
   if (!event.metaKey || !url) return false;
   event.preventDefault();
   handlers.openGitHub(url, deviceId);

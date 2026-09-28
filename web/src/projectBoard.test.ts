@@ -116,7 +116,7 @@ describe("the Issues board", () => {
     );
     expect(board.cards).toEqual([]);
     expect(board.loose.worktrees.map((value) => value.branch)).toEqual(["loose"]);
-    expect(board.loose.pullRequests.map((value) => [value.number, value.title, value.tone])).toEqual([[7, "PR", "open"]]);
+    expect(board.loose.pullRequests.map((value) => value.number)).toEqual([7]);
   });
 
   it("puts an issue in review when its open pull request reaches it by the branch's link or by a closing reference, and shows that pull request on each (B3)", () => {

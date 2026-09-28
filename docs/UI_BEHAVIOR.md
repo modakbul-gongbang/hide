@@ -455,7 +455,7 @@ When the body already closes that issue by a closing keyword, nothing is written
 A failed body write keeps the link and the filled cell; the dialog stays with one line of why and `본문 다시 쓰기`, which writes only the body, and `닫기`.
 A Local issue is Hide's link alone: choosing it asks nothing and writes nothing to GitHub, and the dialog appears only when the link fails.
 `새 이슈 만들기` opens the pull request's title and body (read when it opens) in editable fields and one confirmation, `이슈를 만들고 PR #N 본문에 "Closes #(새 번호)"를 씁니다`, `만들고 쓰기` then makes the issue and writes the body; when the body write fails the issue stays made and linked, the dialog says `이슈 #M은 만들었고 PR 본문 쓰기는 실패했습니다`, and `본문 다시 쓰기` writes only the body.
-On a Local source the same form makes a Local issue and links it, with nothing written to GitHub.
+On a Local source the same form says `Local 이슈를 만들어 이 PR에 잇습니다. GitHub에는 쓰지 않습니다.`, and `만들고 잇기` makes a Local issue and links it, with nothing written to GitHub.
 
 `▷ 맡기기` opens the Start dialog on the pull request's branch: the worktree is the branch, shown and fixed, the agent Claude or Codex, and the first prompt the failed checks by name with their links and the change requests as their reviewers wrote them, which the dialog reads when it opens and the operator can edit.
 With no checkout of the branch here the dialog says `이 브랜치의 워크트리를 만들고 시작합니다`, and the start fetches the branch from origin and makes a worktree that tracks it; it never makes a new branch.

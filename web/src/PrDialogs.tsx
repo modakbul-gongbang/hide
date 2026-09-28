@@ -15,7 +15,7 @@ import { Kbd } from "./components/ui/kbd";
 import { Note, Status } from "./components/settings-rows";
 import { AgentChoiceField, DEFAULT_SETTINGS, Field, submitOnCommandEnter, TextArea, type AgentChoice } from "./IssueDialogs";
 import { delegatePrompt } from "./prDelegate";
-import type { PrLink, PullRequest, Task, Workspace } from "./snapshot";
+import type { PrFeedback, PrLink, PullRequest, Task, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { taskFor } from "./workspaceManage";
@@ -28,11 +28,32 @@ function requestId(kind: string, number: number): string {
   return `${kind}-${number}-${Date.now()}`;
 }
 
-/** The core's answer to this dialog's own link request, and a refusal since it was sent. */
-function useLinkAnswer(sent: Sent | null): { answer: PrLink | null; refused: string | null } {
+/**
+ * The core's answer to this dialog's own link request and a refusal since it
+ * was sent; a link that reached `ready` closes the dialog.
+ */
+function useLinkAnswer(sent: Sent | null, onClose: () => void): { answer: PrLink | null; refused: string | null; working: boolean; failed: boolean } {
   const link = useShellStore((s) => s.rest?.pr_work?.link ?? null);
   const refused = useErrorSince(sent?.at ?? null, ["pr_link."]);
-  return { answer: sent && link?.request_id === sent.id ? link : null, refused };
+  const answer = sent && link?.request_id === sent.id ? link : null;
+  useEffect(() => {
+    if (answer?.phase === "ready") onClose();
+  }, [answer?.phase, onClose]);
+  return {
+    answer,
+    refused,
+    working: sent !== null && refused === null && (answer === null || answer.phase === "working"),
+    failed: refused !== null || answer?.phase === "failed",
+  };
+}
+
+/** The core's read of a pull request's body, checks and reviews under `readId`, asked for once per id. */
+function useFeedbackRead(actions: Actions, readId: string, workspaceId: string, number: number): PrFeedback | null {
+  const read = useShellStore((s) => (s.rest?.pr_work?.feedback?.request_id === readId ? s.rest.pr_work.feedback : null));
+  useEffect(() => {
+    actions.readPullRequestFeedback(readId, workspaceId, number);
+  }, [actions, readId, workspaceId, number]);
+  return read;
 }
 
 /** The number `Closes #N` names for a GitHub issue of this repository (`github:owner/repo#12`). */
@@ -76,9 +97,7 @@ function LinkFailure({ answer, refused }: { answer: PrLink | null; refused: stri
 export function PrLinkDialog({ actions, workspace, pr, task, onClose }: { actions: Actions; workspace: Workspace; pr: PullRequest; task: Task; onClose: () => void }) {
   const local = task.source === "local";
   const [sent, setSent] = useState<Sent | null>(null);
-  const { answer, refused } = useLinkAnswer(sent);
-  const working = sent !== null && refused === null && (answer === null || answer.phase === "working");
-  const failed = refused !== null || answer?.phase === "failed";
+  const { answer, refused, working, failed } = useLinkAnswer(sent, onClose);
   const send = (key: string) => {
     const id = requestId("pr-link", pr.number);
     setSent({ id, at: Date.now() });
@@ -91,9 +110,6 @@ export function PrLinkDialog({ actions, workspace, pr, task, onClose }: { action
     autoSent.current = true;
     send(task.key);
   });
-  useEffect(() => {
-    if (answer?.phase === "ready") onClose();
-  }, [answer?.phase, onClose]);
   if (local && !failed) return null;
   const number = issueNumber(task);
   return (
@@ -133,20 +149,12 @@ export function PrNewIssueDialog({ actions, workspace, pr, onClose }: { actions:
   const [body, setBody] = useState("");
   const bodyEdited = useRef(false);
   const readId = useMemo(() => requestId("pr-body", pr.number), [pr.number]);
-  const read = useShellStore((s) => (s.rest?.pr_work?.feedback?.request_id === readId ? s.rest.pr_work.feedback : null));
-  useEffect(() => {
-    actions.readPullRequestFeedback(readId, workspace.id, pr.number);
-  }, [actions, readId, workspace.id, pr.number]);
+  const read = useFeedbackRead(actions, readId, workspace.id, pr.number);
   useEffect(() => {
     if (read?.phase === "ready" && !bodyEdited.current) setBody(read.body ?? "");
   }, [read?.phase, read?.body]);
   const [sent, setSent] = useState<Sent | null>(null);
-  const { answer, refused } = useLinkAnswer(sent);
-  const working = sent !== null && refused === null && (answer === null || answer.phase === "working");
-  const failed = refused !== null || answer?.phase === "failed";
-  useEffect(() => {
-    if (answer?.phase === "ready") onClose();
-  }, [answer?.phase, onClose]);
+  const { answer, refused, working, failed } = useLinkAnswer(sent, onClose);
   const submit = () => {
     if (working) return;
     const id = requestId("pr-link", pr.number);
@@ -216,10 +224,7 @@ export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions:
   const [prompt, setPrompt] = useState("");
   const promptEdited = useRef(false);
   const [readId, setReadId] = useState(() => requestId("pr-feedback", pr.number));
-  const read = useShellStore((s) => (s.rest?.pr_work?.feedback?.request_id === readId ? s.rest.pr_work.feedback : null));
-  useEffect(() => {
-    actions.readPullRequestFeedback(readId, workspace.id, pr.number);
-  }, [actions, readId, workspace.id, pr.number]);
+  const read = useFeedbackRead(actions, readId, workspace.id, pr.number);
   useEffect(() => {
     if (read?.phase !== "ready" || promptEdited.current) return;
     setPrompt(delegatePrompt({ number: pr.number, title: pr.title, branch }, read));

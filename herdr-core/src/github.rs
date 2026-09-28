@@ -831,7 +831,7 @@ fn referenced_issue(word: &str) -> Option<u32> {
         }
         number
     };
-    if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+    if !is_number(number) {
         return None;
     }
     number.parse().ok()
