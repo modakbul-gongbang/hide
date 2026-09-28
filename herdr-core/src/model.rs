@@ -76,6 +76,7 @@ pub struct Snapshot {
     pub git_worktrees_remote: bool,
     pub worktree_removal: Option<WorktreeRemovalSnapshot>,
     pub task_operation: Option<TaskOperationSnapshot>,
+    pub repository_clone: Option<RepositoryCloneSnapshot>,
     pub explorer_operation: Option<ExplorerOperationSnapshot>,
     pub issue_work: IssueWorkSnapshot,
     pub pr_work: PrWorkSnapshot,
@@ -2933,6 +2934,27 @@ pub struct TaskOperationSnapshot {
     pub agent_message: Option<String>,
 }
 
+/// The one repository clone Add a project started, and how far it got.
+///
+/// One slot, like `TaskOperationSnapshot`: a second clone while one runs is
+/// refused, and the same URL and folder sent again joins the one running.
+/// The URL is not here, because it can carry credentials; `host` is what the
+/// shell shows. `phase` is `cloning`, `cancelling`, then `finished` (the
+/// folder is registered through `create_workspace`), `failed` with `message`,
+/// or `cancelled`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct RepositoryCloneSnapshot {
+    pub id: u64,
+    pub host: String,
+    /// The new folder's full path, `parent` and the name the URL gives.
+    pub path: String,
+    pub phase: String,
+    /// Git's own stage, `Receiving objects` and the like, once it names one.
+    pub stage: Option<String>,
+    pub percent: Option<u8>,
+    pub message: Option<String>,
+}
+
 /// The explorer's most recent filesystem change and how far it got.
 ///
 /// One slot, like `TaskOperationSnapshot`: the shell reads the finished
@@ -3426,6 +3448,7 @@ impl Snapshot {
             git_worktrees_remote: false,
             worktree_removal: None,
             task_operation: None,
+            repository_clone: None,
             explorer_operation: None,
             issue_work: IssueWorkSnapshot::default(),
             pr_work: PrWorkSnapshot::default(),
@@ -3505,6 +3528,7 @@ pub struct RestSections {
     pub git_worktrees_remote: bool,
     pub worktree_removal: Option<WorktreeRemovalSnapshot>,
     pub task_operation: Option<TaskOperationSnapshot>,
+    pub repository_clone: Option<RepositoryCloneSnapshot>,
     pub explorer_operation: Option<ExplorerOperationSnapshot>,
     pub issue_work: IssueWorkSnapshot,
     pub pr_work: PrWorkSnapshot,
@@ -3539,6 +3563,7 @@ impl RestSections {
             git_worktrees_remote: snapshot.git_worktrees_remote,
             worktree_removal: snapshot.worktree_removal.clone(),
             task_operation: snapshot.task_operation.clone(),
+            repository_clone: snapshot.repository_clone.clone(),
             explorer_operation: snapshot.explorer_operation.clone(),
             issue_work: snapshot.issue_work.clone(),
             pr_work: snapshot.pr_work.clone(),
@@ -3574,6 +3599,7 @@ impl RestSections {
             && self.git_worktrees_remote == snapshot.git_worktrees_remote
             && self.worktree_removal == snapshot.worktree_removal
             && self.task_operation == snapshot.task_operation
+            && self.repository_clone == snapshot.repository_clone
             && self.explorer_operation == snapshot.explorer_operation
             && self.issue_work == snapshot.issue_work
             && self.pr_work == snapshot.pr_work
@@ -3717,6 +3743,7 @@ pub struct RestWire<'a> {
     pub git_worktrees_remote: bool,
     pub worktree_removal: &'a Option<WorktreeRemovalSnapshot>,
     pub task_operation: &'a Option<TaskOperationSnapshot>,
+    pub repository_clone: &'a Option<RepositoryCloneSnapshot>,
     pub explorer_operation: &'a Option<ExplorerOperationSnapshot>,
     pub issue_work: &'a IssueWorkSnapshot,
     pub pr_work: &'a PrWorkSnapshot,
@@ -3748,6 +3775,7 @@ impl<'a> RestWire<'a> {
             git_worktrees_remote: rest.git_worktrees_remote,
             worktree_removal: &rest.worktree_removal,
             task_operation: &rest.task_operation,
+            repository_clone: &rest.repository_clone,
             explorer_operation: &rest.explorer_operation,
             issue_work: &rest.issue_work,
             pr_work: &rest.pr_work,

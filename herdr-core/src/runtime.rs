@@ -9,6 +9,7 @@ mod agent_close;
 mod agent_sleep;
 mod agents;
 mod attachments;
+mod clone;
 mod device_catalog;
 mod devices;
 mod documents;
@@ -1302,6 +1303,9 @@ pub struct Runtime {
     /// that runs is a quiet no-op rather than a second round of closes.
     workspace_removals_in_flight: HashSet<String>,
     next_task_operation_id: u64,
+    next_repository_clone_id: u64,
+    /// The clone `snapshot.repository_clone` reports, while its worker runs.
+    repository_clone_job: Option<clone::CloneJob>,
     /// The checkout a purpose receipt belongs to. A remote checkout lives in
     /// `status.remote[].session`, not the local navigator, so the operation
     /// carries this target separately from its shell-facing receipt.
@@ -1599,6 +1603,8 @@ impl Runtime {
             next_worktree_removal_id: 0,
             workspace_removals_in_flight: HashSet::new(),
             next_task_operation_id: 0,
+            next_repository_clone_id: 0,
+            repository_clone_job: None,
             purpose_operation_target: None,
             created_purpose_writes_in_flight: HashMap::new(),
             unconfirmed_created_purposes: HashMap::new(),

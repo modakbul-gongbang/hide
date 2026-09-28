@@ -11,6 +11,7 @@
 //! one contract (PRD S5.5 D-05, D-06).
 
 pub mod bytes;
+pub mod clone;
 pub mod document;
 pub mod error;
 pub mod git;

@@ -1,7 +1,9 @@
 // Add a project's own rules: which hosts the dialog offers, the one refusal
-// the shell can tell from the snapshot before an event goes out, and the line
-// a refusal is shown as. Everything else about a path hided (this Mac) or the
-// device's helper decides and answers.
+// the shell can tell from the snapshot before an event goes out, the line a
+// refusal is shown as, and Clone from URL's reading of a URL and its default
+// parent. Everything else about a path hided (this Mac) or the device's
+// helper decides and answers, and the core parses a URL again before Git
+// sees it (`hide_host::clone`).
 
 import type { Device, WorkspaceRegistration } from "./snapshot";
 
@@ -49,7 +51,87 @@ export function refusalText(reason: string): string {
       return "This folder does not exist.";
     case "not_a_directory":
       return "This is a file, not a folder.";
+    case "already_exists":
+      return "Something by this name is already there.";
     default:
       return `The folder was refused (${reason}).`;
   }
+}
+
+/**
+ * A URL Git can clone and the folder it lands in, read the way the core reads
+ * it (`hide_host::clone::CloneSource`): https, ssh, the scp form
+ * `[user@]host:path`, and `file:///path`; the folder is the last segment
+ * without `.git`. The shell reads it to name the folder and enable Clone; the
+ * core decides.
+ */
+export type CloneUrl = { ok: true; host: string; name: string } | { ok: false; reason: string };
+
+export function parseCloneUrl(raw: string): CloneUrl {
+  const url = raw.trim();
+  if (!url) return { ok: false, reason: "Enter a Git URL." };
+  // `::` is Git's transport-helper form (`ext::`), never a URL this accepts.
+  // eslint-disable-next-line no-control-regex
+  if (url.startsWith("-") || url.includes("::") || /[\s\u0000-\u001f\u007f]/.test(url)) return { ok: false, reason: "This is not a Git URL." };
+  let host: string;
+  let path: string;
+  const scheme = /^(https|ssh|file):\/\/(.*)$/.exec(url);
+  if (scheme) {
+    const [, kind, rest] = scheme as unknown as [string, string, string];
+    if (kind === "file") {
+      if (!rest.startsWith("/")) return { ok: false, reason: "A file URL names an absolute path: file:///path/to/repo.git" };
+      host = "localhost";
+      path = rest;
+    } else {
+      const slash = rest.indexOf("/");
+      if (slash < 0) return { ok: false, reason: "This URL names no repository to clone." };
+      const authority = rest.slice(0, slash);
+      const hostPort = authority.slice(authority.lastIndexOf("@") + 1);
+      host = hostPort.replace(/:\d*$/, "");
+      path = rest.slice(slash + 1);
+      if (!validHost(host)) return { ok: false, reason: "This URL names no host." };
+    }
+  } else if (url.includes("://")) {
+    return { ok: false, reason: "Use an https, ssh or git@host:path URL." };
+  } else {
+    const colon = url.indexOf(":");
+    const authority = colon < 0 ? "" : url.slice(0, colon);
+    host = authority.slice(authority.lastIndexOf("@") + 1);
+    if (colon < 0 || authority.includes("/") || !validHost(host)) return { ok: false, reason: "Use an https, ssh or git@host:path URL." };
+    path = url.slice(colon + 1);
+  }
+  const trimmed = path.replace(/\/+$/, "");
+  const stem = (trimmed.endsWith(".git") ? trimmed.slice(0, -4) : trimmed).replace(/\/+$/, "");
+  const name = stem.split(/[/:]/).pop() ?? "";
+  if (!name || name === "." || name === ".." || name.includes("\\")) return { ok: false, reason: "This URL names no repository to clone." };
+  return { ok: true, host: host.toLowerCase(), name };
+}
+
+function validHost(host: string): boolean {
+  return host.length > 0 && /^[A-Za-z0-9._\-[\]:]+$/.test(host);
+}
+
+/**
+ * Where Create new project puts its folder at first: beside the most recently
+ * added project on this Mac (registrations are kept in the order they were
+ * added), else the home folder.
+ */
+export function defaultProjectParent(registrations: readonly WorkspaceRegistration[]): string {
+  const last = registrations.filter((row) => row.device_id === "local").at(-1);
+  if (!last) return "~";
+  const path = trimFolder(last.path);
+  const cut = path.lastIndexOf("/");
+  return cut > 0 ? path.slice(0, cut) : "~";
+}
+
+/** Why a typed `name` cannot be a new project's folder name, or null; an empty name has nothing to say yet. */
+export function projectNameProblem(name: string): string | null {
+  if (name.includes("/")) return "A name is one folder, without `/`.";
+  if (name === "." || name === "..") return "`.` and `..` are not folder names.";
+  return null;
+}
+
+/** The folder a new project takes: its parent and the name, with a placeholder until one is typed. */
+export function projectPath(parent: string, name: string): string {
+  return `${parent === "/" ? "" : parent}/${name || "project-name"}`;
 }

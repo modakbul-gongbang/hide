@@ -643,6 +643,93 @@ pub(crate) fn temp_base_outside_any_repository() -> &'static Path {
     .as_path()
 }
 
+/// What stands at the path a new project would be created at.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProjectFolder {
+    /// Nothing is there; the folder is made.
+    Free,
+    /// A folder holding nothing, or nothing but `.git` (and the `.DS_Store`
+    /// Finder writes when the folder is looked at): what a create that failed
+    /// after making its folder leaves. A retry continues into it, so the same
+    /// intent converges instead of being refused by its own leftover.
+    Leftover,
+    /// Something else is there, a file, a symlink or a folder with contents.
+    Taken,
+}
+
+/// The names a leftover folder may hold: its repository, and what Finder
+/// writes into a folder the operator opened to see why a create failed.
+const LEFTOVER_NAMES: [&str; 2] = [".git", ".DS_Store"];
+
+/// Reads the path a new project would take without following a symlink at it.
+/// The caller has already confined the parent; this judges only the last name.
+pub fn project_folder(path: &Path) -> ProjectFolder {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return ProjectFolder::Free,
+        Err(_) => return ProjectFolder::Taken,
+    };
+    if !metadata.is_dir() {
+        return ProjectFolder::Taken;
+    }
+    match fs::read_dir(path) {
+        Ok(mut entries) => {
+            let only_git = entries.all(|entry| {
+                entry
+                    .is_ok_and(|entry| LEFTOVER_NAMES.iter().any(|name| entry.file_name() == *name))
+            });
+            if only_git {
+                ProjectFolder::Leftover
+            } else {
+                ProjectFolder::Taken
+            }
+        }
+        Err(_) => ProjectFolder::Taken,
+    }
+}
+
+/// Makes a new project's folder and a Git repository in it. The repository is
+/// made in this folder even inside another repository's tree, because a new
+/// project is its own repository. A leftover of an earlier attempt is
+/// continued into; anything else at the path is refused and left as it is.
+/// A failure after the folder was made keeps the folder and says so.
+pub fn create_project_folder(path: &Path) -> Result<(), String> {
+    match fs::create_dir(path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            if project_folder(path) != ProjectFolder::Leftover {
+                return Err(format!(
+                    "{} already exists; pick another name",
+                    path.display()
+                ));
+            }
+        }
+        Err(error) => return Err(format!("{} could not be made: {error}", path.display())),
+    }
+    if path.join(".git").exists() {
+        return Ok(());
+    }
+    #[cfg(test)]
+    GIT_CALLS.with(|calls| calls.set(calls.get() + 1));
+    let kept = |reason: String| {
+        format!(
+            "{reason}; the folder {} was kept, and creating it again continues there",
+            path.display()
+        )
+    };
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .arg("init")
+        .output()
+        .map_err(|error| kept(format!("git init could not start: {error}")))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(kept(command_failure("git init", &output)))
+    }
+}
+
 pub fn initialize_git(path: &Path) -> Result<(), String> {
     if git_root(path).is_some() {
         return Ok(());
@@ -1537,5 +1624,70 @@ mod tests {
         assert_eq!(catalog.len(), 1);
         assert_eq!(catalog[0].id, registration_id);
         let _ = fs::remove_dir_all(root);
+    }
+
+    /// Create new project makes the folder and its own repository, even inside
+    /// another repository's tree; the same create again continues into what
+    /// it made, and a folder with contents is refused and left untouched.
+    #[test]
+    fn a_new_project_folder_is_made_as_its_own_repository_and_a_retry_converges() {
+        let (outer, _worktree) = repository_with_worktree("new-project");
+        let target = outer.join("fresh");
+        assert_eq!(project_folder(&target), ProjectFolder::Free);
+
+        create_project_folder(&target).expect("created");
+        assert!(target.join(".git").is_dir());
+        assert_eq!(
+            git_root(&target).as_deref(),
+            Some(target.canonicalize().unwrap().as_path())
+        );
+        assert_eq!(project_folder(&target), ProjectFolder::Leftover);
+
+        create_project_folder(&target).expect("a retry continues into its own folder");
+        assert_eq!(
+            git_root(&target).as_deref(),
+            Some(target.canonicalize().unwrap().as_path())
+        );
+
+        let empty = outer.join("empty");
+        fs::create_dir(&empty).unwrap();
+        assert_eq!(project_folder(&empty), ProjectFolder::Leftover);
+        create_project_folder(&empty).expect("an empty folder is continued into");
+        assert!(empty.join(".git").is_dir());
+
+        let looked_at = outer.join("looked-at");
+        fs::create_dir(&looked_at).unwrap();
+        fs::write(looked_at.join(".DS_Store"), "finder").unwrap();
+        assert_eq!(project_folder(&looked_at), ProjectFolder::Leftover);
+
+        // A symlink at the name is refused, never followed into its target.
+        #[cfg(unix)]
+        {
+            let elsewhere = temp_dir("new-project-elsewhere");
+            let link = outer.join("link");
+            std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
+            assert_eq!(project_folder(&link), ProjectFolder::Taken);
+            assert!(create_project_folder(&link).is_err());
+            assert!(!elsewhere.join(".git").exists());
+            let _ = fs::remove_dir_all(&elsewhere);
+        }
+
+        let taken = outer.join("taken");
+        fs::create_dir(&taken).unwrap();
+        fs::write(taken.join("notes.md"), "mine\n").unwrap();
+        assert_eq!(project_folder(&taken), ProjectFolder::Taken);
+        let error = create_project_folder(&taken).expect_err("a folder with contents is refused");
+        assert!(error.contains("already exists"), "{error}");
+        assert!(!taken.join(".git").exists());
+        assert_eq!(
+            fs::read_to_string(taken.join("notes.md")).unwrap(),
+            "mine\n"
+        );
+
+        let file = outer.join("file");
+        fs::write(&file, "x").unwrap();
+        assert_eq!(project_folder(&file), ProjectFolder::Taken);
+        assert!(create_project_folder(&file).is_err());
+        let _ = fs::remove_dir_all(outer);
     }
 }

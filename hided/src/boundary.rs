@@ -176,6 +176,8 @@ pub enum Refusal {
     NotAFile,
     /// Empty, relative, or otherwise not a path this daemon reads.
     InvalidPath,
+    /// Something already stands where a new project's folder would be made.
+    AlreadyExists,
 }
 
 impl Refusal {
@@ -189,6 +191,7 @@ impl Refusal {
             Self::NotADirectory => "not_a_directory",
             Self::NotAFile => "not_a_file",
             Self::InvalidPath => "invalid_path",
+            Self::AlreadyExists => "already_exists",
         }
     }
 }
@@ -349,6 +352,17 @@ pub struct Boundary {
     /// are another machine's paths: this boundary only admits the pair a
     /// device listing names, and the device's helper confines the work.
     device_roots: RwLock<Vec<DeviceRoot>>,
+}
+
+/// A new project's folder as the `$HOME` line resolved it.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NewProject {
+    /// The canonical folder it goes in: home or a directory under it.
+    pub parent: PathBuf,
+    /// The canonical path the folder takes.
+    pub path: PathBuf,
+    /// A folder holding nothing but `.git` is already there, and is used.
+    pub leftover: bool,
 }
 
 /// One checkout on an SSH device: the device and the root path there.
@@ -828,6 +842,58 @@ impl Boundary {
             return Err(Refusal::HomeRoot);
         }
         Ok(real)
+    }
+
+    /// Where Add a project's Create new project would make its folder: `name`
+    /// inside `parent`, which is home or a directory under it, so the new
+    /// folder is always strictly under home. The target is read without
+    /// following a symlink at it; a leftover of an earlier attempt (a folder
+    /// holding nothing but `.git`) is accepted so a retry converges, and
+    /// anything else there is `already_exists`. Answers the canonical parent
+    /// and target, and whether the target is such a leftover.
+    pub fn resolve_new_project(&self, parent: &str, name: &str) -> Result<NewProject, Refusal> {
+        let parent = self.resolve_dir(parent)?;
+        if !valid_name(name) {
+            return Err(Refusal::InvalidPath);
+        }
+        let path = parent.join(name);
+        let leftover = match herdr_core::workspace::project_folder(&path) {
+            herdr_core::workspace::ProjectFolder::Free => false,
+            herdr_core::workspace::ProjectFolder::Leftover => true,
+            herdr_core::workspace::ProjectFolder::Taken => return Err(Refusal::AlreadyExists),
+        };
+        Ok(NewProject {
+            parent,
+            path,
+            leftover,
+        })
+    }
+
+    /// A path under home as `~` spells it, for a line the operator reads.
+    pub fn home_label(&self, path: &Path) -> String {
+        match path.strip_prefix(&self.home) {
+            Ok(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
+            Ok(rest) => format!("~/{}", rest.display()),
+            Err(_) => path.display().to_string(),
+        }
+    }
+
+    /// The canonical parent a clone may write `name` into: home or a folder
+    /// under it, and a plain folder name nothing holds there yet, not even a
+    /// dangling symlink or the `.git`-only leftover Create new project
+    /// continues into, since a clone never writes into a folder it did not
+    /// make. The folder the clone creates is therefore strictly under home,
+    /// which is what `create_workspace` then registers.
+    pub fn resolve_clone_target(&self, parent: &str, name: &str) -> Result<PathBuf, Refusal> {
+        let real = self.resolve_dir(parent)?;
+        if !valid_name(name) {
+            return Err(Refusal::InvalidPath);
+        }
+        match fs::symlink_metadata(real.join(name)) {
+            Ok(_) => Err(Refusal::AlreadyExists),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(real),
+            Err(_) => Err(Refusal::InvalidPath),
+        }
     }
 
     /// The children of a folder inside a registered checkout: files and
@@ -1724,6 +1790,51 @@ mod tests {
         for name in ["", ".", "..", "a/b", "\0"] {
             assert!(!valid_name(name), "{name:?}");
         }
+    }
+
+    #[test]
+    fn a_clone_target_is_a_free_plain_name_in_a_folder_under_home() {
+        let f = fixture();
+        let projects = f.home.join("projects");
+        let real = projects.canonicalize().unwrap();
+        assert_eq!(
+            f.boundary.resolve_clone_target(&s(&projects), "gamma"),
+            Ok(real.clone())
+        );
+        assert_eq!(
+            f.boundary.resolve_clone_target("~/projects", "gamma"),
+            Ok(real)
+        );
+        // Home itself is a parent a clone may use; the folder is below it.
+        assert_eq!(
+            f.boundary.resolve_clone_target("~", "gamma"),
+            Ok(f.home.canonicalize().unwrap())
+        );
+        assert_eq!(
+            f.boundary.resolve_clone_target(&s(&projects), "alpha"),
+            Err(Refusal::AlreadyExists)
+        );
+        symlink(f.outside.join("nowhere"), projects.join("dangling")).unwrap();
+        assert_eq!(
+            f.boundary.resolve_clone_target(&s(&projects), "dangling"),
+            Err(Refusal::AlreadyExists)
+        );
+        for name in ["", ".", "..", "a/b", "../escape", "a\0b"] {
+            assert_eq!(
+                f.boundary.resolve_clone_target(&s(&projects), name),
+                Err(Refusal::InvalidPath),
+                "{name:?}"
+            );
+        }
+        assert_eq!(
+            f.boundary.resolve_clone_target(&s(&f.outside), "gamma"),
+            Err(Refusal::OutsideHome)
+        );
+        assert_eq!(
+            f.boundary
+                .resolve_clone_target(&s(&f.home.join("missing")), "gamma"),
+            Err(Refusal::NotFound)
+        );
     }
 }
 

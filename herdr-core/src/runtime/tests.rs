@@ -34,6 +34,8 @@ mod project_sessions;
 mod projects;
 #[path = "tests/pull_requests.rs"]
 mod pull_requests;
+#[path = "tests/repository_clone.rs"]
+mod repository_clone;
 #[path = "tests/session_navigation.rs"]
 mod session_navigation;
 #[path = "tests/shortcut_import.rs"]

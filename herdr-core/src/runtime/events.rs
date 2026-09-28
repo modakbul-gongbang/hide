@@ -117,6 +117,28 @@ pub(super) struct CreateWorkspacePayload {
     pub(super) path: String,
     pub(super) label: String,
     pub(super) initialize_git: bool,
+    /// Add a project's Create new project: the folder is made and a Git
+    /// repository started in it before it is registered. hided has checked
+    /// the path on its `$HOME` line; the worker judges what stands there
+    /// again, because the check and the make are not one step.
+    #[serde(default)]
+    pub(super) new_folder: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CloneRepositoryPayload {
+    pub(super) url: String,
+    /// The canonical folder hided's `$HOME` line checked.
+    pub(super) parent: String,
+    /// The folder the URL names, which hided found free under `parent`.
+    pub(super) name: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CancelRepositoryClonePayload {
+    pub(super) id: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1096,6 +1118,8 @@ pub(super) enum Event {
     MemoryOpenForTurn(MemoryOpenForTurnPayload),
     MemoryAction(MemoryActionPayload),
     RetryConnect(RetryConnectPayload),
+    CloneRepository(CloneRepositoryPayload),
+    CancelRepositoryClone(CancelRepositoryClonePayload),
     InstallAgentHooks(InstallAgentHooksPayload),
     AiSettings(AiSettingsPayload),
     TerminalResize(TerminalResizePayload),
@@ -1279,6 +1303,8 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "memory_open_for_turn" => decode!(MemoryOpenForTurnPayload, MemoryOpenForTurn),
         "memory_action" => decode!(MemoryActionPayload, MemoryAction),
         "retry_connect" => decode!(RetryConnectPayload, RetryConnect),
+        "clone_repository" => decode!(CloneRepositoryPayload, CloneRepository),
+        "cancel_repository_clone" => decode!(CancelRepositoryClonePayload, CancelRepositoryClone),
         "install_agent_hooks" => decode!(InstallAgentHooksPayload, InstallAgentHooks),
         "ai_settings" => decode!(AiSettingsPayload, AiSettings),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
@@ -1521,12 +1547,24 @@ impl Runtime {
             }
             Event::AiSettings(payload) => self.apply_ai_settings(payload),
             Event::RetryConnect(payload) => self.retry_remote_device(&payload.target_id),
+            Event::CloneRepository(payload) => {
+                self.clone_repository(&payload.url, &payload.parent, &payload.name)
+            }
+            Event::CancelRepositoryClone(payload) => self.cancel_repository_clone(payload.id),
             Event::CreateWorkspace(payload) => {
                 if let Some(device) = payload
                     .device_id
                     .clone()
                     .filter(|device| device != workspace::LOCAL_DEVICE_ID)
                 {
+                    if payload.new_folder {
+                        self.set_error(
+                            "workspace.create_refused",
+                            "A new project can be created on this Mac only",
+                            false,
+                        );
+                        return true;
+                    }
                     return self.create_device_registration(&device, payload.path, payload.label);
                 }
                 if let Some(context) = self.live.as_ref().cloned() {
@@ -1567,6 +1605,7 @@ impl Runtime {
                         payload.path,
                         payload.label,
                         payload.initialize_git,
+                        payload.new_folder,
                         self.snapshot.ui_state.workspace_registrations.clone(),
                     );
                     if let Err(message) = result {
