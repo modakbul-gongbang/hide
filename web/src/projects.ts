@@ -290,6 +290,15 @@ export function checkoutRowExpansion(foldable: boolean, workspaceSelected: boole
   return foldable ? !(workspaceSelected && expanded) : undefined;
 }
 
+/**
+ * A project row takes the checkout rule: it opens the project's Overview and
+ * unfolds it, unless that Overview is already open and the project unfolded,
+ * when it folds. A remote device's tree has no folds to change.
+ */
+export function projectRowExpansion(workspace: Workspace, overviewProjectId: string | null, disclosure: boolean): boolean | undefined {
+  return checkoutRowExpansion(disclosure, workspace.id === overviewProjectId, workspace.expanded !== false);
+}
+
 /** Git project headings navigate too, but only their Overview child owns selection. */
 export function overviewRowSelected(workspace: Workspace, overviewProjectId: string | null): boolean {
   return workspace.is_git === true && workspace.id === overviewProjectId;
