@@ -261,7 +261,6 @@ export type WorktreeRow = {
   /** Commits the upstream has that this branch does not, as of the last fetch; null when unread or no upstream. */
   behind_upstream?: number | null;
   pane_count: number;
-  running_agent_count: number;
   deletion_gate: DeletionGate;
 };
 

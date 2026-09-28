@@ -349,6 +349,9 @@ pub fn deletion_gate(
     let branch_warning = match worktree.merged {
         _ if !can_delete_branch => None,
         Some(true) => None,
+        Some(false) if worktree.ahead == 0 => {
+            Some("Git does not count it as merged; it is deleted anyway".to_owned())
+        }
         Some(false) => Some(format!(
             "{} not on {} {} lost with it",
             if worktree.ahead == 1 {

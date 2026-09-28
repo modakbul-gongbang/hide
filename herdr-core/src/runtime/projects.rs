@@ -381,14 +381,6 @@ impl Runtime {
                 )
             })
             .collect::<HashMap<_, _>>();
-        let running = self
-            .snapshot
-            .navigator
-            .agents
-            .iter()
-            .filter(|agent| agent.activity == "working")
-            .map(|agent| agent.pane_id.as_str())
-            .collect::<HashSet<_>>();
         // The agent line reads the rows the sidebar already projected and the
         // instrumentation the pane header already resolved, so Overview
         // repeats neither judgement (PRD B34, B35, engineering rule 7).
@@ -433,12 +425,6 @@ impl Runtime {
             for worktree in &mut project.worktrees {
                 let panes = pane_rows.get(&worktree.path);
                 worktree.pane_count = panes.map_or(0, HashSet::len);
-                worktree.running_agent_count = panes.map_or(0, |pane_ids| {
-                    pane_ids
-                        .iter()
-                        .filter(|pane_id| running.contains(pane_id.as_str()))
-                        .count()
-                });
                 worktree.agent_line = worktree_agent_line(
                     panes,
                     &agent_chips,

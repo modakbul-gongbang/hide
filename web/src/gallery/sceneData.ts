@@ -125,7 +125,6 @@ function checkout(spec: CheckoutSpec, nowSeconds: number): Checkout {
           merged: false,
           behind_upstream: null,
           pane_count: panes.length,
-          running_agent_count: panes.length,
           deletion_gate: { blocked_reason: null, warnings: [], button_label: "Delete worktree", can_delete_branch: true, branch_warning: null, discard_label: null },
         },
     pull_request: spec.pr ? { url: "", review: null, ...spec.pr } : null,

@@ -36,7 +36,6 @@ const checkout = (patch: Partial<Checkout> = {}): Checkout => ({
     dirty: false,
     changed_file_count: 0,
     pane_count: 0,
-    running_agent_count: 0,
     deletion_gate: { blocked_reason: null, warnings: [], button_label: "Delete worktree", can_delete_branch: true, branch_warning: null, discard_label: null },
   },
   pull_request: null,
@@ -206,7 +205,6 @@ describe("row menus", () => {
       ],
     });
     if (row.worktree) {
-      row.worktree.running_agent_count = 1;
       row.worktree.deletion_gate.warnings = ["3 changed files not committed", "ahead 2 unmerged"];
     }
     expect(deletionConsequences(row, 3)).toEqual([

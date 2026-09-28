@@ -852,8 +852,7 @@ impl ProjectDiskSnapshot {
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct WorkspaceRemovalGateSnapshot {
     pub pane_count: usize,
-    /// Panes whose agent is currently working, the same definition
-    /// `WorktreeDeletionGateSnapshot` warns with.
+    /// Panes whose agent is currently working.
     pub running_agent_count: usize,
 }
 
@@ -2576,7 +2575,6 @@ pub struct WorktreeSnapshot {
     pub last_fetch_at_unix_ms: Option<u64>,
     pub measured_at_unix_ms: Option<u64>,
     pub pane_count: usize,
-    pub running_agent_count: usize,
     /// Who is working in this worktree and on what (PRD B34, B35, D-32,
     /// D-55). Overview's own value is width, so this is one line rather than
     /// a new area.
