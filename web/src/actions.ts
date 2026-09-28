@@ -1344,13 +1344,9 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     reopenClosed() {
-      // The core reopens the newest close of the device in front, and
-      // `recent_closed` already speaks for that device.
-      const recent = rest()?.recent_closed;
-      if (!recent?.can_reopen) {
-        diagnostic(`reopen_closed: nothing to reopen${recent?.reopen_blocked_reason ? ` (${recent.reopen_blocked_reason})` : ""}`);
-        return;
-      }
+      // The core reopens the newest close of the device in front, or says
+      // why it cannot. The page's `recent_closed` can trail a close the core
+      // has already confirmed, so the page does not decide.
       dispatch({ schema_version: 2, kind: "reopen_closed", payload: {} });
     },
 
