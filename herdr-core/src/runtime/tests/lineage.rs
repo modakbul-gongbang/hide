@@ -733,7 +733,13 @@ fn the_breadcrumb_is_the_ancestors_then_the_pane_with_each_layers_siblings() {
 // PRD B1, B3, B4, D-15, D-43, D-44: the canvas keeps one pane, and the tab
 // holding the delegated child never reaches the strip.
 fn split_lineage_payload() -> crate::sidebar::SessionSnapshotPayload {
-    serde_json::from_value(serde_json::json!({
+    serde_json::from_value(split_lineage_json()).expect("session payload")
+}
+
+/// A parent and its delegated child split in one tab, as Herdr reports them
+/// before Hide moves the child.
+pub(super) fn split_lineage_json() -> serde_json::Value {
+    serde_json::json!({
         "agents": [
             {"id":"Observer","pane_id":"w1:p1","agent":"claude","agent_status":"working",
              "state_change_seq":1,"cwd":"/fixture","workspace_label":"Fixture",
@@ -758,8 +764,7 @@ fn split_lineage_payload() -> crate::sidebar::SessionSnapshotPayload {
             "splits":[{"direction":"right","ratio":0.5,
                        "rect":{"x":0,"y":0,"width":80,"height":24}}]
         }]
-    }))
-    .expect("session payload")
+    })
 }
 
 #[test]
