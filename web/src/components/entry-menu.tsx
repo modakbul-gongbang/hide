@@ -54,8 +54,9 @@ function EntryItems<Id extends string>({ items, onSelect, parts }: { items: Menu
  * target whose state changed while it was closed offers what it can do now.
  * The `data-*` hooks name both the target and its menu, which opens in a
  * portal outside the target. `asChild` makes the one child element the
- * target itself (a list row) instead of wrapping it. A `disabled` target
- * offers no menu at all, rather than opening one with nothing in it.
+ * target itself (a list row) instead of wrapping it. A `disabled` target, or
+ * one whose `items` are empty when asked, offers no menu at all rather than
+ * opening one with nothing in it.
  */
 export function EntryContextMenu<Id extends string>({
   label,
@@ -79,7 +80,16 @@ export function EntryContextMenu<Id extends string>({
 } & Record<`data-${string}`, string>) {
   const [entries, setEntries] = useState<MenuEntry<Id>[]>([]);
   return (
-    <ContextMenu onOpenChange={(open) => setEntries(open ? items() : [])}>
+    <ContextMenu
+      canOpen={() => {
+        const next = items();
+        setEntries(next);
+        return next.length > 0;
+      }}
+      onOpenChange={(open) => {
+        if (!open) setEntries([]);
+      }}
+    >
       <ContextMenuTrigger asChild={asChild} disabled={disabled} className={cn("relative", className)} {...data}>
         {children}
       </ContextMenuTrigger>

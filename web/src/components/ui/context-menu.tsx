@@ -25,7 +25,8 @@ function useContextMenu() {
   return state;
 }
 
-function ContextMenu({ onOpenChange, children }: { onOpenChange?: (open: boolean) => void; children: React.ReactNode }) {
+/** `canOpen` is asked on every right-click or menu key; false keeps the menu closed, as a disabled trigger does. */
+function ContextMenu({ onOpenChange, canOpen, children }: { onOpenChange?: (open: boolean) => void; canOpen?: () => boolean; children: React.ReactNode }) {
   const [point, setPoint] = useState<Point | null>(null);
   const host = useRef<HTMLElement | null>(null);
   const change = (next: boolean) => {
@@ -34,6 +35,7 @@ function ContextMenu({ onOpenChange, children }: { onOpenChange?: (open: boolean
   };
   useEscapeLayer(point !== null, () => change(false));
   const openAt = (at: Point) => {
+    if (canOpen && !canOpen()) return;
     setPoint(at);
     onOpenChange?.(true);
   };

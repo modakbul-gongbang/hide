@@ -29,16 +29,23 @@ async function prompt(herdr: HerdrFixture, pane: string): Promise<void> {
 }
 
 /**
- * A `git` first on the daemon's PATH that holds `git worktree remove` for a
- * while, as a removal Git does in place does, and runs the real Git for
- * everything else.
+ * A `git` first on the daemon's PATH that holds `git worktree remove`, as a
+ * removal Git does in place does, until `release` is called, and runs the real
+ * Git for everything else. The hold gives up after 12 seconds, inside the
+ * host's 15-second Git deadline, so a test that fails early still ends.
  */
-function slowGit(root: string): string {
+function heldGit(root: string): { path: string; release: () => void } {
   const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
-  const bin = path.join(root, "slow-git");
+  const bin = path.join(root, "held-git");
+  const hold = path.join(root, "hold-worktree-remove");
   fs.mkdirSync(bin);
-  fs.writeFileSync(path.join(bin, "git"), `#!/bin/sh\ncase " $* " in *" worktree remove "*) sleep 8 ;; esac\nexec "${real}" "$@"\n`, { mode: 0o755 });
-  return `${bin}:${process.env.PATH ?? ""}`;
+  fs.writeFileSync(hold, "");
+  fs.writeFileSync(
+    path.join(bin, "git"),
+    `#!/bin/sh\ncase " $* " in *" worktree remove "*) i=0; while [ -e "${hold}" ] && [ $i -lt 120 ]; do sleep 0.1; i=$((i + 1)); done ;; esac\nexec "${real}" "$@"\n`,
+    { mode: 0o755 },
+  );
+  return { path: `${bin}:${process.env.PATH ?? ""}`, release: () => fs.rmSync(hold, { force: true }) };
 }
 
 test("a checkout row being deleted opens no empty menu", async ({ page }) => {
@@ -56,6 +63,8 @@ test("a checkout row being deleted opens no empty menu", async ({ page }) => {
     git(repo, ["symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"]);
     const worktree = path.join(herdr.root, "repo-slow");
     git(repo, ["worktree", "add", "-b", BRANCH, worktree]);
+    // Unmerged, so the row stays among the active checkouts rather than folding into Inactive once its pane closes.
+    git(worktree, ["commit", "--allow-empty", "-m", "not merged anywhere"]);
 
     // A pane in main keeps the project listed once the worktree's pane closes.
     for (const [cwd, label] of [[repo, "repo"], [worktree, "repo-slow"]]) {
@@ -65,7 +74,8 @@ test("a checkout row being deleted opens no empty menu", async ({ page }) => {
       await prompt(herdr, created.result.root_pane.pane_id);
     }
 
-    daemon = await startHided(herdr, "worktree-removing-menu", undefined, { PATH: slowGit(herdr.root) });
+    const held = heldGit(herdr.root);
+    daemon = await startHided(herdr, "worktree-removing-menu", undefined, { PATH: held.path });
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
     await page.locator('[data-sidebar-mode="projects"]').click();
@@ -87,10 +97,12 @@ test("a checkout row being deleted opens no empty menu", async ({ page }) => {
 
     await feature.locator("[data-checkout-menu]").click({ button: "right" });
     await screenshot(page, "worktree-removing-right-click");
-    await expect(page.locator('[role="menu"]')).toHaveCount(0);
+    // Before the fix the root opened with nothing to draw, so the open state is the check.
     await expect(feature.locator("[data-checkout-menu]")).toHaveAttribute("data-state", "closed");
     // Still mid-removal, so the right-click above landed on the dimmed row.
     await expect(feature).toHaveAttribute("data-checkout-removing", "true");
+
+    held.release();
 
     await expect(feature).toHaveCount(0, { timeout: 30_000 });
     expect(fs.existsSync(worktree)).toBe(false);
