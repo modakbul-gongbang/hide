@@ -1450,3 +1450,61 @@ fn one_device_folder_held_by_two_workspaces_is_one_row_whose_new_tabs_go_to_its_
     assert_eq!(request["method"], "worktree.open");
     assert_eq!(request["params"]["path"], t.main.as_str());
 }
+
+/// B11: a fold saved under a device checkout's old, workspace-keyed id names
+/// the same checkout once it is keyed by folder.
+#[test]
+fn folds_saved_under_old_device_checkout_ids_carry_over() {
+    let t = tree();
+    let mut runtime = runtime();
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: TARGET.to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: Some("0.9.1".to_owned()),
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    let registered = device_catalog::project_id(TARGET, Path::new(&t.other));
+    runtime
+        .snapshot
+        .ui_state
+        .workspace_registrations
+        .push(crate::model::WorkspaceRegistration {
+            primary_checkout_id: None,
+            id: registered.clone(),
+            label: "Other".to_owned(),
+            path: t.other.clone(),
+            device_id: TARGET.to_owned(),
+            pinned: false,
+        });
+    let split_hash = format!(
+        "{:016x}",
+        crate::workspace::fnv1a(t.linked.trim_end_matches('/').as_bytes())
+    );
+    let ui = &mut runtime.snapshot.ui_state;
+    ui.expanded_checkout_ids = vec![
+        "remote:mini:checkout:w5T".to_owned(),
+        format!("remote:mini:checkout:w5N#{split_hash}"),
+        format!("{registered}#registered"),
+        "checkout:local".to_owned(),
+    ];
+
+    runtime.ingest_remote_session(
+        TARGET,
+        Ok(session(vec![
+            herdr_workspace(TARGET, "w5N", &t.main, &[("a", &t.main)]),
+            herdr_workspace(TARGET, "w5T", &t.main, &[("b", &t.main)]),
+        ])),
+    );
+
+    let mut expected = vec![
+        device_catalog::checkout_id(TARGET, &t.main),
+        device_catalog::checkout_id(TARGET, &t.linked),
+        device_catalog::checkout_id(TARGET, &t.other),
+        "checkout:local".to_owned(),
+    ];
+    expected.sort();
+    assert_eq!(runtime.snapshot.ui_state.expanded_checkout_ids, expected);
+}

@@ -638,7 +638,11 @@ pub(crate) struct OwnedTab {
 
 /// Plain-folder owners are found and made one at a time, so two requests
 /// racing for a folder with no owner converge on one workspace; a Git
-/// checkout converges through `worktree.open` itself (`already_open`).
+/// checkout converges through `worktree.open` itself (`already_open`). The
+/// lock spans every folder and device rather than one folder: an open here
+/// happens once per folder per Herdr server life (D-11), and each call it
+/// holds across is bounded by its own timeout, so the rare wait this costs
+/// an unrelated folder is not worth a keyed lock registry.
 static FOLDER_OWNER_OPEN: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// Opens a checkout's owner and creates one tab in it (PRD
@@ -1334,7 +1338,8 @@ fn restore_tab_position(
 ) -> crate::recent_closed::ClosedLayout {
     // The position is an index among the tabs of the workspace it was closed
     // from; a tab that reopened in the checkout's owner elsewhere keeps the
-    // place Herdr gave it.
+    // place Herdr gave it. That is the usual case for a tab closed outside
+    // the owner, and for a plain folder whose owner closed with its last tab.
     if layout.workspace_id != context.workspace_id {
         return layout;
     }

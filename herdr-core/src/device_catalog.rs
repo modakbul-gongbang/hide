@@ -461,6 +461,67 @@ pub(crate) fn group(
     }
 }
 
+/// Device checkout ids saved before a checkout was keyed by its folder
+/// (`remote:<device>:checkout:<workspace>`, `…:<workspace>#<hash>`, and a
+/// registration's `<project>#registered`), each mapped to the folder-keyed id
+/// that now names the same checkout, so a fold saved under the old id
+/// survives the change (PRD checkout-workspace-binding B11). An
+/// old id names a Herdr workspace, so it maps only while that workspace is
+/// in the device's session; the second form carries the folder's hash.
+pub(crate) fn legacy_checkout_ids<'a>(
+    target: &str,
+    raw: &RemoteSessionSnapshot,
+    grouped: &RemoteSessionSnapshot,
+    registrations: &[crate::model::WorkspaceRegistration],
+    saved: impl IntoIterator<Item = &'a String>,
+) -> BTreeMap<String, String> {
+    let prefix = format!("remote:{target}:checkout:");
+    let grouped_holding = |tab_id: &str| {
+        grouped
+            .workspaces
+            .iter()
+            .flat_map(|project| project.checkouts.iter())
+            .find(|checkout| {
+                checkout
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.id.as_deref() == Some(tab_id))
+            })
+            .map(|checkout| checkout.id.clone())
+    };
+    let mut renamed = BTreeMap::new();
+    for id in saved {
+        let new = if let Some(project) = id.strip_suffix("#registered") {
+            registrations
+                .iter()
+                .find(|registration| registration.device_id == target && registration.id == project)
+                .map(|registration| checkout_id(target, &registration.path))
+        } else if let Some(rest) = id.strip_prefix(&prefix) {
+            match rest.split_once('#') {
+                Some((_, hash)) => Some(format!("{prefix}{hash}")),
+                None => raw
+                    .workspaces
+                    .iter()
+                    .flat_map(|workspace| workspace.checkouts.iter())
+                    .find(|checkout| &checkout.id == id)
+                    .map(|checkout| {
+                        checkout
+                            .tabs
+                            .iter()
+                            .find_map(|tab| grouped_holding(tab.id.as_deref()?))
+                            .unwrap_or_else(|| checkout_id(target, &checkout.path))
+                    }),
+            }
+        } else {
+            None
+        };
+        if let Some(new) = new.filter(|new| new != id) {
+            renamed.insert(id.clone(), new);
+        }
+    }
+    renamed
+}
+
 /// A device's registrations carried onto its grouped session (B3, B23-B25).
 ///
 /// A registered project keeps its row while Herdr has no workspace in it: its
