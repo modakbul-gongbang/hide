@@ -3066,22 +3066,37 @@ struct RemoteTerminalConnection {
 }
 
 impl RemoteTerminalConnection {
+    /// Safe from any thread. A caller already inside a Tokio runtime (a
+    /// supervisor task stopping a route) gets the disconnect spawned on this
+    /// connection's runtime, because blocking on it there would panic.
     fn shutdown(mut self) {
         let Some(session) = self.session.take() else {
             return;
         };
-        if let Err(error) = self.runtime.block_on(session.disconnect(
-            Disconnect::ByApplication,
-            "remote terminal session complete",
-            "en",
-        )) {
-            crate::diagnostic!(json!({
-                "component": "remote_terminal_session",
-                "kind": "disconnect.failed",
-                "target": self.target_id,
-                "pane_id": self.pane_id,
-                "message": error.to_string(),
-            }));
+        let target_id = std::mem::take(&mut self.target_id);
+        let pane_id = std::mem::take(&mut self.pane_id);
+        let disconnect = async move {
+            if let Err(error) = session
+                .disconnect(
+                    Disconnect::ByApplication,
+                    "remote terminal session complete",
+                    "en",
+                )
+                .await
+            {
+                crate::diagnostic!(json!({
+                    "component": "remote_terminal_session",
+                    "kind": "disconnect.failed",
+                    "target": target_id,
+                    "pane_id": pane_id,
+                    "message": error.to_string(),
+                }));
+            }
+        };
+        if tokio::runtime::Handle::try_current().is_ok() {
+            self.runtime.spawn(disconnect);
+        } else {
+            self.runtime.block_on(disconnect);
         }
     }
 }

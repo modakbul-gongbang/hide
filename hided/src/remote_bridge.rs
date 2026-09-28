@@ -6,9 +6,9 @@ use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use herdr_core::WorkspaceRemoteRoute;
 use hide_host::workspace_bridge::PaneIdentity;
@@ -19,6 +19,13 @@ use crate::pane_auth::{self, Registry};
 use crate::state_file::new_token;
 
 const MAX_ROUTES: usize = 8;
+const POLL: Duration = Duration::from_secs(2);
+/// A route that fails is tried again after this, doubling per failure up to
+/// `RETRY_MAX`, so an unreachable device costs two SSH connections a minute
+/// rather than every poll. A new connection generation, or a route that
+/// reached ready before it failed, starts the schedule over.
+const RETRY_BASE: Duration = Duration::from_secs(2);
+const RETRY_MAX: Duration = Duration::from_secs(60);
 
 type Shutdown = Box<dyn FnOnce() + Send>;
 
@@ -54,6 +61,8 @@ impl WorkerStop {
         }
     }
 
+    /// Callable from the supervisor's async task: the installed shutdown
+    /// ends the bridge's SSH connection without blocking on its runtime.
     fn stop(&self) {
         self.cancelled.store(true, Ordering::Release);
         if let Ok(mut slot) = self.shutdown.lock()
@@ -64,15 +73,40 @@ impl WorkerStop {
     }
 }
 
-struct Worker {
-    generation: u64,
-    stop: Arc<WorkerStop>,
-    thread: JoinHandle<()>,
+/// How a worker's route ended, which decides when it is tried again.
+enum RouteEnd {
+    Stopped,
+    Failed { was_ready: bool },
 }
 
+struct Worker {
+    generation: u64,
+    bridge_id: String,
+    stop: Arc<WorkerStop>,
+    thread: JoinHandle<RouteEnd>,
+}
+
+struct Retry {
+    generation: u64,
+    failures: u32,
+    not_before: Instant,
+}
+
+#[derive(Default)]
+struct State {
+    workers: HashMap<String, Worker>,
+    retries: HashMap<String, Retry>,
+    /// The generation each device over `MAX_ROUTES` was reported for.
+    unserved: HashMap<String, u64>,
+    routes_unavailable: bool,
+}
+
+/// Keeps exactly one live return route per connected, consented device.
+/// Every start, stop, failure and refusal is a `workspace_bridge` record in
+/// the diagnostics log, because a detached daemon's stderr goes nowhere.
 pub struct Supervisor {
     closed: AtomicBool,
-    workers: Mutex<HashMap<String, Worker>>,
+    state: Mutex<State>,
 }
 
 impl Supervisor {
@@ -84,29 +118,48 @@ impl Supervisor {
     ) -> Arc<Self> {
         let supervisor = Arc::new(Self {
             closed: AtomicBool::new(false),
-            workers: Mutex::new(HashMap::new()),
+            state: Mutex::new(State::default()),
         });
         let running = Arc::clone(&supervisor);
-        tokio::spawn(async move {
-            let mut poll = tokio::time::interval(Duration::from_secs(2));
+        let task = tokio::spawn(async move {
+            let mut poll = tokio::time::interval(POLL);
             loop {
                 poll.tick().await;
                 if running.closed.load(Ordering::Acquire) {
-                    break;
+                    return;
                 }
                 let query_core = Arc::clone(&core);
                 let routes =
-                    tokio::task::spawn_blocking(move || query_core.workspace_remote_routes()).await;
-                let Ok(Ok(routes)) = routes else { continue };
+                    match tokio::task::spawn_blocking(move || query_core.workspace_remote_routes())
+                        .await
+                    {
+                        Ok(routes) => routes,
+                        Err(error) => Err(error.to_string()),
+                    };
                 running.reconcile(routes, &core, &registry, port, &bridge_dir);
             }
+        });
+        // The loop returns only once the daemon stops. Any other end, a
+        // panic included, leaves every device without a route, so it is
+        // recorded rather than lost with the task.
+        let closed = Arc::clone(&supervisor);
+        tokio::spawn(async move {
+            let reason = match task.await {
+                Ok(()) if closed.closed.load(Ordering::Acquire) => "daemon_stopping".to_owned(),
+                Ok(()) => "returned".to_owned(),
+                Err(error) if error.is_panic() => "panicked".to_owned(),
+                Err(error) => error.to_string(),
+            };
+            herdr_core::diagnostic!(json!({
+                "component":"workspace_bridge","kind":"supervisor.stopped","reason":reason,
+            }));
         });
         supervisor
     }
 
     fn reconcile(
         &self,
-        routes: Vec<WorkspaceRemoteRoute>,
+        routes: Result<Vec<WorkspaceRemoteRoute>, String>,
         core: &Arc<CoreHandle>,
         registry: &Arc<Registry>,
         port: u16,
@@ -115,46 +168,179 @@ impl Supervisor {
         if self.closed.load(Ordering::Acquire) {
             return;
         }
-        let Ok(mut workers) = self.workers.lock() else {
-            return;
+        // A panic elsewhere must not leave every later poll locked out.
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let routes = match routes {
+            Ok(routes) => {
+                if std::mem::take(&mut state.routes_unavailable) {
+                    herdr_core::diagnostic!(json!({
+                        "component":"workspace_bridge","kind":"routes.available",
+                    }));
+                }
+                routes
+            }
+            Err(reason) => {
+                if !std::mem::replace(&mut state.routes_unavailable, true) {
+                    herdr_core::diagnostic!(json!({
+                        "component":"workspace_bridge","kind":"routes.unavailable","reason":reason,
+                    }));
+                }
+                return;
+            }
         };
-        let current: HashMap<_, _> = routes
+        let current: HashMap<String, u64> = routes
             .iter()
-            .map(|route| (route.device_id.as_str(), route.generation))
+            .map(|route| (route.device_id.clone(), route.generation))
             .collect();
-        workers.retain(|device, worker| {
-            let keep = current.get(device.as_str()) == Some(&worker.generation)
-                && !worker.thread.is_finished();
-            if !keep {
+        let now = Instant::now();
+        let devices: Vec<String> = state.workers.keys().cloned().collect();
+        for device in devices {
+            let Some(worker) = state.workers.get(&device) else {
+                continue;
+            };
+            let generation = current.get(&device).copied();
+            if worker.thread.is_finished() {
+                let Some(worker) = state.workers.remove(&device) else {
+                    continue;
+                };
+                let was_ready = match worker.thread.join() {
+                    Ok(RouteEnd::Stopped) => continue,
+                    Ok(RouteEnd::Failed { was_ready }) => was_ready,
+                    Err(_) => {
+                        registry.revoke_bridge(&worker.bridge_id);
+                        herdr_core::diagnostic!(json!({
+                            "component":"workspace_bridge","kind":"route.failed",
+                            "device_id":device,"generation":worker.generation,
+                            "bridge_id":worker.bridge_id,"reason":"worker panicked","was_ready":false,
+                        }));
+                        false
+                    }
+                };
+                schedule_retry(&mut state, &device, worker.generation, was_ready, now);
+            } else if generation != Some(worker.generation) {
+                let Some(worker) = state.workers.remove(&device) else {
+                    continue;
+                };
+                herdr_core::diagnostic!(json!({
+                    "component":"workspace_bridge","kind":"route.stopped",
+                    "device_id":device,"generation":worker.generation,"bridge_id":worker.bridge_id,
+                    "reason": if generation.is_some() { "generation_changed" } else { "route_withdrawn" },
+                }));
                 worker.stop.stop();
             }
-            keep
-        });
-        for route in routes.into_iter().take(MAX_ROUTES) {
-            if workers.contains_key(&route.device_id) {
+        }
+        state
+            .retries
+            .retain(|device, _| current.contains_key(device));
+        state
+            .unserved
+            .retain(|device, _| current.contains_key(device));
+        let mut served = state.workers.len();
+        for route in routes {
+            if state.workers.contains_key(&route.device_id) {
                 continue;
             }
-            let stop = Arc::new(WorkerStop::new());
+            if served >= MAX_ROUTES {
+                if state
+                    .unserved
+                    .insert(route.device_id.clone(), route.generation)
+                    != Some(route.generation)
+                {
+                    herdr_core::diagnostic!(json!({
+                        "component":"workspace_bridge","kind":"route.unserved",
+                        "device_id":route.device_id,"generation":route.generation,"limit":MAX_ROUTES,
+                    }));
+                }
+                continue;
+            }
+            let attempt = match state.retries.get(&route.device_id) {
+                Some(retry) if retry.generation == route.generation => {
+                    if now < retry.not_before {
+                        continue;
+                    }
+                    retry.failures + 1
+                }
+                _ => 1,
+            };
             let device = route.device_id.clone();
             let generation = route.generation;
-            let core = Arc::clone(core);
-            let registry = Arc::clone(registry);
-            let worker_stop = Arc::clone(&stop);
-            let bridge_dir = bridge_dir.clone();
-            match std::thread::Builder::new().name("hided-workspace-bridge".to_owned()).spawn(move || {
-                let bridge_id = format!("{}:{}:{}", route.device_id, route.generation, new_token());
-                let alive = Arc::new(AtomicBool::new(true));
-                let context = RouteContext { core: &core, registry: &registry, port, bridge_dir };
-                if let Err(reason) = run_route(&route, &bridge_id, Arc::clone(&alive), &worker_stop, &context) {
-                    eprintln!("{}", json!({"component":"workspace_bridge","kind":"route.failed","device_id":route.device_id,"reason":reason}));
+            let bridge_id = format!("{device}:{generation}:{}", new_token());
+            let stop = Arc::new(WorkerStop::new());
+            let spawned = {
+                let core = Arc::clone(core);
+                let registry = Arc::clone(registry);
+                let worker_stop = Arc::clone(&stop);
+                let bridge_dir = bridge_dir.clone();
+                let bridge_id = bridge_id.clone();
+                std::thread::Builder::new()
+                    .name("hided-workspace-bridge".to_owned())
+                    .spawn(move || {
+                        let alive = Arc::new(AtomicBool::new(true));
+                        let context = RouteContext {
+                            core: &core,
+                            registry: &registry,
+                            port,
+                            bridge_dir,
+                        };
+                        let mut was_ready = false;
+                        let result = run_route(
+                            &route,
+                            &bridge_id,
+                            Arc::clone(&alive),
+                            &worker_stop,
+                            &context,
+                            &mut was_ready,
+                        );
+                        alive.store(false, Ordering::Release);
+                        registry.revoke_bridge(&bridge_id);
+                        // Stopping closes the channel, which the read loop
+                        // sees as an error; that is this route's end, not a
+                        // failure.
+                        let stopped = worker_stop.cancelled.load(Ordering::Acquire);
+                        worker_stop.stop();
+                        match result {
+                            Err(reason) if !stopped => {
+                                herdr_core::diagnostic!(json!({
+                                    "component":"workspace_bridge","kind":"route.failed",
+                                    "device_id":route.device_id,"generation":route.generation,
+                                    "bridge_id":bridge_id,"reason":reason,"was_ready":was_ready,
+                                }));
+                                RouteEnd::Failed { was_ready }
+                            }
+                            _ => {
+                                herdr_core::diagnostic!(json!({
+                                    "component":"workspace_bridge","kind":"route.closed",
+                                    "device_id":route.device_id,"generation":route.generation,
+                                    "bridge_id":bridge_id,
+                                }));
+                                RouteEnd::Stopped
+                            }
+                        }
+                    })
+            };
+            match spawned {
+                Ok(thread) => {
+                    herdr_core::diagnostic!(json!({
+                        "component":"workspace_bridge","kind":"route.starting",
+                        "device_id":device,"generation":generation,"bridge_id":bridge_id,"attempt":attempt,
+                    }));
+                    state.workers.insert(
+                        device,
+                        Worker {
+                            generation,
+                            bridge_id,
+                            stop,
+                            thread,
+                        },
+                    );
+                    served += 1;
                 }
-                alive.store(false, Ordering::Release);
-                registry.revoke_bridge(&bridge_id);
-                worker_stop.stop();
-            }) {
-                Ok(thread) => { workers.insert(device, Worker { generation, stop, thread }); }
                 Err(error) => {
-                    eprintln!("{}", json!({"component":"workspace_bridge","kind":"worker.failed","device_id":device,"reason":error.to_string()}));
+                    herdr_core::diagnostic!(json!({
+                        "component":"workspace_bridge","kind":"worker.failed",
+                        "device_id":device,"generation":generation,"reason":error.to_string(),
+                    }));
+                    schedule_retry(&mut state, &device, generation, false, now);
                 }
             }
         }
@@ -162,11 +348,14 @@ impl Supervisor {
 
     pub fn stop_all(&self) {
         self.closed.store(true, Ordering::Release);
-        if let Ok(mut workers) = self.workers.lock() {
-            for worker in workers.values() {
-                worker.stop.stop();
-            }
-            workers.clear();
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        for (device, worker) in state.workers.drain() {
+            herdr_core::diagnostic!(json!({
+                "component":"workspace_bridge","kind":"route.stopped",
+                "device_id":device,"generation":worker.generation,"bridge_id":worker.bridge_id,
+                "reason":"daemon_stopping",
+            }));
+            worker.stop.stop();
         }
     }
 }
@@ -175,6 +364,26 @@ impl Drop for Supervisor {
     fn drop(&mut self) {
         self.stop_all();
     }
+}
+
+fn schedule_retry(state: &mut State, device: &str, generation: u64, was_ready: bool, now: Instant) {
+    let retry = state.retries.entry(device.to_owned()).or_insert(Retry {
+        generation,
+        failures: 0,
+        not_before: now,
+    });
+    if retry.generation != generation || was_ready {
+        retry.generation = generation;
+        retry.failures = 0;
+    }
+    retry.failures = retry.failures.saturating_add(1);
+    retry.not_before = now + retry_delay(retry.failures);
+}
+
+fn retry_delay(failures: u32) -> Duration {
+    RETRY_BASE
+        .saturating_mul(1 << failures.saturating_sub(1).min(5))
+        .min(RETRY_MAX)
 }
 
 fn read_frame(reader: &mut impl BufRead) -> Result<Value, String> {
@@ -201,6 +410,7 @@ fn run_route(
     alive: Arc<AtomicBool>,
     stop: &WorkerStop,
     context: &RouteContext<'_>,
+    was_ready: &mut bool,
 ) -> Result<(), String> {
     let forward = route
         .client
@@ -234,10 +444,11 @@ fn run_route(
     if ready["type"] != "ready" || ready["socket"].as_str().is_none() {
         return Err("remote bridge did not become ready".to_owned());
     }
-    eprintln!(
-        "{}",
-        json!({"component":"workspace_bridge","kind":"route.ready","device_id":route.device_id,"generation":route.generation,"remote_port":forward.remote_port()})
-    );
+    *was_ready = true;
+    herdr_core::diagnostic!(json!({
+        "component":"workspace_bridge","kind":"route.ready","device_id":route.device_id,
+        "generation":route.generation,"bridge_id":bridge_id,"remote_port":forward.remote_port(),
+    }));
     loop {
         if stop.cancelled.load(Ordering::Acquire) {
             return Ok(());
