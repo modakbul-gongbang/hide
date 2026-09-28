@@ -15,8 +15,8 @@ use crate::{AiError, AiLogSink, ProviderId};
 const PREFIX: &str = "hide-ai-codex-home-";
 
 /// At most this many homes are removed per sweep, so one start never spends
-/// long on a backlog (346 were measured on one machine); the next start
-/// continues where this one stopped.
+/// long on a backlog (344 dead owners' homes on one machine on 2026-09-28);
+/// the next start continues where this one stopped.
 const SWEEP_LIMIT: usize = 32;
 
 /// A private `CODEX_HOME` for one app-server: an owner-only directory holding
@@ -73,20 +73,42 @@ pub(crate) fn spawn_sweep(sink: Arc<dyn AiLogSink>) {
 struct SweepReport {
     removed: usize,
     bytes: u64,
+    /// Dead owners' homes that could not be removed.
     failed: usize,
+    /// Directory listing errors. The listing stops at the first one, so a
+    /// nonzero count means the rest of the temporary directory went unswept.
+    unreadable: usize,
+    /// The kind of the first removal or read error, so a `failed` count that
+    /// repeats every start says why.
+    first_error: Option<std::io::ErrorKind>,
     /// More dead owners' homes were left than the limit allowed removing.
     capped: bool,
 }
 
+impl SweepReport {
+    fn record_error(&mut self, kind: std::io::ErrorKind) {
+        self.first_error.get_or_insert(kind);
+    }
+}
+
 fn log_sweep(report: Result<SweepReport, std::io::ErrorKind>, sink: &dyn AiLogSink) {
     let mut event = match report {
-        Ok(report) if report.removed == 0 && report.failed == 0 => return,
+        Ok(SweepReport {
+            removed: 0,
+            failed: 0,
+            unreadable: 0,
+            ..
+        }) => return,
         Ok(report) => {
+            let mut detail = format!(
+                "removed={};bytes={};failed={};unreadable={};capped={}",
+                report.removed, report.bytes, report.failed, report.unreadable, report.capped
+            );
+            if let Some(kind) = report.first_error {
+                detail.push_str(&format!(";first_error={kind}"));
+            }
             let mut event = AiLogEvent::new("ai.codex_home.swept");
-            event.detail = Some(format!(
-                "removed={};bytes={};failed={};capped={}",
-                report.removed, report.bytes, report.failed, report.capped
-            ));
+            event.detail = Some(detail);
             event
         }
         Err(kind) => {
@@ -108,7 +130,15 @@ fn log_sweep(report: Result<SweepReport, std::io::ErrorKind>, sink: &dyn AiLogSi
 fn sweep(root: &Path, limit: usize) -> Result<SweepReport, std::io::ErrorKind> {
     let mut report = SweepReport::default();
     let entries = std::fs::read_dir(root).map_err(|error| error.kind())?;
-    for entry in entries.flatten() {
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                report.unreadable += 1;
+                report.record_error(error.kind());
+                continue;
+            }
+        };
         let Some(pid) = entry.file_name().to_str().and_then(owner_pid) else {
             continue;
         };
@@ -128,7 +158,10 @@ fn sweep(root: &Path, limit: usize) -> Result<SweepReport, std::io::ErrorKind> {
             }
             // Another owner's sweep got there first.
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => report.failed += 1,
+            Err(error) => {
+                report.failed += 1;
+                report.record_error(error.kind());
+            }
         }
     }
     Ok(report)
@@ -330,6 +363,68 @@ mod tests {
         assert!(link.symlink_metadata().is_ok() && elsewhere.exists());
         assert_eq!(report, SweepReport::default());
         std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_home_whose_pid_belongs_to_another_user_is_kept() {
+        let root = root("eperm");
+        let credential = root.join("auth.json");
+        // SAFETY: `getuid` has no preconditions and cannot fail.
+        if unsafe { libc::getuid() } == 0 {
+            return; // root may signal pid 1, so `kill` would not answer EPERM.
+        }
+        // pid 1 is root's, so `kill` answers EPERM for anyone else: a process
+        // exists, so its homes are not ours to judge.
+        let home = home(&root, &format!("{PREFIX}1-1"), &credential);
+
+        let report = sweep(&root, SWEEP_LIMIT).expect("the root is readable");
+
+        assert!(pid_alive(1));
+        assert!(home.exists());
+        assert_eq!(report, SweepReport::default());
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn a_home_that_cannot_be_removed_is_logged_with_its_error_kind() {
+        use std::os::unix::fs::PermissionsExt;
+        // SAFETY: `getuid` has no preconditions and cannot fail.
+        if unsafe { libc::getuid() } == 0 {
+            return; // root removes a read-only directory's entries anyway.
+        }
+        let root = root("failed");
+        let credential = root.join("auth.json");
+        let home = home(&root, &format!("{PREFIX}{}-1", dead_pid()), &credential);
+        let locked = home.join("shell_snapshots");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o500)).expect("chmod");
+
+        let report = sweep(&root, SWEEP_LIMIT);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o700)).ok();
+        let recorder = Recorder::default();
+        log_sweep(report, &recorder);
+
+        let events = recorder.0.lock().expect("recorder lock");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event, "ai.codex_home.swept");
+        let detail = events[0].detail.as_deref().unwrap_or_default();
+        assert!(
+            detail.contains("removed=0;") && detail.contains("failed=1;"),
+            "{detail}"
+        );
+        assert!(
+            detail.ends_with(";first_error=permission denied"),
+            "{detail}"
+        );
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[derive(Default)]
+    struct Recorder(std::sync::Mutex<Vec<AiLogEvent>>);
+
+    impl AiLogSink for Recorder {
+        fn log(&self, event: AiLogEvent) {
+            self.0.lock().expect("recorder lock").push(event);
+        }
     }
 
     #[test]
