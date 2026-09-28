@@ -310,6 +310,7 @@ fn runtime() -> Runtime {
             .into_owned(),
         host_helper_dir: None,
         host_helper_root: None,
+        host_cli_dir: None,
         workspace_views_path: None,
         shortcut_import_path: None,
         local_issues_path: None,

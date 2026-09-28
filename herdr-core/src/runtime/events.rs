@@ -827,6 +827,9 @@ pub(super) struct RemoveWorktreePayload {
     pub(super) checkout_path: String,
     #[serde(default)]
     pub(super) delete_branch: bool,
+    /// The operator ticked the discard checkbox the gate offered.
+    #[serde(default)]
+    pub(super) discard_changes: bool,
 }
 
 #[derive(Debug, Deserialize)]

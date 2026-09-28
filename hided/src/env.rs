@@ -23,6 +23,7 @@ pub const HIDE_IDLE_SECS: &str = "HIDE_IDLE_SECS";
 pub const HOME: &str = "HOME";
 pub const HIDE_OPEN_COMMAND: &str = "HIDE_OPEN_COMMAND";
 pub const HIDE_HOST_HELPER_ROOT: &str = "HIDE_HOST_HELPER_ROOT";
+pub const HIDE_HOST_CLI_DIR: &str = "HIDE_HOST_CLI_DIR";
 pub const HERDR_PANE_ID: &str = "HERDR_PANE_ID";
 pub const HIDE_CAP_REF: &str = "HIDE_CAP_REF";
 pub const HIDE_WORKSPACE_BRIDGE_DIR: &str = "HIDE_WORKSPACE_BRIDGE_DIR";
@@ -95,6 +96,12 @@ pub const REGISTRY: &[EnvKey] = &[
         absent_behavior: "The device helper installs under ~/.local/share/hide/host-helper on each consented device; a different value is a different consent scope, so every device asks again (isolated verification sets it to a temporary folder)",
     },
     EnvKey {
+        key: HIDE_HOST_CLI_DIR,
+        required: false,
+        format: "absolute path, or a path under the device's home spelled `~/...`, with no `.` or `..` segment",
+        absent_behavior: "Each consented device links `hide` in ~/.local/bin to the command installed beside its helper, when that name is free or already Hide's link; a different value is a different consent scope, so every device asks again (isolated verification sets it to a temporary folder so no test writes the account's own ~/.local/bin)",
+    },
+    EnvKey {
         key: HERDR_PANE_ID,
         required: false,
         format: "the Herdr pane id; Herdr sets it in every pane it manages",
@@ -110,7 +117,7 @@ pub const REGISTRY: &[EnvKey] = &[
         key: HIDE_WORKSPACE_BRIDGE_DIR,
         required: false,
         format: "absolute owner-only directory path on the SSH device",
-        absent_behavior: "The remote helper and remote hide CLI use $HOME/.local/state/hide/workspace-bridges; isolated verification may set a separate directory on both ends",
+        absent_behavior: "The remote helper and the hide command installed beside it use $HOME/.local/state/hide/workspace-bridges; isolated verification may set a separate directory on both ends",
     },
     EnvKey {
         key: HOME,
@@ -139,6 +146,9 @@ pub struct Env {
     /// Where the device helper is installed on each SSH device; part of the
     /// consent scope the operator agrees to (PRD S5.5 D-23).
     pub host_helper_root: Option<String>,
+    /// Where each SSH device links its `hide` command; part of the same
+    /// consent scope.
+    pub host_cli_dir: Option<String>,
     /// The pane a Workspace CLI command runs in; the daemon verifies its
     /// live membership and never trusts a caller-supplied Workspace.
     pub pane_id: Option<String>,
@@ -294,6 +304,16 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         }
         other => other,
     };
+    let host_cli_dir = match read(HIDE_HOST_CLI_DIR) {
+        Some(value) if !valid_helper_root(&value) => {
+            errors.push(EnvError {
+                key: HIDE_HOST_CLI_DIR,
+                kind: "invalid",
+            });
+            None
+        }
+        other => other,
+    };
     let pane_id = match read(HERDR_PANE_ID) {
         Some(value) if value.is_empty() => {
             errors.push(EnvError {
@@ -331,6 +351,7 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         idle_secs,
         open_command,
         host_helper_root,
+        host_cli_dir,
         pane_id,
         workspace_bridge_dir,
     })
@@ -518,7 +539,11 @@ mod tests {
             let env =
                 from_map(&[("HOME", "/Users/example"), (HIDE_HOST_HELPER_ROOT, good)]).unwrap();
             assert_eq!(env.host_helper_root.as_deref(), Some(good));
+            let env = from_map(&[("HOME", "/Users/example"), (HIDE_HOST_CLI_DIR, good)]).unwrap();
+            assert_eq!(env.host_cli_dir.as_deref(), Some(good));
         }
+        let err = from_map(&[("HOME", "/Users/example"), (HIDE_HOST_CLI_DIR, "bin")]).unwrap_err();
+        assert_eq!(err[0].key, HIDE_HOST_CLI_DIR);
         assert_eq!(
             from_map(&[("HOME", "/Users/example")])
                 .unwrap()

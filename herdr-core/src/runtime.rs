@@ -973,6 +973,7 @@ pub struct Runtime {
     next_document_generation: u64,
     host_packages: crate::remote::host::HelperPackages,
     host_helper_root: String,
+    host_cli_dir: String,
     live: Option<LiveContext>,
     remote_controls: HashMap<String, RemoteControlContext>,
     remote_terminals: HashMap<String, RemoteTerminalContext>,
@@ -1320,7 +1321,7 @@ struct RuntimeWorkerContext {
 impl Runtime {
     pub fn new(options: CoreOptions, environment: environment::EnvironmentReport) -> Self {
         let state_path = PathBuf::from(&options.app_state_path);
-        let (host_packages, host_helper_root) = Self::helper_packages_from(&options);
+        let (host_packages, host_helper_root, host_cli_dir) = Self::helper_packages_from(&options);
         let mut snapshot = Snapshot::initial(&options);
         snapshot.status.environment = environment.statuses;
         let (ui_state, pane_terminal_sizes, disposition) = persistence::load(&state_path);
@@ -1340,6 +1341,7 @@ impl Runtime {
             .find(|device| device.kind != "remote")
         {
             local.host.helper_root = Some(host_helper_root.clone());
+            local.host.cli_dir = Some(host_cli_dir.clone());
         }
         snapshot.navigator.focused_device_id = Some(
             snapshot
@@ -1450,6 +1452,7 @@ impl Runtime {
             next_document_generation: 0,
             host_packages,
             host_helper_root,
+            host_cli_dir,
             live: None,
             remote_controls: HashMap::new(),
             remote_terminals: HashMap::new(),

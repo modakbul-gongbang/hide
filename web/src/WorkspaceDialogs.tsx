@@ -378,18 +378,24 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
   const gate = row?.deletion_gate;
   const paneCount = checkout.tabs.reduce((count, tab) => count + tab.panes.length, 0);
   const [deleteBranch, setDeleteBranch] = useState(false);
+  const [discard, setDiscard] = useState(false);
   const [request, setRequest] = useState<{ afterId: number; at: number } | null>(null);
   const current = useShellStore((s) => s.rest?.worktree_removal);
   const removal = request ? removalFor(current, deviceId, checkout.path, request.afterId) : null;
   const refused = useErrorSince(request?.at ?? null, ["worktree.remove"]);
   const inFlight = request !== null && refused === null && (removal === null || removal.phase === "closing" || removal.phase === "removing");
-  const settled = removal && (removal.phase === "finished" || removal.phase === "failed") ? removal : null;
+  const finished = removal?.phase === "finished" ? removal : null;
+  // A refusal or a failed removal keeps the worktree, so the choices come
+  // back under the reason and Delete tries again on the row as it is now.
+  const failure = refused ?? (removal?.phase === "failed" ? (removal.message ?? "Worktree removal failed.") : null);
+  const choosing = !!row && !!gate && !gate.blocked_reason && !inFlight && !finished;
   const branch = row?.branch ?? checkout.branch;
+  const needsDiscard = !!gate?.discard_label;
   const confirm = () => {
     const afterId = useShellStore.getState().rest?.worktree_removal?.id ?? 0;
     setRequest({ afterId, at: Date.now() });
     useUiStore.getState().setWatchedRemoval({ deviceId, path: checkout.path, afterId });
-    actions.removeWorktree(deviceId, checkout.path, deleteBranch && !!gate?.can_delete_branch);
+    actions.removeWorktree(deviceId, checkout.path, deleteBranch && !!gate?.can_delete_branch, discard && needsDiscard);
   };
   const hide = () => {
     // A removal the operator stopped watching still reports its end through
@@ -404,13 +410,22 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
           <AlertDialogTitle className="break-words">Delete worktree {branch ?? checkout.label}?</AlertDialogTitle>
           <AlertDialogDescription className="break-all font-mono text-caption text-muted-foreground">{checkout.path}</AlertDialogDescription>
         </AlertDialogHeader>
-        {!row || !gate ? <Note tone="warn">The worktree row has not been read yet, so nothing can be deleted.</Note> : null}
+        {!row || !gate ? (
+          <Status tone="pending" data-delete-reading="true">
+            Reading the worktree's Git state…
+          </Status>
+        ) : null}
         {gate?.blocked_reason ? (
           <Note tone="warn" data-delete-blocked="true">
             {gate.blocked_reason}
           </Note>
         ) : null}
-        {row && gate && !gate.blocked_reason && !request ? (
+        {failure ? (
+          <Note tone="error" data-delete-result="failed">
+            {failure}
+          </Note>
+        ) : null}
+        {choosing && gate ? (
           <>
             <ul className="list-disc space-y-xxs pl-lg text-body text-subtle-foreground" data-delete-consequences="true">
               {deletionConsequences(checkout, paneCount).map((line) => (
@@ -421,10 +436,24 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
             </ul>
             {branch ? (
               <label className={`flex items-start gap-xs text-body ${gate.can_delete_branch ? "text-foreground" : "text-muted-foreground"}`}>
-                <Checkbox checked={deleteBranch} disabled={!gate.can_delete_branch} onCheckedChange={(checked) => setDeleteBranch(checked === true)} data-delete-branch="true" className="mt-xxs" />
-                <span>
-                  Also delete the local branch {branch}
-                  {gate.can_delete_branch ? " (only if Git agrees it is merged)" : " (not offered: the branch is not safely merged or not named)"}
+                <Checkbox checked={deleteBranch && gate.can_delete_branch} disabled={!gate.can_delete_branch} onCheckedChange={(checked) => setDeleteBranch(checked === true)} data-delete-branch="true" className="mt-xxs" />
+                <span className="min-w-0 break-words">
+                  Also delete branch {branch}
+                  {!gate.can_delete_branch ? <span> (not offered for the base branch or a missing folder)</span> : null}
+                  {gate.can_delete_branch && gate.branch_warning ? (
+                    <span className="block text-caption text-destructive" data-delete-branch-warning="true">
+                      {gate.branch_warning}
+                    </span>
+                  ) : null}
+                </span>
+              </label>
+            ) : null}
+            {gate.discard_label ? (
+              <label className="flex items-start gap-xs text-body text-foreground">
+                <Checkbox checked={discard} onCheckedChange={(checked) => setDiscard(checked === true)} data-delete-discard="true" className="mt-xxs" />
+                <span className="min-w-0 break-words">
+                  {gate.discard_label}
+                  <span className="block text-caption text-muted-foreground">Required to delete: this work cannot be recovered.</span>
                 </span>
               </label>
             ) : null}
@@ -435,20 +464,19 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
             {removal?.phase === "removing" ? "Rechecking and removing the folder…" : `Closing ${paneCount} pane${paneCount === 1 ? "" : "s"}…`}
           </Status>
         ) : null}
-        {refused && refused !== gate?.blocked_reason ? <Note tone="error">{refused}</Note> : null}
-        {settled ? (
-          <Note tone={settled.phase === "finished" ? "ok" : "error"} data-delete-result={settled.phase}>
-            {settled.message ?? (settled.phase === "finished" ? "Worktree removed." : "Worktree removal failed.")}
+        {finished ? (
+          <Note tone="ok" data-delete-result="finished">
+            {finished.message ?? "Worktree removed."}
           </Note>
         ) : null}
         <AlertDialogFooter>
           <Button onClick={hide} data-delete-cancel="true">
-            {settled || refused ? "Close" : inFlight ? "Hide" : "Keep worktree"}
+            {finished ? "Close" : inFlight ? "Hide" : "Keep worktree"}
           </Button>
           {/* Plain Button, not AlertDialogAction: it has to stay open through
               the async removal instead of closing on the first click. */}
-          {row && gate && !gate.blocked_reason && !request ? (
-            <Button variant="destructive" onClick={confirm} data-delete-confirm="true">
+          {choosing && gate ? (
+            <Button variant="destructive" disabled={needsDiscard && !discard} onClick={confirm} data-delete-confirm="true">
               {gate.button_label || "Delete worktree"}
             </Button>
           ) : null}

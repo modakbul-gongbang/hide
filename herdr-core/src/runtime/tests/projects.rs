@@ -791,18 +791,19 @@ fn the_card_projects_the_worktrees_shared_deletion_gate() {
     let mut runtime = runtime();
     let mut checkout = settled_worktree(PullRequestBadge::Open);
     let gate = checkout.worktree.as_mut().expect("worktree");
-    gate.deletion_gate.blocked_reason =
-        Some("Commit or discard uncommitted changes first".to_owned());
+    gate.deletion_gate.discard_label = Some("Discard 2 changed files".to_owned());
     gate.deletion_gate.warnings = vec!["not pushed".to_owned()];
     gate.deletion_gate.button_label = "Close 2 panes and delete".to_owned();
 
     assert_eq!(
         card_for(&mut runtime, checkout).deletion_gate,
         Some(crate::model::WorktreeDeletionGateSnapshot {
-            blocked_reason: Some("Commit or discard uncommitted changes first".to_owned()),
+            blocked_reason: None,
             warnings: vec!["not pushed".to_owned()],
             button_label: "Close 2 panes and delete".to_owned(),
             can_delete_branch: true,
+            branch_warning: None,
+            discard_label: Some("Discard 2 changed files".to_owned()),
         })
     );
 }
@@ -2689,6 +2690,8 @@ fn a_client_cannot_claim_a_worktree_removal_finished() {
         protected_base_branch: Some("main".into()),
         branch: Some("linked".into()),
         delete_branch: false,
+        force_delete_branch: false,
+        discard_changes: false,
         phase: "removing".into(),
         message: None,
     });
@@ -2782,6 +2785,8 @@ fn a_closed_pane_still_listed_does_not_stop_the_removal_but_a_new_one_does() {
         protected_base_branch: Some("main".into()),
         branch: Some("open".into()),
         delete_branch: false,
+        force_delete_branch: false,
+        discard_changes: false,
         phase: "closing".into(),
         message: None,
     };
@@ -2905,6 +2910,7 @@ fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
                 herdr_bin_path: None,
                 host_helper_dir: None,
                 host_helper_root: None,
+                host_cli_dir: None,
                 workspace_views_path: None,
                 shortcut_import_path: None,
                 local_issues_path: None,

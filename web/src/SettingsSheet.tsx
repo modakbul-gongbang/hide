@@ -742,7 +742,9 @@ function DevicesTab({ actions }: { actions: Actions }) {
   const [actedAt, setActedAt] = useState<number | null>(null);
   const deviceError = useErrorSince(actedAt, ["device.", "remote."]);
   const rows = devices ?? [];
-  const localRoot = rows.find((device) => device.kind !== "remote")?.host?.helper_root ?? null;
+  const localHost = rows.find((device) => device.kind !== "remote")?.host ?? null;
+  const localRoot = localHost?.helper_root ?? null;
+  const localCliDir = localHost?.cli_dir ?? null;
   const remoteRows = rows.filter((device) => device.kind === "remote");
   const registrations = useShellStore((s) => s.rest?.ui_state?.workspace_registrations);
   const editorTabs = useShellStore((s) => s.editor?.tabs);
@@ -846,7 +848,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
         {remoteRows.length === 0 ? <Row label={<Note>No SSH device is registered. The daemon's own machine is always available.</Note>} /> : null}
         {deviceError ? <Row label={<Note tone="error" data-device-error="true">{deviceError}</Note>} /> : null}
       </Group>
-      <AddDevice actions={actions} devices={rows} helperRoot={localRoot} />
+      <AddDevice actions={actions} devices={rows} helperRoot={localRoot} cliDir={localCliDir} />
       {allowing ? (
         <Dialog open onOpenChange={(next) => { if (!next) setAllowing(null); }}>
           <DialogContent data-device-host-allow-confirm={allowing.id}>
@@ -859,7 +861,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
                   {allowing.ssh_alias} now answers as a different SSH identity than the one this consent was given to. Allow only if you expect that change.
                 </p>
               ) : null}
-              <HelperTerms helperRoot={allowing.host?.helper_root ?? localRoot} />
+              <HelperTerms helperRoot={allowing.host?.helper_root ?? localRoot} cliDir={allowing.host?.cli_dir ?? localCliDir} />
             </DialogBody>
             <DialogFooter>
               <Button variant="secondary" onClick={() => setAllowing(null)}>Not now</Button>
@@ -999,10 +1001,10 @@ function DeviceHelper({ device }: { device: Device }) {
   );
 }
 
-function HelperTerms({ helperRoot }: { helperRoot: string | null }) {
+function HelperTerms({ helperRoot, cliDir }: { helperRoot: string | null; cliDir: string | null }) {
   return (
     <ul className="list-disc space-y-xs pl-md text-body text-subtle-foreground" data-helper-terms="true">
-      {helperConsentTerms(helperRoot).map((term) => (
+      {helperConsentTerms(helperRoot, cliDir).map((term) => (
         <li key={term}>{term}</li>
       ))}
     </ul>
@@ -1032,7 +1034,7 @@ function DeviceTest({ test }: { test: NonNullable<Device["test"]> }) {
   );
 }
 
-function AddDevice({ actions, devices, helperRoot }: { actions: Actions; devices: Device[]; helperRoot: string | null }) {
+function AddDevice({ actions, devices, helperRoot, cliDir }: { actions: Actions; devices: Device[]; helperRoot: string | null; cliDir: string | null }) {
   const [label, setLabel] = useState("");
   const [alias, setAlias] = useState("");
   const [socket, setSocket] = useState("");
@@ -1086,7 +1088,7 @@ function AddDevice({ actions, devices, helperRoot }: { actions: Actions; devices
           data-device-socket="true"
         />
       </Row>
-      <Row label={<span className="text-subtle-foreground">Hide's helper</span>} detail={<HelperTerms helperRoot={helperRoot} />} />
+      <Row label={<span className="text-subtle-foreground">Hide's helper</span>} detail={<HelperTerms helperRoot={helperRoot} cliDir={cliDir} />} />
       <Row label="">
         <Button variant="ghost" disabled={blocked} onClick={() => submit(false)} data-add-device-without-helper="true">
           Add without files

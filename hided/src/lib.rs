@@ -229,6 +229,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
             .ok()
             .and_then(|exe| exe.parent().map(|dir| dir.display().to_string())),
         host_helper_root: env.host_helper_root.clone(),
+        host_cli_dir: env.host_cli_dir.clone(),
         // The web shell draws separate Agent and View areas; each
         // Workspace's presentation lives in its own versioned file (S6 D-10).
         workspace_views_path: Some(
