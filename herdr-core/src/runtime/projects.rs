@@ -1925,6 +1925,20 @@ impl Runtime {
                 workspace.home_issues = home_issues;
                 changed = true;
             }
+            let pull_requests = match project {
+                Some(project) if workspace.is_git && workspace.remote_target_id.is_none() => {
+                    super::pull_requests::shown_pull_requests(
+                        &project.pull_requests,
+                        &workspace.checkouts,
+                        unix_milliseconds(),
+                    )
+                }
+                _ => Vec::new(),
+            };
+            if workspace.pull_requests != pull_requests {
+                workspace.pull_requests = pull_requests;
+                changed = true;
+            }
             for checkout in workspace.checkouts.iter_mut() {
                 if checkout.github != status {
                     checkout.github = status.clone();
@@ -2020,6 +2034,17 @@ impl Runtime {
     }
 
     pub(super) fn create_project_worktree(&mut self, payload: CreateWorktreePayload) -> bool {
+        self.start_worktree_task(payload, false)
+    }
+
+    /// `create_worktree`, on a new branch or, `existing_branch`, on a branch
+    /// that already exists here or on `origin` (a pull request's, PRD
+    /// overview-lenses-prs D-46), which only this machine's repositories do.
+    pub(super) fn start_worktree_task(
+        &mut self,
+        payload: CreateWorktreePayload,
+        existing_branch: bool,
+    ) -> bool {
         // The kind reaches `agent.start`, which runs it in the new pane's
         // shell, so only the providers Hide can start are accepted.
         if let Some(kind) = payload.agent_kind.as_deref()
@@ -2080,6 +2105,23 @@ impl Runtime {
             );
             return true;
         }
+        // The link is written into the new worktree's own metadata, in the
+        // form the linking chain reads back (`sync_issues`).
+        let issue = match payload.task_key.as_deref() {
+            None => None,
+            Some(key) => match crate::tasks::issue_token(key) {
+                Some(token) => Some(token),
+                None => {
+                    self.set_error(
+                        "worktree.create_unknown_task",
+                        format!("No task named {key}"),
+                        false,
+                    );
+                    return true;
+                }
+            },
+        };
+        let prompt = payload.agent_kind.as_ref().and(payload.prompt.clone());
         let id = match self.begin_task_operation(
             "worktree_create",
             Some(payload.repository_root.clone()),
@@ -2093,6 +2135,7 @@ impl Runtime {
                 return true;
             }
         };
+        self.set_task_agent_prompt(id, prompt);
         if let Some(operation) = self.snapshot.task_operation.as_mut() {
             operation.device_id = device.clone();
         }
@@ -2104,6 +2147,7 @@ impl Runtime {
             agent_kind: payload.agent_kind,
             focus: true,
             purpose: payload.purpose,
+            issue: if device.is_none() { issue } else { None },
         };
         let context = match device.as_deref() {
             Some(device) => self.device_worktree_target(device),
@@ -2116,7 +2160,14 @@ impl Runtime {
                     .ingest_task_operation_result(id, Err(format!("create worktree: {message}")));
             }
         };
-        if let Err(message) = live::spawn_worktree_create(context, request) {
+        let spawned = match (existing_branch, device.is_some()) {
+            (true, true) => Err(
+                "create worktree: an existing branch is checked out only on this Mac".to_owned(),
+            ),
+            (true, false) => live::spawn_existing_branch_worktree(context, request),
+            (false, _) => live::spawn_worktree_create(context, request),
+        };
+        if let Err(message) = spawned {
             return self.ingest_task_operation_result(id, Err(message));
         }
         true
@@ -2351,6 +2402,7 @@ impl Runtime {
         let host = self
             .local_tab_host(&workspace_id, &checkout_id)
             .expect("local_checkout_ids named a listed checkout");
+        let prompt = agent_kind.as_ref().and(payload.prompt.clone());
         let id = match self.begin_task_operation(
             "agent_start",
             Some(workspace_path),
@@ -2364,6 +2416,7 @@ impl Runtime {
                 return true;
             }
         };
+        self.set_task_agent_prompt(id, prompt);
         let request = live::CheckoutTabRequest {
             id,
             checkout_path: payload.checkout_path,
@@ -2464,6 +2517,7 @@ impl Runtime {
             agent_kind: None,
             focus: false,
             purpose: None,
+            issue: None,
         };
         let Some(context) = self.live.as_ref().cloned() else {
             return self.ingest_task_operation_result(

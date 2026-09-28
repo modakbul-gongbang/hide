@@ -1,6 +1,7 @@
 pub mod agent_hooks;
 mod agent_sleep;
 mod agent_sleep_herdr;
+mod agent_start;
 mod ai;
 mod changes;
 mod checkout_owner;
@@ -24,6 +25,7 @@ pub mod herdr_contract;
 pub mod host_access;
 pub mod issues;
 pub mod live;
+pub mod local_issues;
 mod model;
 mod persistence;
 pub mod pet;

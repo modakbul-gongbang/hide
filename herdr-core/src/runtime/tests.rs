@@ -32,6 +32,8 @@ mod memory;
 mod project_sessions;
 #[path = "tests/projects.rs"]
 mod projects;
+#[path = "tests/pull_requests.rs"]
+mod pull_requests;
 #[path = "tests/repository_clone.rs"]
 mod repository_clone;
 #[path = "tests/session_navigation.rs"]
@@ -315,6 +317,7 @@ fn runtime() -> Runtime {
         host_cli_dir: None,
         workspace_views_path: None,
         shortcut_import_path: None,
+        local_issues_path: None,
     };
     Runtime::new(
         options,
@@ -536,6 +539,7 @@ fn workspace(
 ) -> WorkspaceSnapshot {
     WorkspaceSnapshot {
         home_issues: Default::default(),
+        pull_requests: Vec::new(),
         tasks: Default::default(),
         id: id.to_owned(),
         label: label.to_owned(),

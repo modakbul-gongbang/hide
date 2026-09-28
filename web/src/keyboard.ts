@@ -21,7 +21,7 @@ import type { Actions } from "./actions";
 import { advanceHint, clearHint, holdModifiers, idleHint, modifiersOf, NO_MODIFIERS, revealedFamily, type HintState } from "./hints";
 import { hostBridge, hostKind } from "./host";
 import { agentListOrder, numberedAgents, numberedTabs } from "./numbering";
-import { availableSurfaces, currentSurface, observeProject, observeSurfaces, panelItem, placeLabel, projectItem, reconcileCycle, recentProjectOrder, recentSurfaces, type CycleItem } from "./recent";
+import { availableEntries, currentEntry, expectSurface, observeEntries, observeProject, panelItem, placeLabel, projectItem, reconcileCycle, recentEntries, recentProjectOrder, type CycleItem } from "./recent";
 import { contextWorkspaces, remoteContext, remoteView } from "./remote";
 import { hostRegistry, isNumberedCommand, matchHost, numberedCommand, REGISTRY, storedBindings, type CommandId, type Digit, type NumberedFamily } from "./shortcuts";
 import { editorFor, focusedCheckout, type AgentRow, type SnapshotRest } from "./snapshot";
@@ -31,13 +31,14 @@ import { workspaceViewOf } from "./workspace";
 import { drawnViews, installKeyboardOwner, keyboardOwner, noteCommandDelivered } from "./viewFocus";
 
 /**
- * Recent Panels: every surface this machine holds, most recent first, so
- * index 0 is the one in use and one chord lands on the one before it.
+ * Recent Panels: every surface this machine holds and every screen of the
+ * page's own the operator has been on, most recent first, so index 0 is the
+ * one in use and one chord lands on the one before it.
  */
 export function panelCycle(rest: SnapshotRest | null): Cycle | null {
   if (remoteContext(rest)) return deviceTabCycle(rest);
-  const items = recentSurfaces()
-    .map((surface) => panelItem(rest, surface))
+  const items = recentEntries()
+    .map((entry) => panelItem(rest, entry))
     .filter((item): item is CycleItem => item !== null);
   return items.length > 1 ? { kind: "panels", items, index: 0 } : null;
 }
@@ -62,10 +63,7 @@ function deviceTabCycle(rest: SnapshotRest | null): Cycle | null {
     detail,
     kind: "herdr",
     agent: null,
-    surface: null,
-    deviceTabId: tab.id!,
-    workspaceId: checkout.workspace_id,
-    checkoutId: checkout.id,
+    target: { kind: "device_tab", tabId: tab.id! },
   }));
   return items.length > 1 ? { kind: "panels", items, index: 0 } : null;
 }
@@ -86,11 +84,11 @@ export function projectCycle(rest: SnapshotRest | null): Cycle | null {
  * Brings the recent order up to date with the session, and records what the
  * operator is using now when `moved` says the surface in use may have
  * changed. While another device is in front nothing of this machine's is in
- * use, so the order only drops what is gone.
+ * use, so only the page's own screen can be a visit.
  */
 export function observeRecent(rest: SnapshotRest | null, moved: boolean) {
   const local = remoteContext(rest) === null;
-  observeSurfaces(rest, local && moved ? currentSurface(rest, keyboardOwner().kind === "view") : null);
+  observeEntries(rest, moved ? currentEntry(useUiStore.getState().screen, rest, local, keyboardOwner().kind === "view") : null);
   if (local && moved) observeProject(rest?.navigator?.focused_workspace_id);
 }
 
@@ -102,7 +100,7 @@ export function reconcileHeldCycle(cycle: Cycle, rest: SnapshotRest | null): Cyc
       ? new Set(contextWorkspaces(rest).map((workspace) => workspace.id))
       : remoteContext(rest)
         ? new Set((deviceTabs ?? []).map((tab) => tab.id ?? ""))
-        : new Set(availableSurfaces(rest, recentSurfaces()).map((surface) => surface.key));
+        : new Set(availableEntries(rest, recentEntries()).map((entry) => entry.key));
   const kept = reconcileCycle(cycle.items, cycle.index, (item) => alive.has(item.key));
   return kept && kept.items.length > 1 ? { ...cycle, ...kept } : null;
 }
@@ -127,6 +125,33 @@ export function numberedTarget(family: NumberedFamily, number: Digit, state: { r
     return checkout ? (numberedTabs(checkout, layout).get(number) ?? null) : null;
   }
   return numberedAgents(agentListOrder(state)).get(number) ?? null;
+}
+
+/**
+ * Releasing the held modifier: one move to the row the operator stopped on,
+ * none when they stopped where they started. A Workspace surface comes
+ * forward in its own checkout and the Workspace shows once it is in front
+ * (`openSurface`); All projects or an Overview is the page's own screen and
+ * shows at once. A project with no surface to restore comes forward as its
+ * checkout does from the sidebar, which is also how a device's project comes
+ * forward.
+ */
+export function commitCycle(cycle: Cycle, actions: Actions) {
+  const chosen = cycle.items[cycle.index];
+  if (!chosen || cycle.index === 0) return;
+  const target = chosen.target;
+  switch (target.kind) {
+    case "surface":
+      return actions.openSurface(target.surface);
+    case "screen":
+      // Expected like any commit, so an earlier commit still on its way cannot keep this from being the visit.
+      expectSurface(chosen.key);
+      return useUiStore.getState().setScreen(target.screen);
+    case "device_tab":
+      return actions.focusTab(target.tabId);
+    case "checkout":
+      return actions.focusCheckout(target.workspaceId, target.checkoutId);
+  }
 }
 
 function advance(cycle: Cycle, backward: boolean): Cycle {
@@ -340,21 +365,14 @@ export function installKeyboard(actions: Actions): () => void {
     run(command.id, event);
   };
 
-  // Releasing the held modifier commits the cycle: one focus event for the
-  // row the operator stopped on, none when they stopped where they started.
-  // A project with no surface to restore comes forward as its checkout does
-  // from the sidebar, which is also how a device's project comes forward.
+  // Releasing the held modifier commits the cycle (`commitCycle`).
   const onKeyUp = (event: KeyboardEvent) => {
     if (MODIFIER_KEYS.has(event.key)) setHint(holdModifiers(hint, modifiersOf(event), performance.now()));
     if (event.key !== cycleRelease) return;
     const cycle = ui().cycle;
     if (!cycle) return;
     ui().setCycle(null);
-    const chosen = cycle.items[cycle.index];
-    if (!chosen || cycle.index === 0) return;
-    if (chosen.surface) actions.openSurface(chosen.surface);
-    else if (chosen.deviceTabId) actions.focusTab(chosen.deviceTabId);
-    else actions.focusCheckout(chosen.workspaceId, chosen.checkoutId);
+    commitCycle(cycle, actions);
   };
 
   // Losing the window mid-cycle (⌥-Tab switching apps) cancels it; nothing

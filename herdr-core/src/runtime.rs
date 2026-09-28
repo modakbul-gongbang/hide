@@ -21,6 +21,7 @@ mod memory;
 mod operations;
 mod project_sessions;
 mod projects;
+mod pull_requests;
 mod rename;
 mod session;
 mod snapshot_delta;
@@ -1189,6 +1190,28 @@ pub struct Runtime {
     issue_candidates: BTreeMap<String, crate::issues::IssueCandidate>,
     issue_write_pending: Option<(u64, String, String)>,
     unconfirmed_issue_tokens: BTreeMap<String, issues::UnconfirmedIssueToken>,
+    /// Every project's Local issues, read when the runtime is created; `Err`
+    /// holds why the file could not be read, and then no change is accepted,
+    /// so a damaged file is never replaced by a partial one.
+    local_issues: Result<crate::local_issues::LocalIssueStore, String>,
+    /// Absent keeps Local issues in memory only (`CoreOptions::local_issues_path`).
+    local_issues_path: Option<PathBuf>,
+    /// The save thread's flags, as `state_save_pending`/`state_save_active`.
+    local_issues_save_pending: bool,
+    local_issues_save_active: bool,
+    /// Each checkout's Local issue number, for a project that reads Local
+    /// issues; `sync_issues` fills it from the same chain a GitHub link uses.
+    local_issue_links: BTreeMap<String, u32>,
+    /// Ids for the `issue_work` slots, so a late answer for a replaced
+    /// request is recognised and dropped.
+    next_issue_work_id: u64,
+    /// The checkout whose Hide link a Local `pr_link_issue` waits on: its
+    /// answer in `ingest_issue_operation_result` settles `pr_work.link`.
+    pr_link_checkout: Option<String>,
+    /// The first prompt for the agent a worktree task starts, by task id. It
+    /// is kept off the snapshot: an issue body has no business on the wire
+    /// after the Start dialog sent it.
+    task_agent_prompt: Option<(u64, String)>,
     /// The catalog and root index most recently accepted from the sync
     /// coordinator, reused when a later precomputation arrives stale so the
     /// reconcile never rebuilds under the runtime lock.
@@ -1320,6 +1343,7 @@ impl Runtime {
         let mut snapshot = Snapshot::initial(&options);
         snapshot.status.environment = environment.statuses;
         let (ui_state, pane_terminal_sizes, disposition) = persistence::load(&state_path);
+        let local_issues_path = options.local_issues_path.as_ref().map(PathBuf::from);
         snapshot.ui_state = ui_state;
         let shortcuts_imported = options
             .shortcut_import_path
@@ -1542,6 +1566,17 @@ impl Runtime {
             issue_candidates: Default::default(),
             issue_write_pending: None,
             unconfirmed_issue_tokens: BTreeMap::new(),
+            local_issues: match &local_issues_path {
+                Some(path) => crate::local_issues::load(path),
+                None => Ok(crate::local_issues::LocalIssueStore::default()),
+            },
+            local_issues_path,
+            local_issues_save_pending: false,
+            local_issues_save_active: false,
+            local_issue_links: BTreeMap::new(),
+            next_issue_work_id: 0,
+            pr_link_checkout: None,
+            task_agent_prompt: None,
             last_accepted_catalog: None,
             catalog_roots: workspace::RootIndex::new(),
             checkout_tab_order: BTreeMap::new(),

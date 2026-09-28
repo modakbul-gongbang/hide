@@ -24,7 +24,7 @@ import { closeDecision, statusUnknownNotice } from "./close";
 import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./settings";
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
-import type { OpenTarget } from "./navigation";
+import { overviewScreen, pullRequestScreen, type OpenTarget } from "./navigation";
 import { expectSurface, type Surface } from "./recent";
 import { remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, inPlace as inPlaceEvent, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
 import {
@@ -40,6 +40,7 @@ import {
   type Checkout,
   type EditorDocumentSnapshot,
   type EditorTabSnapshot,
+  type IssueSettings,
   type Tab,
   type Workspace,
 } from "./snapshot";
@@ -1000,10 +1001,74 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "github_request", payload: { workspace_id: workspaceId, refresh: false } });
     },
 
-    /** A new tab in the checkout with the provider started in it (D-05); `terminal` is the tab alone. */
-    startAgent(checkoutPath: string, provider: "claude" | "codex" | "terminal") {
-      dispatch({ schema_version: 2, kind: "agent_start_in_checkout", payload: { checkout_path: checkoutPath, provider } });
+    /**
+     * A new tab in the checkout with the provider started in it (D-05);
+     * `terminal` is the tab alone. `prompt` is the agent's first prompt, sent
+     * once it is ready.
+     */
+    startAgent(checkoutPath: string, provider: "claude" | "codex" | "terminal", prompt: string | null = null) {
+      dispatch({ schema_version: 2, kind: "agent_start_in_checkout", payload: { checkout_path: checkoutPath, provider, ...(prompt ? { prompt } : {}) } });
     },
+
+    /** A new issue in the project's source (Settings › Issues); the core answers in `issue_work.create`. */
+    createIssue(workspaceId: string, title: string, body: string) {
+      dispatch({ schema_version: 2, kind: "issue_create", payload: { workspace_id: workspaceId, title, body } });
+    },
+
+    /** An issue's body, labels, author, assignees and comments for its panel and the Start dialog, answered in `issue_work.detail`. */
+    requestIssueDetail(workspaceId: string, taskKey: string) {
+      dispatch({ schema_version: 2, kind: "issue_detail_request", payload: { workspace_id: workspaceId, task_key: taskKey } });
+    },
+
+    /** Asks the background AI to name a worktree; `prefix` stays at the front. Answered in `issue_work.name`. */
+    suggestWorktreeName(requestId: string, prefix: string, title: string, body: string) {
+      dispatch({ schema_version: 2, kind: "worktree_name_suggest", payload: { request_id: requestId, prefix, title, body } });
+    },
+
+    /** A project's issue source; `auto` returns it to the default. */
+    setIssueSource(projectPath: string, source: "auto" | "github" | "local") {
+      dispatch({ schema_version: 2, kind: "issue_source_set", payload: { project_path: projectPath, source } });
+    },
+
+    setIssueSettings(patch: Partial<IssueSettings>) {
+      dispatch({ schema_version: 2, kind: "issue_settings_set", payload: patch });
+    },
+
+    /** A Local issue's title and body, edited in its panel; answered in `issue_work.update` by `requestId`. */
+    updateLocalIssue(requestId: string, taskKey: string, title: string, body: string) {
+      dispatch({ schema_version: 2, kind: "local_issue_update", payload: { request_id: requestId, task_key: taskKey, title, body } });
+    },
+
+    /**
+     * Links a pull request to an issue of its project, one the source has or
+     * a new one (PRD overview-lenses-prs D-13, D-31, D-34); a retry sends the
+     * same issue again. Answered in `pr_work.link` by `requestId`.
+     */
+    linkPullRequestIssue(requestId: string, workspaceId: string, prNumber: number, issue: { key: string } | { title: string; body: string }) {
+      const target = "key" in issue ? { issue_key: issue.key } : { new_issue: { title: issue.title, body: issue.body } };
+      dispatch({ schema_version: 2, kind: "pr_link_issue", payload: { request_id: requestId, workspace_id: workspaceId, pr_number: prNumber, ...target } });
+    },
+
+    /** A pull request's failed checks and change requests, for an agent's first prompt (D-46); answered in `pr_work.feedback`. */
+    readPullRequestFeedback(requestId: string, workspaceId: string, prNumber: number) {
+      dispatch({ schema_version: 2, kind: "pr_feedback_read", payload: { request_id: requestId, workspace_id: workspaceId, pr_number: prNumber } });
+    },
+
+    /** An agent started on a pull request's branch with `prompt` (D-12); it reports through `task_operation`. */
+    delegatePullRequest(workspaceId: string, prNumber: number, provider: "claude" | "codex", prompt: string) {
+      dispatch({ schema_version: 2, kind: "pr_delegate", payload: { workspace_id: workspaceId, pr_number: prNumber, provider, prompt } });
+    },
+
+    /** A pull request's row on its Project's PRs tab, unfolded (PRD overview-lenses-prs B21); ⌘-click stays GitHub's. */
+    openPullRequestRow(projectId: string, number: number | null) {
+      ui().setScreen(pullRequestScreen(ui().screen, rest(), projectId, number));
+    },
+
+    /** Closes or reopens a Local issue; a GitHub one closes on GitHub. */
+    setIssueOpen(taskKey: string, open: boolean) {
+      dispatch({ schema_version: 2, kind: "issue_set_open", payload: { task_key: taskKey, open } });
+    },
+
 
     measureProjectDisk(workspaceId: string) {
       dispatch({ schema_version: 2, kind: "card_measure_disk", payload: { workspace_id: workspaceId } });
@@ -1107,7 +1172,17 @@ export function createActions(dispatch: DispatchFn) {
       bridge.revealPath(path);
     },
 
-    createWorktree(request: { deviceId: string; repositoryRoot: string; branch: string; baseBranch: string | null; agentKind: string | null; purpose: string | null }) {
+    /** A new worktree; `taskKey` links it to that issue, and `prompt` is its agent's first prompt. */
+    createWorktree(request: {
+      deviceId: string;
+      repositoryRoot: string;
+      branch: string;
+      baseBranch: string | null;
+      agentKind: string | null;
+      purpose: string | null;
+      taskKey?: string | null;
+      prompt?: string | null;
+    }) {
       dispatch({
         schema_version: 2,
         kind: "create_worktree",
@@ -1118,6 +1193,8 @@ export function createActions(dispatch: DispatchFn) {
           base_branch: request.baseBranch,
           agent_kind: request.agentKind,
           purpose: request.purpose,
+          ...(request.taskKey ? { task_key: request.taskKey } : {}),
+          ...(request.prompt ? { prompt: request.prompt } : {}),
         },
       });
     },
@@ -1380,7 +1457,7 @@ export function createActions(dispatch: DispatchFn) {
      * sent only when the fold changes.
      */
     openProject(workspace: Workspace, expanded: boolean | undefined) {
-      ui().setScreen({ kind: "overview", projectId: workspace.id });
+      ui().setScreen(overviewScreen(rest(), workspace.id));
       if (expanded !== undefined && expanded !== (workspace.expanded !== false)) setProjectExpanded(workspace, expanded);
     },
 
@@ -1476,7 +1553,7 @@ export function createActions(dispatch: DispatchFn) {
       const front = frontCheckout(rest());
       const project = front ? catalogWorkspaces(rest()).find((row) => row.checkouts.some((checkout) => checkout.id === front.id)) : null;
       if (!project) return diagnostic("project overview: no checkout is in front");
-      ui().setScreen({ kind: "overview", projectId: project.id });
+      ui().setScreen(overviewScreen(rest(), project.id));
     },
 
     /** Back from an Overview to the pane grid in front, or to All projects when no Workspace is in front (B1). */

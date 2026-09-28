@@ -15,6 +15,7 @@ fn runtime_at(path: &std::path::Path) -> Runtime {
             host_cli_dir: None,
             workspace_views_path: None,
             shortcut_import_path: None,
+            local_issues_path: None,
         },
         environment::EnvironmentReport {
             statuses: Vec::new(),

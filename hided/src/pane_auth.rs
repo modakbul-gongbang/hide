@@ -1199,6 +1199,7 @@ mod tests {
             host_cli_dir: None,
             workspace_views_path: None,
             shortcut_import_path: None,
+            local_issues_path: None,
         })
         .unwrap()
     }

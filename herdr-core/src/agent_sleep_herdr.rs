@@ -15,11 +15,10 @@ use std::path::Path;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use hide_herdr_client::{
-    ApiConnector, ApiError, request_with_connector, request_with_correlation_id,
-};
+use hide_herdr_client::{ApiConnector, ApiError, request_with_connector};
 
 use crate::agent_sleep::WakeMode;
+use crate::agent_start::StartError;
 use crate::live::LiveContext;
 use crate::wire;
 
@@ -142,8 +141,9 @@ pub(crate) enum WakeOutcome {
     Failed { reason: String, detail: String },
 }
 
-/// Starts the agent again in the same pane, through Herdr's `agent.start`,
-/// which waits for the pane's shell and returns once the agent is ready.
+/// Starts the agent again in the same pane, through Herdr's `agent.start`
+/// once the pane's shell holds its terminal (`agent_start`); Herdr answers
+/// once the agent is ready.
 pub(crate) fn start_agent(connector: &dyn ApiConnector, request: &WakeRequest) -> WakeOutcome {
     if let Some(cwd) = request.cwd.as_deref()
         && !Path::new(cwd).is_dir()
@@ -167,10 +167,10 @@ pub(crate) fn start_agent(connector: &dyn ApiConnector, request: &WakeRequest) -
             };
         }
     };
-    match request_with_correlation_id(
+    match crate::agent_start::start_at_shell(
         connector,
         &format!("herdr-core:agent-sleep:{}:wake", request.pane_id),
-        "agent.start",
+        &request.pane_id,
         params,
         Duration::from_millis(AGENT_START_TIMEOUT_MS + 5_000),
     ) {
@@ -181,11 +181,15 @@ pub(crate) fn start_agent(connector: &dyn ApiConnector, request: &WakeRequest) -
                 detail,
             },
         },
-        Err(ApiError::Remote { code, message }) => WakeOutcome::Failed {
+        Err(StartError::NotStarted(detail)) => WakeOutcome::Failed {
+            reason: refused_reason(request.mode).to_owned(),
+            detail,
+        },
+        Err(StartError::Herdr(ApiError::Remote { code, message })) => WakeOutcome::Failed {
             reason: refused_reason(request.mode).to_owned(),
             detail: format!("{code}: {message}"),
         },
-        Err(error) => WakeOutcome::Failed {
+        Err(StartError::Herdr(error)) => WakeOutcome::Failed {
             reason: "The agent did not become ready in time.".to_owned(),
             detail: error.to_string(),
         },
@@ -343,9 +347,10 @@ mod tests {
     #[test]
     fn a_refused_wake_names_a_plain_reason_and_keeps_herdrs_words_for_the_log() {
         let herdr = FakeHerdr::start_with_errors("agent-wake-refused", |method, _| match method {
+            "pane.process_info" => Ok(process_info(42, 42)),
             "agent.start" => Err((
-                "agent_pane_busy".into(),
-                "pane is not at a shell prompt".into(),
+                "agent_name_taken".into(),
+                "agent name one is already used".into(),
             )),
             other => panic!("unexpected {other}"),
         });
@@ -364,7 +369,7 @@ mod tests {
             outcome,
             WakeOutcome::Failed {
                 reason: "The conversation couldn\u{2019}t be resumed.".into(),
-                detail: "agent_pane_busy: pane is not at a shell prompt".into(),
+                detail: "agent_name_taken: agent name one is already used".into(),
             }
         );
     }

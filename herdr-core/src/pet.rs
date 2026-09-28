@@ -278,6 +278,7 @@ mod tests {
             progress: None,
             expected_reply: None,
             detail: None,
+            message: None,
             status_word_visible: true,
             elapsed: "1s".to_owned(),
             last_activity: "0000000000001".to_owned(),

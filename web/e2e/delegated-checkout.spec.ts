@@ -50,6 +50,15 @@ test("a checkout whose only tab is delegated opens on the child's pane", async (
     await expect(page.locator('[data-agent-tab-bar] [role="tab"]')).toHaveCount(0);
     await screenshot(page, "delegated-checkout-open");
 
+    // beta's line two names the agent it was raised from, behind an arrow at
+    // the small icon size: a class naming an undefined size token once drew
+    // it at lucide's 24px.
+    const betaRow = page.locator("[data-project]", { hasText: "beta" }).first();
+    const raisedArrow = betaRow.locator("[data-checkout-parent] svg");
+    await expect(raisedArrow).toBeVisible();
+    expect((await raisedArrow.boundingBox())?.width).toBe(12);
+    await betaRow.screenshot({ path: test.info().outputPath("delegated-checkout-raised-from.png") });
+
     // Back on the first checkout, the child's own sidebar row brings its
     // pane to the screen with the keyboard in it.
     await page.locator("[data-project]", { hasText: "fixture" }).locator("[data-checkout]").first().click();

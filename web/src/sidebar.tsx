@@ -16,7 +16,7 @@ import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow, type AgentRowMenu } from "./components/sidebar-agent-row";
 import { StatusBadge } from "./components/status-badge";
 import { WeeklyUsage } from "./components/weekly-usage";
-import { agentPlaces, agentSections, allAgents, allLineageWorkspaces, allProjectsCount, type ListedAgent } from "./navigation";
+import { agentPlaces, agentSections, allAgents, allLineageWorkspaces, allProjectsCount, overviewScreen, type ListedAgent } from "./navigation";
 import { foldedLineage, type FoldedLineage } from "./lineageSummary";
 import {
   activeCheckouts,
@@ -724,7 +724,7 @@ function OverviewRow({ workspace, selected }: { workspace: Workspace; selected: 
           selected ? "bg-secondary font-medium" : "hover:bg-accent",
         )}
         style={{ paddingLeft: CHECKOUT_COLUMN }}
-        onClick={() => useUiStore.getState().setScreen({ kind: "overview", projectId: workspace.id })}
+        onClick={() => useUiStore.getState().setScreen(overviewScreen(useShellStore.getState().rest, workspace.id))}
       >
         <LayoutDashboardIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
         <span className="min-w-0 flex-1 truncate">Overview</span>
@@ -797,8 +797,9 @@ const CheckoutRowView = memo(function CheckoutRowView({
     >
       <EntryContextMenu
         label={`${name} actions`}
-        items={() => (removing ? [] : checkoutMenu(workspace, checkout, menuHost(), purposeProblem))}
+        items={() => checkoutMenu(workspace, checkout, menuHost(), purposeProblem)}
         onSelect={(item) => runCheckoutItem(actions, workspace, checkout, item)}
+        disabled={removing}
         className="group flex items-stretch"
         data-checkout-menu={checkout.id}
       >
@@ -998,7 +999,12 @@ function CheckoutOpenButton({
   // Read on every render, like `view.detail`: a memo keyed on the checkout would keep the Commit age from the last change to this row.
   const card = checkoutCard(workspace, checkout, Date.now());
   return (
-    <CheckoutCardHint card={card} description={view.detail} onOpenPullRequest={(url, external) => actions.openPullRequest(url, workspace.device_id, external)}>
+    <CheckoutCardHint
+      card={card}
+      description={view.detail}
+      onOpenPullRequest={(url, external) => actions.openPullRequest(url, workspace.device_id, external)}
+      onShowPullRequestRow={workspace.is_git && !workspace.remote_target_id ? (number) => actions.openPullRequestRow(workspace.id, number) : undefined}
+    >
       <button
         type="button"
         data-checkout={checkout.id}
@@ -1071,7 +1077,7 @@ function PurposeLine({ purpose, origin, age, raisedFrom }: { purpose: string | n
       <span className="flex min-w-0 flex-1 items-center gap-xs truncate text-muted-foreground" data-purpose={purpose === null ? undefined : origin}>
         {raisedFrom ? (
           <span className="inline-flex min-w-0 shrink items-center gap-xxs text-subtle-foreground" data-checkout-parent={raisedFrom}>
-            <CornerUpLeftIcon aria-hidden="true" className="size-(--size-icon-xs) shrink-0" />
+            <CornerUpLeftIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
             <span className="truncate">{raisedFrom}</span>
           </span>
         ) : null}
@@ -1137,7 +1143,7 @@ function menuHost(): MenuHost {
 function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["id"]) {
   switch (item) {
     case "open_overview":
-      return useUiStore.getState().setScreen({ kind: "overview", projectId: workspace.id });
+      return useUiStore.getState().setScreen(overviewScreen(useShellStore.getState().rest, workspace.id));
     case "new_worktree":
       return useUiStore.getState().setWorkspaceDialog({ kind: "new_worktree", workspaceId: workspace.id });
     case "new_tab_primary": {

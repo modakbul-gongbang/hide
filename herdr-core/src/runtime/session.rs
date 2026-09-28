@@ -2929,7 +2929,16 @@ impl Runtime {
                     pane_id,
                     purpose_error,
                     unconfirmed_purpose_token,
+                    issue_error,
                 } = outcome;
+                if let Some(detail) = issue_error {
+                    self.push_diagnostic(
+                        "checkout_issue.create_failed",
+                        format!(
+                            "The worktree was created, but its issue link was not saved: {detail}"
+                        ),
+                    );
+                }
                 let pane_id = match device.as_deref() {
                     Some(device) => super::operations::remote_pane_id(device, &pane_id),
                     None => pane_id,
@@ -3486,7 +3495,19 @@ impl Runtime {
     }
     /// The agent the task's worker should now start: the created pane and
     /// the chosen kind, once the creation is settled.
-    pub(crate) fn pending_task_agent_start(&self, id: u64) -> Option<(String, String)> {
+    /// Keeps the first prompt for the agent a task starts. Only the most
+    /// recent task has one; the slot is emptied when its start is settled.
+    pub(super) fn set_task_agent_prompt(&mut self, id: u64, prompt: Option<String>) {
+        self.task_agent_prompt = prompt
+            .map(|prompt| prompt.trim().to_owned())
+            .filter(|prompt| !prompt.is_empty())
+            .map(|prompt| (id, prompt));
+    }
+
+    pub(crate) fn pending_task_agent_start(
+        &self,
+        id: u64,
+    ) -> Option<(String, String, Option<String>)> {
         let operation = self.snapshot.task_operation.as_ref()?;
         if operation.id != id
             || operation.phase != "ready"
@@ -3500,7 +3521,12 @@ impl Runtime {
             Some(device) => super::remote_pane_source_id(device, pane_id)?,
             None => pane_id,
         };
-        Some((pane_id.to_owned(), operation.agent_kind.clone()?))
+        let prompt = self
+            .task_agent_prompt
+            .as_ref()
+            .filter(|(task, _)| *task == id)
+            .map(|(_, prompt)| prompt.clone());
+        Some((pane_id.to_owned(), operation.agent_kind.clone()?, prompt))
     }
 
     pub(crate) fn ingest_task_agent_result(
@@ -3508,13 +3534,32 @@ impl Runtime {
         id: u64,
         outcome: live::TaskAgentOutcome,
     ) -> bool {
-        let Some(operation) = self.snapshot.task_operation.as_mut().filter(|operation| {
-            operation.id == id && operation.agent_phase.as_deref() == Some("starting")
-        }) else {
+        if !self
+            .snapshot
+            .task_operation
+            .as_ref()
+            .is_some_and(|operation| {
+                operation.id == id && operation.agent_phase.as_deref() == Some("starting")
+            })
+        {
+            return false;
+        }
+        // A definite failure keeps the prompt for Retry; any other answer
+        // settles it, since the agent may be running.
+        if !matches!(outcome, live::TaskAgentOutcome::Failed(_))
+            && self
+                .task_agent_prompt
+                .as_ref()
+                .is_some_and(|(task, _)| *task == id)
+        {
+            self.task_agent_prompt = None;
+        }
+        let Some(operation) = self.snapshot.task_operation.as_mut() else {
             return false;
         };
         let (phase, message) = match outcome {
             live::TaskAgentOutcome::Started => ("started", None),
+            live::TaskAgentOutcome::StartedWithoutPrompt(message) => ("started", Some(message)),
             live::TaskAgentOutcome::Failed(message) => ("failed", Some(message)),
             live::TaskAgentOutcome::Unknown(message) => ("unknown", Some(message)),
         };

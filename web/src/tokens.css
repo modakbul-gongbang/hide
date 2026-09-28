@@ -98,9 +98,14 @@
 :root {
   --home-column-width: 288px;
   --home-collapsed-width: 148px;
-  --home-halo-radius: 6px;
   --home-child-indent: 12px;
   --home-dependency-gap: 96px;
+  --lens-tile-min: 208px;
+  --lens-bar-height: 4px;
+  --lens-lane-head: 296px;
+  --lens-node-width: 232px;
+  --issue-panel-min-width: 360px;
+  --issue-label-dot: 6px;
   --size-sidebar-hierarchy-grandchild: 36px;
   --size-sidebar-hierarchy-great-grandchild: 48px;
   --text-display: 30px;
@@ -203,6 +208,11 @@
   --size-agent-children-popover: 280px;
   --size-usage-popover: 250px;
   --size-pr-popover: 360px;
+  --size-pr-number: 38px;
+  --size-pr-review: 70px;
+  --size-pr-slot: 72px;
+  --size-pr-branch-max: 190px;
+  --size-pr-indent: 60px;
   --size-relationship-list-max: 360px;
   --text-git-row: 12px;
   --text-git-detail: 11px;

@@ -43,6 +43,10 @@ pub struct CoreOptions {
     /// never written again; the core is the owner that outlived it.
     #[serde(default)]
     pub shortcut_import_path: Option<String>,
+    /// The file that keeps every project's Local issues (`local_issues.rs`).
+    /// Absent keeps them in memory for the session only, as a test core does.
+    #[serde(default)]
+    pub local_issues_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -74,6 +78,8 @@ pub struct Snapshot {
     pub task_operation: Option<TaskOperationSnapshot>,
     pub repository_clone: Option<RepositoryCloneSnapshot>,
     pub explorer_operation: Option<ExplorerOperationSnapshot>,
+    pub issue_work: IssueWorkSnapshot,
+    pub pr_work: PrWorkSnapshot,
     pub find: PaneFindSnapshot,
     pub ui_state: UiStateSnapshot,
     pub ime: ImeSnapshot,
@@ -654,6 +660,13 @@ pub struct SidebarAgentSnapshot {
     /// Derived: the row's second line, chosen by the group from the three
     /// sentences above (PRD D-06). `None` draws no sentence.
     pub detail: Option<String>,
+    /// Everything the agent last said through its hooks, uncut: the request
+    /// it waits on (`expected_reply`), then what it did (`progress`), one per
+    /// line. `detail` is the row's one chosen sentence cut to the row; this is
+    /// the whole of both, which the Overview's node popover shows (PRD
+    /// overview-lenses-tiles-agents D-50). Absent when neither was reported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
     /// Derived: whether the row draws its status word. It leaves working and
     /// read rows, where the mark already says it, and stays on rows that
     /// still concern the operator.
@@ -781,6 +794,12 @@ pub struct WorkspaceSnapshot {
     /// The project's tasks in the source-neutral shape the web reads
     /// (`tasks.rs`); `home_issues` stays as older readers read it.
     pub tasks: crate::tasks::ProjectTasksSnapshot,
+    /// The project's pull requests as `gh pr list` answered them, one per
+    /// branch, for the Overview's PRs tab (PRD overview-lenses-prs), where a
+    /// pull request with no checkout here (a bot's branch) is a row too. A
+    /// local Git project's only, and absent from the wire while empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pull_requests: Vec<PullRequestSnapshot>,
     pub id: String,
     pub label: String,
     pub path: String,
@@ -2110,6 +2129,14 @@ pub struct UiStateSnapshot {
     /// never, the default (PRD D-10).
     #[serde(default)]
     pub agent_sleep_after_hours: Option<u32>,
+    /// Each local project's chosen issue source, `github` or `local`, by the
+    /// project's path; a project without an entry reads its default source
+    /// (`tasks::source_kind`). Set in Settings › Issues.
+    #[serde(default)]
+    pub project_issue_sources: BTreeMap<String, String>,
+    /// How starting work from an issue behaves (Settings › Issues).
+    #[serde(default)]
+    pub issue_settings: IssueSettingsSnapshot,
     /// Each pane's last state change and last look, and the agents Hide has
     /// put to sleep. Persisted with the rest of this store and never on the
     /// wire: the last look of the tab on screen moves every minute, and a
@@ -2169,6 +2196,201 @@ pub(crate) fn default_pane_text_scale() -> f32 {
     DEFAULT_PANE_TEXT_SCALE
 }
 
+/// How starting work from an issue behaves, chosen in Settings › Issues.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct IssueSettingsSnapshot {
+    /// Ask the background AI for the new worktree's name; the deterministic
+    /// name from the issue's number and title stands until it answers.
+    #[serde(default = "default_true")]
+    pub ai_worktree_name: bool,
+    /// The agent the Start dialog selects first: `claude`, `codex` or
+    /// `terminal`.
+    #[serde(default = "default_issue_agent")]
+    pub default_agent: String,
+    /// End the first prompt by asking for a pull request that closes the
+    /// issue, so the PR and the issue link themselves (`Closes #N`).
+    #[serde(default = "default_true")]
+    pub closes_instruction: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_issue_agent() -> String {
+    "claude".into()
+}
+
+impl Default for IssueSettingsSnapshot {
+    fn default() -> Self {
+        Self {
+            ai_worktree_name: true,
+            default_agent: default_issue_agent(),
+            closes_instruction: true,
+        }
+    }
+}
+
+/// The Overview's issue work in flight. Each is one slot a newer request
+/// replaces, like `task_operation`: the web matches a slot to its own request
+/// by id and ignores one it did not ask for.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct IssueWorkSnapshot {
+    pub create: Option<IssueCreateSnapshot>,
+    pub detail: Option<IssueDetailSnapshot>,
+    pub name: Option<WorktreeNameSnapshot>,
+    pub update: Option<IssueUpdateSnapshot>,
+}
+
+/// A new issue on its way to the project's source.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct IssueCreateSnapshot {
+    pub id: u64,
+    pub workspace_id: String,
+    /// `working`, `ready` or `failed`.
+    pub phase: String,
+    /// The created task's key, once it exists.
+    pub task_key: Option<String>,
+    pub message: Option<String>,
+}
+
+/// One issue as its panel and the Start dialog read it (PRD
+/// overview-lenses-issues D-40): the body and, for a GitHub issue, its labels,
+/// author, assignees and latest comments. The fields past `message` are
+/// empty until `ready`.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct IssueDetailSnapshot {
+    pub task_key: String,
+    /// `reading`, `ready` or `failed`.
+    pub phase: String,
+    pub body: Option<String>,
+    pub message: Option<String>,
+    pub labels: Vec<crate::tasks::TaskLabel>,
+    pub author: Option<String>,
+    pub created_at_unix_ms: Option<u64>,
+    pub assignees: Vec<String>,
+    pub comment_count: Option<u32>,
+    pub comments: Vec<crate::tasks::TaskComment>,
+}
+
+impl IssueDetailSnapshot {
+    pub fn reading(task_key: String) -> Self {
+        Self::settled(task_key, "reading", None)
+    }
+
+    /// The answer to a read: `ready` with what it read, or `failed` with why.
+    pub fn answered(task_key: String, answer: Result<crate::tasks::TaskDetail, String>) -> Self {
+        match answer {
+            Ok(detail) => Self::settled(task_key, "ready", Some(detail)),
+            Err(message) => Self {
+                message: Some(message),
+                ..Self::settled(task_key, "failed", None)
+            },
+        }
+    }
+
+    fn settled(task_key: String, phase: &str, detail: Option<crate::tasks::TaskDetail>) -> Self {
+        let read = detail.is_some();
+        let detail = detail.unwrap_or_default();
+        Self {
+            task_key,
+            phase: phase.into(),
+            body: read.then_some(detail.body),
+            message: None,
+            labels: detail.labels,
+            author: detail.author,
+            created_at_unix_ms: detail.created_at_unix_ms,
+            assignees: detail.assignees,
+            comment_count: detail.comment_count,
+            comments: detail.comments,
+        }
+    }
+}
+
+/// The answer to a Local issue's title and body edit (`local_issue_update`),
+/// matched by the web's own request id.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct IssueUpdateSnapshot {
+    pub request_id: String,
+    pub task_key: String,
+    /// `ready` or `failed`.
+    pub phase: String,
+    pub message: Option<String>,
+}
+
+/// The Overview's pull-request work in flight (PRD overview-lenses-prs):
+/// a pull request linked to an issue, and the checks and reviews read for
+/// an agent's first prompt. Each is one slot a newer request replaces; the
+/// web matches a slot to its own request by `request_id`.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct PrWorkSnapshot {
+    pub link: Option<PrLinkSnapshot>,
+    pub feedback: Option<PrFeedbackSnapshot>,
+}
+
+/// `pr_link_issue`'s progress: the issue made (a new one), the link Hide
+/// keeps, then `Closes #N` in the pull request's body. A failed body write
+/// keeps what came before it (D-31, D-53); `issue_key` names the issue the
+/// pull request is linked to, the new one included, so a retry sends it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PrLinkSnapshot {
+    pub request_id: String,
+    pub workspace_id: String,
+    pub pr_number: u32,
+    /// `create`, `link` or `body`: the step working now, or the one that failed.
+    pub step: String,
+    /// `working`, `ready` or `failed`.
+    pub phase: String,
+    pub issue_key: Option<String>,
+    /// The id the source shows for `issue_key` (`#12`, `L-3`).
+    pub issue_id: Option<String>,
+    /// The issue was made by this request.
+    pub created: bool,
+    pub message: Option<String>,
+}
+
+/// One failed check of a pull request, by the name GitHub shows and the page
+/// that says why.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PrFailedCheck {
+    pub name: String,
+    pub url: Option<String>,
+}
+
+/// A review that asked for changes, as its author wrote it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PrChangeRequest {
+    pub author: Option<String>,
+    pub body: String,
+}
+
+/// What a pull request says for the work handed on from it: its body, for
+/// a new issue made from it (B12), and its failed checks and change
+/// requests, for the first prompt of an agent it is handed to (D-46).
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PrFeedbackSnapshot {
+    pub request_id: String,
+    pub pr_number: u32,
+    /// `reading`, `ready` or `failed`.
+    pub phase: String,
+    /// The body once read.
+    pub body: Option<String>,
+    pub failed_checks: Vec<PrFailedCheck>,
+    pub change_requests: Vec<PrChangeRequest>,
+    pub message: Option<String>,
+}
+
+/// The background AI's name for a worktree started from an issue.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct WorktreeNameSnapshot {
+    /// The web's own id for the request it made.
+    pub request_id: String,
+    /// `working`, `ready` or `failed`.
+    pub phase: String,
+    pub name: Option<String>,
+    pub message: Option<String>,
+}
+
 impl Default for UiStateSnapshot {
     fn default() -> Self {
         Self {
@@ -2208,6 +2430,8 @@ impl Default for UiStateSnapshot {
             conversation_pane_ids: BTreeSet::new(),
             pane_read_records: BTreeMap::new(),
             agent_sleep_after_hours: None,
+            project_issue_sources: BTreeMap::new(),
+            issue_settings: IssueSettingsSnapshot::default(),
             agent_sleep: crate::agent_sleep::AgentSleepStore::default(),
         }
     }
@@ -3241,6 +3465,8 @@ impl Snapshot {
             task_operation: None,
             repository_clone: None,
             explorer_operation: None,
+            issue_work: IssueWorkSnapshot::default(),
+            pr_work: PrWorkSnapshot::default(),
             find: PaneFindSnapshot::default(),
             ui_state: UiStateSnapshot::default(),
             ime: ImeSnapshot {
@@ -3319,6 +3545,8 @@ pub struct RestSections {
     pub task_operation: Option<TaskOperationSnapshot>,
     pub repository_clone: Option<RepositoryCloneSnapshot>,
     pub explorer_operation: Option<ExplorerOperationSnapshot>,
+    pub issue_work: IssueWorkSnapshot,
+    pub pr_work: PrWorkSnapshot,
     pub overlay: OverlaySnapshot,
     pub tab: TabSnapshot,
     pub connection: ConnectionSnapshot,
@@ -3352,6 +3580,8 @@ impl RestSections {
             task_operation: snapshot.task_operation.clone(),
             repository_clone: snapshot.repository_clone.clone(),
             explorer_operation: snapshot.explorer_operation.clone(),
+            issue_work: snapshot.issue_work.clone(),
+            pr_work: snapshot.pr_work.clone(),
             overlay: snapshot.overlay.clone(),
             tab: snapshot.tab.clone(),
             connection: snapshot.connection.clone(),
@@ -3386,6 +3616,8 @@ impl RestSections {
             && self.task_operation == snapshot.task_operation
             && self.repository_clone == snapshot.repository_clone
             && self.explorer_operation == snapshot.explorer_operation
+            && self.issue_work == snapshot.issue_work
+            && self.pr_work == snapshot.pr_work
             && self.overlay == snapshot.overlay
             && self.tab == snapshot.tab
             && self.connection == snapshot.connection
@@ -3528,6 +3760,8 @@ pub struct RestWire<'a> {
     pub task_operation: &'a Option<TaskOperationSnapshot>,
     pub repository_clone: &'a Option<RepositoryCloneSnapshot>,
     pub explorer_operation: &'a Option<ExplorerOperationSnapshot>,
+    pub issue_work: &'a IssueWorkSnapshot,
+    pub pr_work: &'a PrWorkSnapshot,
     pub overlay: &'a OverlaySnapshot,
     pub tab: &'a TabSnapshot,
     pub connection: &'a ConnectionSnapshot,
@@ -3558,6 +3792,8 @@ impl<'a> RestWire<'a> {
             task_operation: &rest.task_operation,
             repository_clone: &rest.repository_clone,
             explorer_operation: &rest.explorer_operation,
+            issue_work: &rest.issue_work,
+            pr_work: &rest.pr_work,
             overlay: &rest.overlay,
             tab: &rest.tab,
             connection: &rest.connection,

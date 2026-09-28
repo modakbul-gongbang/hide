@@ -92,6 +92,14 @@ pub fn wake_name(pane_id: &str) -> String {
     bounded_name(format!("wake-{}", sanitize(pane_id)))
 }
 
+/// The name of an agent a task starts in the pane it made (an issue's Start,
+/// a pull request's 맡기기, New agent): Herdr refuses a name another agent
+/// already holds, so it is the pane's, like a wake's, and two tasks running
+/// the same provider never collide.
+pub fn task_agent_name(kind: &str, pane_id: &str) -> String {
+    bounded_name(format!("hide-{}-{}", sanitize(kind), sanitize(pane_id)))
+}
+
 fn bounded_name(full: String) -> String {
     if full.len() <= MAX_NAME_CHARACTERS {
         return full;
@@ -198,6 +206,15 @@ mod tests {
     fn two_forks_of_one_parent_do_not_share_a_name() {
         assert_ne!(fork_name("w1:p2", "abc"), fork_name("w1:p2", "def"));
         assert_eq!(fork_name("w1:p2", "abc"), "fork-w1-p2-abc");
+    }
+
+    #[test]
+    fn two_tasks_running_one_provider_get_names_herdr_accepts_and_keeps_apart() {
+        let first = task_agent_name("claude", "w4:p1");
+        let second = task_agent_name("claude", "w8P:p1");
+        assert_eq!(first, "hide-claude-w4-p1");
+        assert_ne!(first, second);
+        assert!(herdr_accepts(&first) && herdr_accepts(&second));
     }
 
     /// Herdr's own rule, from the error it answers an unacceptable name with:

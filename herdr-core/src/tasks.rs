@@ -1,8 +1,11 @@
 //! A project's tasks in one shape whatever their source is (PRD
 //! task-agents-views D-14). The web reads only this shape; each source has an
-//! adapter here that projects its own answer into it, and GitHub issues are
-//! the one adapter today. The source keeps the authority: Hide reads and
-//! opens a task, it never edits one.
+//! adapter here that projects its own answer into it: GitHub issues read
+//! through the operator's `gh`, and Local issues kept on this Mac
+//! (`local_issues.rs`). Every local project has exactly one source, the one
+//! the operator chose in Settings › Issues or, by default, GitHub when the
+//! repository reads as a GitHub repository and Local otherwise, so no project
+//! is ever "not connected".
 //!
 //! Every value is additive on the wire and none is a string enum an older
 //! reader decodes, so such a reader takes the snapshot exactly as before.
@@ -10,26 +13,32 @@
 use serde::Serialize;
 
 use crate::issues::{IssueReference, IssueSnapshot, ProjectIssuesSnapshot};
+use crate::local_issues::LocalIssueProject;
 use crate::model::GithubStatusSnapshot;
 
 /// The source kind of a GitHub issue.
 pub const GITHUB: &str = "github";
+/// The source kind of an issue kept on this Mac.
+pub const LOCAL: &str = "local";
 
 /// One task. `key` names it across every source and project, so a checkout,
-/// a card and (later) a dependency edge can refer to it without knowing the
-/// source's own identity scheme.
+/// a card and a dependency edge can refer to it without knowing the source's
+/// own identity scheme.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct TaskSnapshot {
     pub key: String,
-    /// The source kind (`github`). A plain string, so a shell that does not
-    /// know a later source draws it as an unknown one instead of failing.
+    /// The source kind (`github`, `local`). A plain string, so a shell that
+    /// does not know a later source draws it as an unknown one instead of
+    /// failing.
     pub source: String,
-    /// The id the source shows for it (`#170`, or `acme/other#12` for an
-    /// issue of another repository), or none when the source has no ids.
+    /// The id the source shows for it (`#170`, `acme/other#12` for an issue of
+    /// another repository, `L-3` for a local issue).
     pub id: Option<String>,
     pub url: Option<String>,
     pub title: String,
     pub open: bool,
+    /// When the source last changed it, for the backlog's order and age.
+    pub updated_at_unix_ms: Option<u64>,
     /// The open tasks this one waits on, which may belong to another project
     /// (PRD task-agents-views D-09, D-10); the source records them.
     pub blocked_by: Vec<TaskRefSnapshot>,
@@ -46,7 +55,7 @@ pub struct TaskRefSnapshot {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct TaskSourceSnapshot {
     pub kind: String,
-    /// What the operator calls the source (`GitHub`).
+    /// What the operator calls the source (`GitHub`, `Local`).
     pub label: String,
     /// Which list of that source this is (`acme/app`), once it has answered.
     pub name: Option<String>,
@@ -56,15 +65,62 @@ pub struct TaskSourceSnapshot {
     /// is in the diagnostic log; this is the one sentence a tooltip shows.
     pub failure: Option<String>,
     pub last_read_at_unix_ms: Option<u64>,
+    /// The operator chose this source in Settings rather than the default.
+    pub chosen: bool,
+}
+
+/// What an issue's panel reads when it opens, beyond the task itself (PRD
+/// overview-lenses-issues D-40): the body, and for a GitHub issue its labels,
+/// author, assignees and comments. A value the source does not have is empty
+/// or absent, never invented: a Local issue has no labels, author or comments.
+/// It rides only on the request's answer (`issue_work.detail`), never on the
+/// snapshot's task list.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct TaskDetail {
+    pub body: String,
+    pub labels: Vec<TaskLabel>,
+    pub author: Option<String>,
+    pub created_at_unix_ms: Option<u64>,
+    pub assignees: Vec<String>,
+    /// How many comments the issue has; absent for a source without comments.
+    pub comment_count: Option<u32>,
+    /// The latest `DETAIL_COMMENTS`, oldest first.
+    pub comments: Vec<TaskComment>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TaskLabel {
+    pub name: String,
+    /// The source's colour as six hex digits, absent when it gave none.
+    pub color: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TaskComment {
+    pub author: Option<String>,
+    pub created_at_unix_ms: Option<u64>,
+    /// At most `COMMENT_BODY_LIMIT` characters, ending in `…` when cut.
+    pub body: String,
+}
+
+/// Comments a panel shows; the rest are counted and read on the source.
+pub const DETAIL_COMMENTS: usize = 3;
+/// A shown comment's length; the whole comment is on the source.
+pub const COMMENT_BODY_LIMIT: usize = 4_000;
+
+/// `body` cut to `COMMENT_BODY_LIMIT` characters, marked when cut.
+pub fn capped_comment(body: &str) -> String {
+    let body = body.trim();
+    match body.char_indices().nth(COMMENT_BODY_LIMIT) {
+        Some((end, _)) => format!("{}…", &body[..end]),
+        None => body.to_owned(),
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct ProjectTasksSnapshot {
-    /// Absent when the project has no source connected.
+    /// Absent only for a device's project, whose issues this Mac does not read.
     pub source: Option<TaskSourceSnapshot>,
-    /// Why no source is connected, in the source's own words (`gh` is not
-    /// logged in, the repository has no GitHub remote), for the empty state.
-    pub unconnected_reason: Option<String>,
     pub tasks: Vec<TaskSnapshot>,
     /// The source listed more than Hide keeps (`ISSUE_LIMIT`).
     pub overflow: bool,
@@ -75,61 +131,154 @@ pub fn github_key(reference: &IssueReference) -> String {
     format!("{GITHUB}:{}", reference.token())
 }
 
-/// A `gh` failure that means the project has no GitHub source to read, as
-/// opposed to one that could not be read this time.
-fn unconnected(status: &GithubStatusSnapshot) -> bool {
-    !status.available
-        || matches!(
+/// The key of a local issue: the project's path names it across projects.
+pub fn local_key(project_path: &str, number: u32) -> String {
+    format!("{LOCAL}:{project_path}#{number}")
+}
+
+/// The project and number a local key names.
+pub fn parse_local_key(key: &str) -> Option<(&str, u32)> {
+    let rest = key.strip_prefix("local:")?;
+    let (path, number) = rest.rsplit_once('#')?;
+    Some((
+        path,
+        number.parse().ok().filter(|number: &u32| *number > 0)?,
+    ))
+}
+
+/// The GitHub reference a GitHub key names.
+pub fn parse_github_key(key: &str) -> Option<IssueReference> {
+    IssueReference::parse(key.strip_prefix("github:")?, None).ok()
+}
+
+/// The token a checkout's issue link stores for a task key: `owner/repo#N`
+/// for a GitHub issue, `L-N` for a local one. The linking chain reads both
+/// back (`runtime/issues.rs`).
+pub fn issue_token(key: &str) -> Option<String> {
+    if let Some((_, number)) = parse_local_key(key) {
+        return Some(crate::local_issues::display_id(number));
+    }
+    parse_github_key(key).map(|reference| reference.token())
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SourceKind {
+    Github,
+    Local,
+}
+
+/// The source a local project reads. `choice` is the operator's
+/// (`ui_state.project_issue_sources`); without one, a Git repository reads
+/// GitHub unless `gh` said it has no GitHub remote or is not installed, and a
+/// folder reads Local. A GitHub read that fails for another reason (logged
+/// out, offline) stays GitHub and says so, rather than moving the project's
+/// issues somewhere else under the operator.
+pub fn source_kind(
+    choice: Option<&str>,
+    git: bool,
+    issues: &ProjectIssuesSnapshot,
+    status: &GithubStatusSnapshot,
+) -> SourceKind {
+    match choice {
+        Some(LOCAL) => SourceKind::Local,
+        Some(GITHUB) if git => SourceKind::Github,
+        _ if !git => SourceKind::Local,
+        _ if issues.repository.is_some() => SourceKind::Github,
+        _ if matches!(
             status.failure_category.as_deref(),
-            Some("not installed" | "not logged in" | "no GitHub remote")
-        )
+            Some("not installed" | "no GitHub remote")
+        ) =>
+        {
+            SourceKind::Local
+        }
+        _ => SourceKind::Github,
+    }
+}
+
+/// How the Local store stands for one project.
+pub enum LocalRead<'a> {
+    /// The store could not be read; its issues are unknown, not empty.
+    Failed(&'a str),
+    Ready(Option<&'a LocalIssueProject>),
 }
 
 /// The GitHub adapter: a local Git project's issues and the reader's status.
-/// A project that has answered once stays connected, so a later failure keeps
-/// its tasks and says so; one that never could be read has no source.
+/// A read that has not answered yet is a source still reading; a failed one
+/// keeps the tasks read before it and says so.
 pub fn github_tasks(
-    local_git: bool,
     issues: &ProjectIssuesSnapshot,
     status: &GithubStatusSnapshot,
+    chosen: bool,
 ) -> ProjectTasksSnapshot {
-    if !local_git {
-        return ProjectTasksSnapshot::default();
-    }
     let answered = issues.repository.is_some();
-    if !answered && !status.loading && unconnected(status) {
-        return ProjectTasksSnapshot {
-            unconnected_reason: status.unavailable_reason.clone(),
-            ..ProjectTasksSnapshot::default()
-        };
-    }
     let repository = issues.repository.as_deref();
+    let failure = if status.stale || (!answered && !status.loading) {
+        status.unavailable_reason.clone()
+    } else {
+        None
+    };
     let source = TaskSourceSnapshot {
         kind: GITHUB.into(),
         label: "GitHub".into(),
         name: issues.repository.clone(),
-        reading: !answered && status.unavailable_reason.is_none(),
-        failure: status
-            .stale
-            .then(|| status.unavailable_reason.clone())
-            .flatten()
-            .or_else(|| {
-                issues
-                    .dependencies_failure
-                    .as_ref()
-                    .map(|reason| format!("issue dependencies: {reason}"))
-            }),
+        reading: !answered && failure.is_none(),
+        failure: failure.or_else(|| {
+            issues
+                .dependencies_failure
+                .as_ref()
+                .map(|reason| format!("issue dependencies: {reason}"))
+        }),
         last_read_at_unix_ms: status.last_success_at_unix_ms,
+        chosen,
     };
     ProjectTasksSnapshot {
         source: Some(source),
-        unconnected_reason: None,
         tasks: issues
             .issues
             .iter()
             .map(|issue| github_task(issue, repository))
             .collect(),
         overflow: issues.overflow,
+    }
+}
+
+/// The Local adapter: the project's issues in the store on this Mac.
+pub fn local_tasks(project_path: &str, read: LocalRead<'_>, chosen: bool) -> ProjectTasksSnapshot {
+    let (failure, project) = match read {
+        LocalRead::Failed(reason) => (Some(reason.to_owned()), None),
+        LocalRead::Ready(project) => (None, project),
+    };
+    ProjectTasksSnapshot {
+        source: Some(TaskSourceSnapshot {
+            kind: LOCAL.into(),
+            label: "Local".into(),
+            name: None,
+            reading: false,
+            failure,
+            last_read_at_unix_ms: None,
+            chosen,
+        }),
+        tasks: project
+            .map(|project| {
+                // Newest first, the order GitHub lists issues in.
+                project
+                    .issues
+                    .iter()
+                    .rev()
+                    .map(|issue| TaskSnapshot {
+                        key: local_key(project_path, issue.number),
+                        source: LOCAL.into(),
+                        id: Some(crate::local_issues::display_id(issue.number)),
+                        url: None,
+                        title: issue.title.clone(),
+                        open: issue.open,
+                        updated_at_unix_ms: Some(issue.updated_at_unix_ms),
+                        blocked_by: Vec::new(),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        overflow: false,
     }
 }
 
@@ -151,6 +300,7 @@ fn github_task(issue: &IssueSnapshot, repository: Option<&str>) -> TaskSnapshot 
         url: Some(issue.url.clone()),
         title: issue.title.clone(),
         open: issue.state == "OPEN",
+        updated_at_unix_ms: issue.updated_at_unix_ms,
         blocked_by: issue
             .blocked_by
             .iter()
@@ -203,7 +353,7 @@ mod tests {
 
     #[test]
     fn issues_become_source_neutral_tasks() {
-        let tasks = github_tasks(true, &answered(), &healthy());
+        let tasks = github_tasks(&answered(), &healthy(), false);
         let source = tasks.source.expect("connected");
         assert_eq!(source.name.as_deref(), Some("acme/app"));
         assert!(!source.reading && source.failure.is_none());
@@ -229,7 +379,7 @@ mod tests {
                 number: 12,
             },
         ];
-        let tasks = github_tasks(true, &issues, &healthy());
+        let tasks = github_tasks(&issues, &healthy(), false);
         assert_eq!(
             tasks.tasks[0].blocked_by,
             vec![
@@ -249,7 +399,7 @@ mod tests {
     fn unread_dependencies_are_a_source_failure_beside_current_tasks() {
         let mut issues = answered();
         issues.dependencies_failure = Some("Field 'blockedBy' doesn't exist".into());
-        let tasks = github_tasks(true, &issues, &healthy());
+        let tasks = github_tasks(&issues, &healthy(), false);
         assert_eq!(tasks.tasks.len(), 2);
         assert_eq!(
             tasks.source.and_then(|source| source.failure).as_deref(),
@@ -267,7 +417,7 @@ mod tests {
             last_success_at_unix_ms: Some(5),
             ..Default::default()
         };
-        let tasks = github_tasks(true, &answered(), &status);
+        let tasks = github_tasks(&answered(), &status, false);
         assert_eq!(tasks.tasks.len(), 2);
         assert_eq!(
             tasks.source.and_then(|source| source.failure).as_deref(),
@@ -276,23 +426,79 @@ mod tests {
     }
 
     #[test]
-    fn a_project_gh_cannot_read_has_no_source_and_says_why() {
-        for category in ["not installed", "not logged in", "no GitHub remote"] {
+    fn without_a_choice_a_repository_gh_cannot_see_on_github_reads_local() {
+        let none = ProjectIssuesSnapshot::default();
+        for (category, expected) in [
+            ("not installed", SourceKind::Local),
+            ("no GitHub remote", SourceKind::Local),
+            // Logged out or offline is still a GitHub repository: it stays
+            // GitHub and says why it could not be read.
+            ("not logged in", SourceKind::Github),
+            ("network or rate limit", SourceKind::Github),
+        ] {
             let status = GithubStatusSnapshot {
-                available: category == "no GitHub remote",
-                stale: true,
                 unavailable_reason: Some(format!("gh: {category}")),
                 failure_category: Some(category.into()),
                 ..Default::default()
             };
-            let tasks = github_tasks(true, &ProjectIssuesSnapshot::default(), &status);
-            assert!(tasks.source.is_none(), "{category}");
             assert_eq!(
-                tasks.unconnected_reason,
-                Some(format!("gh: {category}")),
+                source_kind(None, true, &none, &status),
+                expected,
                 "{category}"
             );
         }
+        // A folder has no GitHub to read; a choice wins over the default.
+        assert_eq!(
+            source_kind(None, false, &none, &healthy()),
+            SourceKind::Local
+        );
+        assert_eq!(
+            source_kind(Some(LOCAL), true, &answered(), &healthy()),
+            SourceKind::Local
+        );
+        assert_eq!(
+            source_kind(Some(GITHUB), false, &none, &healthy()),
+            SourceKind::Local
+        );
+    }
+
+    #[test]
+    fn a_github_read_that_never_answered_says_why_instead_of_reading_forever() {
+        let status = GithubStatusSnapshot {
+            unavailable_reason: Some("gh auth login".into()),
+            failure_category: Some("not logged in".into()),
+            ..Default::default()
+        };
+        let tasks = github_tasks(&ProjectIssuesSnapshot::default(), &status, false);
+        let source = tasks.source.expect("a GitHub source");
+        assert!(!source.reading);
+        assert_eq!(source.failure.as_deref(), Some("gh auth login"));
+    }
+
+    #[test]
+    fn local_issues_are_tasks_keyed_by_project_newest_first() {
+        let mut store = crate::local_issues::LocalIssueStore::default();
+        store.create("/p", "첫 이슈", "", 1).unwrap();
+        store.create("/p", "둘째", "", 2).unwrap();
+        store.set_open("/p", 1, false, 3);
+        let tasks = local_tasks("/p", LocalRead::Ready(store.project("/p")), true);
+        let source = tasks.source.expect("local");
+        assert_eq!(
+            (source.kind.as_str(), source.chosen, source.reading),
+            (LOCAL, true, false)
+        );
+        assert_eq!(tasks.tasks[0].id.as_deref(), Some("L-2"));
+        assert_eq!(tasks.tasks[0].key, "local:/p#2");
+        assert!(!tasks.tasks[1].open);
+        assert_eq!(parse_local_key("local:/p#2"), Some(("/p", 2)));
+        assert_eq!(
+            local_tasks("/p", LocalRead::Failed("damaged"), false)
+                .source
+                .unwrap()
+                .failure
+                .as_deref(),
+            Some("damaged")
+        );
     }
 
     #[test]
@@ -301,15 +507,7 @@ mod tests {
             loading: true,
             ..Default::default()
         };
-        let tasks = github_tasks(true, &ProjectIssuesSnapshot::default(), &status);
+        let tasks = github_tasks(&ProjectIssuesSnapshot::default(), &status, false);
         assert!(tasks.source.expect("reading").reading);
-    }
-
-    #[test]
-    fn a_folder_or_device_project_has_no_source() {
-        assert_eq!(
-            github_tasks(false, &answered(), &healthy()),
-            ProjectTasksSnapshot::default()
-        );
     }
 }

@@ -726,6 +726,10 @@ pub(super) struct OverviewOpenSectionPayload {
 pub(super) struct AgentStartInCheckoutPayload {
     pub(super) checkout_path: String,
     pub(super) provider: String,
+    /// The agent's first prompt, sent once the agent is ready (an issue
+    /// started on a checkout that is not a new worktree).
+    #[serde(default)]
+    pub(super) prompt: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -747,6 +751,133 @@ pub(super) struct CreateWorktreePayload {
     pub(super) agent_kind: Option<String>,
     #[serde(default)]
     pub(super) purpose: Option<String>,
+    /// The task the worktree is started from; the worktree is linked to it.
+    #[serde(default)]
+    pub(super) task_key: Option<String>,
+    /// The agent's first prompt, sent once the agent is ready.
+    #[serde(default)]
+    pub(super) prompt: Option<String>,
+}
+
+/// `issue_source_set`: a project's issue source chosen in Settings › Issues;
+/// `auto` returns it to the default (`tasks::source_kind`).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct IssueSourceSetPayload {
+    pub(super) project_path: String,
+    pub(super) source: String,
+}
+
+/// `issue_settings_set`: how starting work from an issue behaves; an absent
+/// field keeps its value.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct IssueSettingsSetPayload {
+    #[serde(default)]
+    pub(super) ai_worktree_name: Option<bool>,
+    #[serde(default)]
+    pub(super) default_agent: Option<String>,
+    #[serde(default)]
+    pub(super) closes_instruction: Option<bool>,
+}
+
+/// `issue_create`: a new issue in the project's source.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct IssueCreatePayload {
+    pub(super) workspace_id: String,
+    pub(super) title: String,
+    #[serde(default)]
+    pub(super) body: String,
+}
+
+/// `issue_detail_request`: one issue's body, labels, author, assignees and
+/// comments, for its panel and the Start dialog.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct IssueDetailRequestPayload {
+    pub(super) workspace_id: String,
+    pub(super) task_key: String,
+}
+
+/// `local_issue_update`: a Local issue's title and body, edited in its panel.
+/// A GitHub issue has no such event; it is edited on GitHub.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct LocalIssueUpdatePayload {
+    pub(super) request_id: String,
+    pub(super) task_key: String,
+    pub(super) title: String,
+    #[serde(default)]
+    pub(super) body: String,
+}
+
+/// `pr_link_issue`: a pull request linked to an issue of its project (PRD
+/// overview-lenses-prs D-13, D-31, D-34): an issue the project's source has,
+/// by `issue_key`, or a new one made from `new_issue`. A GitHub issue is
+/// linked in Hide and closed by `Closes #N` in the pull request's body; a
+/// Local one is linked in Hide only. A retry sends the same issue again.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PrLinkIssuePayload {
+    pub(super) request_id: String,
+    pub(super) workspace_id: String,
+    pub(super) pr_number: u32,
+    #[serde(default)]
+    pub(super) issue_key: Option<String>,
+    #[serde(default)]
+    pub(super) new_issue: Option<PrNewIssuePayload>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PrNewIssuePayload {
+    pub(super) title: String,
+    #[serde(default)]
+    pub(super) body: String,
+}
+
+/// `pr_feedback_read`: a pull request's failed checks and change requests,
+/// read for an agent's first prompt (D-46).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PrFeedbackReadPayload {
+    pub(super) request_id: String,
+    pub(super) workspace_id: String,
+    pub(super) pr_number: u32,
+}
+
+/// `pr_delegate`: an agent started on a pull request's branch with the
+/// operator's first prompt (D-12, D-46): in the checkout on that branch, or
+/// in a new worktree of the existing branch when there is none.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct PrDelegatePayload {
+    pub(super) workspace_id: String,
+    pub(super) pr_number: u32,
+    pub(super) provider: String,
+    #[serde(default)]
+    pub(super) prompt: String,
+}
+
+/// `issue_set_open`: close or reopen a Local issue.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct IssueSetOpenPayload {
+    pub(super) task_key: String,
+    pub(super) open: bool,
+}
+
+/// `worktree_name_suggest`: ask the background AI to name a worktree started
+/// from an issue. `prefix` is the part the name keeps (`192-`).
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct WorktreeNameSuggestPayload {
+    pub(super) request_id: String,
+    pub(super) prefix: String,
+    pub(super) title: String,
+    #[serde(default)]
+    pub(super) body: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1003,6 +1134,16 @@ pub(super) enum Event {
     GitWorktreeOpen(GitWorktreeOpenPayload),
     GitWorktreeSetBase(GitWorktreeSetBasePayload),
     CreateWorktree(CreateWorktreePayload),
+    IssueSourceSet(IssueSourceSetPayload),
+    IssueSettingsSet(IssueSettingsSetPayload),
+    IssueCreate(IssueCreatePayload),
+    IssueDetailRequest(IssueDetailRequestPayload),
+    WorktreeNameSuggest(WorktreeNameSuggestPayload),
+    IssueSetOpen(IssueSetOpenPayload),
+    LocalIssueUpdate(LocalIssueUpdatePayload),
+    PrLinkIssue(PrLinkIssuePayload),
+    PrFeedbackRead(PrFeedbackReadPayload),
+    PrDelegate(PrDelegatePayload),
     SetCheckoutPurpose(SetCheckoutPurposePayload),
     SetCheckoutIssue(SetCheckoutPurposePayload),
     MigrateMainBranch(MigrateMainBranchPayload),
@@ -1178,6 +1319,16 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "git_worktree_open" => decode!(GitWorktreeOpenPayload, GitWorktreeOpen),
         "git_worktree_set_base" => decode!(GitWorktreeSetBasePayload, GitWorktreeSetBase),
         "create_worktree" => decode!(CreateWorktreePayload, CreateWorktree),
+        "issue_source_set" => decode!(IssueSourceSetPayload, IssueSourceSet),
+        "issue_settings_set" => decode!(IssueSettingsSetPayload, IssueSettingsSet),
+        "issue_create" => decode!(IssueCreatePayload, IssueCreate),
+        "issue_detail_request" => decode!(IssueDetailRequestPayload, IssueDetailRequest),
+        "worktree_name_suggest" => decode!(WorktreeNameSuggestPayload, WorktreeNameSuggest),
+        "issue_set_open" => decode!(IssueSetOpenPayload, IssueSetOpen),
+        "local_issue_update" => decode!(LocalIssueUpdatePayload, LocalIssueUpdate),
+        "pr_link_issue" => decode!(PrLinkIssuePayload, PrLinkIssue),
+        "pr_feedback_read" => decode!(PrFeedbackReadPayload, PrFeedbackRead),
+        "pr_delegate" => decode!(PrDelegatePayload, PrDelegate),
         "set_checkout_issue" => decode!(SetCheckoutPurposePayload, SetCheckoutIssue),
         "set_checkout_purpose" => decode!(SetCheckoutPurposePayload, SetCheckoutPurpose),
         "migrate_main_branch" => decode!(MigrateMainBranchPayload, MigrateMainBranch),
@@ -2929,6 +3080,16 @@ impl Runtime {
             }
             Event::CreateWorktree(payload) => self.create_project_worktree(payload),
             Event::SetCheckoutIssue(payload) => self.set_checkout_issue(payload),
+            Event::IssueSourceSet(payload) => self.set_issue_source(payload),
+            Event::IssueSettingsSet(payload) => self.set_issue_settings(payload),
+            Event::IssueCreate(payload) => self.create_issue(payload),
+            Event::IssueDetailRequest(payload) => self.request_issue_detail(payload),
+            Event::WorktreeNameSuggest(payload) => self.suggest_worktree_name(payload),
+            Event::IssueSetOpen(payload) => self.set_issue_open(payload),
+            Event::LocalIssueUpdate(payload) => self.update_local_issue(payload),
+            Event::PrLinkIssue(payload) => self.link_pr_issue(payload),
+            Event::PrFeedbackRead(payload) => self.read_pr_feedback(payload),
+            Event::PrDelegate(payload) => self.delegate_pr(payload),
             Event::SetCheckoutPurpose(payload) => self.set_checkout_purpose(payload),
             Event::MigrateMainBranch(payload) => self.migrate_main_branch(payload),
             Event::TaskOperationAck(payload) => self.acknowledge_task_operation(payload.id),
@@ -3194,6 +3355,9 @@ impl Runtime {
                     // `agent_sleep_set` owns the setting and the core owns
                     // the sleep records; a shared save carries both through.
                     agent_sleep_after_hours: current.agent_sleep_after_hours,
+                    // Settings › Issues owns these through their own events.
+                    project_issue_sources: current.project_issue_sources,
+                    issue_settings: current.issue_settings,
                     agent_sleep: current.agent_sleep,
                 };
                 // Visibility and popover activity wake the provider reader,
