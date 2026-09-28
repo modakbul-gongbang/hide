@@ -192,6 +192,9 @@ jobs:
       - name: Build the web shell
         # The desktop app serves web/dist through the hided it starts.
         run: pnpm --dir web build
+      - name: Install Playwright Chromium
+        # The browser spec opens a page in Chromium beside the Electron app.
+        run: pnpm --dir desktop exec playwright install chromium
       - name: Fetch the pinned Herdr runtime
         id: herdr
         run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh)" >> "$GITHUB_OUTPUT"

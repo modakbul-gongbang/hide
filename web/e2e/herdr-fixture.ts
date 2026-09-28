@@ -108,22 +108,32 @@ function isolatedEnv(root: string, socket: string): NodeJS.ProcessEnv {
   };
 }
 
-function paneText(env: NodeJS.ProcessEnv, bin: string, pane: string): string {
+function paneRead(env: NodeJS.ProcessEnv, bin: string, pane: string): { text: string; failure: string | null } {
   const result = spawnSync(bin, ["pane", "read", pane, "--source", "visible", "--format", "text"], {
     env,
     encoding: "utf8",
     timeout: 10_000,
   });
-  return result.status === 0 ? result.stdout : "";
+  if (result.status === 0) return { text: result.stdout, failure: null };
+  return { text: "", failure: `pane read exited ${result.status}: ${result.stderr.trim()}` };
 }
 
-async function waitFor(predicate: () => boolean, what: string, ms = 10_000): Promise<void> {
+function paneText(env: NodeJS.ProcessEnv, bin: string, pane: string): string {
+  return paneRead(env, bin, pane).text;
+}
+
+/**
+ * `detail` is read once, when the wait fails, so the error names what the
+ * predicate last saw; a bare "timed out" cannot say whether the shell
+ * printed something else or nothing at all.
+ */
+async function waitFor(predicate: () => boolean, what: string, ms = 10_000, detail?: () => string): Promise<void> {
   const deadline = Date.now() + ms;
   while (Date.now() < deadline) {
     if (predicate()) return;
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  throw new Error(`timed out waiting for ${what}`);
+  throw new Error(`timed out waiting for ${what}${detail ? `; last seen: ${detail()}` : ""}`);
 }
 
 export async function startHerdr({ agents = true }: { agents?: boolean } = {}): Promise<HerdrFixture> {
@@ -161,6 +171,15 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
       for (const name of ["herdr-server.log", "input-one.log", "input-two.log"]) {
         const file = path.join(root, name);
         if (fs.existsSync(file)) fs.copyFileSync(file, path.join(keep, `${path.basename(root)}-${name}`));
+      }
+      // The server's own session log, where a pane whose shell never printed
+      // a prompt says what it ran and how that ended.
+      const sessions = path.join(root, "xdg-config", "herdr", "sessions");
+      if (fs.existsSync(sessions)) {
+        for (const session of fs.readdirSync(sessions)) {
+          const file = path.join(sessions, session, "herdr-server.log");
+          if (fs.existsSync(file)) fs.copyFileSync(file, path.join(keep, `${path.basename(root)}-session.log`));
+        }
       }
     }
     fs.rmSync(root, { recursive: true, force: true });
@@ -204,7 +223,12 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
     // The shell must have printed its prompt before agent start accepts the
     // pane; the fixture .zshrc makes that prompt a fixed string.
     for (const pane of [first, second]) {
-      await waitFor(() => paneText(env, bin, pane).includes("fixture %"), `a prompt in pane ${pane}`);
+      await waitFor(
+        () => paneText(env, bin, pane).includes("fixture %"),
+        `a prompt in pane ${pane}`,
+        10_000,
+        () => JSON.stringify(paneRead(env, bin, pane)),
+      );
     }
     if (agents) {
       herdr(env, bin, ["agent", "start", "one", "--kind", "claude", "--pane", first]);
