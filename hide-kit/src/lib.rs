@@ -31,6 +31,7 @@ mod record;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -295,6 +296,52 @@ fn report(
     }
 }
 
+/// How long a kit waits for another kit changing the same account.
+const LOCK_DEADLINE: Duration = Duration::from_secs(90);
+
+/// One kit at a time changes an account's files. Two registrations of one
+/// machine connect together at launch, and a Mac that is also another Mac's
+/// device runs its own kit beside the device's; their copies, hook files and
+/// hcoord daemon would otherwise interleave. The lock is `flock` on a file in
+/// the kit's private folder, so it ends with the process that held it.
+pub(crate) struct AccountLock {
+    _file: std::fs::File,
+}
+
+pub(crate) fn lock_account(target: &KitTarget) -> Result<AccountLock, String> {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = record::private_state_dir(&target.home, true)?.join(".lock");
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .mode(0o600)
+        .open(&path)
+        .map_err(|error| format!("{} could not be opened: {error}", path.display()))?;
+    let started = std::time::Instant::now();
+    loop {
+        // SAFETY: the descriptor belongs to `file`, which outlives the call.
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+            return Ok(AccountLock { _file: file });
+        }
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::EWOULDBLOCK) {
+            return Err(format!("{} could not be locked: {error}", path.display()));
+        }
+        if target.stop.load(Ordering::Relaxed) {
+            return Err("Hide is quitting".to_owned());
+        }
+        if started.elapsed() >= LOCK_DEADLINE {
+            return Err(format!(
+                "another Hide was still changing this account's kit after {} seconds",
+                LOCK_DEADLINE.as_secs()
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// Judges every part without changing anything.
 pub fn status(target: &KitTarget) -> KitReport {
     let record = record::load(&target.home);
@@ -314,6 +361,10 @@ pub fn status(target: &KitTarget) -> KitReport {
 /// hcoord's daemon is asked to converge each time, as the desktop host did on
 /// every launch.
 pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
+    let _lock = match lock_account(target) {
+        Ok(lock) => lock,
+        Err(reason) => return KitReport::unavailable(&reason),
+    };
     let loaded = record::load(&target.home);
     let (mut record, record_failure) = match loaded {
         Ok(record) => (record, None),
@@ -403,6 +454,20 @@ pub struct RemoveReport {
 /// `hide` link when it is Hide's, and the record. hcoord stays, because other
 /// tools on that machine drive agents through it (D-16).
 pub fn remove(target: &KitTarget) -> RemoveReport {
+    let _lock = match lock_account(target) {
+        Ok(lock) => lock,
+        Err(reason) => {
+            return RemoveReport {
+                components: ComponentId::ALL
+                    .into_iter()
+                    .map(|id| {
+                        let reason = reason.clone();
+                        (id, RemoveOutcome::Failed { reason })
+                    })
+                    .collect(),
+            };
+        }
+    };
     let mut components = Vec::new();
     for id in ComponentId::ALL {
         let outcome = match id {
@@ -429,8 +494,6 @@ pub fn remove(target: &KitTarget) -> RemoveReport {
     RemoveReport { components }
 }
 
-/// Replaces `path` with `contents` through a temporary file beside it, so a
-/// failure part way leaves the old file whole.
 /// `base` joined with `parts`, each folder checked in turn: the kit keeps
 /// code there that launchd and Herdr run as this account, so a folder that
 /// belongs to another account or that others can write to is refused rather
@@ -475,6 +538,8 @@ pub(crate) fn private_dirs(base: &Path, parts: &[&str], create: bool) -> Result<
     Ok(folder)
 }
 
+/// Replaces `path` with `contents` through a temporary file beside it, so a
+/// failure part way leaves the old file whole.
 pub(crate) fn write_atomically(path: &Path, contents: &[u8], mode: u32) -> Result<(), String> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;

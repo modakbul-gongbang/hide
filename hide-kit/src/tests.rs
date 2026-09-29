@@ -527,6 +527,40 @@ fn the_kit_runs_nothing_from_a_folder_another_account_can_change() {
     }
 }
 
+/// Two kits on one account take turns: while another holds the account,
+/// an apply waits and then installs; a quitting owner stops waiting.
+#[test]
+fn an_apply_waits_for_another_kit_changing_the_same_account() {
+    let fixture = Fixture::new();
+    let settings = fixture.home().join(".claude/settings.json");
+    let held = lock_account(&fixture.target).unwrap();
+    let target = fixture.target.clone();
+    let waiting = std::thread::spawn(move || apply(&target, &Scope::Automatic));
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(!waiting.is_finished());
+    assert_eq!(std::fs::read_to_string(&settings).unwrap(), OTHER_TOOL);
+    drop(held);
+    let report = waiting.join().unwrap();
+    assert_eq!(
+        state(&report, ComponentId::ClaudeCodeHook),
+        ComponentState::Installed
+    );
+
+    let _held = lock_account(&fixture.target).unwrap();
+    fixture
+        .target
+        .stop
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    let report = apply(&fixture.target, &Scope::Automatic);
+    assert!(
+        report
+            .components
+            .iter()
+            .all(|part| part.reason.as_deref() == Some("Hide is quitting")),
+        "{report:?}"
+    );
+}
+
 #[test]
 fn an_unreadable_record_installs_nothing_missing_on_a_guess() {
     let fixture = Fixture::new();
