@@ -271,6 +271,16 @@ export function revealedScroll(scroll: number, viewport: number, offset: number,
   return scroll;
 }
 
+/**
+ * Whether a tab strip draws `count` tabs as marks rather than titles (the Pen
+ * library's `Component / Adaptive Work Tab`): titled tabs share `room` alike
+ * and give up their titles only once an equal share would fall below
+ * `titleMin`, the way a browser's tabs do.
+ */
+export function iconTabs(room: number, count: number, titleMin: number): boolean {
+  return count > 0 && room / count < titleMin;
+}
+
 export type Eligibility = { ok: true } | { ok: false; reason: string };
 
 const refuse = (reason: string): Eligibility => ({ ok: false, reason });
