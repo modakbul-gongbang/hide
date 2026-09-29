@@ -34,7 +34,7 @@ import {
 import type { DesktopEnv } from "./env";
 import { readJsonFile, writeJsonFile } from "./jsonFile";
 import { bundledHcoord, hcoordEnvironment, installHcoordShim, parseHcoordEnsure } from "./hcoord";
-import { chooseHerdr, parseServerStatus, serverEnvironment, type HerdrChoice } from "./herdr";
+import { chooseHerdr, ensureServer, parseServerStatus, serverEnvironment, type HerdrChoice } from "./herdr";
 import { loadFailureFields, type HostLog } from "./log";
 import { ChildRunner, startDetached, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
@@ -319,22 +319,18 @@ export class DesktopHost {
     if (herdr.source !== "bundled" || herdr.path === null) return;
     const bin = herdr.path;
     const env = serverEnvironment(this.childEnvironment());
-    const status = () => this.runChild(bin, ["status", "server", "--json"], STATUS_TIMEOUT_MS, env).then(parseServerStatus);
-    const before = await status();
-    if ("unreadable" in before) return this.log.event("herdr.status_failed", { attempt, detail: before.unreadable });
-    if (before.running) return;
-    const started = Date.now();
-    const spawned = await startDetached(bin, ["server"], env);
-    if ("spawnError" in spawned) return this.log.event("herdr.server_start_failed", { attempt, detail: spawned.spawnError });
-    while (Date.now() - started < HERDR_START_WAIT_MS && !this.quitting) {
-      await new Promise((resolve) => setTimeout(resolve, HERDR_START_POLL_MS));
-      const now = await status();
-      if ("running" in now && now.running) {
-        this.log.event("herdr.server_started", { attempt, pid: spawned.pid, elapsed_ms: Date.now() - started });
-        return;
-      }
-    }
-    this.log.event("herdr.server_start_failed", { attempt, pid: spawned.pid, detail: "no answer", elapsed_ms: Date.now() - started });
+    const result = await ensureServer({
+      status: () => this.runChild(bin, ["status", "server", "--json"], STATUS_TIMEOUT_MS, env).then(parseServerStatus),
+      start: () => startDetached(bin, ["server"], env),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      now: Date.now,
+      stopped: () => this.quitting,
+      waitMs: HERDR_START_WAIT_MS,
+      pollMs: HERDR_START_POLL_MS,
+    });
+    if (result.outcome === "status_failed") this.log.event("herdr.status_failed", { attempt, detail: result.detail });
+    else if (result.outcome === "started") this.log.event("herdr.server_started", { attempt, pid: result.pid, elapsed_ms: result.elapsedMs });
+    else if (result.outcome === "start_failed") this.log.event("herdr.server_start_failed", { attempt, pid: result.pid, detail: result.detail, elapsed_ms: result.elapsedMs });
   }
 
   /**

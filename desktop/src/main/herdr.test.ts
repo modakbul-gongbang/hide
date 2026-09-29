@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chooseHerdr, parseServerStatus, serverEnvironment } from "./herdr";
+import { chooseHerdr, ensureServer, parseServerStatus, serverEnvironment, type ServerStatus } from "./herdr";
 import type { ChildResult } from "./spawn";
 
 describe("chooseHerdr", () => {
@@ -59,5 +59,57 @@ describe("serverEnvironment", () => {
       const child = { HOME: "/Users/example", [key]: "ko_KR.UTF-8" };
       expect(serverEnvironment(child)).toEqual(child);
     }
+  });
+});
+
+describe("ensureServer", () => {
+  // Herdr's answers in order, the starts it was asked for, and a clock that moves only when the loop sleeps.
+  const herdr = (answers: ServerStatus[], start: { pid: number } | { spawnError: string } = { pid: 42 }) => {
+    let clock = 0;
+    const starts: number[] = [];
+    const io = {
+      status: async () => answers.shift() ?? { running: false },
+      start: async () => {
+        starts.push(clock);
+        return start;
+      },
+      sleep: async (ms: number) => {
+        clock += ms;
+      },
+      now: () => clock,
+      stopped: () => false,
+      waitMs: 5_000,
+      pollMs: 200,
+    };
+    return { io, starts };
+  };
+
+  it("leaves a server that answers alone", async () => {
+    const { io, starts } = herdr([{ running: true }]);
+    expect(await ensureServer(io)).toEqual({ outcome: "running" });
+    expect(starts).toEqual([]);
+  });
+
+  it("starts one server when none runs and returns once it answers", async () => {
+    const { io, starts } = herdr([{ running: false }, { running: false }, { running: true }]);
+    expect(await ensureServer(io)).toEqual({ outcome: "started", pid: 42, elapsedMs: 400 });
+    expect(starts).toEqual([0]);
+  });
+
+  it("starts nothing when Herdr cannot say whether a server runs", async () => {
+    const { io, starts } = herdr([{ unreadable: "herdr status timed out" }]);
+    expect(await ensureServer(io)).toEqual({ outcome: "status_failed", detail: "herdr status timed out" });
+    expect(starts).toEqual([]);
+  });
+
+  it("reports a start that never answers after the bounded wait, without starting again", async () => {
+    const { io, starts } = herdr([]);
+    expect(await ensureServer(io)).toEqual({ outcome: "start_failed", detail: "no answer", pid: 42, elapsedMs: 5_000 });
+    expect(starts).toEqual([0]);
+  });
+
+  it("reports a binary that could not start", async () => {
+    const { io } = herdr([{ running: false }], { spawnError: "spawn EACCES" });
+    expect(await ensureServer(io)).toEqual({ outcome: "start_failed", detail: "spawn EACCES" });
   });
 });

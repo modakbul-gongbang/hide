@@ -64,3 +64,37 @@ export function serverEnvironment(child: Record<string, string | undefined>): Re
   if (child.LANG || child.LC_ALL || child.LC_CTYPE) return child;
   return { ...child, LC_CTYPE: "UTF-8" };
 }
+
+export type ServerStart =
+  | { outcome: "running" }
+  | { outcome: "status_failed"; detail: string }
+  | { outcome: "started"; pid: number; elapsedMs: number }
+  | { outcome: "start_failed"; detail: string; pid?: number; elapsedMs?: number };
+
+/**
+ * Starts a server only when Herdr says none is running, then waits a bounded
+ * time for it to answer. A status Herdr cannot give starts nothing: a server
+ * that may be running is never doubled.
+ */
+export async function ensureServer(io: {
+  status: () => Promise<ServerStatus>;
+  start: () => Promise<{ pid: number } | { spawnError: string }>;
+  sleep: (ms: number) => Promise<void>;
+  now: () => number;
+  stopped: () => boolean;
+  waitMs: number;
+  pollMs: number;
+}): Promise<ServerStart> {
+  const before = await io.status();
+  if ("unreadable" in before) return { outcome: "status_failed", detail: before.unreadable };
+  if (before.running) return { outcome: "running" };
+  const started = io.now();
+  const spawned = await io.start();
+  if ("spawnError" in spawned) return { outcome: "start_failed", detail: spawned.spawnError };
+  while (io.now() - started < io.waitMs && !io.stopped()) {
+    await io.sleep(io.pollMs);
+    const now = await io.status();
+    if ("running" in now && now.running) return { outcome: "started", pid: spawned.pid, elapsedMs: io.now() - started };
+  }
+  return { outcome: "start_failed", detail: "no answer", pid: spawned.pid, elapsedMs: io.now() - started };
+}
