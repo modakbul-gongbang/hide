@@ -746,6 +746,7 @@ pub fn apply_lineage(
                 .cmp(&agents[*left].last_activity)
         });
     }
+    let close_descendants = close_order(&children, &parents);
     // Walk each row to its root, remembering the way, so the breadcrumb is
     // the same walk the depth already costs rather than a second traversal.
     // The same walk tells every ancestor what this row is doing, and it runs
@@ -821,6 +822,10 @@ pub fn apply_lineage(
             .iter()
             .map(|child| agents[*child].pane_id.clone())
             .collect();
+        let close_ids = close_descendants[index]
+            .iter()
+            .map(|descendant| agents[*descendant].pane_id.clone())
+            .collect();
         let agent = &mut agents[index];
         // Ownership is the depth and nothing else. An orphan resolved to no
         // parent, so it is a root here and the dimming lifts with it.
@@ -830,6 +835,7 @@ pub fn apply_lineage(
         agent.lineage_sibling_pane_ids = siblings;
         agent.lineage_depth = depth;
         agent.lineage_child_pane_ids = child_ids;
+        agent.close_descendant_pane_ids = close_ids;
         agent.lineage_root_checkout_id = root_checkout;
         agent.lineage_worktree_badge = badge;
         agent.lineage_orphan = orphan;
@@ -856,6 +862,30 @@ pub fn apply_lineage(
     for agent in agents.iter_mut() {
         derive_from_axes(agent);
     }
+}
+
+/// Each row's live descendants in the order closing the row takes them:
+/// every descendant before its parent, siblings in the tree's own order, so
+/// no child is left behind as an orphan root while its parent is still
+/// open (PRD close-agent-subtree D-21). In a post-order walk a row's subtree
+/// is the run of rows just before it, so one walk per root answers every row.
+fn close_order(children: &[Vec<usize>], parents: &[Option<usize>]) -> Vec<Vec<usize>> {
+    let mut order = vec![Vec::new(); children.len()];
+    for root in (0..children.len()).filter(|index| parents[*index].is_none()) {
+        let mut post = Vec::new();
+        // (row, next child to visit, position of the row's first descendant)
+        let mut stack = vec![(root, 0usize, 0usize)];
+        while let Some((node, next, start)) = stack.pop() {
+            if let Some(child) = children[node].get(next) {
+                stack.push((node, next + 1, start));
+                stack.push((*child, 0, post.len()));
+            } else {
+                order[node] = post[start..].to_vec();
+                post.push(node);
+            }
+        }
+    }
+    order
 }
 
 /// A row with no demand of its own that is stopped, idle or done: the half
@@ -1325,6 +1355,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         lineage_sibling_pane_ids: Vec::new(),
         lineage_depth: 0,
         lineage_child_pane_ids: Vec::new(),
+        close_descendant_pane_ids: Vec::new(),
         lineage_root_checkout_id: None,
         lineage_worktree_badge: None,
         lineage_orphan: false,
