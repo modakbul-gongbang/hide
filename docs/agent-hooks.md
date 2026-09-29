@@ -16,7 +16,8 @@ This is the only part of the tree Hide cannot read from the session snapshot, an
 | Codex | `~/.codex/hooks.json` |
 
 One entry is appended per registered event, and nothing else in the file is touched.
-The write is atomic - a temporary file and a rename - and `serde_json`'s `preserve_order` is enabled for this crate so appending one hook does not rewrite the operator's whole file in alphabetical order.
+The write is atomic - a temporary file beside the target, created 0600, and a rename - and `serde_json`'s `preserve_order` is enabled for this crate so appending one hook does not rewrite the operator's whole file in alphabetical order.
+The file keeps its mode, a new one is created 0600, and a file that is a symlink stays one: the write lands at the file the link resolves to, so a settings file kept in a dotfiles repository is edited there.
 Entries belonging to other tools are counted before and after, and a regression test asserts they survive.
 
 Five events are registered: `SessionStart`, `UserPromptSubmit`, `SubagentStart`, `SubagentStop`, and `Stop`.

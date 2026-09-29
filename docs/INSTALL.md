@@ -133,6 +133,7 @@ The remote machine needs Herdr installed where a non-login shell finds it (`~/.l
 hide asks that machine `herdr status server --json` to learn where the server socket is, so nothing about the remote user or home directory is configured on this side.
 Adding the machine installs the same kit a first launch installs here, under that account's home, with the form listing each part and where it goes: Hide's helper and every part's files in `~/.local/share/hide/host-helper`, the `hide` link in `~/.local/bin`, the Claude Code and Codex hook entries, the labels plugin in that machine's Herdr, and hcoord.
 Every connection brings the kit up to this Hide's version, and a part you removed there stays removed until Reinstall on that machine's row.
+hcoord keeps its daemon running only on macOS, so on another system its row says so and nothing is installed for it.
 A pane on that machine can then run `hide file open`, `hide diff open` or `hide browser open http://localhost:3000`, and the result opens in this Hide, with `localhost` meaning that machine; that shell's `PATH` has to include `~/.local/bin` for a bare `hide` to be found.
 Its agent panes show labels, subagent counts and Workspace guidance as panes on this Mac do; Project Memory stays on this Mac and is not given to a device's sessions.
 A machine allowed by an earlier version of Hide gets the whole kit on its next connection without asking again; a machine added without the helper installs nothing until you press Allow and install on its row.
