@@ -92,23 +92,28 @@ impl Runtime {
         if !dropped_moves.is_empty() {
             self.report_dropped_tab_moves(dropped_moves);
         }
-        let Some(status) = self
+        let Some(index) = self
             .snapshot
             .status
             .remote
-            .iter_mut()
-            .find(|status| status.target_id == target)
+            .iter()
+            .position(|status| status.target_id == target)
         else {
             return false;
         };
+        let status = &mut self.snapshot.status.remote[index];
         let mut changed = false;
         if status.catalog != catalog {
             status.catalog = catalog;
             changed = true;
         }
         if status.session.as_ref() != Some(&session) {
-            status.session = Some(session);
-            changed = true;
+            let before = status.session.replace(session);
+            // Rows regrouped from Herdr's raw session carry no lineage, which
+            // only the pass across every machine derives; a subtree close
+            // waits on it, so the session is never published without it.
+            self.refresh_agent_lineage();
+            changed |= self.snapshot.status.remote[index].session != before;
         }
         if changed {
             self.prune_device_view_bookmarks(target);
