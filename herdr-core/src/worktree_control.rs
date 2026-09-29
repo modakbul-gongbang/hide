@@ -1765,6 +1765,7 @@ mod tests {
             inactive_checkouts: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
+            cleanup: None,
         };
         mirror.sync(&[], std::slice::from_ref(&project), &HashMap::new());
         project.checkouts[0].branch = Some("other".into());
@@ -1980,6 +1981,7 @@ mod tests {
             inactive_checkouts: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
+            cleanup: None,
         };
 
         let suppressed = HashMap::from([(
@@ -2098,6 +2100,7 @@ mod tests {
             inactive_checkouts: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
+            cleanup: None,
         };
 
         mirror.sync(&spaces, std::slice::from_ref(&project), &HashMap::new());
@@ -2157,6 +2160,7 @@ mod tests {
             inactive_checkouts: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
+            cleanup: None,
         };
 
         mirror.sync(

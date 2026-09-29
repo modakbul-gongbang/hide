@@ -1074,6 +1074,21 @@ export function createActions(dispatch: DispatchFn) {
       dispatch({ schema_version: 2, kind: "card_measure_disk", payload: { workspace_id: workspaceId } });
     },
 
+    /** Opening the disk cleanup sheet, or its `다시 검토`: the core reviews the project and measures it again. */
+    reviewDiskCleanup(workspaceId: string) {
+      dispatch({ schema_version: 2, kind: "cleanup_review", payload: { workspace_id: workspaceId } });
+    },
+
+    /** The one event a `정리` press is: the worktrees to remove and the cache cells to empty (D-15, B27). */
+    confirmDiskCleanup(id: number, paths: string[], cells: { path: string; layer: string }[]) {
+      dispatch({ schema_version: 2, kind: "cleanup_confirm", payload: { id, paths, cells } });
+    },
+
+    /** Closing the sheet; the core keeps a cleanup that is still removing. */
+    dismissDiskCleanup() {
+      dispatch({ schema_version: 2, kind: "cleanup_dismiss", payload: {} });
+    },
+
     /** Opens one session read-only beside the named Project's history; never in a Workspace (B3). */
     openProjectSession(workspaceId: string, sessionId: string) {
       dispatch({ schema_version: 2, kind: "archive_open", payload: { kind: "session", id: sessionId, workspace_id: workspaceId } });

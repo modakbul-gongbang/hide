@@ -112,7 +112,7 @@ fn wait_for_shell(
                 "The pane's shell could not be read, so the agent was not started: {message}"
             ))
         })?;
-        if shell_holds_terminal(&group) {
+        if group.shell_holds_terminal() {
             return Ok(());
         }
         if Instant::now() >= deadline {
@@ -132,18 +132,6 @@ fn wait_for_shell(
             )));
         }
         thread::sleep(POLL_INTERVAL);
-    }
-}
-
-/// Herdr's condition for `agent.start`: the foreground group is the shell's
-/// own and holds nothing but the shell.
-fn shell_holds_terminal(group: &wire::PaneProcessGroup) -> bool {
-    match group.shell_pid {
-        Some(shell) if shell > 1 => {
-            group.foreground_process_group_id == Some(shell)
-                && group.foreground_pids.iter().all(|pid| *pid == shell)
-        }
-        _ => false,
     }
 }
 

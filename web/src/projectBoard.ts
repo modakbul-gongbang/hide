@@ -463,7 +463,9 @@ export type BoardStats = {
   merged: number;
   /**
    * Allocated disk in bytes, `measuring` while the core walks it, or null when
-   * there is no number: never asked, or a part could not be read.
+   * there is no number: never asked, or no checkout could be read. While one
+   * checkout could not be, it is the subtotal of the others (`entranceBytes`
+   * says which it is).
    */
   disk: number | "measuring" | null;
 };
@@ -478,7 +480,8 @@ export function projectStats(workspace: Workspace): BoardStats {
     openPullRequests: answered ? workspace.checkouts.filter((checkout) => checkout.pull_request?.badge === "open" || checkout.pull_request?.badge === "review").length : null,
     behind: primary && behind > 0 ? { branch: primary.branch ?? primary.label, count: behind } : null,
     merged: workspace.checkouts.filter((checkout) => checkout.is_worktree && stageOf(checkout) === "done").length,
-    disk: workspace.disk?.total_bytes ?? (workspace.disk?.measuring ? "measuring" : null),
+    // A checkout that could not be measured leaves no total, and the entrance still states the subtotal of those that were.
+    disk: workspace.disk?.total_bytes ?? (workspace.disk?.measuring ? "measuring" : (workspace.disk?.confirmed_bytes ?? null)),
   };
 }
 
