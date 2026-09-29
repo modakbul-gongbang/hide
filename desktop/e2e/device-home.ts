@@ -35,9 +35,16 @@ export function deviceHome(): string {
     throw new Error("HIDE_E2E_SSH_HOME must name the private HOME the isolated sshd sets (see desktop/e2e/device-home.ts)");
   }
   const home = fs.realpathSync(declared);
-  if (home === fs.realpathSync(os.homedir())) throw new Error("HIDE_E2E_SSH_HOME is this account's own HOME");
-  if (!fs.existsSync(path.join(home, MARKER))) throw new Error(`${home} has no ${MARKER}, so it is not declared a test HOME`);
+  assertTestHome(home);
   return home;
+}
+
+/** Refuses any folder that is the account's own HOME, by the environment or by the account database, or that is not marked as a test HOME. */
+function assertTestHome(home: string): void {
+  for (const own of [os.homedir(), os.userInfo().homedir]) {
+    if (fs.existsSync(own) && home === fs.realpathSync(own)) throw new Error(`${home} is this account's own HOME`);
+  }
+  if (!fs.existsSync(path.join(home, MARKER))) throw new Error(`${home} has no ${MARKER}, so it is not declared a test HOME`);
 }
 
 /** An SSH config and known_hosts under the run's local HOME, one host entry per alias for the isolated server. */
@@ -104,6 +111,7 @@ export const readSettings = (file: string) => JSON.parse(fs.readFileSync(file, "
  * folders gone, and the agent files seeded by `seedAgentFiles`.
  */
 export function resetDeviceHome(home: string, label: string): { claude: AgentSettings; codex: AgentSettings } {
+  assertTestHome(home);
   bootoutTestLabel(label);
   for (const name of [".claude", ".codex", ".hide", ".hcoord", ".local"]) fs.rmSync(path.join(home, name), { recursive: true, force: true });
   fs.rmSync(path.join(home, "Library", "LaunchAgents", `${label}.plist`), { force: true });
