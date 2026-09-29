@@ -1,10 +1,10 @@
-import { AlertTriangleIcon, ChevronRightIcon, GitBranchIcon, HomeIcon, Loader2Icon, LockIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { ChevronRightIcon, GitBranchIcon, HomeIcon, Loader2Icon, LockIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./components/ui/alert-dialog";
 import { Button } from "./components/ui/button";
 import { Checkbox } from "./components/ui/checkbox";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
 import { Hint } from "./components/ui/tooltip";
 import {
@@ -13,13 +13,11 @@ import {
   FILTER_LABEL,
   LAYER_LABEL,
   BUSY_TEXT,
-  allocatedTotal,
   cleanupElsewhere,
   bundleRefs,
   bundleState,
   filterCounts,
   footerOf,
-  freedFree,
   gigabytes,
   isChecked,
   isIncluded,
@@ -30,7 +28,6 @@ import {
   pruneSelection,
   resultLines,
   sheetModel,
-  signedBytes,
   toggleBundle,
   toggleCell,
   visibleRows,
@@ -43,7 +40,6 @@ import {
   type Selection,
   type SheetModel,
   type SheetRow,
-  type SheetState,
 } from "./diskCleanup";
 import { cn } from "./lib/utils";
 import { formatBytes, prChip } from "./projectBoard";
@@ -172,12 +168,9 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
   return (
     <>
       <Dialog open onOpenChange={(next) => { if (!next) close(); }}>
-        <DialogContent className={listing ? SHEET_WIDTH : "w-(--size-overview-cleanup)"} showCloseButton aria-label={title} data-disk-sheet={workspace.id} data-disk-state={model.state} data-disk-filter={filter}>
+        <DialogContent className={listing ? SHEET_WIDTH : "w-(--size-overview-cleanup)"} showCloseButton aria-label={title} aria-describedby={undefined} data-disk-sheet={workspace.id} data-disk-state={model.state} data-disk-filter={filter}>
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
-            <DialogDescription className="text-caption text-muted-foreground">
-              {workspace.label} · {model.rows.length} 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다
-            </DialogDescription>
           </DialogHeader>
           <div className="flex min-h-0 flex-1 flex-col overflow-auto px-lg py-md">{body}</div>
           {listing ? (
@@ -186,17 +179,6 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
                 <span className="text-subhead font-semibold tabular-nums text-foreground" data-disk-summary="true">
                   {footer.summary}
                 </span>
-                {footer.destructive ? (
-                  <span className="flex items-center gap-xs text-body text-destructive" data-disk-warning="worktree">
-                    <AlertTriangleIcon aria-hidden="true" className="size-(--size-icon)" />
-                    {footer.destructive}
-                  </span>
-                ) : null}
-                {footer.note ? (
-                  <span className="text-body text-muted-foreground" data-disk-note="dependencies">
-                    {footer.note}
-                  </span>
-                ) : null}
               </div>
               <div className="flex items-center gap-sm">
                 <Button variant="ghost" onClick={close} data-disk-cancel="true">
@@ -214,8 +196,8 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
       <AlertDialog open={confirming} onOpenChange={(next) => { if (!next) setStep("table"); }}>
         <AlertDialogContent data-disk-confirm="true">
           <AlertDialogHeader>
-            <AlertDialogTitle>워크트리 {plan.worktrees.length}개를 폴더째 지운다</AlertDialogTitle>
-            <AlertDialogDescription>되돌릴 수 없다. 브랜치와 Git 기록은 남는다.</AlertDialogDescription>
+            <AlertDialogTitle>{plan.worktrees.length === 1 ? `${plan.worktrees[0]!.label} 폴더째 삭제` : `워크트리 ${plan.worktrees.length}개 폴더째 삭제`}</AlertDialogTitle>
+            <AlertDialogDescription>브랜치는 남음</AlertDialogDescription>
           </AlertDialogHeader>
           <ul className="flex flex-col gap-xxs font-mono text-body text-foreground" data-disk-confirm-list="true">
             {plan.worktrees.map((worktree) => (
@@ -225,11 +207,6 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
               </li>
             ))}
           </ul>
-          {plan.cells.length > 0 ? (
-            <p className="text-body text-subtle-foreground" data-disk-confirm-cells="true">
-              다른 체크아웃의 캐시 칸 {plan.cells.length}개 · {formatBytes(plan.cells.reduce((sum, cell) => sum + cell.bytes, 0))}도 함께 비운다
-            </p>
-          ) : null}
           <AlertDialogFooter>
             {/* Plain buttons, not Action and Cancel: neither is the default and neither closes the sheet behind. */}
             <Button variant="secondary" onClick={() => setStep("table")} data-disk-confirm-back="true">
@@ -298,7 +275,6 @@ function TableView({
             </ToggleGroupItem>
           ))}
         </ToggleGroup>
-        <span className="text-caption text-muted-foreground">체크박스는 보이는 행에만 닿는다</span>
       </div>
       {shown.length === 0 && measured ? (
         <div className="flex flex-col items-center gap-sm py-xl text-body text-muted-foreground" data-disk-empty="true">
@@ -312,15 +288,14 @@ function TableView({
           <div role="row" className="grid items-end gap-x-sm border-b border-border pb-sm" style={{ gridTemplateColumns: GRID }}>
             <BundleBox state={bundleState(selection, all)} label="보이는 행의 빌드 캐시와 의존성 전부" onToggle={() => onSelection(toggleBundle(selection, all))} data="all" />
             <span role="columnheader" className="text-caption text-subtle-foreground">
-              체크아웃 · 크기순
+              체크아웃
             </span>
             {(["build_cache", "dependencies", "worktree"] as const).map((column) => (
-              <ColumnHead key={column} column={column} state={model.state} rows={shown} selection={selection} refs={columnRefs(column)} onToggle={() => onSelection(toggleBundle(selection, columnRefs(column)))} />
+              <ColumnHead key={column} column={column} rows={shown} selection={selection} refs={columnRefs(column)} onToggle={() => onSelection(toggleBundle(selection, columnRefs(column)))} />
             ))}
             <span role="columnheader" className="flex flex-col items-end gap-xxs text-caption text-subtle-foreground">
               기타
               <span className="font-mono text-muted-foreground">{formatBytes(shown.reduce((sum, row) => sum + (row.other?.bytes ?? 0), 0))}</span>
-              <span className="text-muted-foreground">지우지 않음</span>
             </span>
             <span role="columnheader" className="flex flex-col items-end gap-xxs text-caption text-subtle-foreground" data-disk-column="total">
               합계
@@ -359,15 +334,9 @@ function UsageBar({ workspace }: { workspace: Workspace }) {
       </div>
       <div className="flex h-(--lens-bar-height) w-full gap-px overflow-hidden rounded-xs bg-muted" role="img" aria-label={parts.map((part) => `${part.label} ${formatBytes(part.bytes)}`).join(", ")}>
         {parts.map((part) => (
-          <span key={part.key} className={LAYER_DOT[part.key]} style={{ flexGrow: part.bytes, flexBasis: 0 }} />
-        ))}
-      </div>
-      <div className="flex flex-wrap gap-md text-caption text-muted-foreground">
-        {parts.map((part) => (
-          <span key={part.key} className="inline-flex items-center gap-xs">
-            <span aria-hidden="true" className={cn("size-(--size-status-mark) rounded-full", LAYER_DOT[part.key])} />
-            {part.label}
-          </span>
+          <Hint key={part.key} label={`${part.label} ${formatBytes(part.bytes)}`} reveals>
+            <span className={LAYER_DOT[part.key]} style={{ flexGrow: part.bytes, flexBasis: 0 }} data-disk-bar-part={part.key} />
+          </Hint>
         ))}
       </div>
     </div>
@@ -387,9 +356,8 @@ function BundleBox({ state, label, onToggle, data }: { state: BundleState; label
   );
 }
 
-function ColumnHead({ column, state: sheet, rows, selection, refs, onToggle }: { column: Column; state: SheetState; rows: SheetRow[]; selection: Selection; refs: CellRef[]; onToggle: () => void }) {
+function ColumnHead({ column, rows, selection, refs, onToggle }: { column: Column; rows: SheetRow[]; selection: Selection; refs: CellRef[]; onToggle: () => void }) {
   const state = bundleState(selection, refs);
-  const selected = refs.filter((ref) => isChecked(selection, ref)).length;
   const bytes = rows.reduce((sum, row) => sum + (column === "worktree" ? (row.total ?? 0) * (row.isMain ? 0 : 1) : row.cache[column].bytes), 0);
   return (
     <div role="columnheader" className="flex flex-col gap-xxs" data-disk-column={column}>
@@ -398,7 +366,6 @@ function ColumnHead({ column, state: sheet, rows, selection, refs, onToggle }: {
         {LAYER_LABEL[column]}
       </span>
       <span className="pl-lg font-mono text-caption text-muted-foreground">{formatBytes(bytes)}</span>
-      <span className="pl-lg text-caption text-muted-foreground">{sheet === "pending" && refs.length === 0 ? "확인 중…" : selected > 0 ? `${selected}곳 선택됨` : refs.length > 0 ? `고를 수 있는 ${refs.length}곳` : "고를 수 있는 곳 없음"}</span>
     </div>
   );
 }
@@ -594,23 +561,13 @@ const OUTCOME_TEXT: Record<ResultLine["outcome"], string> = { removed: "지움",
 function ResultView({ workspace, onReview, onClose }: { workspace: Workspace; onReview: () => void; onClose: () => void }) {
   const cleanup = workspace.cleanup!;
   const lines = resultLines(cleanup);
-  const freed = freedFree(cleanup);
   return (
     <div className="flex flex-col gap-md" data-disk-result="true">
-      <div className="flex flex-wrap items-baseline justify-between gap-md">
-        <div className="flex flex-col gap-xxs">
-          <span className="text-caption text-muted-foreground">디스크에서 잰 여유</span>
-          <span className="flex items-baseline gap-sm font-mono text-headline font-semibold text-foreground" data-disk-free-change="true">
-            {cleanup.free_before != null ? gigabytes(cleanup.free_before) : "-"}
-            <span aria-hidden="true">→</span>
-            {cleanup.free_after != null ? gigabytes(cleanup.free_after) : "…"}
-          </span>
-        </div>
-        <span className="font-mono text-caption text-subtle-foreground" data-disk-allocated="true">
-          할당 합계 {formatBytes(allocatedTotal(lines))}
-          {freed !== null ? ` · 실제로 늘어난 여유 ${signedBytes(freed)}` : ""}
-        </span>
-      </div>
+      <span className="flex items-baseline gap-sm font-mono text-headline font-semibold text-foreground" data-disk-free-change="true">
+        여유 {cleanup.free_before != null ? gigabytes(cleanup.free_before) : "-"}
+        <span aria-hidden="true">→</span>
+        {cleanup.free_after != null ? gigabytes(cleanup.free_after) : "…"}
+      </span>
       <ul className="flex flex-col divide-y divide-border border-y border-border" data-disk-result-lines="true">
         {lines.map((line) => (
           <li key={line.key} className="grid items-baseline gap-x-md py-sm text-body" style={{ gridTemplateColumns: "minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.6fr) minmax(0, 0.5fr)" }} data-disk-result-line={line.outcome}>

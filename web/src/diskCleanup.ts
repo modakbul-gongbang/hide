@@ -289,18 +289,16 @@ export type CleanupPlan = {
   worktrees: { path: string; label: string; bytes: number }[];
   /** Cache cells to empty, never one whose worktree is going too. */
   cells: { path: string; layer: CacheLayer; bytes: number }[];
-  counts: { build_cache: number; dependencies: number; worktrees: number };
   bytes: number;
 };
 
 /** What the selection would do to the visible rows now: a ticked cell that stopped being selectable is not part of it. */
 export function planOf(rows: readonly SheetRow[], selection: Selection): CleanupPlan {
-  const plan: CleanupPlan = { worktrees: [], cells: [], counts: { build_cache: 0, dependencies: 0, worktrees: 0 }, bytes: 0 };
+  const plan: CleanupPlan = { worktrees: [], cells: [], bytes: 0 };
   for (const row of rows) {
     if (row.worktree?.selectable && selection.worktrees.has(row.path)) {
       const bytes = row.total ?? 0;
       plan.worktrees.push({ path: row.path, label: row.label, bytes });
-      plan.counts.worktrees += 1;
       plan.bytes += bytes;
       continue;
     }
@@ -308,7 +306,6 @@ export function planOf(rows: readonly SheetRow[], selection: Selection): Cleanup
       const cell = row.cache[layer];
       if (!cell.selectable || !selection.cells.has(cellKey(row.path, layer))) continue;
       plan.cells.push({ path: row.path, layer, bytes: cell.bytes });
-      plan.counts[layer] += 1;
       plan.bytes += cell.bytes;
     }
   }
@@ -319,11 +316,8 @@ export type Footer = {
   /** Nothing in the visible rows can be ticked at all (B13). */
   nothingToClear: boolean;
   empty: boolean;
+  /** `N칸 · X`, with `워크트리 M` between only when a worktree is ticked (B16); the explaining is the confirm step's. */
   summary: string;
-  /** Red: what is deleted with the folder (B16). */
-  destructive: string | null;
-  /** What comes back by itself. */
-  note: string | null;
 };
 
 /** What the bottom line says while the table cannot be ticked yet or at all; the ready state speaks for itself (B13, B25). */
@@ -337,7 +331,6 @@ export function footerOf(rows: readonly SheetRow[], selection: Selection, state:
   const plan = planOf(rows, selection);
   const anySelectable = rows.some((row) => CACHE_LAYERS.some((layer) => row.cache[layer].selectable) || row.worktree?.selectable);
   const empty = plan.cells.length === 0 && plan.worktrees.length === 0;
-  const { counts } = plan;
   const waiting = WAITING_SUMMARY[state];
   const summary = waiting !== undefined
     ? waiting
@@ -345,16 +338,8 @@ export function footerOf(rows: readonly SheetRow[], selection: Selection, state:
     ? anySelectable
       ? "고른 칸 없음"
       : "비울 캐시가 없다"
-    : `빌드 캐시 ${counts.build_cache} · 의존성 ${counts.dependencies} · 워크트리 ${counts.worktrees} · ${formatBytes(plan.bytes)}`;
-  const destructive =
-    plan.worktrees.length === 0 ? null : plan.worktrees.length === 1 ? `${plan.worktrees[0]!.label}은 폴더째 지워진다` : `워크트리 ${plan.worktrees.length}개는 폴더째 지워진다`;
-  return {
-    nothingToClear: !anySelectable,
-    empty,
-    summary,
-    destructive,
-    note: counts.dependencies > 0 ? "의존성은 다음 install이 다시 받는다" : null,
-  };
+    : `${plan.cells.length}칸${plan.worktrees.length > 0 ? ` · 워크트리 ${plan.worktrees.length}` : ""} · ${formatBytes(plan.bytes)}`;
+  return { nothingToClear: !anySelectable, empty, summary };
 }
 
 /** The confirm step is asked only when a worktree is in the plan (D-15). */
@@ -473,21 +458,7 @@ export function resultLines(cleanup: DiskCleanup): ResultLine[] {
   return lines;
 }
 
-/** The allocated bytes the confirm removed; the volume's own free space says what actually came back. */
-export function allocatedTotal(lines: readonly ResultLine[]): number {
-  return lines.reduce((sum, line) => sum + (line.outcome === "removed" ? (line.bytes ?? 0) : 0), 0);
-}
-
 /** Free space to one decimal, the way the volume's own number reads (`1.6 GB → 18.3 GB`). */
 export function gigabytes(bytes: number): string {
   return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
-}
-
-export function freedFree(cleanup: DiskCleanup): number | null {
-  return cleanup.free_before != null && cleanup.free_after != null ? cleanup.free_after - cleanup.free_before : null;
-}
-
-/** A signed size for a change of free space; the sign is the system's, not made up. */
-export function signedBytes(bytes: number): string {
-  return bytes < 0 ? `-${formatBytes(-bytes)}` : formatBytes(bytes);
 }

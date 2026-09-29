@@ -9,7 +9,6 @@ import {
   LOW_FREE_BYTES,
   SMALL_CHECKOUT_BYTES,
   BUSY_TEXT,
-  allocatedTotal,
   bundleRefs,
   bundleState,
   cellReasonText,
@@ -17,7 +16,6 @@ import {
   exclusionText,
   filterCounts,
   footerOf,
-  freedFree,
   gigabytes,
   layerLines,
   layoutRows,
@@ -349,7 +347,7 @@ describe("the folded small row (D-21, B10)", () => {
     const selection = toggleBundle(EMPTY_SELECTION, fold);
     const all = bundleRefs(rows, selection, ["build_cache", "dependencies"]);
     expect(all.some((ref) => ref.path === "/r/s1")).toBe(true);
-    expect(planOf(rows, selection).counts.build_cache).toBe(2);
+    expect(planOf(rows, selection).cells.filter((cell) => cell.layer === "build_cache")).toHaveLength(2);
   });
 });
 
@@ -369,12 +367,9 @@ describe("footer (B13, B16, B17, B18)", () => {
     expect(footerOf(rows, EMPTY_SELECTION)).toMatchObject({ nothingToClear: false, empty: true, summary: "고른 칸 없음" });
   });
 
-  it("counts cells and sums their bytes, warning that dependencies come back by install", () => {
+  it("says only how many cells and how much, with no explaining sentence", () => {
     const selection = toggleBundle(EMPTY_SELECTION, bundleRefs(rows, EMPTY_SELECTION, ["build_cache", "dependencies"]));
-    const footer = footerOf(rows, selection);
-    expect(footer.summary).toBe("빌드 캐시 2 · 의존성 1 · 워크트리 0 · 6.0 GB");
-    expect(footer.note).toBe("의존성은 다음 install이 다시 받는다");
-    expect(footer.destructive).toBeNull();
+    expect(footerOf(rows, selection)).toEqual({ nothingToClear: false, empty: false, summary: "3칸 · 6.0 GB" });
     expect(needsConfirm(planOf(rows, selection))).toBe(false);
   });
 
@@ -385,13 +380,15 @@ describe("footer (B13, B16, B17, B18)", () => {
     expect(footerOf(unreadable.rows, EMPTY_SELECTION, unreadable.state).summary).toBe("쓰는 중인지 확인해야 고를 수 있다");
   });
 
-  it("names one worktree, or counts several, in red, and asks the confirmation", () => {
+  it("adds the worktree count only when a worktree is ticked, and asks the confirmation", () => {
     const one = toggleCell(EMPTY_SELECTION, { path: "/r/done", column: "worktree" });
-    expect(footerOf(rows, one).destructive).toBe("done은 폴더째 지워진다");
+    expect(footerOf(rows, one).summary).toBe("0칸 · 워크트리 1 · 4.0 GB");
     expect(needsConfirm(planOf(rows, one))).toBe(true);
+    const withCache = toggleCell(one, { path: "/r/done-2", column: "build_cache" });
+    expect(footerOf(rows, withCache).summary).toBe("1칸 · 워크트리 1 · 6.0 GB");
     const both = toggleBundle(EMPTY_SELECTION, bundleRefs(rows, EMPTY_SELECTION, ["worktree"]));
-    expect(footerOf(rows, both).destructive).toBe("워크트리 2개는 폴더째 지워진다");
-    expect(footerOf(rows, both).summary).toContain("워크트리 2");
+    expect(footerOf(rows, both).summary).toBe("0칸 · 워크트리 2 · 6.0 GB");
+    expect(footerOf(rows, both)).not.toHaveProperty("destructive");
   });
 });
 
@@ -536,7 +533,6 @@ describe("result (B22)", () => {
     const lines = resultLines(cleanup);
     const by = (key: string) => lines.find((line) => line.key === key);
     expect(by("worktree:/r/gone")).toMatchObject({ label: "feat/gone", outcome: "removed", bytes: 4 * GB, reason: null });
-    expect(allocatedTotal(lines)).toBe(4 * GB + 9 * GB + 1 * GB);
   });
 
   it("tells a skipped worktree from one Git refused", () => {
@@ -550,10 +546,5 @@ describe("result (B22)", () => {
   it("writes free space to one decimal", () => {
     expect(gigabytes(18.3 * GB)).toBe("18.3 GB");
     expect(gigabytes(1.6 * GB)).toBe("1.6 GB");
-  });
-
-  it("reports the volume's own change beside the allocated total", () => {
-    expect(freedFree(cleanup)).toBe(16.7 * GB);
-    expect(freedFree({ ...cleanup, free_after: null })).toBeNull();
   });
 });
