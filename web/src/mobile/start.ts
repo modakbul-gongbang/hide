@@ -56,6 +56,15 @@ export function modelsOf(selection: StartSelection): string[] {
   return selection.entry?.models ?? [];
 }
 
+/**
+ * Whether a start that did not answer ok may still have started its agent:
+ * then a resend keeps its request id and hided answers it once (B43). Any
+ * other answer is final, and tapping 시작 again is a new start with a new id.
+ */
+export function mayHaveStarted(reason: string | null): boolean {
+  return reason === "timeout" || reason === "in_flight" || reason === "offline";
+}
+
 /** The line inside the sheet for a refused or failed start. */
 export function startFailure(reason: string | null): string {
   switch (reason) {

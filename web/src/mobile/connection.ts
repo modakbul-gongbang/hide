@@ -18,7 +18,7 @@ import {
   type QuickKey,
   type ServerFrame,
 } from "./protocol";
-import { selectionOf, startFailure, startProblem } from "./start";
+import { mayHaveStarted, selectionOf, startFailure, startProblem } from "./start";
 import { CLOSED_SHEET, applyFrame, patch, usePhone, type StartSheet } from "./store";
 import { forgetPush, syncPush } from "./push";
 
@@ -307,7 +307,7 @@ export function editStartSheet(next: Partial<Pick<StartSheet, "text" | "choice">
   patch({ startSheet: { ...state.startSheet, ...next, error: null } });
 }
 
-/** A start that failed keeps its request id, so a resend of the same start lands once (B43). */
+/** A start whose outcome is unknown keeps its request id, so a resend of the same start lands once (B43). */
 let lastStart: { key: string; requestId: string } | null = null;
 
 /** Sends the sheet's start; the sheet keeps its text until hided says an agent started (B43, B44). */
@@ -341,6 +341,7 @@ function onStartResult(frame: Extract<ServerFrame, { type: "start_result" }>): v
   // Only the answer to the start this sheet is waiting on.
   if (!sheet.pending || frame.request_id !== sheet.pending) return;
   if (!frame.ok || !frame.device_id || !frame.pane_id) {
+    if (!mayHaveStarted(frame.reason)) lastStart = null;
     patch({ startSheet: { ...sheet, pending: null, error: startFailure(frame.reason) } });
     return;
   }

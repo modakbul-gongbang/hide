@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { ServerFrame, StartCatalog } from "./protocol";
-import { NO_CHOICE, modelsOf, selectionOf, startFailure, startProblem, targetText } from "./start";
+import { NO_CHOICE, mayHaveStarted, modelsOf, selectionOf, startFailure, startProblem, targetText } from "./start";
 import { CLOSED_SHEET, applyFrame, patch, usePhone } from "./store";
 
 /** The frame hided/src/mobile/start.rs sends, as its own test builds it. */
@@ -77,5 +77,12 @@ describe("the store", () => {
     applyFrame(JSON.parse(FRAME) as ServerFrame);
     expect(usePhone.getState().startCatalog?.targets.map((target) => target.id)).toEqual(["home:local", "c1", "home:mini"]);
     expect(usePhone.getState().startCatalog?.remembered.kind).toBe("codex");
+  });
+});
+
+describe("mayHaveStarted", () => {
+  it("keeps the request id only while the outcome is unknown, so a tap after a refusal is a new start", () => {
+    for (const reason of ["timeout", "in_flight", "offline"]) expect(mayHaveStarted(reason)).toBe(true);
+    for (const reason of ["task_operation.busy", "home.conflict", "agent_failed", "start_failed", "unknown_target", null]) expect(mayHaveStarted(reason)).toBe(false);
   });
 });
