@@ -40,7 +40,36 @@ impl Runtime {
                 }
             }
         }
+        self.judge_device_pane_children(target, &mut session);
         session
+    }
+
+    /// What each device agent pane's header says about the work it
+    /// delegated, judged by the same function as a local pane's, from the
+    /// pane's hook tokens and the device's own kit (PRD device-parity D-21,
+    /// B14). A device whose kit Hide has not read yet leaves the cause
+    /// unknown rather than guessing it.
+    fn judge_device_pane_children(&self, target: &str, session: &mut RemoteSessionSnapshot) {
+        let kit = self.kit_view(target);
+        let status_of = |runtime: hide_agent_hooks::AgentRuntime| {
+            crate::agent_hooks::device_hook_status(&kit, runtime)
+        };
+        let agents = &session.agents;
+        let tokens = &session.pane_hook_tokens;
+        for pane in session
+            .workspaces
+            .iter_mut()
+            .flat_map(|project| project.checkouts.iter_mut())
+            .flat_map(|checkout| checkout.tabs.iter_mut())
+            .flat_map(|tab| tab.panes.iter_mut())
+        {
+            pane.children = crate::sidebar::project_pane_children(
+                agents,
+                &pane.id,
+                tokens.get(&pane.id).copied().unwrap_or_default(),
+                &status_of,
+            );
+        }
     }
 
     /// Recomputes a device's published session and catalog state from what

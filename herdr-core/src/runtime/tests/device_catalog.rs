@@ -103,6 +103,7 @@ fn session(workspaces: Vec<WorkspaceSnapshot>) -> RemoteSessionSnapshot {
         focused_tab_id: None,
         focused_pane_id: None,
         pane_layouts: Vec::new(),
+        pane_hook_tokens: Default::default(),
     }
 }
 
@@ -1230,6 +1231,103 @@ fn a_device_pane_carries_its_children_and_its_path_to_the_parent() {
             .map(|step| step.pane_id.as_str())
             .collect::<Vec<_>>(),
         [parent.as_str(), child.as_str()]
+    );
+}
+
+/// PRD device-parity B14, D-21: a device's agent pane is judged by the same
+/// function as a local one, from its own hook tokens and its device's kit:
+/// counts once the device's hook is in place, "not installed" while Hide may
+/// not install there, and never the old fixed "remote host" answer.
+#[test]
+fn a_device_agent_pane_is_judged_against_its_own_kit() {
+    let t = tree();
+    let mut runtime = runtime();
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: TARGET.to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: Some("0.9.1".to_owned()),
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    let mut raw = session(vec![herdr_workspace(
+        TARGET,
+        "w1",
+        &t.main,
+        &[("t1", &t.main)],
+    )]);
+    let pane_id = format!("remote:{TARGET}:pane:t1");
+    raw.agents = crate::sidebar::project_agents(
+        serde_json::from_value(serde_json::json!({"agents": [{
+            "pane_id": pane_id, "agent": "claude", "agent_status": "working",
+            "state_change_seq": 1
+        }]}))
+        .unwrap(),
+    )
+    .agents;
+    raw.pane_hook_tokens.insert(
+        pane_id.clone(),
+        crate::agent_hooks::PaneHookTokens {
+            version: Some(hide_agent_hooks::HOOK_VERSION),
+            working: Some(2),
+            done: Some(1),
+            blocked: None,
+        },
+    );
+    runtime.ingest_remote_session(TARGET, Ok(raw));
+    let children = |runtime: &Runtime| {
+        runtime.snapshot.status.remote[0]
+            .session
+            .as_ref()
+            .unwrap()
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .flat_map(|checkout| &checkout.tabs)
+            .flat_map(|tab| &tab.panes)
+            .find(|pane| pane.id == pane_id)
+            .and_then(|pane| pane.children.clone())
+            .expect("an agent pane has a children answer")
+    };
+
+    // Not registered with consent: Hide installs nothing there.
+    let before = children(&runtime);
+    assert!(!before.instrumented);
+    assert_eq!(
+        before.uninstrumented_code.as_deref(),
+        Some(hide_agent_hooks::diagnosis::UninstrumentedReason::HooksNotInstalled.code())
+    );
+
+    let consent = runtime.new_host_consent();
+    runtime
+        .snapshot
+        .ui_state
+        .device_registrations
+        .push(crate::model::DeviceRegistration {
+            id: TARGET.to_owned(),
+            label: TARGET.to_owned(),
+            ssh_alias: Some(TARGET.to_owned()),
+            herdr_socket_path: None,
+            host_consent: Some(consent),
+        });
+    runtime.ingest_kit_report(
+        TARGET,
+        &hide_kit::KitReport {
+            components: vec![hide_kit::ComponentReport {
+                id: hide_kit::ComponentId::ClaudeCodeHook,
+                state: hide_kit::ComponentState::Installed,
+                reason: None,
+                location: None,
+            }],
+        },
+    );
+    let after = children(&runtime);
+    assert!(after.instrumented, "{after:?}");
+    assert_eq!(after.uninstrumented_code, None);
+    assert_eq!(
+        (after.subagents.working, after.subagents.done),
+        (Some(2), Some(1))
     );
 }
 

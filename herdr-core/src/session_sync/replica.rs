@@ -394,13 +394,11 @@ impl SessionReplica {
                                     // so a remote pane reports none rather than
                                     // claiming the local machine's.
                                     ports: Vec::new(),
-                                    // Hide installs no hook on another
-                                    // machine, so a remote agent pane is
-                                    // permanently uninstrumented and says so
-                                    // rather than showing an empty chip row
-                                    // (PRD B33, D-28, D-49).
-                                    children: agent
-                                        .map(|_| crate::model::PaneChildrenSnapshot::remote()),
+                                    // Judged by the core from this pane's
+                                    // hook tokens and the device's kit, the
+                                    // same way a local pane is (PRD
+                                    // device-parity D-21).
+                                    children: None,
                                     lineage_path: Vec::new(),
                                     sleep: None,
                                     sleep_action: None,
@@ -596,6 +594,17 @@ impl SessionReplica {
                     .as_deref()
                     .map(|pane_id| remote_pane_id(target_id, pane_id)),
                 pane_layouts,
+                pane_hook_tokens: state
+                    .panes
+                    .iter()
+                    .map(|pane| {
+                        (
+                            remote_pane_id(target_id, &pane.pane_id),
+                            crate::agent_hooks::PaneHookTokens::read(&pane.tokens),
+                        )
+                    })
+                    .filter(|(_, tokens)| !tokens.is_empty())
+                    .collect(),
             },
             agent_projection.excluded,
         ))

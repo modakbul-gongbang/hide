@@ -1460,20 +1460,6 @@ pub struct PaneChildrenSnapshot {
     pub subagents: SubagentCountsSnapshot,
 }
 
-impl PaneChildrenSnapshot {
-    /// The permanent answer for a pane on another machine.
-    pub fn remote() -> Self {
-        let reason = hide_agent_hooks::diagnosis::UninstrumentedReason::RemoteHost;
-        Self {
-            instrumented: false,
-            uninstrumented_reason: Some(reason.message().to_owned()),
-            uninstrumented_label: Some(reason.accessibility_label().to_owned()),
-            uninstrumented_code: Some(reason.code().to_owned()),
-            ..Self::default()
-        }
-    }
-}
-
 /// One agent in a line of them: a pane header chip, a breadcrumb step's
 /// sibling, or an Overview worktree row's agent.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -3431,6 +3417,11 @@ pub struct RemoteSessionSnapshot {
     pub focused_tab_id: Option<String>,
     pub focused_pane_id: Option<String>,
     pub pane_layouts: Vec<RemotePaneLayoutSnapshot>,
+    /// Each device pane's Hide hook tokens, by its remote pane id. The core
+    /// judges a device pane's children from them and the device's kit
+    /// (`Runtime::derive_device_session`), so they are not sent to the shell.
+    #[serde(skip)]
+    pub pane_hook_tokens: BTreeMap<String, crate::agent_hooks::PaneHookTokens>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]

@@ -111,13 +111,14 @@ The Settings screen learns of it because the coordinator re-reads the diagnosis 
 `hide_agent_hooks::diagnosis` resolves one reason, in a fixed order, and the first match wins:
 
 1. `config_unreadable` - the file could not be read or parsed, so nothing was installed into it.
-2. `remote_host` - the pane is on another machine. Hide does not write to another machine's file system.
-3. `hooks_not_installed` - the runtime is here and carries no hook of Hide's.
-4. `session_predates_install` - the hook is installed and this pane carries none of Hide's tokens, so the session was already running when it was installed. Restarting the agent instruments it. A pane whose reports Herdr refuses lands here too; `last_report_failure` is what tells the two apart.
-5. `hook_outdated` - the session is reporting through an older hook than this Hide writes.
-6. `unknown` - genuinely unknown, and said to be.
+2. `hooks_not_installed` - the runtime is here and carries no hook of Hide's.
+3. `session_predates_install` - the hook is installed and this pane carries none of Hide's tokens, so the session was already running when it was installed. Restarting the agent instruments it. A pane whose reports Herdr refuses lands here too; `last_report_failure` is what tells the two apart.
+4. `hook_outdated` - the session is reporting through an older hook than this Hide writes.
+5. `unknown` - genuinely unknown, and said to be.
 
 Both the pane's own mark and the Settings diagnosis read that one function, and every projection carries the reason's stable code alongside its sentence so no surface has to recognise its own operator-facing text.
+A pane on a device is judged by the same function, against that device's hooks as its kit last reported them (`agent_hooks::device_hook_status`), with the pane's tokens carried from the device's Herdr.
+A device where Hide may not install, or whose platform this build does not carry, reads `hooks_not_installed`; a device whose kit Hide has not read yet reads `unknown`.
 
 ## Installing
 

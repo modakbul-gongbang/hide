@@ -100,6 +100,7 @@ fn device_runtime(repo: &Repo) -> Arc<Mutex<Runtime>> {
             focused_tab_id: None,
             focused_pane_id: None,
             pane_layouts: Vec::new(),
+            pane_hook_tokens: Default::default(),
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),

@@ -34,6 +34,7 @@ fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
             focused_tab_id: None,
             focused_pane_id: None,
             pane_layouts: Vec::new(),
+            pane_hook_tokens: Default::default(),
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
@@ -152,6 +153,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
         focused_tab_id: Some(active_tab_id.to_owned()),
         focused_pane_id: Some(pane_id.to_owned()),
         pane_layouts: Vec::new(),
+        pane_hook_tokens: Default::default(),
     };
 
     assert!(runtime.ingest_remote_session("mini", Ok(session.clone())));
@@ -237,6 +239,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
             focused_tab_id: None,
             focused_pane_id: None,
             pane_layouts: Vec::new(),
+            pane_hook_tokens: Default::default(),
         })
     ));
     assert!(!runtime.terminal_sessions.contains_key(pane_id));
@@ -301,6 +304,7 @@ fn remote_file_results_are_scoped_and_generation_guarded() {
             focused_tab_id: None,
             focused_pane_id: None,
             pane_layouts: Vec::new(),
+            pane_hook_tokens: Default::default(),
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
@@ -745,6 +749,7 @@ fn remote_pane_focus_uses_its_existing_request_outcome() {
             focused_tab_id: Some(projected_tab_id.to_owned()),
             focused_pane_id: None,
             pane_layouts: Vec::new(),
+            pane_hook_tokens: Default::default(),
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),
@@ -1494,6 +1499,7 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
             focused_tab_id: None,
             focused_pane_id: focused.map(|pane_id| remote_pane_id_prefix(target_id) + pane_id),
             pane_layouts: Vec::new(),
+            pane_hook_tokens: Default::default(),
         }
     };
     let stored_agents = |runtime: &Runtime, target_id: &str| {
@@ -1777,6 +1783,7 @@ fn remote_purpose_runtime(version: &str) -> Runtime {
             focused_tab_id: None,
             focused_pane_id: None,
             pane_layouts: Vec::new(),
+            pane_hook_tokens: Default::default(),
         }),
         files: RemoteFileListSnapshot::idle(),
         catalog: Default::default(),

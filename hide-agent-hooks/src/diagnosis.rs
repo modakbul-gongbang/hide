@@ -26,9 +26,6 @@ pub enum UninstrumentedReason {
     /// The runtime's configuration file could not be read or parsed, so Hide
     /// never installed anything into it.
     ConfigUnreadable,
-    /// The pane belongs to a remote host. Hide does not write to another
-    /// machine's file system (PRD D-28, D-49).
-    RemoteHost,
     /// The runtime is here and carries no hook of Hide's.
     HooksNotInstalled,
     /// The hook is installed, but this session was already running when it
@@ -47,7 +44,6 @@ impl UninstrumentedReason {
     pub fn code(self) -> &'static str {
         match self {
             Self::ConfigUnreadable => "config_unreadable",
-            Self::RemoteHost => "remote_host",
             Self::HooksNotInstalled => "hooks_not_installed",
             Self::SessionPredatesInstall => "session_predates_install",
             Self::HookOutdated => "hook_outdated",
@@ -61,7 +57,6 @@ impl UninstrumentedReason {
     pub fn from_code(code: &str) -> Option<Self> {
         [
             Self::ConfigUnreadable,
-            Self::RemoteHost,
             Self::HooksNotInstalled,
             Self::SessionPredatesInstall,
             Self::HookOutdated,
@@ -79,7 +74,6 @@ impl UninstrumentedReason {
             Self::ConfigUnreadable => {
                 "Hide could not read this runtime's settings file, so its hook is not installed."
             }
-            Self::RemoteHost => "Hide does not install hooks on remote hosts.",
             Self::HooksNotInstalled => "This runtime's Hide hook is not installed.",
             Self::SessionPredatesInstall => {
                 "This session started before the Hide hook was installed. Restart the agent to instrument it."
@@ -97,11 +91,10 @@ impl UninstrumentedReason {
 }
 
 /// What the core observed about one pane, in the vocabulary this judgement
-/// needs. Everything here comes from the snapshot the core already has.
+/// needs. Everything here comes from the snapshot the core already has. A
+/// pane on a device is observed the same way, against that device's hooks.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PaneObservation {
-    /// The pane belongs to a remote target.
-    pub remote: bool,
     /// The runtime Herdr detected in this pane, when Hide has an adapter for
     /// it. `None` is an agent Hide cannot instrument.
     pub runtime: Option<AgentRuntime>,
@@ -139,9 +132,6 @@ pub fn instrumentation(
         done: None,
         blocked: None,
     };
-    if observation.remote {
-        return uninstrumented(UninstrumentedReason::RemoteHost);
-    }
     let Some(status) = status else {
         return uninstrumented(UninstrumentedReason::Unknown);
     };
@@ -454,7 +444,6 @@ mod tests {
 
     fn observation(token_version: Option<u32>) -> PaneObservation {
         PaneObservation {
-            remote: false,
             runtime: Some(AgentRuntime::ClaudeCode),
             token_version,
             working: Some(2),
@@ -471,13 +460,6 @@ mod tests {
                 detail: "expected value".to_owned(),
             },
         };
-        // A remote pane is remote before anything else is considered.
-        let mut remote = observation(Some(HOOK_VERSION));
-        remote.remote = true;
-        assert_eq!(
-            instrumentation(remote, Some(&failed)).reason,
-            Some(UninstrumentedReason::RemoteHost)
-        );
         assert_eq!(
             instrumentation(observation(Some(HOOK_VERSION)), Some(&failed)).reason,
             Some(UninstrumentedReason::ConfigUnreadable)
@@ -556,7 +538,6 @@ mod tests {
     fn every_reason_carries_a_distinct_sentence() {
         let reasons = [
             UninstrumentedReason::ConfigUnreadable,
-            UninstrumentedReason::RemoteHost,
             UninstrumentedReason::HooksNotInstalled,
             UninstrumentedReason::SessionPredatesInstall,
             UninstrumentedReason::HookOutdated,

@@ -528,6 +528,10 @@ impl Runtime {
         }
         self.kit_states.insert(device_id.to_owned(), snapshot);
         self.refresh_device_snapshots();
+        // A device's agent panes are judged against its kit.
+        if device_id != LOCAL_DEVICE_ID {
+            self.refresh_device_catalog(device_id);
+        }
         true
     }
 }
