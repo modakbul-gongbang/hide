@@ -61,8 +61,8 @@ export function exclusionText(row: CleanupRow): string | null {
       return "브랜치 없이 떨어진 HEAD";
     case "contains_worktree":
       return "다른 워크트리를 품고 있음";
-    case "unknown_pane_cwd":
-      return "pane의 위치를 알 수 없음";
+    case "unverified":
+      return "확인하지 못함";
     case "main_unavailable":
       return "로컬 main을 읽을 수 없음";
     case "alias":
@@ -132,11 +132,14 @@ export function sheetModel(workspace: Workspace, busyElsewhere: boolean): SheetM
   else if (phase === "failed" || (phase === "review" && cleanup?.usage_error)) state = "unreadable";
   else if (phase === "review") state = "ready";
   const message = state === "unreadable" ? (cleanup?.usage_error ?? cleanup?.message ?? null) : null;
-  const rows = workspace.checkouts.filter((checkout) => checkout.worktree).map((checkout) => rowOf(checkout, cleanup, state === "ready"));
+  // The in-use answer arrives before the slow worktree checks: caches may be
+  // ticked from then on, a worktree only once the review is whole.
+  const open = !busyElsewhere && !cleanup?.usage_error && (phase === "review" || (phase === "loading" && cleanup?.usage_ready === true));
+  const rows = workspace.checkouts.filter((checkout) => checkout.worktree).map((checkout) => rowOf(checkout, cleanup, open, state === "ready"));
   return { state, message, rows };
 }
 
-function rowOf(checkout: Checkout, cleanup: DiskCleanup | null, ready: boolean): SheetRow {
+function rowOf(checkout: Checkout, cleanup: DiskCleanup | null, cachesOpen: boolean, worktreesOpen: boolean): SheetRow {
   const core = cleanup?.rows.find((row) => row.path === checkout.path) ?? null;
   const worktree = checkout.worktree!;
   const disk = worktree.disk;
@@ -145,7 +148,7 @@ function rowOf(checkout: Checkout, cleanup: DiskCleanup | null, ready: boolean):
   if (disk?.unavailable_reason) measure = "unavailable";
   else if (disk?.total_bytes != null) measure = layers ? "measured" : "unavailable";
   const isMain = worktree.is_main;
-  const reviewed = ready && core !== null;
+  const reviewed = cachesOpen && core !== null;
   const agentWorking = (checkout.agent_summary?.working ?? 0) > 0;
   // The review's judgement wins once it has answered; before that only the
   // agent projection the sidebar already carries can say a checkout is busy.
@@ -171,7 +174,7 @@ function rowOf(checkout: Checkout, cleanup: DiskCleanup | null, ready: boolean):
     total: measure === "measured" ? (disk?.total_bytes ?? null) : null,
     cache: { build_cache: cell("build_cache"), dependencies: cell("dependencies") },
     other: layers ? layers.other : null,
-    worktree: isMain ? null : { selectable: usable && core !== null && core.exclusion_code === null && core.result === null, why: measure === "unavailable" ? "크기를 재지 못함" : worktreeWhy },
+    worktree: isMain ? null : { selectable: worktreesOpen && usable && core !== null && core.exclusion_code === null && core.result === null, why: measure === "unavailable" ? "크기를 재지 못함" : worktreeWhy },
     inUse,
   };
 }
@@ -396,6 +399,7 @@ export function layerLines(workspace: Workspace): LayerLine[] | null {
 // --- results (B22) --------------------------------------------------------------------------
 
 const SKIP_TEXT: Record<string, string> = {
+  unverified: "확인하지 못함",
   in_use: "확인 사이에 쓰는 중이 됨",
   changed: "확인 사이에 바뀜",
   tracked_files: "추적 파일이 있음",
@@ -437,7 +441,8 @@ export function resultLines(cleanup: DiskCleanup, labels: ReadonlyMap<string, st
         what: group.map((cell) => LAYER_LABEL[cell.layer]).join(" · "),
         outcome,
         bytes: outcome === "removed" ? group.reduce((sum, cell) => sum + cell.bytes, 0) : null,
-        reason: outcome === "removed" ? null : (group[0]!.reason ?? (group[0]!.reason_code ? (SKIP_TEXT[group[0]!.reason_code] ?? group[0]!.reason_code) : null)),
+        // A cell of several folders can be removed with the folders it kept named by their reason.
+        reason: group[0]!.reason ?? (group[0]!.reason_code ? (SKIP_TEXT[group[0]!.reason_code] ?? group[0]!.reason_code) : null),
       });
     }
   }

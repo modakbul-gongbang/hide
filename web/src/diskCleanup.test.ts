@@ -83,6 +83,7 @@ function workspace(checkouts: Checkout[], cleanup: Partial<DiskCleanup> | null, 
         main_head: null,
         message: null,
         usage_error: null,
+        usage_ready: true,
         free_bytes: null,
         progress: null,
         cell_results: [],
@@ -152,7 +153,7 @@ describe("layout (B4, D-21)", () => {
 
 describe("cell availability (B5, B6, B14, B15, B25)", () => {
   it("is a skeleton with nothing selectable while the review has not answered", () => {
-    const pending = sheetModel(workspace([checkout("a")], { phase: "loading" }), false);
+    const pending = sheetModel(workspace([checkout("a")], { phase: "loading", usage_ready: false }), false);
     expect(pending.state).toBe("pending");
     expect(pending.rows[0]?.cache.build_cache.selectable).toBe(false);
   });
@@ -195,6 +196,23 @@ describe("cell availability (B5, B6, B14, B15, B25)", () => {
     expect(removingElsewhere([other, mine], "p")).toBe(true);
     expect(removingElsewhere([other], "other")).toBe(false);
     expect(sheetModel(mine, true).state).toBe("busy");
+  });
+
+  it("opens the cache cells once the in-use answer is in and the worktree cells only with the whole review", () => {
+    const early = sheetModel(workspace([checkout("main", { main: true }), checkout("ok", merged)], { phase: "loading", usage_ready: true }), false);
+    expect(early.state).toBe("pending");
+    expect(early.rows[1]?.cache.build_cache.selectable).toBe(true);
+    expect(early.rows[1]?.worktree?.selectable).toBe(false);
+    const waiting = sheetModel(workspace([checkout("ok", merged)], { phase: "loading", usage_ready: false }), false);
+    expect(waiting.rows[0]?.cache.build_cache.selectable).toBe(false);
+  });
+
+  it("draws the rows from the checkouts when the review failed, with the reason for the notice", () => {
+    const failed = sheetModel(workspace([checkout("a"), checkout("b")], { phase: "failed", message: "no herdr", usage_error: "no herdr", usage_ready: false }), false);
+    expect(failed.state).toBe("unreadable");
+    expect(failed.message).toBe("no herdr");
+    expect(failed.rows).toHaveLength(2);
+    expect(failed.rows.every((row) => !row.cache.build_cache.selectable && row.total !== null)).toBe(true);
   });
 
   it("leaves a layer with nothing in it unselectable", () => {
@@ -331,7 +349,7 @@ describe("footer (B13, B16, B17, B18)", () => {
   });
 
   it("says what it waits for instead of claiming there is nothing to clear while the review is out or unreadable", () => {
-    const pending = sheetModel(workspace([checkout("a")], { phase: "loading" }), false);
+    const pending = sheetModel(workspace([checkout("a")], { phase: "loading", usage_ready: false }), false);
     expect(footerOf(pending.rows, EMPTY_SELECTION, pending.state).summary).toBe("검토하는 중…");
     const unreadable = sheetModel(workspace([checkout("a")], { usage_error: "no herdr" }), false);
     expect(footerOf(unreadable.rows, EMPTY_SELECTION, unreadable.state).summary).toBe("쓰는 중인지 확인해야 고를 수 있다");
@@ -377,12 +395,14 @@ describe("result (B22)", () => {
     main_head: null,
     message: null,
     usage_error: null,
+    usage_ready: true,
     free_bytes: null,
     progress: null,
     free_before: 1.6 * GB,
     free_after: 18.3 * GB,
     rows: [core("/r/gone", { result: "removed" }), core("/r/kept", { result: "refused", message: "State changed." })],
     cell_results: [
+      { path: "/r/d", layer: "build_cache", outcome: "removed", bytes: 1 * GB, folders: 1, reason_code: "tracked_files", reason: null },
       { path: "/r/a", layer: "build_cache", outcome: "removed", bytes: 8 * GB, folders: 2, reason_code: null, reason: null },
       { path: "/r/a", layer: "dependencies", outcome: "removed", bytes: 1 * GB, folders: 1, reason_code: null, reason: null },
       { path: "/r/b", layer: "build_cache", outcome: "skipped", bytes: 2 * GB, folders: 1, reason_code: "in_use", reason: null },
@@ -398,7 +418,9 @@ describe("result (B22)", () => {
     expect(by("cells:/r/c:failed")).toMatchObject({ reason: "permission denied" });
     expect(by("worktree:/r/gone")).toMatchObject({ outcome: "removed", bytes: 4 * GB });
     expect(by("worktree:/r/kept")).toMatchObject({ outcome: "skipped", reason: "State changed." });
-    expect(allocatedTotal(lines)).toBe(13 * GB);
+    // A cell that emptied some folders and kept one says so beside what it removed.
+    expect(by("cells:/r/d:removed")).toMatchObject({ bytes: 1 * GB, reason: "추적 파일이 있음" });
+    expect(allocatedTotal(lines)).toBe(14 * GB);
   });
 
   it("writes free space to one decimal", () => {

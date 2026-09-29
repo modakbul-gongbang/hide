@@ -455,19 +455,19 @@ export type CleanupExclusionCode =
   | "main"
   | "locked"
   | "unavailable"
-  | "current"
   | "missing"
   | "alias"
+  | "current"
   | "contains_worktree"
+  | "in_use"
   | "pane_open"
-  | "unknown_pane_cwd"
   | "main_unavailable"
   | "detached"
   | "dirty"
   | "not_merged"
   | "merge_unverified"
   | "nested_repository"
-  | "in_use";
+  | "unverified";
 
 export type CleanupInUse = { code: "agent_working" | "process" | "port"; name: string | null; port: number | null };
 
@@ -485,7 +485,7 @@ export type CleanupRow = {
   message: string | null;
 };
 
-export type CleanupCellSkip = "in_use" | "changed" | "tracked_files" | "nested_repository" | "symlink" | "not_found";
+export type CleanupCellSkip = "in_use" | "changed" | "tracked_files" | "nested_repository" | "symlink" | "not_found" | "unverified";
 
 export type CleanupCellResult = {
   path: string;
@@ -506,6 +506,8 @@ export type DiskCleanup = {
   message: string | null;
   /** Set when in-use could not be read (no Herdr connection, a failed process read): nothing is selectable. */
   usage_error: string | null;
+  /** The in-use reads are in: cache cells may be ticked while worktree checks still run (phase `loading`). */
+  usage_ready: boolean;
   free_bytes: number | null;
   progress: { done: number; total: number } | null;
   rows: CleanupRow[];

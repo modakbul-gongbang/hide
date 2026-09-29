@@ -382,7 +382,7 @@ function ColumnHead({ column, state: sheet, rows, selection, refs, onToggle }: {
         {LAYER_LABEL[column]}
       </span>
       <span className="pl-lg font-mono text-caption text-muted-foreground">{formatBytes(bytes)}</span>
-      <span className="pl-lg text-caption text-muted-foreground">{sheet === "pending" ? "확인 중…" : selected > 0 ? `${selected}곳 선택됨` : refs.length > 0 ? `고를 수 있는 ${refs.length}곳` : "고를 수 있는 곳 없음"}</span>
+      <span className="pl-lg text-caption text-muted-foreground">{sheet === "pending" && refs.length === 0 ? "확인 중…" : selected > 0 ? `${selected}곳 선택됨` : refs.length > 0 ? `고를 수 있는 ${refs.length}곳` : "고를 수 있는 곳 없음"}</span>
     </div>
   );
 }
@@ -602,7 +602,7 @@ function ResultView({ workspace, seen, onReview, onClose }: { workspace: Workspa
             <span className="truncate text-muted-foreground">{line.what}</span>
             <span className={cn("truncate text-caption", line.outcome === "removed" ? "text-success" : line.outcome === "failed" ? "text-destructive" : "text-warning")}>
               {OUTCOME_TEXT[line.outcome]}
-              {line.reason ? ` · ${line.reason}` : ""}
+              {line.reason ? ` · ${line.outcome === "removed" ? "남긴 폴더: " : ""}${line.reason}` : ""}
             </span>
             <span className="text-right font-mono text-caption text-subtle-foreground">{line.bytes !== null ? formatBytes(line.bytes) : ""}</span>
           </li>
