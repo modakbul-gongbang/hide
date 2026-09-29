@@ -220,9 +220,10 @@ fn operation(shared: &Arc<Mutex<Runtime>>) -> crate::model::TaskOperationSnapsho
         .expect("operation")
 }
 
-/// B18, B22, B38, D-08: the first start in a device's Home makes `~/hide`
-/// there with a link per registered project, registers Home pinned, and
-/// starts the agent on that device with the model and every linked folder.
+/// B18, B22, B38, D-08, D-26: the first start in a device's Home makes
+/// `~/hide` there with a link per registered project, registers Home pinned,
+/// and starts the agent on that device with the model, every linked folder
+/// and its first prompt as its own arguments.
 #[test]
 fn a_device_home_start_makes_home_then_starts_the_agent_with_its_folders() {
     let machine = machine();
@@ -320,14 +321,14 @@ fn a_device_home_start_makes_home_then_starts_the_agent_with_its_folders() {
         expected.push("--add-dir".to_owned());
         expected.push(folder);
     }
+    expected.push("--".to_owned());
+    expected.push("tidy the notes".to_owned());
     assert_eq!(start["args"], json!(expected));
     assert_eq!(start["kind"], "codex");
-    let prompt = calls
-        .iter()
-        .find(|(method, _)| method == "agent.prompt")
-        .map(|(_, params)| params.clone())
-        .expect("agent.prompt");
-    assert_eq!(prompt["text"], "tidy the notes");
+    assert!(
+        calls.iter().all(|(method, _)| method != "agent.prompt"),
+        "the prompt is the agent's own argument, never typed"
+    );
     let created = calls
         .iter()
         .find(|(method, _)| method == "workspace.create")
