@@ -52,17 +52,23 @@ export function parseServerStatus(result: ChildResult): ServerStatus {
   return { unreadable: "herdr status answered without a running field" };
 }
 
+/** Values Herdr sets in every pane itself: its own executable and the pane's identity. */
+const PANE_KEYS = ["HERDR_BIN_PATH", "HERDR_PANE_ID", "HERDR_TAB_ID", "HERDR_WORKSPACE_ID", "HERDR_ENV"];
+
 /**
  * The environment a Herdr server this host starts runs with, and every pane
- * shell it starts inherits. An app opened from Finder carries launchd's
- * environment, which has no locale, while a terminal that runs `herdr` sets
- * one; a pane without it cannot edit multibyte text. The character type is
- * set to UTF-8 only when no locale variable names one, so a message language
- * or number format the operator chose is never replaced.
+ * shell it starts inherits. It carries none of the per-pane values Herdr sets
+ * itself, so a pane never sees one from the pane the app was opened from.
+ * An app opened from Finder carries launchd's environment, which has no
+ * locale, while a terminal that runs `herdr` sets one; a pane without it
+ * cannot edit multibyte text. The character type is set to UTF-8 only when no
+ * locale variable names one, so a message language or number format the
+ * operator chose is never replaced.
  */
 export function serverEnvironment(child: Record<string, string | undefined>): Record<string, string | undefined> {
-  if (child.LANG || child.LC_ALL || child.LC_CTYPE) return child;
-  return { ...child, LC_CTYPE: "UTF-8" };
+  const server = Object.fromEntries(Object.entries(child).filter(([key]) => !PANE_KEYS.includes(key)));
+  if (server.LANG || server.LC_ALL || server.LC_CTYPE) return server;
+  return { ...server, LC_CTYPE: "UTF-8" };
 }
 
 export type ServerStart =
@@ -77,15 +83,17 @@ export type ServerStart =
  * that may be running is never doubled.
  */
 export async function ensureServer(io: {
-  status: () => Promise<ServerStatus>;
+  /** Herdr's answer within the given deadline. */
+  status: (timeoutMs: number) => Promise<ServerStatus>;
   start: () => Promise<{ pid: number } | { spawnError: string }>;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   stopped: () => boolean;
+  statusTimeoutMs: number;
   waitMs: number;
   pollMs: number;
 }): Promise<ServerStart> {
-  const before = await io.status();
+  const before = await io.status(io.statusTimeoutMs);
   if ("unreadable" in before) return { outcome: "status_failed", detail: before.unreadable };
   if (before.running) return { outcome: "running" };
   const started = io.now();
@@ -93,7 +101,10 @@ export async function ensureServer(io: {
   if ("spawnError" in spawned) return { outcome: "start_failed", detail: spawned.spawnError };
   while (io.now() - started < io.waitMs && !io.stopped()) {
     await io.sleep(io.pollMs);
-    const now = await io.status();
+    // A poll that hangs cannot stretch the wait past its bound.
+    const remaining = io.waitMs - (io.now() - started);
+    if (remaining <= 0) break;
+    const now = await io.status(Math.min(io.statusTimeoutMs, remaining));
     if ("running" in now && now.running) return { outcome: "started", pid: spawned.pid, elapsedMs: io.now() - started };
   }
   return { outcome: "start_failed", detail: "no answer", pid: spawned.pid, elapsedMs: io.now() - started };

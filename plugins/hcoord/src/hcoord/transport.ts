@@ -367,7 +367,8 @@ export async function runDaemon(home = os.homedir()): Promise<"stopped" | "manua
       const local = isLocalMachine(machine);
       if (now - (routeReadAt.get(key) ?? -Infinity) < (local ? LOCAL_LINEAGE_MS : REMOTE_LINEAGE_MS)) continue;
       routeReadAt.set(key, now);
-      const panes = readRouteLineage(machine, hostScope, local ? 2000 : 20_000);
+      // A remote route keeps its own SSH deadline; this one bounds the local call.
+      const panes = readRouteLineage(machine, hostScope, 2000);
       if (panes === null) {
         // One line when the route stops answering, not one per pass while a server is down.
         if (!unreadableRoutes.has(key)) process.stderr.write(`${JSON.stringify({ event: "hcoord.lineage_route_unavailable", at: new Date(now).toISOString(), machine })}\n`);

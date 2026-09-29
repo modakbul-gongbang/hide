@@ -320,11 +320,12 @@ export class DesktopHost {
     const bin = herdr.path;
     const env = serverEnvironment(this.childEnvironment());
     const result = await ensureServer({
-      status: () => this.runChild(bin, ["status", "server", "--json"], STATUS_TIMEOUT_MS, env).then(parseServerStatus),
+      status: (timeoutMs) => this.runChild(bin, ["status", "server", "--json"], timeoutMs, env).then(parseServerStatus),
       start: () => startDetached(bin, ["server"], env),
       sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       now: Date.now,
       stopped: () => this.quitting,
+      statusTimeoutMs: STATUS_TIMEOUT_MS,
       waitMs: HERDR_START_WAIT_MS,
       pollMs: HERDR_START_POLL_MS,
     });

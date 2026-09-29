@@ -50,6 +50,11 @@ describe("parseServerStatus", () => {
 });
 
 describe("serverEnvironment", () => {
+  it("passes on none of the values Herdr sets in each pane itself", () => {
+    const fromPane = { HOME: "/Users/example", LANG: "en_US.UTF-8", HERDR_SOCKET_PATH: "/s.sock", HERDR_BIN_PATH: "/A/Contents/Resources/herdr", HERDR_PANE_ID: "w1:p1", HERDR_TAB_ID: "w1:t1", HERDR_WORKSPACE_ID: "w1", HERDR_ENV: "1" };
+    expect(serverEnvironment(fromPane)).toEqual({ HOME: "/Users/example", LANG: "en_US.UTF-8", HERDR_SOCKET_PATH: "/s.sock" });
+  });
+
   it("gives a server started from Finder a UTF-8 character type", () => {
     expect(serverEnvironment({ HOME: "/Users/example", PATH: "/usr/bin" })).toEqual({ HOME: "/Users/example", PATH: "/usr/bin", LC_CTYPE: "UTF-8" });
   });
@@ -67,8 +72,12 @@ describe("ensureServer", () => {
   const herdr = (answers: ServerStatus[], start: { pid: number } | { spawnError: string } = { pid: 42 }) => {
     let clock = 0;
     const starts: number[] = [];
+    const deadlines: number[] = [];
     const io = {
-      status: async () => answers.shift() ?? { running: false },
+      status: async (timeoutMs: number) => {
+        deadlines.push(timeoutMs);
+        return answers.shift() ?? { running: false };
+      },
       start: async () => {
         starts.push(clock);
         return start;
@@ -78,10 +87,11 @@ describe("ensureServer", () => {
       },
       now: () => clock,
       stopped: () => false,
+      statusTimeoutMs: 5_000,
       waitMs: 5_000,
       pollMs: 200,
     };
-    return { io, starts };
+    return { io, starts, deadlines };
   };
 
   it("leaves a server that answers alone", async () => {
@@ -103,9 +113,12 @@ describe("ensureServer", () => {
   });
 
   it("reports a start that never answers after the bounded wait, without starting again", async () => {
-    const { io, starts } = herdr([]);
+    const { io, starts, deadlines } = herdr([]);
     expect(await ensureServer(io)).toEqual({ outcome: "start_failed", detail: "no answer", pid: 42, elapsedMs: 5_000 });
     expect(starts).toEqual([0]);
+    // Each poll may only use what is left of the wait.
+    expect(deadlines.at(-1)).toBe(200);
+    expect(deadlines.slice(1).every((deadline, index) => deadline === 5_000 - 200 * (index + 1))).toBe(true);
   });
 
   it("reports a binary that could not start", async () => {
