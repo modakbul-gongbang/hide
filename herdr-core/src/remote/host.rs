@@ -1196,15 +1196,7 @@ async fn ensure_private_dirs(
                 )));
             }
             Err(SftpError::Status(status)) if status.status_code == StatusCode::NoSuchFile => {
-                raw.mkdir(
-                    &current,
-                    FileAttributes {
-                        permissions: Some(0o700),
-                        ..FileAttributes::empty()
-                    },
-                )
-                .await
-                .map_err(|error| sftp_failure("The helper folder could not be created", error))?;
+                make_private_dir(raw, &current).await?;
             }
             Err(error) => {
                 return Err(sftp_failure(
@@ -1283,6 +1275,32 @@ fn ancestors(resolved: &str) -> Result<Vec<String>, EstablishError> {
     Ok(folders)
 }
 
+/// Makes `path` a 0700 folder. Another connection to the same account (two
+/// registrations of one machine connecting together) can make it first: a
+/// folder that is there when `mkdir` fails is taken as that one, and the
+/// caller checks it as it would its own.
+async fn make_private_dir(raw: &RawSftpSession, path: &str) -> Result<(), EstablishError> {
+    let made = raw
+        .mkdir(
+            path,
+            FileAttributes {
+                permissions: Some(0o700),
+                ..FileAttributes::empty()
+            },
+        )
+        .await;
+    match made {
+        Ok(_) => Ok(()),
+        Err(error) => match raw.lstat(path).await {
+            Ok(found) if found.attrs.is_dir() => Ok(()),
+            _ => Err(sftp_failure(
+                "The helper folder could not be created",
+                error,
+            )),
+        },
+    }
+}
+
 async fn ensure_private_dir(
     raw: &RawSftpSession,
     path: &str,
@@ -1291,15 +1309,7 @@ async fn ensure_private_dir(
     match raw.lstat(path).await {
         Ok(attrs) => validate_private(&attrs.attrs, owner, path),
         Err(SftpError::Status(status)) if status.status_code == StatusCode::NoSuchFile => {
-            raw.mkdir(
-                path,
-                FileAttributes {
-                    permissions: Some(0o700),
-                    ..FileAttributes::empty()
-                },
-            )
-            .await
-            .map_err(|error| sftp_failure("The helper folder could not be created", error))?;
+            make_private_dir(raw, path).await?;
             let attrs = raw
                 .lstat(path)
                 .await
