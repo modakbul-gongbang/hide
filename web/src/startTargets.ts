@@ -77,10 +77,10 @@ function mainCheckout(workspace: Workspace): Checkout | null {
 }
 
 /** The key of the thing in front on the front device, before it is checked against the menu. */
-function frontKey(rest: SnapshotRest, screen: Screen | null, inbox: boolean, deviceId: string, workspaces: Workspace[]): string {
+function frontKey(rest: SnapshotRest, screen: Screen | null, noProject: boolean, deviceId: string, workspaces: Workspace[]): string {
   const home = homeKey(deviceId);
-  // Inbox is selected in the rail while the center stays where it was, so what the center shows is not what is in front.
-  if (inbox) return home;
+  // The Inbox and Settings sit in front of a center that stays where it was, so what the center shows is not what is in front.
+  if (noProject) return home;
   if (screen?.kind === "workspace") {
     const checkout = frontCheckout(rest);
     if (!checkout) return home;
@@ -97,10 +97,12 @@ function frontKey(rest: SnapshotRest, screen: Screen | null, inbox: boolean, dev
 }
 
 /**
- * `inbox` is the rail's Inbox selection (page state beside the screen); a
- * device's own Home screen names its device, which is then the front device.
+ * `inbox` is the rail's Inbox selection (page state beside the screen) and
+ * `settings` says the panel was opened over Settings; with either the front
+ * device's Home is the default. A device's own Home screen names its device,
+ * which is then the front device.
  */
-export function startTargets(rest: SnapshotRest | null, screen: Screen | null, inbox = false): StartTargets {
+export function startTargets(rest: SnapshotRest | null, screen: Screen | null, inbox = false, settings = false): StartTargets {
   if (!rest) return { groups: [], defaultKey: null };
   const devices = rest.navigator?.devices?.length ? rest.navigator.devices : [LOCAL];
   const named = !inbox && screen?.kind === "main" ? screen.deviceId : undefined;
@@ -111,7 +113,7 @@ export function startTargets(rest: SnapshotRest | null, screen: Screen | null, i
   const usable = (key: string) => items.some((item) => item.key === key && item.disabled === null);
   const front = groups[0];
   const workspaces = front ? deviceWorkspaces(rest, ordered[0]!).workspaces : [];
-  const wanted = front ? frontKey(rest, screen, inbox, front.deviceId, workspaces) : null;
+  const wanted = front ? frontKey(rest, screen, inbox || settings, front.deviceId, workspaces) : null;
   const defaultKey =
     (wanted && usable(wanted) ? wanted : null) ?? (front && usable(homeKey(front.deviceId)) ? homeKey(front.deviceId) : null) ?? items.find((item) => item.disabled === null)?.key ?? null;
   return { groups, defaultKey };

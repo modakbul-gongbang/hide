@@ -80,6 +80,11 @@ describe("start target default (PRD home-device-rail D-19, B25)", () => {
     expect(startTargets(rest({ front: "mini", focusedCheckout: "m-main" }), { kind: "workspace" }, true).defaultKey).toBe(homeKey("mini"));
   });
 
+  it("is the front device's Home when the panel took Settings' place, whatever is under it", () => {
+    expect(startTargets(rest(), { kind: "workspace" }, false, true).defaultKey).toBe(homeKey("local"));
+    expect(startTargets(rest({ front: "mini", focusedCheckout: "m-main" }), { kind: "workspace" }, false, true).defaultKey).toBe(homeKey("mini"));
+  });
+
   it("is the Home of the device a Home screen names", () => {
     expect(startTargets(rest(), { kind: "main", deviceId: "mini" }).groups[0]?.deviceId).toBe("mini");
     expect(startTargets(rest(), { kind: "main", deviceId: "mini" }).defaultKey).toBe(homeKey("mini"));

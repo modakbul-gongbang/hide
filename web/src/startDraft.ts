@@ -12,6 +12,8 @@ type StartPanelState = {
   text: string;
   /** The target picked in this open; null follows what is in front. */
   target: string | null;
+  /** This open replaced Settings, which then counts as what is in front (B25). */
+  overSettings: boolean;
   /** The id of the request whose answer the panel waits for. */
   request: string | null;
   /** Why the last start did not go, shown inside the panel. */
@@ -20,7 +22,7 @@ type StartPanelState = {
   sent: string;
   /** A start whose tab is open but whose agent has not answered yet, with its text. */
   spent: { taskId: number; text: string } | null;
-  open: () => void;
+  open: (overSettings: boolean) => void;
   close: () => void;
   setText: (text: string) => void;
   setTarget: (key: string) => void;
@@ -38,12 +40,13 @@ export const useStartPanel = create<StartPanelState>((set) => ({
   isOpen: false,
   text: "",
   target: null,
+  overSettings: false,
   request: null,
   failure: null,
   sent: "",
   spent: null,
   // A reason the last start did not go stays with its text until the text changes.
-  open: () => set({ isOpen: true, target: null }),
+  open: (overSettings) => set({ isOpen: true, target: null, overSettings }),
   close: () => set({ isOpen: false }),
   setText: (text) => set({ text, failure: null }),
   setTarget: (target) => set({ target }),

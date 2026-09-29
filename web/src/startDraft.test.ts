@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { useStartPanel } from "./startDraft";
 
 describe("the start panel's draft", () => {
-  beforeEach(() => useStartPanel.setState({ isOpen: false, text: "", target: null, request: null, failure: null, sent: "", spent: null }));
+  beforeEach(() => useStartPanel.setState({ isOpen: false, text: "", target: null, overSettings: false, request: null, failure: null, sent: "", spent: null }));
 
   it("is spent by a start and comes back with the reason when the agent then fails to start", () => {
     const panel = useStartPanel.getState();
@@ -13,7 +13,7 @@ describe("the start panel's draft", () => {
     useStartPanel.getState().restore("claude: command not found");
     expect(useStartPanel.getState()).toMatchObject({ text: "테스트 고쳐줘", failure: "claude: command not found", spent: null });
     // The next open shows both, and editing the text clears the reason.
-    useStartPanel.getState().open();
+    useStartPanel.getState().open(false);
     expect(useStartPanel.getState().failure).toBe("claude: command not found");
     useStartPanel.getState().setText("테스트 고쳐줘 다시");
     expect(useStartPanel.getState().failure).toBeNull();

@@ -1068,8 +1068,14 @@ export function createActions(dispatch: DispatchFn) {
      * Opens the start panel (⌘N, or ⌘K's `에이전트 시작…`); the keyboard goes
      * to its text box. The draft it kept comes back.
      */
+    /**
+     * Opens the start panel. Over Settings the panel takes Settings' place,
+     * because Settings holds the keyboard, and Settings is what was in front (B25).
+     */
     openStartPanel() {
-      useStartPanel.getState().open();
+      const overSettings = ui().overlay === "settings";
+      if (overSettings) ui().closeOverlay("settings");
+      useStartPanel.getState().open(overSettings);
     },
 
     /**
