@@ -1396,6 +1396,10 @@
       "type": "number",
       "value": 560
     },
+    "--size-disk-sheet": {
+      "type": "number",
+      "value": 1160
+    },
     "--size-editor-inset": {
       "type": "number",
       "value": 12

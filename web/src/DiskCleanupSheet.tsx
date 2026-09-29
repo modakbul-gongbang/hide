@@ -56,7 +56,7 @@ import { PR_TONE } from "./TaskBoards";
 // screen-local grid (D-31): no System / Table part exists for it.
 
 /** The sheet's width; a token of its own belongs in design/tokens.json when the design owner adds one. */
-const SHEET_WIDTH = "w-[calc(var(--size-editor-min-content)+var(--size-worktree-dialog))]";
+const SHEET_WIDTH = "w-(--size-disk-sheet)";
 /** Checkbox, checkout, the two cache layers, the worktree, other and the row total. */
 const GRID = "var(--spacing-xl) minmax(0, 2.6fr) repeat(3, minmax(0, 1.2fr)) minmax(0, 0.9fr) minmax(0, 0.9fr)";
 
