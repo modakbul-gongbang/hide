@@ -34,9 +34,9 @@ import {
 import type { DesktopEnv } from "./env";
 import { readJsonFile, writeJsonFile } from "./jsonFile";
 import { bundledHcoord, hcoordEnvironment, installHcoordShim, parseHcoordEnsure } from "./hcoord";
-import { chooseHerdr, type HerdrChoice } from "./herdr";
+import { chooseHerdr, ensureServer, parseServerStatus, serverEnvironment, type HerdrChoice } from "./herdr";
 import { loadFailureFields, type HostLog } from "./log";
-import { ChildRunner, type ChildResult } from "./spawn";
+import { ChildRunner, startDetached, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
 import { revealablePath } from "./reveal";
 
@@ -50,6 +50,9 @@ const HEALTH_INTERVAL_MS = 2_000;
 const HEALTH_TIMEOUT_MS = 1_500;
 const LOST_AFTER_MISSES = 2;
 const LOST_POLL_MS = 3_000;
+/** A started Herdr answered within 0.1 s in a 2026-09-29 run; restoring many panes can take longer. */
+const HERDR_START_WAIT_MS = 5_000;
+const HERDR_START_POLL_MS = 200;
 const STATUS_PAGE = path.join(__dirname, "static", "status.html");
 const STATUS_PAGE_URL = pathToFileURL(STATUS_PAGE).href;
 const CLIPBOARD_PERMISSIONS = new Set(["clipboard-read", "clipboard-sanitized-write"]);
@@ -220,6 +223,8 @@ export class DesktopHost {
     this.log.event("discovery.start", { attempt, trigger, herdr: herdr.source, replaced_pane_herdr: herdr.replacedPaneValue ?? undefined });
     const cli = await this.findCli(attempt);
     if (!cli) return this.fail(attempt, "cli_missing", "no executable hide CLI");
+    await this.ensureHerdrServer(attempt);
+    if (this.quitting) return;
     const answer = parseConnect(await this.runCli(cli.path, ["connect"], CONNECT_TIMEOUT_MS));
     if (this.quitting) return;
     if (answer.kind === "failed") return this.fail(attempt, answer.reason, answer.detail);
@@ -298,6 +303,35 @@ export class DesktopHost {
     const inheritedPath = this.env.path || "/usr/bin:/bin:/usr/sbin:/sbin";
     const searchPath = [...new Set([...inheritedPath.split(":"), ...wellKnownDirs(this.env.home)].filter(Boolean))].join(":");
     return { ...this.env.inherited, PATH: searchPath, ...(herdr ? { HERDR_BIN_PATH: herdr } : {}) };
+  }
+
+  /**
+   * Starts the Herdr this app bundles when no server answers on the socket
+   * its children would use, as `herdr` does when a terminal runs it: after a
+   * reboot nothing else starts one, and hided only reads a missing server as
+   * absent. A server that answers is never touched, and neither an unpackaged
+   * host nor an explicit HERDR_BIN_PATH override starts anything, so a
+   * development or e2e run keeps the server it made. Every failure goes to the
+   * log and the connect goes ahead, where the shell shows Herdr unreachable.
+   */
+  private async ensureHerdrServer(attempt: number): Promise<void> {
+    const herdr = this.herdr();
+    if (herdr.source !== "bundled" || herdr.path === null) return;
+    const bin = herdr.path;
+    const env = serverEnvironment(this.childEnvironment());
+    const result = await ensureServer({
+      status: (timeoutMs) => this.runChild(bin, ["status", "server", "--json"], timeoutMs, env).then(parseServerStatus),
+      start: () => startDetached(bin, ["server"], env),
+      sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      now: Date.now,
+      stopped: () => this.quitting,
+      statusTimeoutMs: STATUS_TIMEOUT_MS,
+      waitMs: HERDR_START_WAIT_MS,
+      pollMs: HERDR_START_POLL_MS,
+    });
+    if (result.outcome === "status_failed") this.log.event("herdr.status_failed", { attempt, detail: result.detail });
+    else if (result.outcome === "started") this.log.event("herdr.server_started", { attempt, pid: result.pid, elapsed_ms: result.elapsedMs });
+    else if (result.outcome === "start_failed") this.log.event("herdr.server_start_failed", { attempt, pid: result.pid, detail: result.detail, elapsed_ms: result.elapsedMs });
   }
 
   /**

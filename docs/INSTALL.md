@@ -101,10 +101,10 @@ The app runs its own bundled `hide` CLI, which starts `hided` beside it.
 The app passes its bundled Herdr binary to that CLI as `HERDR_BIN_PATH` unless the environment names one as an explicit override, one that arrives without `HERDR_PANE_ID`; the value a Herdr pane exports is replaced, so opening the app from a pane behaves like opening it from the Dock.
 The CLI search order, and `HIDE_CLI_PATH`, are documented in [ARCHITECTURE.md](ARCHITECTURE.md), "The desktop host".
 
-A Herdr server must be running for panes to attach.
-The binary the app bundles is at `hide.app/Contents/Resources/herdr`; running it once, with no arguments, starts the default server on `~/.config/herdr/herdr.sock`.
-Set `HERDR_SOCKET_PATH` to an absolute path before launching to use another socket.
-A server already running on the socket hided uses is used as it is; hide never stops or replaces it.
+Panes attach to a Herdr server.
+When none answers on the socket hide uses, the app starts the Herdr it bundles (`hide.app/Contents/Resources/herdr`) there before it connects, and that server restores the saved workspaces and resumes the agents Herdr can resume, as a server `herdr` starts from a terminal does.
+The default socket is `~/.config/herdr/herdr.sock`; set `HERDR_SOCKET_PATH` to an absolute path before launching to use another socket.
+A server already running on that socket is used as it is; hide never stops or replaces it, and a server the app started keeps running after the app quits.
 
 Authentication is not bundled: SSH, Herdr, Claude Code, and Codex continue to own their own sign-in state and credentials.
 If you want to start agents from hide, install and sign in to the relevant CLI before launching the app.
@@ -145,7 +145,9 @@ Read the host log at `<profile>/logs/desktop.log` (the profile is `~/Library/App
 ### No Herdr session
 
 If the app connects but no workspace, terminal, or agent can start, no `herdr server` is running on the socket hided uses.
-The daemon logs `herdr_bin.missing` when it cannot find a herdr binary at all: check `HERDR_BIN_PATH`, then PATH, then run the bundled `hide.app/Contents/Resources/herdr` once to start the default server.
+The packaged app starts one on launch, Retry, a second launch or a Dock click; the host log records `herdr.server_started`, or `herdr.status_failed` or `herdr.server_start_failed` with the reason it could not.
+A development host, or a launch with `HERDR_BIN_PATH` set as an explicit override, starts none; run that Herdr once to start its server.
+The daemon logs `herdr_bin.missing` when it cannot find a herdr binary at all: check `HERDR_BIN_PATH`, then PATH.
 When `HERDR_BIN_PATH` names a file that no longer exists, `hide connect` and the daemon refuse to start and print that path: the Herdr server was started from an app bundle that has since been replaced, and every pane it opens still carries the old path.
 The packaged app replaces that pane value with its own bundled `herdr`, but the `hide` CLI run directly in such a pane, and an unpackaged development host, still inherit it; unset `HERDR_BIN_PATH` there, or hand the server off to the new bundle's `herdr`.
 
