@@ -189,6 +189,11 @@ Beside it, the phone app: the pairing confirm the QR opens, the list in four gro
 The machine name and tailnet are placeholders, and the QR is a drawn pattern, never a real code.
 Its web files are `web/src/MobileTab.tsx` and `web/src/mobileSettings.ts`, and the phone app under `web/src/mobile/` with its entry `web/mobile.html`.
 
+Disk Cleanup is `Screen / Disk Cleanup`.
+It draws the Overview facts line with the disk number's breakdown tooltip and the low-disk cell, the cleanup sheet as a checkout x layer table with every checkbox scope (cell, row, column, top-left, the fold of small checkouts) and the Checkbox's Indeterminate, the states the table carries (measuring, not measured, in use with its reason, usage unreadable, another cleanup running, no row for the filter), the confirm step a worktree pick adds, the running step and the result.
+The library Checkbox and Button are refs; the table is a screen-local grid drawn in `scripts/pen-screens-disk.mjs`, with no `System / Table` behind it.
+Its web files are `web/src/DiskCleanupSheet.tsx`, `web/src/diskCleanup.ts` and `web/src/ProjectOverview.tsx`.
+
 ## How to add a token
 
 1. Add the entry to `design/tokens.json`, with both a Dark (`value`) and a Light (`light`) value for a color token, or use `type: "alias"` to point at another token.

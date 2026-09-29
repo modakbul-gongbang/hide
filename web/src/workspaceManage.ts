@@ -146,24 +146,20 @@ export function projectMenu(workspace: Workspace, host: MenuHost): MenuItem[] {
 }
 
 /**
- * What removing a project does, spelled out before it is confirmed (D-10): a
- * registered project loses its registration, and a row Herdr shows without
- * one loses its panes, which takes the row with them (PRD sidebar-context-menus D-14).
+ * What removing a project does, as the short facts its confirmation shows on
+ * one line (PRD close-agent-subtree D-42): the panes that close, the agents
+ * that stop, and what stays on disk.
  */
-export function projectRemovalConsequences(workspace: Workspace): string[] {
+export function projectRemovalFacts(workspace: Workspace): string[] {
   const panes = workspace.removal?.pane_count ?? 0;
   const running = workspace.removal?.running_agent_count ?? 0;
-  const lines: string[] = [];
-  if (panes > 0) {
-    const stopping = running > 0 ? `, stopping ${running === 1 ? "1 running agent" : `${running} running agents`}` : "";
-    lines.push(`${panes === 1 ? "1 pane in this project closes" : `${panes} panes in this project close`} first${stopping}.`);
-  }
-  lines.push(
-    workspace.registered
-      ? "Only the registration is removed: the folder, its repository and its worktrees stay on disk."
-      : "Hide keeps no registration for this project, so its row leaves once Herdr closes the workspace. The folder, its repository and its worktrees stay on disk.",
-  );
-  return lines;
+  const facts: string[] = [];
+  if (panes > 0) facts.push(panes === 1 ? "1 pane closes" : `${panes} panes close`);
+  if (panes > 0 && running > 0) facts.push(running === 1 ? "1 agent stops" : `${running} agents stop`);
+  // A row Herdr shows without a registration leaves once its panes do.
+  facts.push(workspace.registered ? "registration only" : panes > 0 ? "the row goes with them" : "the row goes with Herdr's workspace");
+  facts.push("files stay on disk");
+  return facts;
 }
 
 /** The checkout items a plain folder's row adds after its project's; its row routes these to the checkout. */
@@ -262,15 +258,22 @@ export function stoppedAgents(checkout: Checkout): string[] {
   return checkout.tabs.flatMap((tab) => tab.panes).flatMap((pane) => (pane.identity_label ? [`${pane.identity_label} (${pane.status_label})`] : []));
 }
 
-/** The deletion consequences the confirmation spells out, from the checkout's panes and the core's gate. */
-export function deletionConsequences(checkout: Checkout, paneCount: number): string[] {
-  const lines: string[] = [];
-  lines.push(`The folder ${checkout.path} is removed from disk. This cannot be undone.`);
-  if (paneCount > 0) lines.push(`${paneCount === 1 ? "1 pane in this worktree closes" : `${paneCount} panes in this worktree close`} first, stopping whatever runs there.`);
+/**
+ * What deleting a worktree does, as the short facts its confirmation shows
+ * on one line under the path (D-42); the core's warnings are its badges.
+ */
+export function deletionFacts(checkout: Checkout, paneCount: number): string[] {
+  const facts = ["folder removed for good"];
+  if (paneCount > 0) facts.push(paneCount === 1 ? "1 pane closes" : `${paneCount} panes close`);
   const agents = stoppedAgents(checkout);
-  if (agents.length > 0) lines.push(`Stops ${agents.length === 1 ? "1 agent" : `${agents.length} agents`}: ${agents.join(", ")}.`);
-  for (const warning of checkout.worktree?.deletion_gate.warnings ?? []) lines.push(warning);
-  return lines;
+  if (agents.length > 0) facts.push(`stops ${agents.length === 1 ? "1 agent" : `${agents.length} agents`}: ${agents.join(", ")}`);
+  return facts;
+}
+
+/** Facts joined into the one line a confirmation shows, its first word capitalized. */
+export function factsLine(facts: readonly string[]): string {
+  const line = facts.join(" · ");
+  return line.charAt(0).toUpperCase() + line.slice(1);
 }
 
 /** The newest task the operator asked for on this page, once it names the request's own target. */

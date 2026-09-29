@@ -518,6 +518,30 @@ impl<I: AreaItem> SplitTree<I> {
         Ok(true)
     }
 
+    /// Makes a display its area's active display and leaves the area in use
+    /// where it is: what a bookmark restore does, so the keyboard's area never
+    /// moves. Returns whether that changed anything.
+    pub fn show(&mut self, display_id: &str, stamp: u64) -> Result<bool, LayoutError> {
+        let area_id = self
+            .area_of(display_id)
+            .ok_or_else(|| LayoutError::UnknownDisplay(display_id.to_owned()))?
+            .id
+            .clone();
+        let area = self.root.area_mut(&area_id).expect("found above");
+        if area.active.as_deref() == Some(display_id) {
+            return Ok(false);
+        }
+        area.active = Some(display_id.to_owned());
+        if let Some(display) = area
+            .displays
+            .iter_mut()
+            .find(|display| display.id() == display_id)
+        {
+            display.set_focus_stamp(stamp);
+        }
+        Ok(true)
+    }
+
     /// Makes an area the one in use; its active display counts as focused.
     pub fn focus_area(&mut self, area_id: &str, stamp: u64) -> Result<bool, LayoutError> {
         if self.area(area_id).is_none() {

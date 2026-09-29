@@ -222,6 +222,10 @@ pub(super) struct InactiveProjectsTogglePayload {
 #[derive(Debug, Deserialize)]
 pub(super) struct RemoveWorkspacePayload {
     pub(super) workspace_id: String,
+    /// The agents outside the project, spawned from its agents, that the
+    /// operator chose to close first (PRD close-agent-subtree D-10).
+    #[serde(default)]
+    pub(super) close_descendant_pane_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -699,9 +703,25 @@ pub(super) struct ChangesSelectPayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct CleanupReviewPayload {
+    pub(super) workspace_id: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct CleanupConfirmPayload {
     pub(super) id: u64,
+    /// Worktrees to remove with everything in them.
+    #[serde(default)]
     pub(super) paths: Vec<String>,
+    /// Build cache and dependency cells to empty.
+    #[serde(default)]
+    pub(super) cells: Vec<CleanupCellPayload>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub(super) struct CleanupCellPayload {
+    pub(super) path: String,
+    pub(super) layer: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -913,6 +933,10 @@ pub(super) struct RemoveWorktreePayload {
     /// The operator ticked the discard checkbox the gate offered.
     #[serde(default)]
     pub(super) discard_changes: bool,
+    /// The agents outside the worktree, spawned from its agents, that the
+    /// operator chose to close first (PRD close-agent-subtree D-10).
+    #[serde(default)]
+    pub(super) close_descendant_pane_ids: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1096,6 +1120,7 @@ pub(super) enum Event {
     CloseWorkspace(ConfirmedWorkspacePayload),
     CloseTab(ConfirmedTabPayload),
     ClosePane(ConfirmedPanePayload),
+    CloseTree(super::tree_close::CloseTreePayload),
     CheckCloseStatus(CheckCloseStatusPayload),
     RetryAgentClose(CheckCloseStatusPayload),
     DismissAgentClose(CheckCloseStatusPayload),
@@ -1171,7 +1196,7 @@ pub(super) enum Event {
     /// the selected checkout, and a removal changes the whole worktree list.
     OverviewOpenSection(OverviewOpenSectionPayload),
     AgentStartInCheckout(AgentStartInCheckoutPayload),
-    CleanupReview,
+    CleanupReview(CleanupReviewPayload),
     CleanupConfirm(CleanupConfirmPayload),
     CleanupDismiss,
     CardRefresh,
@@ -1279,6 +1304,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "close_workspace" => decode!(ConfirmedWorkspacePayload, CloseWorkspace),
         "close_tab" => decode!(ConfirmedTabPayload, CloseTab),
         "close_pane" => decode!(ConfirmedPanePayload, ClosePane),
+        "close_tree" => decode!(super::tree_close::CloseTreePayload, CloseTree),
         "check_close_status" => decode!(CheckCloseStatusPayload, CheckCloseStatus),
         "retry_agent_close" => decode!(CheckCloseStatusPayload, RetryAgentClose),
         "dismiss_agent_close" => decode!(CheckCloseStatusPayload, DismissAgentClose),
@@ -1352,7 +1378,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "task_agent_retry" => decode!(TaskAgentRetryPayload, TaskAgentRetry),
         "remove_worktree" => decode!(RemoveWorktreePayload, RemoveWorktree),
         "github_request" => decode!(GithubRequestPayload, GithubRequest),
-        "cleanup_review" => Ok(Event::CleanupReview),
+        "cleanup_review" => decode!(CleanupReviewPayload, CleanupReview),
         "cleanup_confirm" => decode!(CleanupConfirmPayload, CleanupConfirm),
         "cleanup_dismiss" => Ok(Event::CleanupDismiss),
         "overview_open_section" => decode!(OverviewOpenSectionPayload, OverviewOpenSection),
@@ -2337,120 +2363,9 @@ impl Runtime {
                 let _ = (payload.workspace_id, payload.confirmed);
                 false
             }
-            Event::CloseTab(payload) => {
-                let tab = self
-                    .snapshot
-                    .navigator
-                    .workspaces
-                    .iter()
-                    .flat_map(|workspace| workspace.checkouts.iter())
-                    .flat_map(|checkout| checkout.tabs.iter())
-                    .find(|tab| tab.id.as_deref() == Some(payload.tab_id.as_str()))
-                    .cloned();
-                let Some(tab) = tab else {
-                    self.set_error(
-                        "tab.unknown",
-                        format!("Tab {} is not available", payload.tab_id),
-                        false,
-                    );
-                    return true;
-                };
-                let pane_ids = tab
-                    .panes
-                    .iter()
-                    .map(|pane| pane.id.as_str())
-                    .collect::<HashSet<_>>();
-                let status_unknown = self.snapshot.navigator.agents.iter().any(|agent| {
-                    pane_ids.contains(agent.pane_id.as_str()) && agent.requires_close_status_check
-                });
-                if status_unknown {
-                    self.set_error(
-                        "tab.close_status_unknown",
-                        format!(
-                            "Tab {} has a pane whose activity status is unknown; refresh status before closing",
-                            payload.tab_id
-                        ),
-                        true,
-                    );
-                    return true;
-                }
-                let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
-                    pane_ids.contains(agent.pane_id.as_str()) && agent.requires_close_confirmation
-                });
-                if requires_confirmation && !payload.confirmed {
-                    self.set_error(
-                        "tab.close_confirmation_required",
-                        format!(
-                            "Tab {} contains an agent that is working or needs attention; close_tab requires confirmed=true",
-                            payload.tab_id
-                        ),
-                        false,
-                    );
-                    return true;
-                }
-                let tab_id = payload.tab_id;
-                self.push_diagnostic("tab.close.requested", format!("Closing tab {tab_id}"));
-                self.start_close_capture(live::CloseCaptureTarget::Tab { tab_id }, tab)
-            }
-            Event::ClosePane(payload) => {
-                let status_unknown = self.snapshot.navigator.agents.iter().any(|agent| {
-                    agent.pane_id == payload.pane_id && agent.requires_close_status_check
-                });
-                if status_unknown {
-                    self.set_error(
-                        "pane.close_status_unknown",
-                        format!(
-                            "Pane {} has an unknown activity status; refresh status before closing",
-                            payload.pane_id
-                        ),
-                        true,
-                    );
-                    return true;
-                }
-                let requires_confirmation = self.snapshot.navigator.agents.iter().any(|agent| {
-                    agent.pane_id == payload.pane_id && agent.requires_close_confirmation
-                });
-                if requires_confirmation && !payload.confirmed {
-                    self.set_error(
-                        "pane.close_confirmation_required",
-                        format!(
-                            "Pane {} is working or needs attention; close_pane requires confirmed=true",
-                            payload.pane_id
-                        ),
-                        false,
-                    );
-                    return true;
-                }
-                let pane_id = payload.pane_id;
-                if self.live.is_none() {
-                    self.set_error(
-                        "pane.control_unavailable",
-                        "Pane close requires a live Herdr connection",
-                        true,
-                    );
-                    return true;
-                }
-                let tab = self
-                    .snapshot
-                    .navigator
-                    .workspaces
-                    .iter()
-                    .flat_map(|workspace| workspace.checkouts.iter())
-                    .flat_map(|checkout| checkout.tabs.iter())
-                    .find(|tab| tab.panes.iter().any(|pane| pane.id == pane_id))
-                    .cloned();
-                let Some(tab) = tab else {
-                    self.set_error(
-                        "pane.unknown",
-                        format!("Pane {pane_id} is not available"),
-                        false,
-                    );
-                    return true;
-                };
-                self.retain_project_before_last_pane_closes(&pane_id);
-                self.push_diagnostic("pane.close.requested", format!("Closing pane {pane_id}"));
-                self.start_close_capture(live::CloseCaptureTarget::Pane { pane_id }, tab)
-            }
+            Event::CloseTab(payload) => self.close_local_tab(payload.tab_id, payload.confirmed),
+            Event::ClosePane(payload) => self.close_local_pane(payload.pane_id, payload.confirmed),
+            Event::CloseTree(payload) => self.start_tree_close(payload),
             Event::CheckCloseStatus(payload) => self.check_close_status(&payload.key),
             Event::RetryAgentClose(payload) => self.retry_agent_close(&payload.key),
             Event::DismissAgentClose(payload) => self.dismiss_agent_close(&payload.key),
@@ -3073,10 +2988,12 @@ impl Runtime {
                 }
                 first || payload.refresh
             }
-            Event::CleanupReview => self.review_cleanup(),
+            Event::CleanupReview(payload) => self.review_cleanup(&payload.workspace_id),
             Event::CleanupConfirm(payload) => self.confirm_cleanup(payload),
             Event::CleanupDismiss => {
-                if self.cleanup.as_ref().is_none_or(|r| r.phase == "removing") {
+                // A worker still running owns the snapshot; it cannot be
+                // dismissed until the worker has ended.
+                if self.cleanup.is_none() || self.cleanup_worker.is_some() {
                     return false;
                 }
                 self.cleanup = None;

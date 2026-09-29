@@ -22,7 +22,15 @@ function AlertDialogContent({
   onOpenAutoFocus,
   onCloseAutoFocus,
   ...props
-}: ComponentProps<typeof AlertDialogPrimitive.Content> & { initialFocus?: "cancel" | "container" }) {
+}: ComponentProps<typeof AlertDialogPrimitive.Content> & {
+  /**
+   * Where the keyboard lands when the dialog opens: the dialog itself (the
+   * default), Radix's Cancel, or the one control marked `data-initial-focus`
+   * (`action`), which only the close sheet uses, as the operator's chosen
+   * Enter default (PRD close-agent-subtree D-18).
+   */
+  initialFocus?: "cancel" | "container" | "action";
+}) {
   const surface = useRef<HTMLDivElement>(null);
   const returnFocus = useReturnFocus(true);
   return (
@@ -38,9 +46,10 @@ function AlertDialogContent({
         )}
         onOpenAutoFocus={(event) => {
           onOpenAutoFocus?.(event);
-          if (event.defaultPrevented || initialFocus !== "container") return;
+          if (event.defaultPrevented || initialFocus === "cancel") return;
           event.preventDefault();
-          surface.current?.focus();
+          const action = initialFocus === "action" ? surface.current?.querySelector<HTMLElement>("[data-initial-focus]") : null;
+          (action ?? surface.current)?.focus();
         }}
         onCloseAutoFocus={(event) => {
           onCloseAutoFocus?.(event);

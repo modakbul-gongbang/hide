@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::view_bookmarks::Bookmarks;
 use crate::view_layout::{DisplayKind, Layout};
 
 pub const SCHEMA_VERSION: u32 = 2;
@@ -129,6 +130,11 @@ pub struct WorkspaceView {
     pub last_used_unix_ms: u64,
     pub layout: Layout,
     pub agent_layout: crate::agent_layout::Layout,
+    /// What each Agent tab's View areas showed in front (PRD
+    /// tab-view-bookmark). Left out of the file while empty, so a Workspace
+    /// that never used it reads as before, and an older build ignores the key.
+    #[serde(skip_serializing_if = "Bookmarks::is_empty")]
+    pub view_bookmarks: Bookmarks,
 }
 
 /// A stored entry as any build since schema 2 wrote it: the side panel's
@@ -160,6 +166,8 @@ struct StoredView {
     layout: Layout,
     #[serde(default)]
     agent_layout: crate::agent_layout::Layout,
+    #[serde(default)]
+    view_bookmarks: Bookmarks,
     #[serde(default)]
     mode: Option<LegacyMode>,
     #[serde(default)]
@@ -194,6 +202,7 @@ impl StoredView {
             last_used_unix_ms: self.last_used_unix_ms,
             layout: self.layout,
             agent_layout: self.agent_layout,
+            view_bookmarks: self.view_bookmarks,
         }
     }
 }
@@ -246,6 +255,7 @@ impl WorkspaceView {
             last_used_unix_ms: 0,
             layout: Layout::default(),
             agent_layout: crate::agent_layout::Layout::default(),
+            view_bookmarks: Bookmarks::default(),
         }
     }
 
@@ -409,6 +419,7 @@ impl V1View {
             last_used_unix_ms: self.last_used_unix_ms,
             layout,
             agent_layout: crate::agent_layout::Layout::default(),
+            view_bookmarks: Bookmarks::default(),
         }
     }
 }
@@ -504,6 +515,10 @@ fn settle(
         {
             repairs.push(format!("{} on {}: {note}", view.path, view.device_id));
         }
+        // A bookmark names the areas the repaired layout still has.
+        let layout = &view.layout;
+        view.view_bookmarks
+            .retain_areas(|area| layout.area(area).is_some());
     }
     workspaces.truncate(MAX_WORKSPACES);
     (
@@ -886,6 +901,68 @@ mod tests {
         assert!(!written.contains("\"explorer\":"));
         assert!(!written.contains("\"changes\":"));
         assert_eq!(load(&path, 2).0, loaded);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// PRD tab-view-bookmark B18, B19, D-13: the bookmarks come back after a
+    /// save, an entry stored without the key loads with none and no repair,
+    /// and a bookmark naming an area the layout no longer has is dropped on
+    /// load.
+    #[test]
+    fn bookmarks_survive_a_save_and_a_file_without_them_loads_untouched() {
+        let root = scratch("bookmarks");
+        let path = root.join("workspace-views.json");
+        let mut views = WorkspaceViews::default();
+        let entry = views.entry("local", "/repo");
+        let display = entry
+            .layout
+            .new_display("/repo/a.md", DisplayKind::File, None, false);
+        entry.layout.insert("a1", display, 1).unwrap();
+        entry.view_bookmarks.record("w:t1", "a1", "d1");
+        entry.view_bookmarks.record("w:t1", "a9", "d7");
+        entry.view_bookmarks.record("w:t2", "a1", "d1");
+        save(&path, &views).unwrap();
+
+        let (loaded, outcome) = load(&path, 1);
+        let bookmarks = &loaded.get("local", "/repo").unwrap().view_bookmarks;
+        assert_eq!(
+            bookmarks.of("w:t1").unwrap().len(),
+            1,
+            "the area a9 is gone"
+        );
+        assert_eq!(bookmarks.of("w:t2").unwrap().get("a1").unwrap(), "d1");
+        assert_eq!(
+            outcome,
+            LoadOutcome::Loaded {
+                migrated_from: None,
+                repairs: Vec::new()
+            }
+        );
+
+        let empty = WorkspaceViews {
+            workspaces: vec![WorkspaceView::new("local", "/repo")],
+        };
+        save(&path, &empty).unwrap();
+        assert!(
+            !fs::read_to_string(&path)
+                .unwrap()
+                .contains("view_bookmarks")
+        );
+        let (reloaded, outcome) = load(&path, 2);
+        assert!(
+            reloaded
+                .get("local", "/repo")
+                .unwrap()
+                .view_bookmarks
+                .is_empty()
+        );
+        assert_eq!(
+            outcome,
+            LoadOutcome::Loaded {
+                migrated_from: None,
+                repairs: Vec::new()
+            }
+        );
         let _ = fs::remove_dir_all(&root);
     }
 

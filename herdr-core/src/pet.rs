@@ -297,6 +297,7 @@ mod tests {
             lineage_sibling_pane_ids: Vec::new(),
             lineage_depth: 0,
             lineage_child_pane_ids: Vec::new(),
+            close_descendant_pane_ids: Vec::new(),
             lineage_root_checkout_id: None,
             lineage_worktree_badge: None,
             lineage_orphan: false,

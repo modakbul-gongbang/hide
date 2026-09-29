@@ -528,6 +528,7 @@ impl SessionReplica {
                     inactive_checkouts: Default::default(),
                     removal: Default::default(),
                     disk: Default::default(),
+                    cleanup: None,
                 }
             })
             .collect::<Vec<_>>();

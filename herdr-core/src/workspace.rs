@@ -480,6 +480,7 @@ fn inspect_space(space: &SessionSpace) -> Vec<WorkspaceSnapshot> {
                     inactive_checkouts: Default::default(),
                     removal: Default::default(),
                     disk: Default::default(),
+                    cleanup: None,
                 });
                 projects.len() - 1
             }
@@ -816,6 +817,7 @@ fn inspect(
         inactive_checkouts: Default::default(),
         removal: Default::default(),
         disk: Default::default(),
+        cleanup: None,
     }
 }
 
@@ -1377,6 +1379,7 @@ mod tests {
             inactive_checkouts: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
+            cleanup: None,
         };
 
         let authority = authoritative_session_space(&spaces, &project, "/fixture/outer/worktree")
@@ -1433,6 +1436,7 @@ mod tests {
             inactive_checkouts: Default::default(),
             removal: Default::default(),
             disk: Default::default(),
+            cleanup: None,
         };
 
         let authority =

@@ -1999,6 +1999,25 @@ impl Runtime {
             &workspaces,
             &self.snapshot.ui_state.expanded_agent_pane_ids,
         );
+        // A device that is not connected keeps its last session for the
+        // lineage above, but its rows are neither shown nor closable, so no
+        // close ever names them (PRD close-agent-subtree D-16).
+        let unreachable = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .filter(|remote| remote.state != "connected")
+            .filter_map(|remote| remote.session.as_ref())
+            .flat_map(|session| session.agents.iter().map(|agent| agent.pane_id.clone()))
+            .collect::<HashSet<_>>();
+        if !unreachable.is_empty() {
+            for agent in &mut agents {
+                agent
+                    .close_descendant_pane_ids
+                    .retain(|pane| !unreachable.contains(pane));
+            }
+        }
         let resolved = agents
             .into_iter()
             .map(|agent| (agent.pane_id.clone(), agent))

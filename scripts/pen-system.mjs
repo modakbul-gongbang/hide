@@ -300,18 +300,19 @@ function buildCheckbox(tokens) {
     reusable: true, width: S, height: S, cornerRadius: '$--radius-xs', fill: '$--background',
     stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
     layout: 'horizontal', alignItems: 'center', justifyContent: 'center',
-  }, [icon('chk-i', 'check', {size: 12, fill: '$--primary-foreground', enabled: false})]);
+  }, [icon('chk-i', 'check', {size: 12, fill: '$--primary-foreground', enabled: false}), icon('chk-bar', 'minus', {size: 12, fill: '$--primary-foreground', enabled: false})]);
   function states(suffix) {
     const checked = {fill: '$--primary', stroke: '$--primary', strokeWidth: '$--size-hairline', strokeAlignment: 'inner'};
     return [
       cell('Unchecked', ref(`chk-off-${suffix}`, master.id, 'Unchecked')),
       cell('Checked', ref(`chk-on-${suffix}`, master.id, 'Checked', checked, {'chk-i': {enabled: true}})),
+      cell('Indeterminate', ref(`chk-mixed-${suffix}`, master.id, 'Indeterminate', checked, {'chk-bar': {enabled: true}})),
       cell('Focus', ref(`chk-focus-${suffix}`, master.id, 'Focus', {stroke: '$--ring', strokeWidth: 1})),
       cell('Disabled', ref(`chk-disabled-${suffix}`, master.id, 'Disabled', {opacity: num(tokens, '--opacity-disabled')})),
       cell('Checked Disabled', ref(`chk-ondis-${suffix}`, master.id, 'Checked Disabled', {...checked, opacity: num(tokens, '--opacity-disabled')}, {'chk-i': {enabled: true}})),
     ];
   }
-  return buildSheet('sys-checkbox', 'System / Checkbox', 'Shaped from shadcn Checkbox/Checked’s Checkbox frame over Radix: --size-checkbox square, rounded-xs, a --size-icon-sm check glyph, checked fills --primary - hide’s sizes already match the shadcn node’s own 16/4/12.', [masterCard('chk-master-card', 'Master', master)], states('l'), states('d'));
+  return buildSheet('sys-checkbox', 'System / Checkbox', 'Shaped from shadcn Checkbox/Checked’s Checkbox frame over Radix: --size-checkbox square, rounded-xs, a --size-icon-sm check glyph, checked and indeterminate fill --primary (a minus for a group whose members are partly checked) - hide’s sizes already match the shadcn node’s own 16/4/12.', [masterCard('chk-master-card', 'Master', master)], states('l'), states('d'));
 }
 
 // -- Switch --------------------------------------------------------------------

@@ -36,6 +36,8 @@ export type AgentRow = {
   delegated?: boolean;
   lineage_parent_pane_id?: string | null;
   lineage_child_pane_ids?: string[];
+  /** Every live descendant pane in the order closing this row takes them, deepest first; absent when none (PRD close-agent-subtree D-20). */
+  close_descendant_pane_ids?: string[];
   /** What every live descendant is doing, counted by state; unknown activity is in none. */
   descendant_counts?: DescendantCounts;
   /** A quiet root whose live descendant is still working or asking: drawn as a ring in Working (docs/status-model.md). */
@@ -347,6 +349,29 @@ export type WorktreeRow = {
   behind_upstream?: number | null;
   pane_count: number;
   deletion_gate: DeletionGate;
+  /** What the core measured of this checkout's folder; its `layers` split the size by what a build tool remakes. */
+  disk?: WorktreeDisk;
+};
+
+/** One layer's share of a checkout: allocated bytes, how many folders, the biggest one's name (never a path). */
+export type DiskCell = { bytes: number; folders: number; largest_name: string | null };
+
+/** A checkout's allocated bytes split into the layers cleanup names; Git-visible files are `source_bytes`. */
+export type DiskLayers = { build_cache: DiskCell; dependencies: DiskCell; other: DiskCell; source_bytes: number };
+
+/** The two layers a cleanup may empty; `other` is size only (PRD disk-layers D-10). */
+export type CacheLayer = "build_cache" | "dependencies";
+
+export type WorktreeDisk = {
+  path?: string | null;
+  /** Null until measured and when a part could not be read. */
+  total_bytes: number | null;
+  unavailable_reason: string | null;
+  measured_at_unix_ms?: number | null;
+  largest_child_name?: string | null;
+  largest_child_bytes?: number | null;
+  layers?: DiskLayers | null;
+  volume_free_bytes?: number | null;
 };
 
 export type Checkout = {
@@ -421,6 +446,81 @@ export type Workspace = {
    * measuring (`card_measure_disk` with its `workspace_id`).
    */
   disk?: ProjectDisk;
+  /** The project's disk cleanup: its review, its progress and its result, present on the project the last `cleanup_review` named. */
+  cleanup?: DiskCleanup | null;
+};
+
+export type DiskCleanupPhase = "loading" | "review" | "removing" | "complete" | "failed";
+
+/** Why a worktree cannot be removed by the sheet; the shell words each code. */
+export type CleanupExclusionCode =
+  | "main"
+  | "locked"
+  | "unavailable"
+  | "missing"
+  | "alias"
+  | "current"
+  | "contains_worktree"
+  | "in_use"
+  | "pane_open"
+  | "main_unavailable"
+  | "detached"
+  | "dirty"
+  | "not_merged"
+  | "merge_unverified"
+  | "nested_repository"
+  | "unverified";
+
+/** `unverified` is a checkout the core has no facts about, which is never read as idle. */
+export type CleanupInUse = { code: "agent_working" | "process" | "port" | "unverified"; name: string | null; port: number | null };
+
+export type CleanupRow = {
+  path: string;
+  branch: string | null;
+  head: string | null;
+  is_main: boolean;
+  exclusion_code: CleanupExclusionCode | null;
+  exclusion_count: number | null;
+  in_use: CleanupInUse | null;
+  /** The worktree's own outcome once confirmed: `skipped` when a recheck found it changed or busy, `failed` when Git refused. */
+  result: "removed" | "skipped" | "failed" | null;
+  /** Why a skipped or failed worktree stayed: an exclusion code, `changed`, `not_found`, `unverified` or `remove_refused`. */
+  result_code: CleanupResultCode | null;
+  /** The allocated size of the worktree this run removed. */
+  bytes: number | null;
+};
+
+export type CleanupResultCode = CleanupExclusionCode | "changed" | "not_found" | "unverified" | "remove_refused";
+
+export type CleanupCellSkip = "in_use" | "changed" | "tracked_files" | "nested_repository" | "symlink" | "not_found" | "unverified";
+
+export type CleanupCellResult = {
+  path: string;
+  layer: CacheLayer;
+  outcome: "removed" | "skipped" | "failed";
+  bytes: number;
+  folders: number;
+  /** What kept a folder of the cell (or all of it): a recheck code, or `io` when a move failed. */
+  reason_code: CleanupCellSkip | "io" | null;
+};
+
+export type DiskCleanup = {
+  id: number;
+  workspace_id: string;
+  repository_root: string;
+  phase: DiskCleanupPhase;
+  main_head: string | null;
+  message: string | null;
+  /** Set when in-use could not be read (no Herdr connection, a failed process read): nothing is selectable. */
+  usage_error: string | null;
+  /** The in-use reads are in: cache cells may be ticked while worktree checks still run (phase `loading`). */
+  usage_ready: boolean;
+  free_bytes: number | null;
+  progress: { done: number; total: number } | null;
+  rows: CleanupRow[];
+  cell_results: CleanupCellResult[];
+  free_before: number | null;
+  free_after: number | null;
 };
 
 export type ProjectDisk = {
@@ -429,7 +529,15 @@ export type ProjectDisk = {
   unavailable_reason: string | null;
   /** The named measurement has not come back yet. */
   measuring: boolean;
+  /** Free space on the volume the project sits on, as of the last measurement. */
+  free_bytes?: number | null;
+  /** What the checkouts that could be measured add up to; the entrance shows it as a subtotal while `total_bytes` is null. */
+  confirmed_bytes?: number | null;
+  /** The layers of the checkouts that could be measured, summed; absent only while none was. */
+  layers?: ProjectDiskLayers | null;
 };
+
+export type ProjectDiskLayers = { build_cache: number; dependencies: number; source: number; other: number; shared_git: number };
 
 export type InactiveProjectGroup = { device_id: string; expanded: boolean; project_ids: string[] };
 

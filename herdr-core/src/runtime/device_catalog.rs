@@ -111,12 +111,54 @@ impl Runtime {
             changed = true;
         }
         if changed {
+            self.prune_device_view_bookmarks(target);
             self.repoint_device_editor_tabs(target);
             // A device Workspace in front waited for its catalog to bring
             // its View tabs back.
             self.restore_front_when_ready();
         }
         changed
+    }
+
+    /// A device tab Herdr no longer lists loses its View bookmark (D-11).
+    /// A checkout the device lists with no tab at all is left alone, like an
+    /// answer that has not arrived.
+    fn prune_device_view_bookmarks(&mut self, target: &str) {
+        let Some(session) = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == target)
+            .and_then(|status| status.session.as_ref())
+        else {
+            return;
+        };
+        let listed: Vec<(workspace_view::WorkspaceKey, Vec<String>)> = session
+            .workspaces
+            .iter()
+            .flat_map(|project| {
+                project.checkouts.iter().map(|checkout| {
+                    (
+                        (project.device_id.clone(), checkout.path.clone()),
+                        checkout
+                            .tabs
+                            .iter()
+                            .filter_map(|tab| tab.id.clone())
+                            .collect::<Vec<_>>(),
+                    )
+                })
+            })
+            .filter(|(_, tabs)| !tabs.is_empty())
+            .collect();
+        let mut pruned = false;
+        for (key, tabs) in &listed {
+            let tabs: Vec<&str> = tabs.iter().map(String::as_str).collect();
+            pruned |= self.prune_view_bookmarks(key, &tabs);
+        }
+        if pruned {
+            self.persist_workspace_views();
+        }
     }
 
     /// Carries folds saved under a device checkout's old, workspace-keyed id

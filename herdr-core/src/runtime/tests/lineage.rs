@@ -2093,3 +2093,82 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
         std::fs::write(&path, bytes).expect("snapshot is written");
     }
 }
+
+// PRD close-agent-subtree D-20, D-21: a row lists every live descendant in
+// the order closing it takes them, each before its own parent.
+#[test]
+fn each_row_lists_its_live_descendants_deepest_first_and_a_leaf_lists_none() {
+    let mut rows = lineage_rows();
+    crate::sidebar::apply_lineage(&mut rows, &lineage_workspaces(), &[]);
+    let listed = |id: &str| {
+        rows.iter()
+            .find(|row| row.pane_id == id)
+            .unwrap()
+            .close_descendant_pane_ids
+            .clone()
+    };
+    let parent = listed("parent");
+    assert_eq!(parent.len(), 3);
+    let at = |id: &str| parent.iter().position(|pane| pane == id).unwrap();
+    assert!(
+        at("grandchild") < at("child"),
+        "a child closes after its own child"
+    );
+    assert!(parent.contains(&"sibling".to_owned()));
+    assert_eq!(listed("child"), ["grandchild"]);
+    assert!(listed("grandchild").is_empty());
+    assert!(listed("sibling").is_empty());
+    let wire =
+        serde_json::to_value(rows.iter().find(|row| row.pane_id == "sibling").unwrap()).unwrap();
+    assert!(
+        wire.get("close_descendant_pane_ids").is_none(),
+        "a row with no descendant carries no field"
+    );
+}
+
+// PRD close-agent-subtree D-16, B17: a device that is not connected keeps
+// its lineage but none of its rows is ever named for a close.
+#[test]
+fn a_descendant_on_a_disconnected_device_is_never_listed_for_a_close() {
+    let mut runtime = runtime();
+    runtime.local_machine_id = Some("machine-local".to_owned());
+    runtime
+        .device_machine_ids
+        .insert("mini".to_owned(), "machine-mini".to_owned());
+    let mut rows = lineage_rows();
+    let mut parent = rows.remove(0);
+    parent.pane_id = "local-parent".to_owned();
+    parent.declared_parent_pane_id = None;
+    parent.spawned_from_pane_id = None;
+    let mut local_child = rows.remove(0);
+    local_child.pane_id = "local-child".to_owned();
+    local_child.declared_parent_pane_id = Some("local-parent".to_owned());
+    local_child.spawned_from_machine_id = None;
+    let mut remote_child = rows.remove(0);
+    remote_child.pane_id = "remote:mini:pane:remote-child".to_owned();
+    remote_child.declared_parent_pane_id = Some("local-parent".to_owned());
+    remote_child.spawned_from_machine_id = Some("machine-local".to_owned());
+    runtime.snapshot.navigator.agents = vec![parent, local_child];
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: "mini".to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: Some("0.9.1".to_owned()),
+        session: Some(remote_lineage_session(vec![remote_child])),
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    runtime.refresh_agent_lineage();
+    let mut listed = local_lineage_agent(&runtime, "local-parent")
+        .close_descendant_pane_ids
+        .clone();
+    listed.sort();
+    assert_eq!(listed, ["local-child", "remote:mini:pane:remote-child"]);
+
+    runtime.snapshot.status.remote[0].state = "stale".to_owned();
+    runtime.refresh_agent_lineage();
+    assert_eq!(
+        local_lineage_agent(&runtime, "local-parent").close_descendant_pane_ids,
+        ["local-child"]
+    );
+}

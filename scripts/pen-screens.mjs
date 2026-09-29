@@ -38,6 +38,7 @@
 
 import {read as readTokenPlan, loadCanvas, CANVAS} from './pen-tokens.mjs';
 import {BUTTON_VARIANTS, BADGE_VARIANTS, frame, icon, num, text} from './pen-system.mjs';
+import {diskCleanupRows} from './pen-screens-disk.mjs';
 
 const LOCAL_TOKEN = /^\$--[A-Za-z0-9_-]+$/;
 const THEMED_PROPS = ['fill', 'stroke'];
@@ -2839,6 +2840,15 @@ function buildMobile(tokens) {
 
 // -- assembly ---------------------------------------------------------------------
 
+// -- Screen / Disk Cleanup -------------------------------------------------------
+
+const DISK_CLEANUP_SPEC = 'web/src/DiskCleanupSheet.tsx, DiskEntrance.tsx, diskCleanup.ts (PRD disk-layers B1-B28, worded from the shipped app): the Overview facts line with the disk number’s breakdown tooltip (빌드 캐시, 의존성, 워크트리 소스, 기타, 공유 Git), the `≥` number and its tooltip line while a checkout could not be measured, and the low-disk cell that opens the sheet on 끝난 것, then the sheet as a checkout x layer table (빌드 캐시, 의존성, 워크트리, 기타 read-only, 합계) with the checkbox for every unit picked at once (cell, row, column, top-left, the fold of small checkouts, all limited to the rows the filter shows; a worktree pick turns its row’s caches into the disabled Checked state, a partly picked group draws the Checkbox’s Indeterminate). The states the table carries follow: measuring, not measured, in use with its reason beside the name, usage unreadable, another cleanup running, no row for the filter. The table has no subtitle, no second header line and no legend, and its footer says only `N칸 · X`. The confirm step exists only when a worktree is picked and names the folder; the result is one line of the volume’s free space before and after over its per-cell rows. Sizes and names are invented mock content.';
+
+function buildDiskCleanup(tokens) {
+  const build = suffix => diskCleanupRows(tokens, {themedXref, screenButton, screenDialogSurface}, suffix);
+  return screenSheet('screen-disk-cleanup', 'Screen / Disk Cleanup', DISK_CLEANUP_SPEC, build, build);
+}
+
 export function readLocalVariables(root) {
   const {expected} = readTokenPlan(root);
   const {document} = loadCanvas(root);
@@ -2863,5 +2873,6 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Menus and Overlays', build: () => buildMenus()},
     {name: 'Screen / Projects Sidebar', build: () => buildProjectsSidebar(tokens)},
     {name: 'Screen / Mobile', build: () => buildMobile(tokens)},
+    {name: 'Screen / Disk Cleanup', build: () => buildDiskCleanup(tokens)},
   ];
 }

@@ -360,11 +360,13 @@ describe("the facts line", () => {
     expect(allProjectsStats([read, null])).toEqual({ projects: 2, openPullRequests: null, merged: null });
   });
 
-  it("states the disk as a size once measured, pending while measuring, and nothing when a part could not be read", () => {
+  it("states the disk as a size once measured, pending while measuring, and the subtotal when a part could not be read, and nothing when none could", () => {
     const sized = (disk: Workspace["disk"]) => projectStats({ ...workspace([]), disk }).disk;
     expect(sized({ total_bytes: null, unavailable_reason: null, measuring: true })).toBe("measuring");
     expect(sized({ total_bytes: 1_503_238_553, unavailable_reason: null, measuring: false })).toBe(1_503_238_553);
     expect(sized({ total_bytes: null, unavailable_reason: "Permission denied", measuring: false })).toBeNull();
+    // One checkout that could not be read leaves the subtotal of the others, not a total.
+    expect(sized({ total_bytes: null, unavailable_reason: "over the limit", measuring: false, confirmed_bytes: 1_503_238_553 })).toBe(1_503_238_553);
     expect(formatBytes(512)).toBe("512 B");
     expect(formatBytes(812 * 1024 * 1024)).toBe("812 MB");
     expect(formatBytes(1_503_238_553)).toBe("1.4 GB");

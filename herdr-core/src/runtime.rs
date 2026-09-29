@@ -27,7 +27,9 @@ mod rename;
 mod session;
 mod snapshot_delta;
 mod terminal;
+mod tree_close;
 mod view_areas;
+mod view_bookmarks;
 mod workspace_control;
 mod workspace_view;
 
@@ -1093,6 +1095,10 @@ pub struct Runtime {
     /// that as a failure is what put "terminal attach ended" on screen for one
     /// frame every time the operator closed a pane.
     panes_closing: HashSet<String>,
+    /// Closes of an agent together with its descendants, deepest first
+    /// (`tree_close.rs`). At most `TREE_CLOSE_ACTIVE_LIMIT` at once.
+    tree_closes: Vec<tree_close::TreeClose>,
+    next_tree_close_id: u64,
     /// User-initiated local closes, newest last. Memory only by contract.
     recent_closed: VecDeque<ClosedItem>,
     /// User closes in request order. A close is promoted onto
@@ -1306,6 +1312,10 @@ pub struct Runtime {
     disk_project: Option<String>,
     cleanup: Option<live::cleanup::CleanupSnapshot>,
     next_cleanup_id: u64,
+    /// The id of the cleanup worker that is running, if one is. While it is,
+    /// no other review starts and the snapshot cannot be dismissed, so two
+    /// workers never overlap however the sheet is opened and closed.
+    cleanup_worker: Option<u64>,
     /// Bumped when the worktree list itself is known to have changed through a
     /// manual refresh, a refused removal, or an observed Herdr worktree event.
     worktree_generation: u64,
@@ -1540,6 +1550,8 @@ impl Runtime {
             recent_visible_tabs: Vec::new(),
             pending_tab_rename: None,
             panes_closing: HashSet::new(),
+            tree_closes: Vec::new(),
+            next_tree_close_id: 0,
             recent_closed: VecDeque::new(),
             close_capture_order: VecDeque::new(),
             close_operations: HashMap::new(),
@@ -1628,6 +1640,7 @@ impl Runtime {
             disk_project: None,
             cleanup: None,
             next_cleanup_id: 0,
+            cleanup_worker: None,
             worktree_generation: 0,
             worktree_removals: 0,
             removed_worktrees: Vec::new(),

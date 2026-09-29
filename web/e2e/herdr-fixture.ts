@@ -289,3 +289,20 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
     throw error;
   }
 }
+
+/**
+ * A workspace of its own at `cwd` with one agent in it, recorded as spawned
+ * by `parent` the way hcoord records it (a `parent_pane` token) when one is
+ * named. Returns the new pane.
+ */
+export async function spawnAgent(fixture: HerdrFixture, label: string, parent: string | null, cwd = path.join(fixture.root, label)): Promise<string> {
+  fs.mkdirSync(cwd, { recursive: true });
+  const created = fixture.run(["workspace", "create", "--cwd", cwd, "--label", label, "--env", `PATH=${fixture.fixturePath}`, "--no-focus"]) as {
+    result: { root_pane: { pane_id: string } };
+  };
+  const pane = created.result.root_pane.pane_id;
+  await waitFor(() => paneText(fixture.env, fixture.bin, pane).includes("fixture %"), `a prompt in pane ${pane}`, 20_000, () => JSON.stringify(paneRead(fixture.env, fixture.bin, pane)));
+  fixture.run(["agent", "start", label, "--kind", "claude", "--pane", pane]);
+  if (parent) execFileSync(fixture.bin, ["pane", "report-metadata", pane, "--source", "e2e-lineage", "--token", `parent_pane=${parent}`], { env: fixture.env, timeout: 30_000 });
+  return pane;
+}
