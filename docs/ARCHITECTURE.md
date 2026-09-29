@@ -906,7 +906,8 @@ The helper holds an exclusive `flock` on the account's home folder for each sync
 They run in the order they take the lock, not the order they were sent, so each answer records the set it applied and a newer set that ran first is sent again.
 A Home agent is started with each linked project's real folder as `--add-dir <folder>` (both CLIs take it, one flag per folder), so its sandbox lets it edit a project through its link; the edit shows as that project's checkout change, and the agent row stays under Home.
 Removing a device, or losing its connection, leaves its `~/hide` and its agents on it; registering it again continues them.
-Consent contract 2 is unchanged: the helper's scope grows to `~/hide`, its links and instruction files for devices that already allowed it, and only the add-device consent wording names Home (D-05).
+Home does not bump the consent contract on its own (PRD home-device-rail D-05): the helper's scope includes `~/hide`, its links and instruction files for devices that already allowed it, and the add-device wording names Home.
+The later device-parity contract is 3 (D-12), and a contract-2 device carries its consent forward on connection without another prompt (D-13).
 
 ### The desktop host
 

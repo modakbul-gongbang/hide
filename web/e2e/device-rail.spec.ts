@@ -53,7 +53,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     const centerBefore = await page.locator("[data-main-screen]").count();
     await page.locator("[data-device-label]").fill("연구실 빌드 서버 자동화 장비");
     await page.locator("[data-device-alias]").fill(ALIAS);
-    await page.locator("[data-add-device-without-helper]").click();
+    await page.locator("[data-add-device]").click();
     await page.keyboard.press("Escape");
     await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
     const rail = page.locator("[data-device-rail]");
