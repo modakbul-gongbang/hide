@@ -1,13 +1,13 @@
 <p align="center">
-  <img src="desktop/resources/hide-icon-1024.png" width="132" alt="hide app icon">
+  <img src="desktop/resources/hide-icon-1024.png" width="132" alt="hide owl app icon">
 </p>
 
 <h1 align="center">hide</h1>
 
-<p align="center"><strong>Your agent workspaces, without the window hunt.</strong></p>
+<p align="center"><strong>Many agents. One clear view.</strong></p>
 
 <p align="center">
-  A quiet macOS workspace for Herdr, local and remote terminals, and coding agents.
+  A calm IDE for coding with multiple agents, with each task in context and attention on what matters.
 </p>
 
 <p align="center">
@@ -19,8 +19,9 @@
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-blue"></a>
 </p>
 
-hide is a dark workspace navigator for [Herdr](https://github.com/herdrdev/herdr), shipped as a macOS desktop app.
-It brings local and remote workspaces, checkouts, terminal panes, files, and coding agents into one keyboard-first window while leaving session state and credentials with the tools that own them.
+hide is a multi-agent IDE built on [Herdr](https://github.com/herdrdev/herdr), shipped as a macOS desktop app.
+It brings local and remote workspaces, checkouts, terminal panes, files, and coding agents into one keyboard-first window.
+It surfaces the questions, approvals, and results that need a person's attention while leaving session state and credentials with the tools that own them.
 
 ## Why hide
 
@@ -30,7 +31,7 @@ It brings local and remote workspaces, checkouts, terminal panes, files, and cod
 - **Local and remote stay distinct.** Work on this Mac or an SSH-connected Mac while keeping remote file writes inside the attached terminal.
 - **Files remain understandable.** Browse and edit existing local files in the Explorer, with remote trees exposed as read-only context.
 - **A browser shows beside the work.** `hide browser open <url>` opens a browser as a View area display in the desktop app.
-- **Attention is visible.** Agent state, blocked work, and failures make the next action easy to spot.
+- **Attention is visible.** Questions, approvals, completed turns, and failures make the next action easy to spot.
 
 ## How it works
 

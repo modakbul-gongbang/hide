@@ -110340,24 +110340,17 @@
                                       "type": "frame",
                                       "id": "mob-pair-b-l-logo",
                                       "name": "Logo",
-                                      "children": [
-                                        {
-                                          "type": "text",
-                                          "id": "mob-pair-b-l-lt",
-                                          "name": "h",
-                                          "content": "h",
-                                          "fill": "$--primary-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": 34,
-                                          "fontWeight": "700"
-                                        }
-                                      ],
+                                      "children": [],
                                       "width": 64,
                                       "height": 64,
                                       "cornerRadius": "$--radius-xl",
-                                      "fill": "$--primary",
-                                      "alignItems": "center",
-                                      "justifyContent": "center"
+                                      "clip": true,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/public/m/icon-192.png",
+                                        "mode": "fit"
+                                      }
                                     },
                                     {
                                       "type": "text",
@@ -126618,24 +126611,17 @@
                                       "type": "frame",
                                       "id": "mob-pair-b-d-logo",
                                       "name": "Logo",
-                                      "children": [
-                                        {
-                                          "type": "text",
-                                          "id": "mob-pair-b-d-lt",
-                                          "name": "h",
-                                          "content": "h",
-                                          "fill": "$--primary-foreground",
-                                          "fontFamily": "$--font-ui",
-                                          "fontSize": 34,
-                                          "fontWeight": "700"
-                                        }
-                                      ],
+                                      "children": [],
                                       "width": 64,
                                       "height": 64,
                                       "cornerRadius": "$--radius-xl",
-                                      "fill": "$--primary",
-                                      "alignItems": "center",
-                                      "justifyContent": "center"
+                                      "clip": true,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/public/m/icon-192.png",
+                                        "mode": "fit"
+                                      }
                                     },
                                     {
                                       "type": "text",

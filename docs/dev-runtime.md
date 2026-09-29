@@ -45,6 +45,8 @@ For a faster loop that does not need reinstalling anything, `pnpm --dir desktop 
 
 The production identity is `hide` (`me.grab.hide.desktop`).
 The app bundles `desktop/resources/hide.icns` as its icon (`desktop/scripts/package.mjs`).
+The approved mark and its visual rules live in [BRAND.md](BRAND.md), with the full square source at `design/brand/hide-mark.png`.
+The app's rounded 1024-pixel PNG and `.icns` are derivatives of that source; the mobile web icons under `web/public/m/` use the same mark.
 Provider marks (`agent-claude.png`, `agent-codex.png`) live in `web/src/assets/`, drawn by the web shell itself rather than bundled as native app resources.
 Keep packaging aligned with `desktop/resources/THIRD_PARTY_NOTICES/`; bundled artwork is not a grant of trademark permission.
 Use [UI_BEHAVIOR.md](UI_BEHAVIOR.md) for shell behavior.

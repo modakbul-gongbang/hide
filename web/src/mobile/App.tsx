@@ -32,9 +32,7 @@ export function App() {
 
 function HideIcon() {
   return (
-    <div aria-hidden="true" className="flex size-(--size-mobile-app-icon) items-center justify-center rounded-xl bg-primary text-display font-semibold text-primary-foreground">
-      h
-    </div>
+    <img aria-hidden="true" alt="" src="/m/icon-192.png" className="size-(--size-mobile-app-icon) rounded-xl" />
   );
 }
 
