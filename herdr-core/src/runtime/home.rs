@@ -18,10 +18,13 @@ use hide_host::home::HomeSynced;
 /// is synced rather than taken as already done. `in_flight` holds back a second
 /// background sync while one runs; a start's sync does not wait for it, because
 /// the helper runs syncs of one Home one after the other (`hide_host::home`).
+/// `deferred` marks a change that found the helper not ready, which is sent
+/// once the helper is.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct HomeLinkState {
     requested: Option<Vec<String>>,
     in_flight: bool,
+    deferred: bool,
 }
 
 /// The label Home's registration and its first tab carry.
@@ -320,7 +323,7 @@ impl Runtime {
                 continue;
             }
             // Nothing is recorded as sent until it is: a device whose helper
-            // is not ready is tried again on the next registration change.
+            // is not ready is tried again once it is (`home_helper_ready`).
             let host = match self.device_channel(&device) {
                 Ok(host) => host,
                 Err(message) => {
@@ -328,12 +331,14 @@ impl Runtime {
                         "component": "home", "kind": "home.link_sync_deferred",
                         "target": device, "message": message, "projects": projects.len(),
                     }));
+                    self.home_links.entry(device).or_default().deferred = true;
                     continue;
                 }
             };
             let state = self.home_links.entry(device.clone()).or_default();
             state.requested = Some(projects.clone());
             state.in_flight = true;
+            state.deferred = false;
             if let Err(message) =
                 live::spawn_home_link_sync(context.clone(), device.clone(), projects, host)
             {
@@ -343,6 +348,19 @@ impl Runtime {
                 self.forget_home_sync(&device);
                 self.log_home_sync_failure(&device, "home.sync_failed", &message);
             }
+        }
+    }
+
+    /// `device`'s helper became ready: a link change it missed is sent now.
+    /// Launching Hide writes nothing, so a device with nothing deferred is
+    /// left alone.
+    pub(super) fn home_helper_ready(&mut self, device: &str) {
+        if self
+            .home_links
+            .get(device)
+            .is_some_and(|state| state.deferred)
+        {
+            self.request_home_link_syncs();
         }
     }
 

@@ -349,6 +349,7 @@ impl Runtime {
                 // A device Workspace in front waited for this helper to
                 // bring its View tabs back.
                 self.restore_front_when_ready();
+                self.home_helper_ready(device_id);
             }
             Err(error) => {
                 let message = error.to_string();

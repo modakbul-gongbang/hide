@@ -448,6 +448,47 @@ fn the_first_registration_after_launch_is_linked_into_an_existing_home() {
     });
 }
 
+/// B19 across a helper reconnect: a registration change made while the
+/// device's helper was not ready is linked once it is, with no Home start.
+#[test]
+fn a_link_change_missed_while_the_helper_reconnects_is_sent_once_it_is_ready() {
+    let machine = machine();
+    let herdr = herdr("home-reconnect");
+    let earlier = hide_host::home::sync(&machine.user_home, &machine.projects[..1]).unwrap();
+    let shared = device_runtime(&herdr, &machine.user_home);
+    let home = machine.user_home.join("hide");
+    {
+        let mut runtime = shared.lock().unwrap();
+        runtime.device_hosts.get_mut(DEVICE).unwrap().phase = hosts::HostPhase::Connecting;
+        let registrations = &mut runtime.snapshot.ui_state.workspace_registrations;
+        registrations.push(registration(&machine.projects[0], DEVICE));
+        registrations.push(WorkspaceRegistration {
+            pinned: true,
+            home: true,
+            ..registration(&earlier.home, DEVICE)
+        });
+        registrations.push(registration(&machine.projects[1], DEVICE));
+        runtime.persist_ui_state();
+    }
+    std::thread::sleep(Duration::from_millis(200));
+    assert!(!home.join("app-play").exists(), "nothing reaches a helper that is not ready");
+
+    {
+        let mut runtime = shared.lock().unwrap();
+        runtime.device_hosts.get_mut(DEVICE).unwrap().phase = hosts::HostPhase::Ready {
+            host: Arc::new(HomeHost {
+                user_home: machine.user_home.clone(),
+            }),
+            platform: "macos aarch64".to_owned(),
+            helper_path: "/fake/hide-host-helper".to_owned(),
+        };
+        runtime.home_helper_ready(DEVICE);
+    }
+    wait_for("the missed project's link", || {
+        home.join("app-play").is_symlink() && home.join("app-work").is_symlink()
+    });
+}
+
 /// B21, D-03: a `~/hide` that is not Hide's is left as it is, and the start
 /// that asked is refused with the reason, under its own request id.
 #[test]
