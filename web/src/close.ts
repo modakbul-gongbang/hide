@@ -10,12 +10,12 @@ export type CloseKind = "pane" | "tab";
 
 export type CloseDecision =
   | { action: "status_unknown"; label: string }
-  | { action: "confirm"; title: string; consequence: string; affected: string[] }
+  | { action: "confirm" }
   | { action: "close" };
 
 type Target = { label: string; confirmation: boolean; statusCheck: boolean };
 
-function target(pane: PaneRow, agents: AgentRow[]): Target {
+function target(pane: PaneRow, agents: readonly AgentRow[]): Target {
   const agent = agents.find((row) => row.pane_id === pane.id);
   return {
     label: pane.herdr_label ?? pane.id,
@@ -24,25 +24,44 @@ function target(pane: PaneRow, agents: AgentRow[]): Target {
   };
 }
 
-export function closeDecision(kind: CloseKind, panes: PaneRow[], agents: AgentRow[]): CloseDecision {
+export function closeDecision(panes: PaneRow[], agents: AgentRow[]): CloseDecision {
   const targets = panes.map((pane) => target(pane, agents));
   const unknown = targets.find((row) => row.statusCheck);
   if (unknown) return { action: "status_unknown", label: unknown.label };
-  const risky = targets.filter((row) => row.confirmation);
-  if (risky.length === 0) return { action: "close" };
+  return targets.some((row) => row.confirmation) ? { action: "confirm" } : { action: "close" };
+}
+
+/** The Stop-work sheet's words, which stay as they are while it is open (B28). */
+export function stopWorkCopy(kind: CloseKind): { title: string; consequence: string } {
   return kind === "pane"
-    ? {
-        action: "confirm",
-        title: "Stop the active pane?",
-        consequence: "Closing this pane terminates its running process and interrupts the listed work.",
-        affected: risky.map((row) => row.label),
-      }
-    : {
-        action: "confirm",
-        title: "Close this tab?",
-        consequence: "Closing the tab terminates all listed working or attention panes in one operation.",
-        affected: risky.map((row) => row.label),
-      };
+    ? { title: "Stop the active pane?", consequence: "Closing this pane terminates its running process and interrupts the listed work." }
+    : { title: "Close this tab?", consequence: "Closing the tab terminates all listed working or attention panes in one operation." };
+}
+
+/** A pane the Stop-work sheet lists: working or asking (`active`), unreadable, or quiet. */
+export type StopWorkRow = { pane: PaneRow; agent: AgentRow | null; label: string; state: "active" | "unknown" | "quiet" };
+
+export type StopWork = {
+  rows: StopWorkRow[];
+  /** A pane's activity is unknown, so Stop work and close waits for a status check (B28). */
+  unknown: StopWorkRow | null;
+};
+
+/**
+ * The open Stop-work sheet's list, re-derived from every snapshot (PRD
+ * close-agent-subtree B28, D-39): every pane that closes, each with its mark
+ * and status word, a quiet one dimmed rather than dropped, so a pane that
+ * settles or starts while the sheet is open changes in place.
+ */
+export function stopWorkOf(panes: readonly PaneRow[], agents: readonly AgentRow[]): StopWork {
+  const rows = panes.map((pane): StopWorkRow => {
+    const row = target(pane, agents);
+    const agent = agents.find((candidate) => candidate.pane_id === pane.id) ?? null;
+    const state = row.statusCheck ? "unknown" : row.confirmation ? "active" : "quiet";
+    // Named as the sidebar and the pane header name it, not by its pane id.
+    return { pane, agent, label: agent?.identity_label ?? pane.identity_label ?? row.label, state };
+  });
+  return { rows, unknown: rows.find((row) => row.state === "unknown") ?? null };
 }
 
 /** The notice for an unknown activity status; `refresh_status` is the way out. */
@@ -134,6 +153,21 @@ export function subtreeOf(inside: readonly string[], agents: readonly AgentRow[]
   const counts = { working: 0, waiting: 0, unread: 0, unknown: 0 };
   for (const row of rows) if (!row.target && row.state !== "quiet") counts[row.state] += 1;
   return { ids, rows, counts, unknown: counts.unknown > 0 };
+}
+
+/** Which sheet an open close shows. */
+export type CloseSheet = { sheet: "subtree"; subtree: Subtree } | { sheet: "stop_work"; stopWork: StopWork };
+
+/**
+ * Which sheet an open close shows now (B28, D-40): the subtree sheet while
+ * the target has a live descendant outside it, the target's Stop-work sheet
+ * otherwise, so a descendant that appears or the last one that leaves turns
+ * one into the other in place. `hostAgents` are the agent rows of the
+ * target's own host; `everyAgent` is every listed agent row.
+ */
+export function closeSheet(panes: readonly PaneRow[], hostAgents: readonly AgentRow[], everyAgent: readonly AgentRow[]): CloseSheet {
+  const subtree = subtreeOf(panes.map((pane) => pane.id), everyAgent);
+  return subtree ? { sheet: "subtree", subtree } : { sheet: "stop_work", stopWork: stopWorkOf(panes, hostAgents) };
 }
 
 /** The close sheet's title (D-17): how many descendants close with it. */

@@ -216,6 +216,86 @@ test("the close sheet closes the whole subtree deepest first, and Close only kee
   }
 });
 
+/** Clears status tokens `report` set. */
+function clear(herdr: HerdrFixture, pane: string, names: string[]): void {
+  const args = ["pane", "report-metadata", pane, "--source", "e2e-status"];
+  for (const name of names) args.push("--clear-token", name);
+  execFileSync(herdr.bin, args, { env: herdr.env, timeout: 30_000 });
+}
+
+test("an open close sheet follows the snapshot: Stop-work tracks its pane, and a subtree sheet whose last child leaves turns back into it", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    const [keeper, target] = herdr.panes;
+    report(herdr, target, { status_working: "●", task: "계보 투영 구현" });
+    daemon = await startHided(herdr, "close-stop-work-live");
+    const last = new Map<string, Record<string, unknown>>();
+    const sent = countSent(page, last);
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await enterWorkspace(page, "fixture");
+    await agentsMode(page);
+
+    const confirm = page.locator('[data-confirm-close="pane"]');
+    const subtree = page.locator("[data-confirm-subtree]");
+    const row = confirm.locator(`[data-stop-work-row="${target}"]`);
+    const opacity = () => row.evaluate((node) => Number(getComputedStyle(node).opacity));
+    // The working state has to be in before the sheet opens on it.
+    await expect(async () => {
+      if (await confirm.isVisible()) {
+        await page.keyboard.press("Escape");
+        await expect(confirm).toHaveCount(0);
+      }
+      await page.locator(`[data-terminal-host="${target}"]`).click();
+      await page.keyboard.press("Alt+KeyW");
+      await expect(row).toHaveAttribute("data-stop-work-state", "active", { timeout: 3_000 });
+    }).toPass({ timeout: 30_000, intervals: [500] });
+    await expect(confirm.getByRole("heading")).toHaveText("Stop the active pane?");
+    await expect(subtree).toHaveCount(0);
+    expect(await opacity()).toBe(1);
+
+    // The pane settles while the sheet is open: its row dims and says so, and
+    // the sheet stays until the operator answers (B28, D-40).
+    clear(herdr, target, ["status_working"]);
+    await expect(row).toHaveAttribute("data-stop-work-state", "quiet", { timeout: 30_000 });
+    expect(await opacity()).toBeLessThan(1);
+    // It starts again: bright again, in place.
+    report(herdr, target, { status_working: "●" });
+    await expect(row).toHaveAttribute("data-stop-work-state", "active", { timeout: 30_000 });
+    expect(await opacity()).toBe(1);
+    await screenshot(page, "close-stop-work-live");
+
+    // A child spawned while it is open turns it into the subtree sheet in place.
+    const child = await spawnAgent(herdr, "child", target);
+    await expect(subtree.locator(`[data-subtree-row="${child}"]`)).toBeVisible({ timeout: 30_000 });
+    await expect(subtree.getByRole("heading")).toHaveText("이 에이전트와 자식 1개를 닫을까요?");
+
+    // The target settles, then its last child closes elsewhere: the sheet
+    // turns back into the target's Stop-work sheet with the quiet target dimmed.
+    clear(herdr, target, ["status_working"]);
+    herdr.run(["pane", "close", child]);
+    await expect(subtree).toHaveCount(0, { timeout: 30_000 });
+    await expect(confirm.getByRole("heading")).toHaveText("Stop the active pane?");
+    await expect(row).toHaveAttribute("data-stop-work-state", "quiet", { timeout: 30_000 });
+    expect(await opacity()).toBeLessThan(1);
+    await screenshot(page, "close-subtree-back-to-stop-work");
+    expect(sent.get("close_pane") ?? 0).toBe(0);
+    expect(sent.get("close_tree") ?? 0).toBe(0);
+
+    // Stop work and close closes the target alone.
+    await confirm.getByRole("button", { name: "Stop work and close" }).click();
+    expect(sent.get("close_pane")).toBe(1);
+    expect(last.get("close_pane")).toMatchObject({ pane_id: target, confirmed: true });
+    await expect.poll(async () => (await livePanes(herdr)).has(target), { timeout: 20_000 }).toBe(false);
+    expect((await livePanes(herdr)).has(keeper)).toBe(true);
+    await expect(confirm).toHaveCount(0);
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});
+
 function git(cwd: string, args: string[]): string {
   return execFileSync("git", ["-c", "user.name=e2e", "-c", "user.email=e2e@example.invalid", "-c", "init.defaultBranch=main", ...args], { cwd, encoding: "utf8" });
 }

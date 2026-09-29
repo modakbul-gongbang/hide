@@ -280,6 +280,9 @@ Closing a pane or a tab asks about the agents spawned from it only when one of t
 Those are the live descendants of every agent pane that closes, on this machine or a connected device, asleep or not, less the panes that close anyway; a device that is not connected contributes none.
 With none, the close is the ordinary one: a quiet pane closes at once, a working or attention pane asks the Stop-work confirmation, and an unknown status shows the status notice.
 A target whose own status is unknown still shows only the status notice.
+The Stop-work confirmation lists every pane that closes, named as the sidebar names it, with its status mark and status word, and while it is open the list is live: a pane that settles stays listed and dims, one that starts working or asking brightens, and its title, words, buttons and focus stay as they opened.
+While a listed pane's status is unknown, `Stop work and close` is disabled, `Keep open` takes the keyboard if the button held it, and a `Check status` in the confirmation reads the status again without closing it.
+`Stop work and close` sends the close the confirmation shows at the press.
 Otherwise one sheet opens in place of the Stop-work confirmation, titled `이 에이전트와 자식 N개를 닫을까요?` (a tab: `이 탭과 자식 N개를 닫을까요?`), N counting only the descendants outside.
 It lists the target first and then its descendants in tree order, indented by depth, each with the sidebar's status mark, name and status word, and a device chip when it runs on another device than the target; the list scrolls inside the sheet when it is long.
 A line above the list counts, with the sidebar's marks, the descendants that are working (`진행 중`), waiting for an answer to a question, approval or error (`답 대기`), holding an unread result (`확인 안 한 결과`) and unreadable (`상태 모름`), leaving out a kind with none; those rows are bright and a quiet one (idle, read, asleep) is dimmed, its status word still said.
@@ -292,13 +295,14 @@ While the sheet is open its list is live, as in the removal dialogs: a descendan
 `모두 닫기` sends one event naming the target and exactly the descendants the sheet shows at the press: one that appears after the press is not closed, and one already gone counts as closed.
 The core checks each listed pane again as it arrives; if one now needs a status check, an earlier close of one is still unresolved, or the close slots cannot take them all, nothing closes and the one-line notice says why and what to do.
 A pane whose earlier close was refused is simply closed again, since asking again is the retry.
-If every descendant goes while the sheet is open, the sheet closes without sending anything.
+If every descendant goes while the sheet is open, it turns in place into the target's Stop-work confirmation, a quiet target dimmed, whose `Stop work and close` closes the target alone; a descendant that appears under an open Stop-work confirmation turns it into this sheet the same way.
+Either one closes by itself only when its target pane or tab is gone or its device disconnects; otherwise it waits for the operator's answer and runs nothing on its own.
 The core closes the deepest descendants first, each pane only after every descendant below it is gone, and the target last, so no descendant ever surfaces as a root on the way; each row reads `closing…` until it goes.
 A descendant whose close is refused, times out, or loses its device keeps itself and its ancestors, the target included, open while the other branches finish; the close failure notice shows and the detail goes to the diagnostic log.
 Closing the same target again lists only what is left.
 Each local pane or tab closed this way gets its own Reopen closed tab entry; a device's close leaves none, as before.
 Every entry to a pane or tab close uses this: ⌘W or ⌥W, ⌘⇧W or ⌥⇧W, the desktop menu's commands, a tab's ×, the tab menu's and the palette's `Close tab…`, the pane header's ×, the pane menu's `Close pane`, and the agent row menu's `Close tab…`; closing a View, the phone app and the Overview are unchanged.
-Web owner: `web/src/close.ts` (which descendants and their states), `web/src/Overlays.tsx` (the sheet), `web/src/components/subtree-list.tsx` (the list both the sheet and the removal dialogs draw); core owner: `herdr-core/src/runtime/tree_close.rs`.
+Web owner: `web/src/close.ts` (which sheet, which panes and descendants, and their states), `web/src/Overlays.tsx` (both sheets), `web/src/components/subtree-list.tsx` (the list both the sheet and the removal dialogs draw); core owner: `herdr-core/src/runtime/tree_close.rs`.
 
 ## Web Project Sessions
 

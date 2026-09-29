@@ -46,7 +46,7 @@ import {
 } from "./snapshot";
 import { fileUrl } from "./browserViews";
 import { useShellStore } from "./store";
-import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
+import { SIDEBAR_MODES, useUiStore, type PendingClose, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
 import { closeShortcutPolicy, drawnViews, keyboardOwner, newTabPolicy } from "./viewFocus";
 import {
@@ -196,23 +196,35 @@ export function createActions(dispatch: DispatchFn) {
    * local close is the core's own `close_pane`/`close_tab`.
    */
   const requestClose = (kind: "pane" | "tab", id: string, panes: Tab["panes"], targetId: string | null, agents: AgentRow[]) => {
-    const decision = closeDecision(kind, panes, agents);
+    const decision = closeDecision(panes, agents);
     if (decision.action === "status_unknown") {
       ui().setNotice({ text: statusUnknownNotice(decision.label), refreshable: true });
       return;
     }
-    // An agent with live descendants outside what closes asks one sheet
-    // instead of the Stop-work one (PRD close-agent-subtree B2).
-    const inside = panes.map((pane) => pane.id);
-    if (subtreeOf(inside, everyAgent())) {
-      ui().setPendingClose({ kind, id, targetId, subtree: { inside } });
-      return;
-    }
-    if (decision.action === "confirm") {
-      ui().setPendingClose({ kind, id, targetId, title: decision.title, consequence: decision.consequence, affected: decision.affected });
+    // An agent with live descendants outside what closes asks the subtree
+    // sheet instead of the Stop-work one (PRD close-agent-subtree B2); which
+    // of the two shows is re-derived while it is open (B28).
+    if (decision.action === "confirm" || subtreeOf(panes.map((pane) => pane.id), everyAgent())) {
+      ui().setPendingClose({ kind, id, targetId });
       return;
     }
     sendClose(kind, id, targetId, false);
+  };
+
+  /**
+   * What an open close sheet is about, as the snapshot has it now: the
+   * target's panes and the agent rows of its host, or null once the pane or
+   * tab is gone or its device is no longer connected, which is the one thing
+   * that closes the sheet by itself (B28, D-40).
+   */
+  const closeTarget = (pending: PendingClose): { panes: Tab["panes"]; agents: AgentRow[] } | null => {
+    const status = pending.targetId ? rest()?.status?.remote?.find((row) => row.target_id === pending.targetId) : null;
+    if (pending.targetId && status?.state !== "connected") return null;
+    const workspaces = pending.targetId ? status?.session?.workspaces : rest()?.navigator?.workspaces;
+    const tabs = (workspaces ?? []).flatMap((row) => row.checkouts).flatMap((row) => row.tabs);
+    const panes = pending.kind === "tab" ? (tabs.find((tab) => tab.id === pending.id)?.panes ?? []) : tabs.flatMap((tab) => tab.panes).filter((pane) => pane.id === pending.id);
+    if (panes.length === 0) return null;
+    return { panes, agents: pending.targetId ? (status?.session?.agents ?? []) : useShellStore.getState().agents };
   };
 
   /** Every current agent row, this machine's and each connected device's, as the lists draw them. */
@@ -1373,7 +1385,7 @@ export function createActions(dispatch: DispatchFn) {
     /** 모두 닫기: the target and exactly the descendants the sheet shows at the press, in one event (D-20, D-21). */
     closeSubtree(ids: string[]) {
       const pending = ui().pendingClose;
-      if (!pending?.subtree) return;
+      if (!pending) return;
       ui().setPendingClose(null);
       dispatch({
         schema_version: 2,
@@ -1388,6 +1400,8 @@ export function createActions(dispatch: DispatchFn) {
 
     /** Every current agent row the close lists read, this machine's and each connected device's. */
     everyAgent,
+
+    closeTarget,
 
     keepOpen() {
       ui().setPendingClose(null);

@@ -1,5 +1,5 @@
 import { ChevronDownIcon, ChevronUpIcon, FolderIcon, HouseIcon, LayoutDashboardIcon, XIcon } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { Actions } from "./actions";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./components/ui/alert-dialog";
@@ -17,7 +17,7 @@ import { visibleWindow, type CycleItem } from "./recent";
 import { displayCommand, hostRegistry } from "./shortcuts";
 import { displayMark } from "./ViewAreas";
 import { AgentMark } from "./AgentMark";
-import { subtreeOf, subtreeTitle } from "./close";
+import { closeSheet, statusUnknownNotice, stopWorkCopy, subtreeTitle, type StopWork, type Subtree } from "./close";
 import { SubtreeList } from "./components/subtree-list";
 import { knownProvider } from "./workspace";
 
@@ -97,33 +97,47 @@ function KindMark({ item }: { item: CycleItem }) {
 }
 
 /**
- * The consequence sheet: Keep open, or stop the work and close. A target
- * with live descendants outside what closes gets the subtree sheet instead
- * (PRD close-agent-subtree B2).
+ * The close confirmation: the Stop-work sheet (Keep open, or stop the work
+ * and close), or, for a target with live descendants outside what closes,
+ * the subtree sheet (PRD close-agent-subtree B2). Both are live (B13, B28):
+ * every snapshot re-derives which of the two it is, who it lists and in what
+ * state, so a sheet turns into the other in place, a press sends what is on
+ * screen, and the sheet closes by itself only when its target is gone (D-40).
  */
 export function ConfirmClose({ actions }: { actions: Actions }) {
   const pending = useUiStore((s) => s.pendingClose);
+  useShellStore((s) => s.rest);
+  useShellStore((s) => s.agents);
+  const target = pending ? actions.closeTarget(pending) : null;
+  const gone = pending != null && target === null;
+  useEffect(() => {
+    if (gone) actions.keepOpen();
+  }, [gone, actions]);
+  const sheet = target ? closeSheet(target.panes, target.agents, actions.everyAgent()) : null;
+  const blocked = sheet?.sheet === "subtree" ? sheet.subtree.unknown : sheet?.stopWork.unknown != null;
+  // A pane or descendant whose status turns unknown while the sheet is open
+  // disables the close under the keyboard; the cancel button takes it, as when
+  // the subtree sheet opens blocked (D-19, B28).
+  const footer = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!blocked) return;
+    const active = document.activeElement;
+    if (active && active !== document.body && !active.matches("[data-close-proceed]")) return;
+    footer.current?.querySelector<HTMLElement>("[data-close-cancel]")?.focus();
+  }, [blocked]);
   return (
-    <AlertDialog open={pending != null} onOpenChange={(open) => { if (!open) actions.keepOpen(); }}>
-      {pending?.subtree ? (
-        <ConfirmSubtreeClose actions={actions} kind={pending.kind} targetId={pending.targetId} inside={pending.subtree.inside} />
-      ) : pending ? (
-        <AlertDialogContent data-confirm-close={pending.kind}>
-          <AlertDialogHeader>
-            <AlertDialogTitle>{pending.title}</AlertDialogTitle>
-            <AlertDialogDescription>{pending.consequence}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <ul className="text-caption text-subtle-foreground">
-            {pending.affected.map((label) => (
-              <li key={label} className="truncate">
-                {label}
-              </li>
-            ))}
-          </ul>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep open</AlertDialogCancel>
-            <AlertDialogAction onClick={() => actions.confirmClose()}>Stop work and close</AlertDialogAction>
-          </AlertDialogFooter>
+    <AlertDialog open={pending != null && target != null} onOpenChange={(open) => { if (!open) actions.keepOpen(); }}>
+      {pending && sheet ? (
+        <AlertDialogContent
+          data-confirm-close={pending.kind}
+          data-confirm-subtree={sheet.sheet === "subtree" ? "true" : undefined}
+          initialFocus={sheet.sheet === "subtree" ? (blocked ? "cancel" : "action") : "container"}
+        >
+          {sheet.sheet === "subtree" ? (
+            <SubtreeClose actions={actions} kind={pending.kind} targetId={pending.targetId} subtree={sheet.subtree} footer={footer} />
+          ) : (
+            <StopWorkClose actions={actions} kind={pending.kind} stopWork={sheet.stopWork} footer={footer} />
+          )}
         </AlertDialogContent>
       ) : null}
     </AlertDialog>
@@ -131,47 +145,69 @@ export function ConfirmClose({ actions }: { actions: Actions }) {
 }
 
 /**
- * The close of an agent with descendants (D-07, D-17, D-18, D-19): one list
- * of what closes with it, redrawn from every snapshot, and 취소 / 이것만 닫기 /
- * 모두 닫기 with 모두 닫기 the Enter default.
- * While a listed descendant's activity is unknown, 모두 닫기 waits for a
- * status check the sheet itself offers, and the default is 취소.
+ * The Stop-work sheet: every pane that closes with its mark and status word,
+ * a quiet one dimmed. While a pane's activity is unknown, Stop work and close
+ * waits for the status check the sheet offers (B28, D-39).
  */
-function ConfirmSubtreeClose({ actions, kind, targetId, inside }: { actions: Actions; kind: "pane" | "tab"; targetId: string | null; inside: string[] }) {
-  // Live like the removal dialogs (D-20, B13): every snapshot re-derives who
-  // is listed and in what state, so a child that appears shows up, one that
-  // goes drops out, and Close all sends exactly what is on screen.
-  useShellStore((s) => s.rest);
-  useShellStore((s) => s.agents);
-  const subtree = subtreeOf(inside, actions.everyAgent());
-  const count = subtree?.rows.filter((row) => !row.target).length ?? 0;
-  const targetDevice = subtree?.rows.find((row) => row.target)?.agent.device_id;
-  const blocked = subtree?.unknown ?? false;
-  // Every descendant left while the sheet was open: there is nothing left
-  // to ask, so it closes without sending anything.
-  const empty = subtree === null;
-  useEffect(() => {
-    if (empty) actions.keepOpen();
-  }, [empty, actions]);
-  // A descendant whose status turns unknown while the sheet is open disables
-  // 모두 닫기 under the keyboard; 취소 takes it, as when the sheet opens
-  // blocked (D-19).
-  const footer = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!blocked) return;
-    const active = document.activeElement;
-    const dialog = footer.current?.closest("[data-confirm-subtree]");
-    if (active && active !== document.body && !active.matches("[data-subtree-close-all]")) return;
-    dialog?.querySelector<HTMLElement>("[data-subtree-cancel]")?.focus();
-  }, [blocked]);
+function StopWorkClose({ actions, kind, stopWork, footer }: { actions: Actions; kind: "pane" | "tab"; stopWork: StopWork; footer: RefObject<HTMLDivElement | null> }) {
+  const copy = stopWorkCopy(kind);
   return (
-    <AlertDialogContent data-confirm-close={kind} data-confirm-subtree="true" initialFocus={blocked ? "cancel" : "action"}>
+    <>
+      <AlertDialogHeader>
+        <AlertDialogTitle>{copy.title}</AlertDialogTitle>
+        <AlertDialogDescription>{copy.consequence}</AlertDialogDescription>
+      </AlertDialogHeader>
+      <ul className="flex min-w-0 flex-col gap-xxs text-caption" data-stop-work-list="true">
+        {stopWork.rows.map((row) => (
+          <li
+            key={row.pane.id}
+            data-stop-work-row={row.pane.id}
+            data-stop-work-state={row.state}
+            className={`flex min-w-0 items-start gap-xs ${row.state === "quiet" ? "opacity-(--opacity-read-status)" : ""}`}
+          >
+            <span className="flex w-(--size-agent-mark) shrink-0 justify-center">{row.agent ? <StatusMark symbol={row.agent.symbol} className={markTone(row.agent)} /> : null}</span>
+            <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-xs">
+              <span className="min-w-0 break-words text-foreground">{row.label}</span>
+              <span className={`shrink-0 ${row.agent ? markTone(row.agent) : "text-subtle-foreground"}`}>{row.agent?.status_label ?? row.pane.status_label}</span>
+            </span>
+          </li>
+        ))}
+      </ul>
+      {stopWork.unknown ? (
+        <p className="flex flex-wrap items-center gap-xs text-caption text-subtle-foreground" data-stop-work-blocked="true">
+          <span className="min-w-0 break-words">{statusUnknownNotice(stopWork.unknown.label)}</span>
+          <Button size="sm" variant="secondary" onClick={() => actions.refreshStatus()} data-stop-work-check-status="true">
+            Check status
+          </Button>
+        </p>
+      ) : null}
+      <AlertDialogFooter ref={footer}>
+        <AlertDialogCancel data-close-cancel="true">Keep open</AlertDialogCancel>
+        <AlertDialogAction disabled={stopWork.unknown != null} onClick={() => actions.confirmClose()} data-close-proceed="true">
+          Stop work and close
+        </AlertDialogAction>
+      </AlertDialogFooter>
+    </>
+  );
+}
+
+/**
+ * The close of an agent with descendants (D-07, D-17, D-18, D-19): one list
+ * of what closes with it, and 취소 / 이것만 닫기 / 모두 닫기 with 모두 닫기 the
+ * Enter default. While a listed descendant's activity is unknown, 모두 닫기
+ * waits for a status check the sheet itself offers, and the default is 취소.
+ */
+function SubtreeClose({ actions, kind, targetId, subtree, footer }: { actions: Actions; kind: "pane" | "tab"; targetId: string | null; subtree: Subtree; footer: RefObject<HTMLDivElement | null> }) {
+  const count = subtree.rows.filter((row) => !row.target).length;
+  const targetDevice = subtree.rows.find((row) => row.target)?.agent.device_id;
+  return (
+    <>
       <AlertDialogHeader>
         <AlertDialogTitle>{subtreeTitle(kind, count)}</AlertDialogTitle>
         <AlertDialogDescription data-subtree-consequence="true">이것만 닫기: 자식은 계속 실행되고 내 목록으로 올라옵니다.</AlertDialogDescription>
       </AlertDialogHeader>
-      {subtree ? <SubtreeList subtree={subtree} targetDevice={targetDevice ?? (targetId ?? undefined)} /> : null}
-      {blocked ? (
+      <SubtreeList subtree={subtree} targetDevice={targetDevice ?? (targetId ?? undefined)} />
+      {subtree.unknown ? (
         <p className="flex flex-wrap items-center gap-xs text-caption text-subtle-foreground" data-subtree-blocked="true">
           <span className="min-w-0 break-words">상태를 모르는 자식이 있어 모두 닫기 전에 상태를 확인해야 합니다.</span>
           <Button size="sm" variant="secondary" onClick={() => actions.refreshStatus()} data-subtree-check-status="true">
@@ -180,15 +216,24 @@ function ConfirmSubtreeClose({ actions, kind, targetId, inside }: { actions: Act
         </p>
       ) : null}
       <AlertDialogFooter ref={footer}>
-        <AlertDialogCancel data-subtree-cancel="true">취소</AlertDialogCancel>
+        <AlertDialogCancel data-subtree-cancel="true" data-close-cancel="true">
+          취소
+        </AlertDialogCancel>
         <Button variant="secondary" onClick={() => actions.confirmClose()} data-subtree-close-only="true">
           이것만 닫기
         </Button>
-        <Button variant="destructive" disabled={blocked} onClick={() => subtree && actions.closeSubtree(subtree.ids)} data-subtree-close-all="true" data-initial-focus={blocked ? undefined : "true"}>
+        <Button
+          variant="destructive"
+          disabled={subtree.unknown}
+          onClick={() => actions.closeSubtree(subtree.ids)}
+          data-subtree-close-all="true"
+          data-close-proceed="true"
+          data-initial-focus={subtree.unknown ? undefined : "true"}
+        >
           모두 닫기
         </Button>
       </AlertDialogFooter>
-    </AlertDialogContent>
+    </>
   );
 }
 

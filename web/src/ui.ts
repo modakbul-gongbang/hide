@@ -20,29 +20,19 @@ export type SidebarMode = "agents" | "projects";
  * panel where the core's `right_panel_section` says it does (D-13). */
 export const SIDEBAR_MODES: readonly SidebarMode[] = ["projects", "agents"];
 
-export type PendingClose =
-  | {
-      kind: "pane" | "tab";
-      id: string;
-      /** The SSH device the pane or tab is on, or null for this machine. */
-      targetId: string | null;
-      title: string;
-      consequence: string;
-      affected: string[];
-      subtree?: undefined;
-    }
-  | {
-      kind: "pane" | "tab";
-      id: string;
-      targetId: string | null;
-      /**
-       * The close of an agent that has live descendants (PRD
-       * close-agent-subtree): the panes being closed. The sheet re-derives
-       * the descendants on every snapshot, and Close all sends the ones it
-       * shows at the press (D-20).
-       */
-      subtree: { inside: string[] };
-    };
+/**
+ * A close the operator is being asked about. The sheet holds only what is
+ * being closed: every snapshot re-derives whether it is the Stop-work sheet
+ * or the subtree sheet, who is listed and in what state, and the sheet
+ * closes by itself only when the target is gone (PRD close-agent-subtree
+ * B13, B28, D-20, D-39, D-40).
+ */
+export type PendingClose = {
+  kind: "pane" | "tab";
+  id: string;
+  /** The SSH device the pane or tab is on, or null for this machine. */
+  targetId: string | null;
+};
 
 /**
  * The scope the center shows, picked in the sidebar (PRD S6 D-02): All
