@@ -449,7 +449,8 @@ fn the_first_registration_after_launch_is_linked_into_an_existing_home() {
 }
 
 /// B19 across a helper reconnect: a registration change made while the
-/// device's helper was not ready is linked once it is, with no Home start.
+/// device's helper was down asks the helper once, is left alone through every
+/// later UI state write, and is linked once the helper is ready.
 #[test]
 fn a_link_change_missed_while_the_helper_reconnects_is_sent_once_it_is_ready() {
     let machine = machine();
@@ -457,9 +458,19 @@ fn a_link_change_missed_while_the_helper_reconnects_is_sent_once_it_is_ready() {
     let earlier = hide_host::home::sync(&machine.user_home, &machine.projects[..1]).unwrap();
     let shared = device_runtime(&herdr, &machine.user_home);
     let home = machine.user_home.join("hide");
-    {
+    let generation = {
         let mut runtime = shared.lock().unwrap();
-        runtime.device_hosts.get_mut(DEVICE).unwrap().phase = hosts::HostPhase::Connecting;
+        let consent = runtime.new_host_consent();
+        runtime
+            .snapshot
+            .ui_state
+            .device_registrations
+            .iter_mut()
+            .find(|registration| registration.id == DEVICE)
+            .unwrap()
+            .host_consent = Some(consent);
+        runtime.device_hosts.get_mut(DEVICE).unwrap().phase =
+            hosts::HostPhase::Unavailable("offline".to_owned());
         let registrations = &mut runtime.snapshot.ui_state.workspace_registrations;
         registrations.push(registration(&machine.projects[0], DEVICE));
         registrations.push(WorkspaceRegistration {
@@ -468,13 +479,25 @@ fn a_link_change_missed_while_the_helper_reconnects_is_sent_once_it_is_ready() {
             ..registration(&earlier.home, DEVICE)
         });
         registrations.push(registration(&machine.projects[1], DEVICE));
-        runtime.persist_ui_state();
-    }
+        let generation = runtime.last_host_generation;
+        for _ in 0..20 {
+            runtime.persist_ui_state();
+        }
+        generation
+    };
     std::thread::sleep(Duration::from_millis(200));
     assert!(
         !home.join("app-play").exists(),
         "nothing reaches a helper that is not ready"
     );
+    {
+        let runtime = shared.lock().unwrap();
+        assert_eq!(
+            runtime.last_host_generation,
+            generation + 1,
+            "the helper is asked to connect once, not on every write"
+        );
+    }
 
     {
         let mut runtime = shared.lock().unwrap();

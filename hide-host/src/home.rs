@@ -471,30 +471,50 @@ fn link_claude_file(home: &Path) -> HostResult<()> {
     }
 }
 
+/// How long a sync waits for another one on the same Home, short of the
+/// core's 30 s wait for the whole call, so a holder that hangs is reported
+/// rather than stacking helper threads behind it.
+const SYNC_LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// An exclusive `flock` on the account's home folder, released when dropped
 /// (closing the descriptor ends the lock).
 struct SyncLock(#[allow(dead_code)] std::fs::File);
 
 impl SyncLock {
-    #[cfg(unix)]
     fn take(user_home: &Path) -> HostResult<Self> {
+        Self::take_within(user_home, SYNC_LOCK_WAIT)
+    }
+
+    #[cfg(unix)]
+    fn take_within(user_home: &Path, wait: std::time::Duration) -> HostResult<Self> {
         use std::os::fd::AsRawFd;
         let folder = std::fs::File::open(user_home)
             .map_err(|error| io_error(&error, "The home folder could not be opened"))?;
+        let deadline = std::time::Instant::now() + wait;
         loop {
             // flock only reads the descriptor, which `folder` keeps open for the call.
-            if unsafe { libc::flock(folder.as_raw_fd(), libc::LOCK_EX) } == 0 {
+            if unsafe { libc::flock(folder.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
                 return Ok(Self(folder));
             }
             let error = std::io::Error::last_os_error();
-            if error.kind() != std::io::ErrorKind::Interrupted {
-                return Err(io_error(&error, "Hide's Home could not be locked"));
+            match error.kind() {
+                std::io::ErrorKind::Interrupted => {}
+                std::io::ErrorKind::WouldBlock if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                std::io::ErrorKind::WouldBlock => {
+                    return Err(HostError::new(
+                        ErrorCode::Busy,
+                        "Another sync of Hide's Home is still running; try again",
+                    ));
+                }
+                _ => return Err(io_error(&error, "Hide's Home could not be locked")),
             }
         }
     }
 
     #[cfg(not(unix))]
-    fn take(user_home: &Path) -> HostResult<Self> {
+    fn take_within(user_home: &Path, _wait: std::time::Duration) -> HostResult<Self> {
         let folder = std::fs::File::open(user_home)
             .map_err(|error| io_error(&error, "The home folder could not be opened"))?;
         Ok(Self(folder))
@@ -551,4 +571,28 @@ fn agents_text(links: &[HomeLink]) -> String {
          Hide rewrites this file when projects change, so edits here are not kept.\n",
     );
     text
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::fd::AsRawFd;
+    use std::time::Duration;
+
+    /// A holder that never lets go is reported as busy within the wait,
+    /// rather than keeping the sync, and the helper thread, waiting forever.
+    #[test]
+    fn a_sync_lock_held_elsewhere_is_busy_after_the_wait() {
+        let dir = tempfile::tempdir().unwrap();
+        let holder = std::fs::File::open(dir.path()).unwrap();
+        assert_eq!(unsafe { libc::flock(holder.as_raw_fd(), libc::LOCK_EX) }, 0);
+        let started = std::time::Instant::now();
+        let Err(error) = SyncLock::take_within(dir.path(), Duration::from_millis(300)) else {
+            panic!("the lock was taken while another descriptor held it");
+        };
+        assert_eq!(error.code, ErrorCode::Busy);
+        assert!(started.elapsed() >= Duration::from_millis(300));
+        drop(holder);
+        assert!(SyncLock::take_within(dir.path(), Duration::from_millis(300)).is_ok());
+    }
 }

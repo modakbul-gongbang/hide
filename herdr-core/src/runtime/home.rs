@@ -18,8 +18,11 @@ use hide_host::home::HomeSynced;
 /// is synced rather than taken as already done. `in_flight` holds back a second
 /// background sync while one runs; a start's sync does not wait for it, because
 /// the helper runs syncs of one Home one after the other (`hide_host::home`).
-/// `deferred` marks a change that found the helper not ready, which is sent
-/// once the helper is.
+/// `deferred` marks a change that found the helper not ready: the device is
+/// left alone, its helper not asked again, until the helper is ready.
+/// `requested` is also set to the set a sync applied when it answers, since
+/// the helper runs syncs in the order they take its lock, not the order they
+/// were sent; a newer set that lost that race is then sent again.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct HomeLinkState {
     requested: Option<Vec<String>>,
@@ -178,6 +181,7 @@ impl Runtime {
             }
         };
         self.log_home_sync(device, projects, &synced);
+        self.record_home_applied(device, projects);
         self.register_home(device, &synced.home);
         // The agent may write every linked project through its link (D-02,
         // D-08); each CLI takes the real folders as extra roots. The helper
@@ -319,11 +323,12 @@ impl Runtime {
         for device in devices {
             let projects = self.home_projects(&device);
             let state = self.home_links.entry(device.clone()).or_default();
-            if state.in_flight || state.requested.as_ref() == Some(&projects) {
+            if state.in_flight || state.deferred || state.requested.as_ref() == Some(&projects) {
                 continue;
             }
             // Nothing is recorded as sent until it is: a device whose helper
-            // is not ready is tried again once it is (`home_helper_ready`).
+            // is not ready is asked once and then left until it is
+            // (`home_helper_ready`), since every UI state write lands here.
             let host = match self.device_channel(&device) {
                 Ok(host) => host,
                 Err(message) => {
@@ -355,11 +360,10 @@ impl Runtime {
     /// Launching Hide writes nothing, so a device with nothing deferred is
     /// left alone.
     pub(super) fn home_helper_ready(&mut self, device: &str) {
-        if self
-            .home_links
-            .get(device)
-            .is_some_and(|state| state.deferred)
-        {
+        let Some(state) = self.home_links.get_mut(device) else {
+            return;
+        };
+        if std::mem::take(&mut state.deferred) {
             self.request_home_link_syncs();
         }
     }
@@ -375,9 +379,11 @@ impl Runtime {
             state.in_flight = false;
         }
         match synced {
-            // A registration that changed while this sync ran is caught up now.
+            // A registration that changed while this sync ran, or a newer
+            // set this one ran after, is caught up now.
             Ok(synced) => {
                 self.log_home_sync(device, projects, &synced);
+                self.record_home_applied(device, projects);
                 self.request_home_link_syncs();
             }
             // The failed set stays `requested`, so it is not sent again until
@@ -386,6 +392,14 @@ impl Runtime {
                 self.log_home_sync_failure(device, "home.sync_failed", &error.to_string())
             }
         }
+    }
+
+    /// The set a sync just applied is what `~/hide` holds now, and the helper
+    /// answered, so nothing is deferred.
+    fn record_home_applied(&mut self, device: &str, projects: &[String]) {
+        let state = self.home_links.entry(device.to_owned()).or_default();
+        state.requested = Some(projects.to_vec());
+        state.deferred = false;
     }
 
     /// A sync that did not run or did not finish leaves the links unknown: the
