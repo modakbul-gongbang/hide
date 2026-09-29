@@ -77,6 +77,12 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
     fs.writeFileSync(path.join(repo, ".gitignore"), "target/\nnode_modules/\ndist/\nagents/runs/\n");
     git(repo, ["add", "."]);
     git(repo, ["commit", "-m", "initial"]);
+    // A repository with an origin, as a real one has: the core measures each branch against origin's default.
+    const origin = path.join(herdr.root, "origin.git");
+    git(herdr.root, ["init", "--bare", origin]);
+    git(repo, ["remote", "add", "origin", origin]);
+    git(repo, ["push", "-q", "origin", "main"]);
+    git(repo, ["remote", "set-head", "origin", "main"]);
     const shipped = path.join(herdr.root, "repo-shipped");
     const active = path.join(herdr.root, "repo-active");
     git(repo, ["worktree", "add", "-b", "prd/shipped", shipped]);
@@ -141,10 +147,10 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
     await expect(sheet.locator('[data-disk-bundle="all"]')).toHaveAttribute("data-disk-bundle-state", "checked");
     await expect(sheet.locator("[data-disk-summary]")).toContainText("빌드 캐시 3 · 의존성 3 · 워크트리 0");
     await expect(sheet.locator('[data-disk-note="dependencies"]')).toBeVisible();
+    await showTheme(page, "light");
     await screenshot(page, "disk-cleanup-sheet-light");
     await showTheme(page, "dark");
     await screenshot(page, "disk-cleanup-sheet-dark");
-    await showTheme(page, "light");
 
     // B17, B21: cache-only runs at once, without a confirmation, and the tracked files stay.
     const confirmsBefore = sent.get("cleanup_confirm") ?? 0;
@@ -163,15 +169,16 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
     await expect(sheet.locator("[data-disk-free-change]")).toContainText("→");
     await expect(sheet.locator("[data-disk-allocated]")).toContainText("할당 합계");
     await expect(sheet.locator('[data-disk-result-line="removed"]').first()).toBeVisible();
+    await showTheme(page, "light");
     await screenshot(page, "disk-cleanup-result-light");
     await showTheme(page, "dark");
     await screenshot(page, "disk-cleanup-result-dark");
-    await showTheme(page, "light");
 
     // B22, B24: review again measures again and returns to the table.
     await sheet.locator("[data-disk-review-again]").click();
     await expect(sheet).toHaveAttribute("data-disk-state", "ready", { timeout: 60_000 });
-    await sheet.locator("[data-disk-fold-toggle]").click();
+    // The fold keeps the way the operator left it (open).
+    await expect(sheet.locator("[data-disk-fold]")).toHaveAttribute("data-disk-fold", "open");
     await expect(row("/repo-shipped").locator('[data-disk-cell$=":build_cache"]')).toHaveAttribute("data-disk-cell-state", "empty");
 
     // B11, B18: a worktree includes its caches, asks once, and Back deletes nothing.
@@ -184,7 +191,10 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
     await expect(confirm.locator("[data-disk-confirm-run]")).toHaveText("워크트리 1개와 캐시 정리");
     // Neither button holds the keyboard when the confirmation opens (design 6).
     expect(await page.evaluate(() => document.activeElement?.hasAttribute("data-disk-confirm-run") || document.activeElement?.hasAttribute("data-disk-confirm-back"))).toBe(false);
+    await showTheme(page, "light");
     await screenshot(page, "disk-cleanup-confirm-light");
+    await showTheme(page, "dark");
+    await screenshot(page, "disk-cleanup-confirm-dark");
     await confirm.locator("[data-disk-confirm-back]").click();
     await expect(confirm).toHaveCount(0);
     expect(fs.existsSync(shipped)).toBe(true);
@@ -200,6 +210,62 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
     await expect(sheet).toHaveCount(0);
     // B27: two presses of `정리` were two confirm events, one per cleanup.
     expect((sent.get("cleanup_confirm") ?? 0) - confirmsBefore).toBe(2);
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});
+
+test("a checkout with a working agent cannot be ticked, and an open pane alone does not block main", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 1000 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    fs.writeFileSync(path.join(herdr.root, "home", ".zshenv"), `export PATH="${path.join(herdr.root, "bin")}:$PATH"\n`);
+    const repo = path.join(herdr.root, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    fs.writeFileSync(path.join(repo, "package.json"), '{"name":"fixture"}\n');
+    fs.writeFileSync(path.join(repo, ".gitignore"), "node_modules/\ndist/\n");
+    git(repo, ["add", "."]);
+    git(repo, ["commit", "-m", "initial"]);
+    const busy = path.join(herdr.root, "repo-busy");
+    git(repo, ["worktree", "add", "-b", "prd/busy", busy]);
+    git(busy, ["commit", "--allow-empty", "-m", "busy work"]);
+    for (const dir of [repo, busy]) build(dir);
+
+    const at = async (cwd: string) => {
+      const created = herdr.run(["workspace", "create", "--cwd", cwd, "--label", path.basename(cwd), "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]) as { result: { root_pane: { pane_id: string } } };
+      const pane = created.result.root_pane.pane_id;
+      await prompt(herdr, pane);
+      return pane;
+    };
+    await at(repo);
+    const pane = await at(busy);
+    herdr.run(["agent", "start", "agent-busy", "--kind", "claude", "--pane", pane]);
+    execFileSync(herdr.bin, ["pane", "report-agent", pane, "--source", "e2e", "--agent", "claude", "--state", "working"], { env: herdr.env, timeout: 30_000 });
+
+    daemon = await startHided(herdr, "disk-cleanup-busy");
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
+    await page.locator('[data-sidebar-mode="projects"]').click();
+    await page.locator("[data-project-row]", { hasText: /^repo/ }).click();
+    await page.locator('[data-disk-entrance="true"]').click({ timeout: 30_000 });
+    const sheet = page.locator("[data-disk-sheet]");
+    await expect(sheet).toHaveAttribute("data-disk-state", "ready", { timeout: 60_000 });
+    await sheet.locator("[data-disk-fold-toggle]").click();
+    const busyRow = sheet.locator('[data-disk-row$="/repo-busy"]');
+    await expect(busyRow).toHaveAttribute("data-disk-bucket", "working");
+    await expect(busyRow.locator("[data-disk-in-use]")).toHaveText("에이전트 작업 중");
+    await expect(busyRow.locator('[data-disk-check$=":build_cache"]')).toBeDisabled();
+    await expect(busyRow.locator('[data-disk-cell$=":build_cache"]')).toHaveAttribute("data-disk-cell-state", "blocked");
+    // Main has a pane open and is still ticked: an open pane alone blocks nothing (D-14).
+    await expect(sheet.locator('[data-disk-row$="/repo"] [data-disk-check$=":build_cache"]')).toBeEnabled();
+    await sheet.locator('[data-disk-bundle="all"]').click();
+    await expect(sheet.locator("[data-disk-summary]")).toContainText("빌드 캐시 1");
+    await sheet.locator("[data-disk-cancel]").click();
+    await expect(sheet).toHaveCount(0);
+    expect(fs.existsSync(path.join(busy, "node_modules"))).toBe(true);
   } finally {
     daemon?.stop();
     herdr.stop();
