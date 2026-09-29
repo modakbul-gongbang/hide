@@ -45,6 +45,8 @@ import { displayCommand } from "./shortcuts";
 // floats there, without changing what the core stores, so widening brings it
 // back.
 
+/** Where every device keeps its Home (PRD home-device-rail D-03). */
+const HOME_FOLDER = "~/hide";
 const CLOSED: PanelFrame = { shown: "closed", content: "tools", width: 0, agentsRight: 0, narrow: false, resize: null, need: 0, toolsOverlay: false };
 
 export function WorkspaceScreen({ actions }: { actions: Actions }) {
@@ -216,23 +218,26 @@ function WorkspaceToolbar({ checkout, view, panelShown, actions }: { checkout: C
           <button type="button" className="shrink-0 rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setScreen({ kind: "main" })}>
             Home
           </button>
-          <span aria-hidden="true" className="text-muted-foreground">/</span>
-          {project ? (
-            <Hint label={`${project.label} · ${project.path}${device ? ` · ${device.label}` : ""}`}>
-              <button
-                type="button"
-                className="min-w-0 max-w-[var(--size-recent-location-max)] shrink truncate rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
-                data-go-overview={project.id}
-                onClick={() => setScreen(overviewScreen(useShellStore.getState().rest, project.id))}
-              >
-                {project.label}
-              </button>
-            </Hint>
+          {project && !project.is_home ? (
+            <>
+              <span aria-hidden="true" className="text-muted-foreground">/</span>
+              <Hint label={`${project.label} · ${project.path}${device ? ` · ${device.label}` : ""}`}>
+                <button
+                  type="button"
+                  className="min-w-0 max-w-[var(--size-recent-location-max)] shrink truncate rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
+                  data-go-overview={project.id}
+                  onClick={() => setScreen(overviewScreen(useShellStore.getState().rest, project.id))}
+                >
+                  {project.label}
+                </button>
+              </Hint>
+            </>
           ) : null}
           <span aria-hidden="true" className="text-muted-foreground">/</span>
-          <Hint label={`${name} · ${checkout.path}`}>
-            <span className="min-w-0 truncate text-foreground" aria-current="page">
-              {name}
+          {/* Home is no project (B16): its tab is `Home / ~/hide`, the folder every device keeps it in (D-03). */}
+          <Hint label={`${project?.is_home ? HOME_FOLDER : name} · ${checkout.path}`}>
+            <span className="min-w-0 truncate text-foreground" aria-current="page" data-workspace-location={project?.is_home ? "home" : "checkout"}>
+              {project?.is_home ? HOME_FOLDER : name}
             </span>
           </Hint>
         </nav>

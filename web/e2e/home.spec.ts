@@ -53,6 +53,8 @@ test("Home's + makes ~/hide with a link per project and opens a tab there", asyn
       .toBe(true);
     await expect(page.locator("[data-home-count]")).toHaveText("1 project");
     await expect(page.locator("nav[data-sidebar]").getByRole("button", { name: /^(hide|Home)$/ })).toHaveCount(0);
+    // The path back names Home and its folder, never Home as a project.
+    await expect(page.locator('nav[aria-label="Location"]')).toHaveText("Home/~/hide");
     await screenshot(page, "home-tab-opened");
   } finally {
     daemon?.stop();

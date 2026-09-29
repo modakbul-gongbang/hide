@@ -10,7 +10,7 @@ Each rule below names the code that owns it: a web owner in `web/src/` and, wher
 The web shell's Workspace screen follows the approved S6 proposal, its View areas follow the approved boards of PRD S7 (`agents/prd/workspace-views-layout/prd.md`), and its side panel follows the operator's decisions on issue 170, the newest ("Side panel hierarchy, revised") first: every control sits once, on the container it changes.
 Web owner: `web/src/WorkspaceScreen.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tools.tsx`, `web/src/viewLayout.ts`, `web/src/viewDrag.ts`, `web/src/viewFocus.ts`.
 
-The toolbar spans only the agent column and holds the path back (`Overview / Project / Workspace`, naming the device when it is not this Mac); it has no tool toggles.
+The toolbar spans only the agent column and holds the path back (`Home / Project / Workspace`, where `Home` opens the Overview), led by the device's colored band when the Workspace is not this Mac's; a tab in Home reads `Home / ~/hide`, since Home is no project. It has no tool toggles.
 The side panel toggle sits at the Workspace's top right in both states: at the toolbar's right end while the panel is closed, and at the right end of the panel's first row while it shows.
 It is drawn pressed while the panel shows, and ⌘⇧B toggles the panel too, restoring its views and the tool column as they were before hiding; while the panel is closed with views open, the toggle carries a badge with their count, also given as its accessible description.
 The toggle, the tool column's toggle, Pin, and Expand each keep one accessible name and say their state as pressed or not; their tooltips say what a press does.
