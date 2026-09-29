@@ -191,18 +191,28 @@ export function NoticeBar({ actions }: { actions: Actions }) {
   );
 }
 
-/** ⌘F over the focused pane, through the core's `pane_find`; the count comes back in the snapshot. */
+/** ⌘F over the focused pane, through the core's `pane_find`; the count comes back in the snapshot. An agent with its own find gets this bar only when the core answers `bar`. */
 export function FindBar({ actions }: { actions: Actions }) {
   const open = useUiStore((s) => s.overlay === "find");
   const close = useUiStore((s) => s.closeOverlay);
   const pushEscape = useUiStore((s) => s.pushEscape);
   const find = useShellStore((s) => s.find);
   const paneId = useShellStore((s) => s.focusedPaneId);
+  const pending = useUiStore((s) => s.agentFindRequest);
   const [term, setTerm] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (open) inputRef.current?.focus();
   }, [open]);
+  // The core's answer to ⌘F on an agent with its own find, acted on once:
+  // the agent's search takes the typing, or this bar opens.
+  const opened = find?.opened;
+  useEffect(() => {
+    if (!pending || !opened || opened.request_id !== pending) return;
+    useUiStore.getState().setAgentFindRequest(null);
+    if (opened.route === "bar") useUiStore.getState().openOverlay("find");
+    else if (find?.pane_id) focusTerminal(find.pane_id);
+  }, [pending, opened, find?.pane_id]);
   // Escape and × end the search and give the keyboard back to the pane it
   // searched, so typing continues where it was (B5).
   const dismiss = useRef(() => {});

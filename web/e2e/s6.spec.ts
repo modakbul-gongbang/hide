@@ -234,12 +234,14 @@ test("Main, Overview and a Workspace with its side panel, tools and delegated ch
     await expect(workspace).toHaveAttribute("data-panel", "open");
     await childHost.click({ position: { x: 40, y: 60 } });
     expect(resizes()).toBe(resizesBefore);
-    // The pane's find bar takes a row of the pane itself, so the count starts
-    // again after it.
+    // The pane is an agent with its own find and no history in Herdr, so ⌘F
+    // opens the agent's search in that pane, never the document's; any
+    // resize it causes is counted from after it.
+    const heardBefore = fs.readFileSync(herdr.inputLogs[1], "latin1").length;
     await page.keyboard.press("Meta+f");
-    await expect(page.locator("[data-find-bar]")).toBeVisible();
+    await expect.poll(() => JSON.stringify(fs.readFileSync(herdr.inputLogs[1], "latin1").slice(heardBefore)), { timeout: 10_000 }).toBe(JSON.stringify("\x0f/"));
+    expect(last.get("pane_find_open")).toMatchObject({ pane_id: child });
     await expect(page.locator(".cm-search")).toHaveCount(0);
-    await page.keyboard.press("Escape");
     await expect(page.locator("[data-find-bar]")).toHaveCount(0);
     await panel.locator("[data-editor-body] .cm-content").click();
     await page.keyboard.press("Meta+f");

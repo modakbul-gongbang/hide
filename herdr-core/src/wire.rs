@@ -818,6 +818,12 @@ pub(crate) fn pane_scroll(value: Value) -> Result<Option<crate::live::PaneScroll
         _ => Err(missing.into()),
     }
 }
+pub(crate) fn pane_send_keys_params(pane_id: &str, keys: &[&str]) -> Result<Value, String> {
+    params(req::PaneSendKeysParams {
+        pane_id: pane_id.into(),
+        keys: keys.iter().map(|key| (*key).to_owned()).collect(),
+    })
+}
 pub(crate) fn pane_send_text_params(pane_id: &str, text: &str) -> Result<Value, String> {
     params(req::PaneSendTextParams {
         pane_id: pane_id.into(),

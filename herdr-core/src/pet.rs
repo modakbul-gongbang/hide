@@ -284,6 +284,7 @@ mod tests {
             last_activity: "0000000000001".to_owned(),
             state_change_seq: None,
             session_id: None,
+            own_find: false,
             spawned_from_pane_id: None,
             declared_parent_pane_id: None,
             spawned_from_machine_id: None,

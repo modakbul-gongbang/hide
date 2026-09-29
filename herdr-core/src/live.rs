@@ -18,13 +18,14 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::agent_find::AgentFind;
 use crate::checkout_owner::OwnerOpen;
 use crate::find::PaneFindOptions;
 use crate::fork::ForkRequest;
 use crate::handle::ChangeNotifier;
 use crate::model::{
-    EditorDocumentSnapshot, PaneLayoutDirection, PaneLayoutNodeSnapshot, PaneLayoutSnapshot,
-    WorkspaceRegistration, WorkspaceSnapshot,
+    EditorDocumentSnapshot, PaneFindRoute, PaneLayoutDirection, PaneLayoutNodeSnapshot,
+    PaneLayoutSnapshot, WorkspaceRegistration, WorkspaceSnapshot,
 };
 use crate::recent_closed::{
     ClosedAgent, ClosedContext, ClosedItem, ClosedLayoutBranch, ClosedLayoutNode, ClosedPane,
@@ -2229,6 +2230,46 @@ pub fn spawn_pane_find(route: PaneApiRoute, request: PaneFindRequest) -> Result<
         move |connector, herdr_pane_id| run_pane_find(connector, herdr_pane_id, &request),
         |runtime, pane_id, result| runtime.ingest_pane_find(pane_id, result),
     )
+}
+
+/// Opens an agent's own search in its pane, unless Herdr holds the pane's
+/// history, which Hide's find bar searches instead (`agent_find.rs`).
+///
+/// The requests run on this thread, never under the runtime mutex.
+pub(crate) fn spawn_agent_find(
+    route: PaneApiRoute,
+    request_id: String,
+    find: AgentFind,
+) -> Result<(), String> {
+    route.spawn(
+        "herdr-core-agent-find",
+        move |connector, herdr_pane_id| open_agent_find(connector, herdr_pane_id, find),
+        move |runtime, pane_id, result| runtime.ingest_agent_find(pane_id, request_id, result),
+    )
+}
+
+fn open_agent_find(
+    connector: &dyn ApiConnector,
+    pane_id: &str,
+    find: AgentFind,
+) -> Result<PaneFindRoute, String> {
+    // An agent that draws inline leaves its conversation in Herdr's history,
+    // where the find bar reaches all of it; its own search may not exist in
+    // that mode (Claude Code's default renderer has none).
+    let pane = control_request(connector, "pane.get", wire::pane_target_params(pane_id)?)?;
+    if wire::pane_scroll(pane)?.is_some_and(|scroll| scroll.max_offset_from_bottom > 0) {
+        return Ok(PaneFindRoute::Bar);
+    }
+    let visible = match find.already_open {
+        Some(_) => Some(read_pane_text(connector, pane_id, "visible")?.text),
+        None => None,
+    };
+    control_request(
+        connector,
+        "pane.send_keys",
+        wire::pane_send_keys_params(pane_id, find.keys(visible.as_deref()))?,
+    )?;
+    Ok(PaneFindRoute::Agent)
 }
 
 /// Herdr's scroll position for one pane, in lines above the bottom.

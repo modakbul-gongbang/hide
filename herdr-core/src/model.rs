@@ -385,6 +385,29 @@ pub struct PaneFindSnapshot {
     /// searched rather than everything the pane has ever printed.
     pub truncated: bool,
     pub unavailable_reason: Option<String>,
+    /// Where the last `pane_find_open` sent the search, named by the request
+    /// that asked, so the shell acts on its own answer once and never on a
+    /// late one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub opened: Option<PaneFindOpened>,
+}
+
+/// The answer to one `pane_find_open`.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PaneFindOpened {
+    pub request_id: String,
+    pub route: PaneFindRoute,
+}
+
+/// Where ⌘F's search went for an agent with its own find.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneFindRoute {
+    /// The agent's own search is open in the pane and takes the typing.
+    Agent,
+    /// Herdr holds the pane's history, or the agent's search could not be
+    /// opened (`unavailable_reason` says why), so Hide's find bar opens.
+    Bar,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -686,6 +709,10 @@ pub struct SidebarAgentSnapshot {
     /// wire when Herdr recorded none.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_id: Option<String>,
+    /// The agent has its own search over its whole conversation, so ⌘F on its
+    /// pane asks the core where the search goes (`pane_find_open`) rather
+    /// than opening Hide's find bar (`agent_find.rs`).
+    pub own_find: bool,
     /// The pane this agent was spawned from: Herdr's own lineage record, or
     /// the `parent_pane` token its spawner declared when Herdr recorded none.
     /// `wire.rs::lineage_parent` is the one place that resolves the two.
@@ -4040,6 +4067,15 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "strip_tab_kind", &strip_kinds);
         checked.insert("strip_tab_kind");
+
+        let find_routes = [PaneFindRoute::Agent, PaneFindRoute::Bar];
+        for variant in find_routes {
+            match variant {
+                PaneFindRoute::Agent | PaneFindRoute::Bar => {}
+            }
+        }
+        assert_wire(&contract, "pane_find_route", &find_routes);
+        checked.insert("pane_find_route");
 
         let unchecked = contract
             .keys()

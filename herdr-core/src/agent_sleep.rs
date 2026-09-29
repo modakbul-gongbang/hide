@@ -526,6 +526,7 @@ mod tests {
             last_activity: "1788871000000".to_owned(),
             state_change_seq: Some(4),
             session_id: Some("session-a".to_owned()),
+            own_find: true,
             spawned_from_pane_id: None,
             declared_parent_pane_id: None,
             spawned_from_machine_id: None,

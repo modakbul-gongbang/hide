@@ -1,3 +1,4 @@
+mod agent_find;
 pub mod agent_hooks;
 mod agent_sleep;
 mod agent_sleep_herdr;

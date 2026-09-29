@@ -300,6 +300,7 @@ impl Runtime {
             total: outcome.total,
             truncated: outcome.truncated,
             unavailable_reason: None,
+            opened: None,
         };
         let changed = self.snapshot.find != next;
         self.snapshot.find = next;
@@ -314,6 +315,66 @@ impl Runtime {
             ) || changed;
         }
         changed
+    }
+    /// ⌘F on a pane whose agent has its own find: a worker opens the
+    /// agent's search, or answers that Hide's find bar should open because
+    /// Herdr holds the pane's history (`live::spawn_agent_find`).
+    pub(super) fn open_pane_find(&mut self, pane_id: String, request_id: String) -> bool {
+        let find = self
+            .agent_row(&pane_id)
+            .and_then(|agent| crate::agent_find::agent_find(&agent.agent_kind));
+        // The agent left between the frame the shell acted on and this event:
+        // the pane is a plain terminal again, which the bar searches.
+        let Some(find) = find else {
+            return self.ingest_agent_find(&pane_id, request_id, Ok(PaneFindRoute::Bar));
+        };
+        // A device's pane opens through that device's Herdr; one that cannot
+        // be reached says why in the bar.
+        let route = match self.pane_api_route(&pane_id) {
+            Ok(route) => route,
+            Err(reason) => return self.ingest_agent_find(&pane_id, request_id, Err(reason)),
+        };
+        if let Err(message) = live::spawn_agent_find(route, request_id.clone(), find) {
+            return self.ingest_agent_find(&pane_id, request_id, Err(message));
+        }
+        false
+    }
+    /// Records where a `pane_find_open` sent the search. A failure opens the
+    /// bar with the reason, where the operator can search what Herdr holds.
+    pub fn ingest_agent_find(
+        &mut self,
+        pane_id: &str,
+        request_id: String,
+        result: Result<PaneFindRoute, String>,
+    ) -> bool {
+        let (route, unavailable_reason) = match result {
+            Ok(route) => (route, None),
+            Err(message) => (PaneFindRoute::Bar, Some(message)),
+        };
+        crate::diagnostic!(serde_json::json!({
+            "component": "terminal", "kind": "pane.find_opened",
+            "pane_id": pane_id, "request_id": request_id, "route": route,
+            "reason": unavailable_reason,
+        }));
+        self.snapshot.find = PaneFindSnapshot {
+            pane_id: Some(pane_id.to_owned()),
+            unavailable_reason,
+            opened: Some(PaneFindOpened { request_id, route }),
+            ..PaneFindSnapshot::default()
+        };
+        true
+    }
+    /// The agent row for a pane on this machine or on a device.
+    fn agent_row(&self, pane_id: &str) -> Option<&SidebarAgentSnapshot> {
+        let local = self.snapshot.navigator.agents.iter();
+        let devices = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .filter_map(|remote| remote.session.as_ref())
+            .flat_map(|session| session.agents.iter());
+        local.chain(devices).find(|agent| agent.pane_id == pane_id)
     }
     /// Moves a pane's view by a wheel's signed lines (positive shows older
     /// lines), and whether that changed the snapshot.

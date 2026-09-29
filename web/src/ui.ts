@@ -194,6 +194,8 @@ type UiStore = {
   editorFindRequest: number;
   /** The display the latest ⌘F is for; one display answers it, whichever else shows the document. */
   editorFindDisplay: string | null;
+  /** The `pane_find_open` whose answer ⌘F waits for, until the find bar or the agent's own search takes it. */
+  agentFindRequest: string | null;
   viewFocusRequest: ViewFocusRequest | null;
   /**
    * How the Workspace tools stand (S7 B12, D-08): the column while the side
@@ -262,6 +264,7 @@ type UiStore = {
   toggleSidebarMode: () => void;
   setExplorerSelection: (path: string | null) => void;
   requestEditorFind: (displayId: string | null) => void;
+  setAgentFindRequest: (requestId: string | null) => void;
   setViewFocusRequest: (request: ViewFocusRequest | null) => void;
   /** Follows the window: `column` when wide, a closed overlay when it turns narrow, unless a tool was asked for with the panel. */
   setToolsNarrow: (narrow: boolean) => void;
@@ -302,6 +305,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   explorerSelection: null,
   editorFindRequest: 0,
   editorFindDisplay: null,
+  agentFindRequest: null,
   viewFocusRequest: null,
   toolsPlacement: "column",
   toolsAsked: false,
@@ -343,6 +347,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   },
   setExplorerSelection: (explorerSelection) => set({ explorerSelection }),
   requestEditorFind: (displayId) => set({ editorFindRequest: get().editorFindRequest + 1, editorFindDisplay: displayId }),
+  setAgentFindRequest: (agentFindRequest) => set({ agentFindRequest }),
   setViewFocusRequest: (viewFocusRequest) => set({ viewFocusRequest }),
   setToolsNarrow: (narrow) => {
     const { toolsPlacement: current, toolsAsked } = get();
