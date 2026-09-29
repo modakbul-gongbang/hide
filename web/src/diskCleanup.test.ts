@@ -3,6 +3,7 @@
 // small fixtures. Expected answers are the PRD's Behaviors (B2, B4, B10-B16, B22).
 
 import { describe, expect, it } from "vitest";
+import { projectStats } from "./projectBoard";
 import {
   EMPTY_SELECTION,
   LOW_FREE_BYTES,
@@ -10,15 +11,20 @@ import {
   allocatedTotal,
   bundleRefs,
   bundleState,
+  cellReasonText,
+  entranceBytes,
+  exclusionText,
   filterCounts,
   footerOf,
   freedFree,
   gigabytes,
+  layerLines,
   layoutRows,
   lowFree,
   needsConfirm,
   planOf,
   pruneSelection,
+  reasonText,
   reclaimable,
   removingElsewhere,
   resultLines,
@@ -28,7 +34,7 @@ import {
   visibleRows,
   type SheetRow,
 } from "./diskCleanup";
-import type { Checkout, CleanupRow, DiskCleanup, DiskLayers, Workspace } from "./snapshot";
+import type { Checkout, CleanupCellResult, CleanupExclusionCode, CleanupRow, DiskCleanup, DiskLayers, Workspace } from "./snapshot";
 
 const GB = 1024 ** 3;
 const MB = 1024 ** 2;
@@ -70,7 +76,7 @@ function checkout(name: string, options: Options = {}): Checkout {
 }
 
 function core(path: string, extra: Partial<CleanupRow> = {}): CleanupRow {
-  return { path, branch: null, head: null, is_main: false, exclusion: null, exclusion_code: null, exclusion_count: null, in_use: null, result: null, message: null, ...extra };
+  return { path, branch: null, head: null, is_main: false, exclusion_code: null, exclusion_count: null, in_use: null, result: null, result_code: null, bytes: null, ...extra };
 }
 
 function workspace(checkouts: Checkout[], cleanup: Partial<DiskCleanup> | null, rows: Record<string, Partial<CleanupRow>> = {}, id = "p"): Workspace {
@@ -210,7 +216,6 @@ describe("cell availability (B5, B6, B14, B15, B25)", () => {
   it("draws the rows from the checkouts when the review failed, with the reason for the notice", () => {
     const failed = sheetModel(workspace([checkout("a"), checkout("b")], { phase: "failed", message: "no herdr", usage_error: "no herdr", usage_ready: false }), false);
     expect(failed.state).toBe("unreadable");
-    expect(failed.message).toBe("no herdr");
     expect(failed.rows).toHaveLength(2);
     expect(failed.rows.every((row) => !row.cache.build_cache.selectable && row.total !== null)).toBe(true);
   });
@@ -284,6 +289,15 @@ describe("selection (D-09, B10, B11)", () => {
   it("drops a ticked cell that stopped being selectable from the plan", () => {
     const selection = toggleCell(EMPTY_SELECTION, { path: "/r/run", column: "build_cache" });
     expect(planOf(visible, selection).cells).toEqual([]);
+  });
+
+  it("has no worktree left to confirm when the one ticked turned in use meanwhile", () => {
+    const before = ready([checkout("ok", merged)], { ok: {} });
+    const selection = toggleCell(EMPTY_SELECTION, { path: "/r/ok", column: "worktree" });
+    expect(needsConfirm(planOf(before, selection))).toBe(true);
+    const after = ready([checkout("ok", merged)], { ok: { in_use: { code: "process", name: "vite", port: null } } });
+    expect(planOf(after, selection).worktrees).toEqual([]);
+    expect(needsConfirm(planOf(after, selection))).toBe(false);
   });
 
   it("unticks what a filter hides (B12)", () => {
@@ -365,10 +379,11 @@ describe("footer (B13, B16, B17, B18)", () => {
   });
 });
 
-describe("the entrance (B2, D-29)", () => {
+describe("the entrance (B1, B2, B6, D-29)", () => {
   const measured = (free: number | null, checkouts: Checkout[]): Workspace => ({ ...workspace(checkouts, null), disk: { total_bytes: 50 * GB, unavailable_reason: null, measuring: false, free_bytes: free } });
+  const layerTotals = { build_cache: 30 * GB, dependencies: 5 * GB, source: 3 * GB, other: 2 * GB, shared_git: 1 * GB };
 
-  it("stands only once measured and under 10 GB free", () => {
+  it("stands only once the measurement is back and under 10 GB free", () => {
     expect(lowFree(measured(1.6 * GB, []))).toBe(1.6 * GB);
     expect(lowFree(measured(LOW_FREE_BYTES, []))).toBeNull();
     expect(lowFree(measured(null, []))).toBeNull();
@@ -384,9 +399,84 @@ describe("the entrance (B2, D-29)", () => {
     ]);
     expect(reclaimable(value)).toBe(4 * GB);
   });
+
+  describe("with one checkout that could not be measured", () => {
+    // The core leaves `total_bytes` out while any checkout is unavailable and states the subtotal, the layers and the free space of the rest.
+    const partial: Workspace = {
+      ...workspace([checkout("main", { main: true }), checkout("done-a", { ...merged, build: 3 * GB, deps: 1 * GB }), checkout("huge", { unavailable: true })], null),
+      disk: { total_bytes: null, unavailable_reason: "over the limit", measuring: false, confirmed_bytes: 40 * GB, free_bytes: 1.6 * GB, layers: layerTotals },
+    };
+
+    it("keeps the entrance as a subtotal instead of removing it, and never as a total", () => {
+      expect(entranceBytes(partial)).toEqual({ bytes: 40 * GB, partial: true });
+      expect(projectStats(partial).disk).toBe(40 * GB);
+      expect(entranceBytes({ ...partial, disk: { ...partial.disk!, total_bytes: 45 * GB } })).toEqual({ bytes: 45 * GB, partial: false });
+      expect(entranceBytes({ ...partial, disk: { total_bytes: null, unavailable_reason: "x", measuring: false } })).toBeNull();
+      expect(entranceBytes({ ...partial, disk: { ...partial.disk!, measuring: true } })).toBeNull();
+    });
+
+    it("keeps the layer tooltip in the PRD's words and the low-free warning from the measured rows", () => {
+      expect(layerLines(partial)?.map((line) => [line.label, line.bytes])).toEqual([
+        ["빌드 캐시", 30 * GB],
+        ["의존성", 5 * GB],
+        ["워크트리 소스", 3 * GB],
+        ["기타 · 지우지 않음", 2 * GB],
+        ["공유 Git", 1 * GB],
+      ]);
+      expect(lowFree(partial)).toBe(1.6 * GB);
+      expect(reclaimable(partial)).toBe(4 * GB);
+    });
+  });
+});
+
+describe("reasons in the operator's words (B15, B22)", () => {
+  it("words every exclusion code, and the count of changed files", () => {
+    const codes: [CleanupExclusionCode, string][] = [
+      ["locked", "잠김"],
+      ["current", "지금 보고 있는 체크아웃"],
+      ["pane_open", "pane이 열려 있음"],
+      ["dirty", "바뀐 파일 있음"],
+      ["not_merged", "main에 머지되지 않음"],
+      ["merge_unverified", "머지를 확인하지 못함"],
+      ["nested_repository", "안에 다른 저장소"],
+      ["detached", "브랜치 없이 떨어진 HEAD"],
+      ["contains_worktree", "다른 워크트리를 품고 있음"],
+      ["unverified", "확인하지 못함"],
+      ["main_unavailable", "로컬 main을 읽을 수 없음"],
+      ["alias", "폴더를 읽을 수 없음"],
+      ["missing", "폴더를 읽을 수 없음"],
+      ["unavailable", "폴더를 읽을 수 없음"],
+      ["in_use", "쓰는 중"],
+    ];
+    for (const [code, text] of codes) expect(exclusionText(core("/r/x", { exclusion_code: code })), code).toBe(text);
+    expect(exclusionText(core("/r/x", { exclusion_code: "dirty", exclusion_count: 3 }))).toBe("바뀐 파일 3");
+    expect(exclusionText(core("/r/x", { exclusion_code: "main" }))).toBeNull();
+    expect(exclusionText(core("/r/x"))).toBeNull();
+  });
+
+  it("words every result code of a worktree that stayed", () => {
+    expect(reasonText("changed")).toBe("확인 사이에 바뀜");
+    expect(reasonText("not_found")).toBe("이미 없음");
+    expect(reasonText("unverified")).toBe("확인하지 못함");
+    expect(reasonText("remove_refused")).toBe("Git이 워크트리를 지우지 못함");
+    // A code this build does not know reads as a plain refusal, never as the raw code.
+    expect(reasonText("from_a_newer_core" as CleanupExclusionCode)).toBe("지울 수 없음");
+  });
+
+  it("words every cell code the core sends and the in-use kinds", () => {
+    const cells = { in_use: "확인 사이에 쓰는 중이 됨", changed: "확인 사이에 바뀜", tracked_files: "추적 파일이 있음", nested_repository: "안에 다른 저장소", symlink: "심링크라 건너뜀", not_found: "이미 없음", unverified: "확인하지 못함", io: "폴더를 지우지 못함" } as const;
+    for (const [code, text] of Object.entries(cells)) expect(cellReasonText(code as keyof typeof cells), code).toBe(text);
+    const inUse = (code: "agent_working" | "process" | "port" | "unverified", name: string | null = null, port: number | null = null) => exclusionText(core("/r/x", { in_use: { code, name, port } }));
+    expect(inUse("agent_working")).toBe("에이전트 작업 중");
+    expect(inUse("process", "cargo")).toBe("터미널에서 cargo 실행 중");
+    expect(inUse("port", null, 5173)).toBe("포트 5173 서버");
+    expect(inUse("unverified")).toBe("쓰는 중인지 확인하지 못함");
+  });
 });
 
 describe("result (B22)", () => {
+  // The core's real shape: codes and sizes only, no sentence anywhere.
+  const cell = (path: string, layer: CleanupCellResult["layer"], outcome: CleanupCellResult["outcome"], bytes: number, folders: number, reason_code: CleanupCellResult["reason_code"]): CleanupCellResult => ({ path, layer, outcome, bytes, folders, reason_code });
   const cleanup: DiskCleanup = {
     id: 1,
     workspace_id: "p",
@@ -400,27 +490,45 @@ describe("result (B22)", () => {
     progress: null,
     free_before: 1.6 * GB,
     free_after: 18.3 * GB,
-    rows: [core("/r/gone", { result: "removed" }), core("/r/kept", { result: "refused", message: "State changed." })],
+    rows: [
+      core("/r/gone", { branch: "feat/gone", result: "removed", bytes: 4 * GB }),
+      core("/r/kept", { branch: "feat/kept", result: "skipped", result_code: "changed" }),
+      core("/r/dirty", { branch: "feat/dirty", result: "skipped", result_code: "dirty", exclusion_count: 2 }),
+      core("/r/refused", { branch: "feat/refused", result: "failed", result_code: "remove_refused" }),
+      core("/r/a", { branch: "feat/a" }),
+    ],
     cell_results: [
-      { path: "/r/d", layer: "build_cache", outcome: "removed", bytes: 1 * GB, folders: 1, reason_code: "tracked_files", reason: null },
-      { path: "/r/a", layer: "build_cache", outcome: "removed", bytes: 8 * GB, folders: 2, reason_code: null, reason: null },
-      { path: "/r/a", layer: "dependencies", outcome: "removed", bytes: 1 * GB, folders: 1, reason_code: null, reason: null },
-      { path: "/r/b", layer: "build_cache", outcome: "skipped", bytes: 2 * GB, folders: 1, reason_code: "in_use", reason: null },
-      { path: "/r/c", layer: "dependencies", outcome: "failed", bytes: 0, folders: 1, reason_code: "io", reason: "permission denied" },
+      cell("/r/d", "build_cache", "removed", 1 * GB, 1, "tracked_files"),
+      cell("/r/a", "build_cache", "removed", 8 * GB, 2, null),
+      cell("/r/a", "dependencies", "removed", 1 * GB, 1, null),
+      cell("/r/b", "build_cache", "skipped", 2 * GB, 1, "in_use"),
+      cell("/r/c", "dependencies", "failed", 0, 1, "io"),
     ],
   };
 
-  it("lists each removed, skipped and failed cell with its reason and never invents a size for a skip", () => {
-    const lines = resultLines(cleanup, new Map([["/r/a", "a"]]), new Map([["/r/gone", 4 * GB]]));
+  it("lists each removed, skipped and failed line from codes, and never invents a size for a skip", () => {
+    const lines = resultLines(cleanup);
     const by = (key: string) => lines.find((line) => line.key === key);
-    expect(by("cells:/r/a:removed")).toMatchObject({ label: "a", what: "빌드 캐시 · 의존성", bytes: 9 * GB });
-    expect(by("cells:/r/b:skipped")).toMatchObject({ reason: "확인 사이에 쓰는 중이 됨", bytes: null });
-    expect(by("cells:/r/c:failed")).toMatchObject({ reason: "permission denied" });
-    expect(by("worktree:/r/gone")).toMatchObject({ outcome: "removed", bytes: 4 * GB });
-    expect(by("worktree:/r/kept")).toMatchObject({ outcome: "skipped", reason: "State changed." });
+    expect(by("cells:/r/a:removed")).toMatchObject({ label: "feat/a", what: "빌드 캐시 · 의존성", bytes: 9 * GB, reason: null });
+    expect(by("cells:/r/b:skipped")).toMatchObject({ outcome: "skipped", reason: "확인 사이에 쓰는 중이 됨", bytes: null });
+    expect(by("cells:/r/c:failed")).toMatchObject({ outcome: "failed", reason: "폴더를 지우지 못함" });
     // A cell that emptied some folders and kept one says so beside what it removed.
     expect(by("cells:/r/d:removed")).toMatchObject({ bytes: 1 * GB, reason: "추적 파일이 있음" });
-    expect(allocatedTotal(lines)).toBe(14 * GB);
+  });
+
+  it("names a removed worktree by its branch and sizes it from the core's bytes, so a reopened result matches", () => {
+    const lines = resultLines(cleanup);
+    const by = (key: string) => lines.find((line) => line.key === key);
+    expect(by("worktree:/r/gone")).toMatchObject({ label: "feat/gone", outcome: "removed", bytes: 4 * GB, reason: null });
+    expect(allocatedTotal(lines)).toBe(4 * GB + 9 * GB + 1 * GB);
+  });
+
+  it("tells a skipped worktree from one Git refused", () => {
+    const lines = resultLines(cleanup);
+    const by = (key: string) => lines.find((line) => line.key === key);
+    expect(by("worktree:/r/kept")).toMatchObject({ outcome: "skipped", reason: "확인 사이에 바뀜", bytes: null });
+    expect(by("worktree:/r/dirty")).toMatchObject({ outcome: "skipped", reason: "바뀐 파일 2" });
+    expect(by("worktree:/r/refused")).toMatchObject({ outcome: "failed", reason: "Git이 워크트리를 지우지 못함" });
   });
 
   it("writes free space to one decimal", () => {

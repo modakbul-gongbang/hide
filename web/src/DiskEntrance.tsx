@@ -1,7 +1,7 @@
 import { AlertTriangleIcon, HardDriveIcon } from "lucide-react";
 import { cn } from "./lib/utils";
 import { FACT } from "./MainScreen";
-import { LOW_FREE_BYTES, layerLines, lowFree, reclaimable, type Filter } from "./diskCleanup";
+import { LOW_FREE_BYTES, entranceBytes, layerLines, lowFree, reclaimable, type Filter } from "./diskCleanup";
 import { LAYER_DOT } from "./DiskCleanupSheet";
 import { Tooltip, TooltipContent, TooltipTrigger, useHintOpen } from "./components/ui/tooltip";
 import { formatBytes } from "./projectBoard";
@@ -17,15 +17,22 @@ export function openDiskCleanup(workspaceId: string, filter: Filter) {
   useUiStore.getState().setWorkspaceDialog({ kind: "disk_cleanup", workspaceId, filter });
 }
 
-/** A local Git project's size, drawn as a button once its layers are known; a plain number before. */
+/**
+ * A local Git project's size, drawn as a button once its layers are known; a
+ * plain number before. While a checkout could not be measured the number is
+ * the subtotal of the others, marked `≥`, and the tooltip says so: the entrance
+ * never states a total the system cannot produce (B6).
+ */
 export function DiskFact({ workspace, bytes }: { workspace: Workspace; bytes: number }) {
   const { open, onOpenChange, triggerProps } = useHintOpen();
   const lines = layerLines(workspace);
   const local = !workspace.remote_target_id;
+  const partial = entranceBytes(workspace)?.partial ?? false;
+  const size = `${partial ? "≥ " : ""}${formatBytes(bytes)}`;
   const content = (
-    <span className={cn(FACT, "rounded-xs")} data-stat="disk">
+    <span className={cn(FACT, "rounded-xs")} data-stat="disk" data-disk-partial={partial || undefined}>
       <HardDriveIcon aria-hidden="true" className="size-(--size-icon)" />
-      {formatBytes(bytes)}
+      {size}
     </span>
   );
   if (!local || !lines) {
@@ -36,19 +43,25 @@ export function DiskFact({ workspace, bytes }: { workspace: Workspace; bytes: nu
       <TooltipTrigger asChild {...triggerProps}>
         <button
           type="button"
-          aria-label={`디스크 ${formatBytes(bytes)}, 정리 시트 열기`}
+          aria-label={`디스크 ${size}, 정리 시트 열기`}
           className={cn(FACT, "rounded-xs outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring")}
           data-stat="disk"
           data-disk-entrance="true"
+          data-disk-partial={partial || undefined}
           onClick={() => openDiskCleanup(workspace.id, "all")}
         >
           <HardDriveIcon aria-hidden="true" className="size-(--size-icon)" />
-          {formatBytes(bytes)}
+          {size}
         </button>
       </TooltipTrigger>
       <TooltipContent>
         <div className="flex flex-col gap-xxs" data-disk-tooltip="true">
-          <span>할당 {formatBytes(bytes)} · 눌러서 정리</span>
+          <span>할당 {size} · 눌러서 정리</span>
+          {partial ? (
+            <span className="text-warning" data-disk-tooltip-partial="true">
+              일부 체크아웃은 크기를 재지 못해 잰 것만 합했다
+            </span>
+          ) : null}
           {lines.map((line) => (
             <span key={line.key} className="flex items-center justify-between gap-md" data-disk-tooltip-line={line.key}>
               <span className="inline-flex items-center gap-xs">

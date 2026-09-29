@@ -10,7 +10,9 @@
 // selection can never reach what the core has not judged.
 
 import { formatBytes, stageOf } from "./projectBoard";
-import type { CacheLayer, Checkout, DiskCell, DiskCleanup, CleanupInUse, CleanupRow, Workspace } from "./snapshot";
+import type { CacheLayer, Checkout, CleanupCellResult, CleanupInUse, CleanupResultCode, CleanupRow, DiskCell, DiskCleanup, Workspace } from "./snapshot";
+
+type CleanupCellReason = NonNullable<CleanupCellResult["reason_code"]>;
 
 export const CACHE_LAYERS: readonly CacheLayer[] = ["build_cache", "dependencies"];
 export type Column = CacheLayer | "worktree";
@@ -32,48 +34,44 @@ export const FILTER_LABEL: Record<Filter, string> = { all: "전체", done: "끝�
 export function inUseText(inUse: CleanupInUse): string {
   if (inUse.code === "agent_working") return "에이전트 작업 중";
   if (inUse.code === "process") return `터미널에서 ${inUse.name ?? "프로세스"} 실행 중`;
+  if (inUse.code === "unverified") return "쓰는 중인지 확인하지 못함";
   return `포트 ${inUse.port ?? "?"} 서버`;
 }
 
-/** Why the core will not remove a worktree folder, in the operator's words (B15). */
+/** Every reason is worded here from the core's codes; the core's own sentences are for its log only (design 13). */
+const CODE_TEXT: Record<CleanupResultCode, string> = {
+  main: "main 체크아웃",
+  locked: "잠김",
+  current: "지금 보고 있는 체크아웃",
+  pane_open: "pane이 열려 있음",
+  dirty: "바뀐 파일 있음",
+  not_merged: "main에 머지되지 않음",
+  merge_unverified: "머지를 확인하지 못함",
+  nested_repository: "안에 다른 저장소",
+  detached: "브랜치 없이 떨어진 HEAD",
+  contains_worktree: "다른 워크트리를 품고 있음",
+  unverified: "확인하지 못함",
+  main_unavailable: "로컬 main을 읽을 수 없음",
+  alias: "폴더를 읽을 수 없음",
+  missing: "폴더를 읽을 수 없음",
+  unavailable: "폴더를 읽을 수 없음",
+  in_use: "쓰는 중",
+  changed: "확인 사이에 바뀜",
+  not_found: "이미 없음",
+  remove_refused: "Git이 워크트리를 지우지 못함",
+};
+
+/** A reason code in the operator's words; a code this build does not know is said as such, never as the raw code. */
+export function reasonText(code: CleanupResultCode, count?: number | null): string {
+  if (code === "dirty" && count) return `바뀐 파일 ${count}`;
+  return CODE_TEXT[code] ?? "지울 수 없음";
+}
+
+/** Why the core will not remove a worktree folder (B15); null for a row that may be, and for main, which has no worktree cell. */
 export function exclusionText(row: CleanupRow): string | null {
   if (row.in_use) return inUseText(row.in_use);
-  switch (row.exclusion_code) {
-    case null:
-      return null;
-    case "main":
-      return null;
-    case "locked":
-      return "잠김";
-    case "current":
-      return "지금 보고 있는 체크아웃";
-    case "pane_open":
-      return "pane이 열려 있음";
-    case "dirty":
-      return row.exclusion_count ? `바뀐 파일 ${row.exclusion_count}` : "바뀐 파일 있음";
-    case "not_merged":
-      return "main에 머지되지 않음";
-    case "merge_unverified":
-      return "머지를 확인하지 못함";
-    case "nested_repository":
-      return "안에 다른 저장소";
-    case "detached":
-      return "브랜치 없이 떨어진 HEAD";
-    case "contains_worktree":
-      return "다른 워크트리를 품고 있음";
-    case "unverified":
-      return "확인하지 못함";
-    case "main_unavailable":
-      return "로컬 main을 읽을 수 없음";
-    case "alias":
-    case "missing":
-    case "unavailable":
-      return "폴더를 읽을 수 없음";
-    case "in_use":
-      return "쓰는 중";
-    default:
-      return row.exclusion ?? "지울 수 없음";
-  }
+  if (row.exclusion_code === null || row.exclusion_code === "main") return null;
+  return reasonText(row.exclusion_code, row.exclusion_count);
 }
 
 // --- rows ----------------------------------------------------------------------------
@@ -113,7 +111,7 @@ export type SheetState =
   | "removing"
   | "complete";
 
-export type SheetModel = { state: SheetState; message: string | null; rows: SheetRow[] };
+export type SheetModel = { state: SheetState; rows: SheetRow[] };
 
 const EMPTY_CELL: DiskCell = { bytes: 0, folders: 0, largest_name: null };
 
@@ -131,12 +129,11 @@ export function sheetModel(workspace: Workspace, busyElsewhere: boolean): SheetM
   else if (busyElsewhere) state = "busy";
   else if (phase === "failed" || (phase === "review" && cleanup?.usage_error)) state = "unreadable";
   else if (phase === "review") state = "ready";
-  const message = state === "unreadable" ? (cleanup?.usage_error ?? cleanup?.message ?? null) : null;
   // The in-use answer arrives before the slow worktree checks: caches may be
   // ticked from then on, a worktree only once the review is whole.
   const open = !busyElsewhere && !cleanup?.usage_error && (phase === "review" || (phase === "loading" && cleanup?.usage_ready === true));
   const rows = workspace.checkouts.filter((checkout) => checkout.worktree).map((checkout) => rowOf(checkout, cleanup, open, state === "ready"));
-  return { state, message, rows };
+  return { state, rows };
 }
 
 function rowOf(checkout: Checkout, cleanup: DiskCleanup | null, cachesOpen: boolean, worktreesOpen: boolean): SheetRow {
@@ -356,11 +353,19 @@ export function needsConfirm(plan: CleanupPlan): boolean {
 
 // --- the entrance (B1, B2, D-29) ----------------------------------------------------------
 
-/** The warning cell shows only once measured and under the limit (B2, D-20). */
+/** The warning cell shows once the measurement is back and the volume is under the limit (B2, D-20); one checkout that could not be measured does not hide it. */
 export function lowFree(workspace: Workspace): number | null {
   const disk = workspace.disk;
-  if (!disk || disk.total_bytes == null || disk.free_bytes == null) return null;
+  if (!disk || disk.measuring || disk.free_bytes == null) return null;
   return disk.free_bytes < LOW_FREE_BYTES ? disk.free_bytes : null;
+}
+
+/** The size the entrance may state: the total when every checkout was measured, else the subtotal of those that were (never a total the system cannot produce). */
+export function entranceBytes(workspace: Workspace): { bytes: number; partial: boolean } | null {
+  const disk = workspace.disk;
+  if (!disk || disk.measuring) return null;
+  if (disk.total_bytes != null) return { bytes: disk.total_bytes, partial: false };
+  return disk.confirmed_bytes != null ? { bytes: disk.confirmed_bytes, partial: true } : null;
 }
 
 /**
@@ -383,40 +388,47 @@ export function reclaimable(workspace: Workspace): number {
 
 export type LayerLine = { key: "build_cache" | "dependencies" | "source" | "other" | "shared_git"; label: string; bytes: number };
 
-/** The tooltip's lines, in the order the board draws them (D-29); null until the project's layers are known. */
+/** The tooltip's lines in the PRD's order (B1, D-29); null until any checkout's layers are known. */
 export function layerLines(workspace: Workspace): LayerLine[] | null {
   const layers = workspace.disk?.layers;
   if (!layers) return null;
   return [
     { key: "build_cache", label: "빌드 캐시", bytes: layers.build_cache },
     { key: "dependencies", label: "의존성", bytes: layers.dependencies },
+    { key: "source", label: "워크트리 소스", bytes: layers.source },
     { key: "other", label: "기타 · 지우지 않음", bytes: layers.other },
-    { key: "source", label: "소스", bytes: layers.source },
-    { key: "shared_git", label: ".git 공유", bytes: layers.shared_git },
+    { key: "shared_git", label: "공유 Git", bytes: layers.shared_git },
   ];
 }
 
 // --- results (B22) --------------------------------------------------------------------------
 
-const SKIP_TEXT: Record<string, string> = {
-  unverified: "확인하지 못함",
+/** What kept a cell's folders, by the core's code; `io` is a move that failed. */
+const CELL_REASON_TEXT: Record<CleanupCellReason, string> = {
   in_use: "확인 사이에 쓰는 중이 됨",
   changed: "확인 사이에 바뀜",
   tracked_files: "추적 파일이 있음",
   nested_repository: "안에 다른 저장소",
   symlink: "심링크라 건너뜀",
   not_found: "이미 없음",
+  unverified: "확인하지 못함",
+  io: "폴더를 지우지 못함",
 };
+
+export function cellReasonText(code: CleanupCellReason): string {
+  return CELL_REASON_TEXT[code] ?? "지울 수 없음";
+}
 
 export type ResultLine = { key: string; label: string; what: string; outcome: "removed" | "skipped" | "failed"; bytes: number | null; reason: string | null };
 
 /**
- * One line per worktree and per cell the confirm touched. `sizes` holds the
- * folder sizes the sheet saw when the operator confirmed, because a removed
- * worktree leaves the catalog and takes its size with it.
+ * One line per worktree and per cell the confirm touched, worded from the
+ * core's codes alone. A worktree is named by its branch and sized by the bytes
+ * the core recorded when it removed it, so a result opened again after the
+ * sheet was closed reads the same as one that never left.
  */
-export function resultLines(cleanup: DiskCleanup, labels: ReadonlyMap<string, string>, sizes: ReadonlyMap<string, number>): ResultLine[] {
-  const label = (path: string) => labels.get(path) ?? path.slice(path.lastIndexOf("/") + 1);
+export function resultLines(cleanup: DiskCleanup): ResultLine[] {
+  const label = (path: string) => cleanup.rows.find((row) => row.path === path)?.branch ?? path.slice(path.lastIndexOf("/") + 1);
   const lines: ResultLine[] = [];
   for (const row of cleanup.rows) {
     if (row.result === null) continue;
@@ -424,9 +436,9 @@ export function resultLines(cleanup: DiskCleanup, labels: ReadonlyMap<string, st
       key: `worktree:${row.path}`,
       label: label(row.path),
       what: "워크트리 삭제",
-      outcome: row.result === "removed" ? "removed" : "skipped",
-      bytes: row.result === "removed" ? (sizes.get(row.path) ?? null) : null,
-      reason: row.result === "removed" ? null : (exclusionTextOrMessage(row)),
+      outcome: row.result,
+      bytes: row.result === "removed" ? row.bytes : null,
+      reason: row.result === "removed" ? null : row.result_code ? reasonText(row.result_code, row.exclusion_count) : null,
     });
   }
   const byPath = new Map<string, typeof cleanup.cell_results>();
@@ -435,6 +447,7 @@ export function resultLines(cleanup: DiskCleanup, labels: ReadonlyMap<string, st
     for (const outcome of ["removed", "skipped", "failed"] as const) {
       const group = cells.filter((cell) => cell.outcome === outcome);
       if (group.length === 0) continue;
+      const code = group.find((cell) => cell.reason_code)?.reason_code ?? null;
       lines.push({
         key: `cells:${path}:${outcome}`,
         label: label(path),
@@ -442,15 +455,11 @@ export function resultLines(cleanup: DiskCleanup, labels: ReadonlyMap<string, st
         outcome,
         bytes: outcome === "removed" ? group.reduce((sum, cell) => sum + cell.bytes, 0) : null,
         // A cell of several folders can be removed with the folders it kept named by their reason.
-        reason: group[0]!.reason ?? (group[0]!.reason_code ? (SKIP_TEXT[group[0]!.reason_code] ?? group[0]!.reason_code) : null),
+        reason: code ? cellReasonText(code) : null,
       });
     }
   }
   return lines;
-}
-
-function exclusionTextOrMessage(row: CleanupRow): string | null {
-  return row.message ?? exclusionText(row);
 }
 
 /** The allocated bytes the confirm removed; the volume's own free space says what actually came back. */

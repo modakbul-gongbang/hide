@@ -1,5 +1,5 @@
 import { AlertTriangleIcon, ChevronRightIcon, GitBranchIcon, HomeIcon, Loader2Icon, LockIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./components/ui/alert-dialog";
 import { Button } from "./components/ui/button";
@@ -21,6 +21,7 @@ import {
   gigabytes,
   isChecked,
   isIncluded,
+  entranceBytes,
   layoutRows,
   needsConfirm,
   planOf,
@@ -55,7 +56,7 @@ import { PR_TONE } from "./TaskBoards";
 // lays the model out and turns a press into one core event. The table is a
 // screen-local grid (D-31): no System / Table part exists for it.
 
-/** The sheet's width; a token of its own belongs in design/tokens.json when the design owner adds one. */
+/** The sheet's width: the `--size-disk-sheet` token. */
 const SHEET_WIDTH = "w-(--size-disk-sheet)";
 /** Checkbox, checkout, the two cache layers, the worktree, other and the row total. */
 const GRID = "var(--spacing-xl) minmax(0, 2.6fr) repeat(3, minmax(0, 1.2fr)) minmax(0, 0.9fr) minmax(0, 0.9fr)";
@@ -71,6 +72,9 @@ export const LAYER_DOT = {
 
 type Step = "table" | "confirm";
 
+/** How long a confirm may go unanswered before the sheet takes it as dropped; the core answers in one snapshot. */
+const CONFIRM_ANSWER_MS = 5000;
+
 export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, onClose }: { actions: Actions; workspace: Workspace; filter: Filter; onClose: () => void }) {
   const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
   const busyElsewhere = removingElsewhere(workspaces ?? [], workspace.id);
@@ -82,16 +86,16 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
   const [step, setStep] = useState<Step>("table");
   // A press on `정리` is one event; until the core answers with `removing` a second press is not another (B23).
   const [sent, setSent] = useState(false);
-  const seen = useRef<{ labels: Map<string, string>; sizes: Map<string, number> }>({ labels: new Map(), sizes: new Map() });
   const cleanupId = cleanup?.id ?? null;
   const phase = cleanup?.phase ?? null;
 
   // Opening reviews the project, unless a cleanup that already ran or is running is what there is to show (B20).
+  // Another project's cleanup that ends while the sheet is open leaves this project unreviewed: review when it does.
   useEffect(() => {
-    if (phase === "removing" || phase === "complete" || busyElsewhere) return;
+    if (busyElsewhere || phase === "removing" || phase === "complete") return;
     actions.reviewDiskCleanup(workspace.id);
-    // Only on opening: a later `다시 검토` is its own press.
-  }, []);
+    // On opening and when the daemon's other cleanup ends; a later `다시 검토` is its own press.
+  }, [busyElsewhere]);
   // A new review starts from nothing ticked, and a settled press can be made again.
   useEffect(() => {
     setSelection(EMPTY_SELECTION);
@@ -101,6 +105,13 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
   useEffect(() => {
     if (phase !== "review") setSent(phase === "removing");
   }, [phase]);
+  // The core drops a confirm it cannot take (stale id, review gone) with no phase change: after its answer window
+  // the press is released, so `정리` never stays disabled with nothing said.
+  useEffect(() => {
+    if (!sent || phase !== "review") return;
+    const timer = window.setTimeout(() => setSent(false), CONFIRM_ANSWER_MS);
+    return () => window.clearTimeout(timer);
+  }, [sent, phase]);
 
   const shown = visibleRows(model.rows, filter);
   const counts = filterCounts(model.rows);
@@ -116,12 +127,8 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
     setFilter(next);
     setSelection((current) => pruneSelection(current, visibleRows(model.rows, next)));
   };
-  const remember = () => {
-    seen.current = { labels: new Map(model.rows.map((row) => [row.path, row.label])), sizes: new Map(model.rows.flatMap((row) => (row.total === null ? [] : [[row.path, row.total] as const]))) };
-  };
   const run = () => {
     if (!cleanup || sent) return;
-    remember();
     setSent(true);
     setStep("table");
     actions.confirmDiskCleanup(
@@ -131,13 +138,19 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
     );
   };
   const press = () => (needsConfirm(plan) ? setStep("confirm") : run());
+  // The one worktree the confirmation named can stop being removable while it is open (a row turned in use):
+  // with none left the sheet is back on the table, where that row says why.
+  const confirming = step === "confirm" && plan.worktrees.length > 0;
+  useEffect(() => {
+    if (step === "confirm" && plan.worktrees.length === 0) setStep("table");
+  }, [step, plan.worktrees.length]);
 
   const title = "디스크 정리";
   const body =
     model.state === "removing" ? (
       <RunningView progress={cleanup?.progress ?? null} />
     ) : model.state === "complete" && cleanup ? (
-      <ResultView workspace={workspace} seen={seen.current} onReview={() => actions.reviewDiskCleanup(workspace.id)} onClose={close} />
+      <ResultView workspace={workspace} onReview={() => actions.reviewDiskCleanup(workspace.id)} onClose={close} />
     ) : (
       <TableView
         workspace={workspace}
@@ -197,7 +210,7 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
           ) : null}
         </DialogContent>
       </Dialog>
-      <AlertDialog open={step === "confirm"} onOpenChange={(next) => { if (!next) setStep("table"); }}>
+      <AlertDialog open={confirming} onOpenChange={(next) => { if (!next) setStep("table"); }}>
         <AlertDialogContent data-disk-confirm="true">
           <AlertDialogHeader>
             <AlertDialogTitle>워크트리 {plan.worktrees.length}개를 폴더째 지운다</AlertDialogTitle>
@@ -308,8 +321,9 @@ function TableView({
               <span className="font-mono text-muted-foreground">{formatBytes(shown.reduce((sum, row) => sum + (row.other?.bytes ?? 0), 0))}</span>
               <span className="text-muted-foreground">지우지 않음</span>
             </span>
-            <span role="columnheader" className="text-right text-caption text-subtle-foreground">
+            <span role="columnheader" className="flex flex-col items-end gap-xxs text-caption text-subtle-foreground" data-disk-column="total">
               합계
+              <span className="font-mono text-muted-foreground" data-disk-total-head="true">{formatBytes(shown.reduce((sum, row) => sum + (row.total ?? 0), 0))}</span>
             </span>
           </div>
           {layout.main ? <Row row={layout.main} selection={selection} onSelection={onSelection} /> : null}
@@ -326,7 +340,8 @@ function TableView({
 function UsageBar({ workspace }: { workspace: Workspace }) {
   const disk = workspace.disk;
   const layers = disk?.layers;
-  if (!disk || disk.total_bytes == null || !layers) return null;
+  const size = entranceBytes(workspace);
+  if (!disk || !size || !layers) return null;
   const parts = [
     { key: "build_cache", label: "빌드 캐시", bytes: layers.build_cache },
     { key: "dependencies", label: "의존성", bytes: layers.dependencies },
@@ -337,7 +352,7 @@ function UsageBar({ workspace }: { workspace: Workspace }) {
     <div className="flex flex-col gap-xs" data-disk-usage="true">
       <div className="flex items-baseline justify-between gap-md text-caption text-subtle-foreground">
         <span>
-          이 프로젝트 <span className="font-mono text-foreground">{formatBytes(disk.total_bytes)}</span>
+          이 프로젝트 <span className="font-mono text-foreground">{size.partial ? "≥ " : ""}{formatBytes(size.bytes)}</span>
         </span>
         {disk.free_bytes != null ? <span className="font-mono" data-disk-free="true">디스크 여유 {formatBytes(disk.free_bytes)}</span> : null}
       </div>
@@ -575,9 +590,9 @@ function RunningView({ progress }: { progress: { done: number; total: number } |
 
 const OUTCOME_TEXT: Record<ResultLine["outcome"], string> = { removed: "지움", skipped: "건너뜀", failed: "실패" };
 
-function ResultView({ workspace, seen, onReview, onClose }: { workspace: Workspace; seen: { labels: Map<string, string>; sizes: Map<string, number> }; onReview: () => void; onClose: () => void }) {
+function ResultView({ workspace, onReview, onClose }: { workspace: Workspace; onReview: () => void; onClose: () => void }) {
   const cleanup = workspace.cleanup!;
-  const lines = resultLines(cleanup, seen.labels, seen.sizes);
+  const lines = resultLines(cleanup);
   const freed = freedFree(cleanup);
   return (
     <div className="flex flex-col gap-md" data-disk-result="true">
