@@ -185,12 +185,15 @@ impl Transcript {
             return Ok(Tail::Reset);
         }
         self.length = length;
+        // A small append is read whole and no further back: the newest line
+        // ends at or before `length`, so this window reaches `self.end`.
+        let window = (length - self.end).clamp(1, WINDOW_BYTES);
         let mut messages = Vec::new();
         let mut end = None;
         let mut newest_end = None;
         let mut read = 0;
         loop {
-            let chunk = read_page_before(&self.path, end, WINDOW_BYTES)?;
+            let chunk = read_page_before(&self.path, end, window)?;
             newest_end.get_or_insert(chunk.end_offset);
             read += chunk.end_offset - chunk.start_offset;
             let mut found = messages_in(self.source.agent, &chunk.contents, chunk.start_offset);
