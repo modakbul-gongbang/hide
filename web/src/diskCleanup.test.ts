@@ -382,12 +382,12 @@ describe("footer (B13, B16, B17, B18)", () => {
 
   it("adds the worktree count only when a worktree is ticked, and asks the confirmation", () => {
     const one = toggleCell(EMPTY_SELECTION, { path: "/r/done", column: "worktree" });
-    expect(footerOf(rows, one).summary).toBe("0칸 · 워크트리 1 · 4.0 GB");
+    expect(footerOf(rows, one).summary).toBe("워크트리 1 · 4.0 GB");
     expect(needsConfirm(planOf(rows, one))).toBe(true);
     const withCache = toggleCell(one, { path: "/r/done-2", column: "build_cache" });
     expect(footerOf(rows, withCache).summary).toBe("1칸 · 워크트리 1 · 6.0 GB");
     const both = toggleBundle(EMPTY_SELECTION, bundleRefs(rows, EMPTY_SELECTION, ["worktree"]));
-    expect(footerOf(rows, both).summary).toBe("0칸 · 워크트리 2 · 6.0 GB");
+    expect(footerOf(rows, both).summary).toBe("워크트리 2 · 6.0 GB");
     expect(footerOf(rows, both)).not.toHaveProperty("destructive");
   });
 });

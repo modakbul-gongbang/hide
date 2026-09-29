@@ -736,7 +736,7 @@ A checkout is in use while an agent there is working, a terminal pane in it runs
 A worktree cell can be chosen only for a linked checkout that is merged into local main, clean, has no open pane, is not the checkout in front, is not locked and holds no nested git repository; otherwise it is disabled and its tooltip says which.
 When Hide cannot read what is in use, the sheet says so above the table with a retry and every checkbox is disabled; no banner or alert appears.
 
-The bottom line reads `N칸 · X` (`N칸 · 워크트리 M · X` when a worktree is chosen) and `정리` runs at once for caches and dependencies alone.
+The bottom line reads `N칸 · X` (`N칸 · 워크트리 M · X` when a worktree is chosen, and a part that is zero is left out, so a worktree alone reads `워크트리 M · X`) and `정리` runs at once for caches and dependencies alone.
 With a worktree chosen a confirmation step titled `<branch> 폴더째 삭제` (`워크트리 N개 폴더째 삭제` for more than one) says only that the branch stays, lists the worktrees with their sizes and offers `워크트리 N개와 캐시 정리` and `돌아가기`, neither focused; going back deletes nothing and keeps the choice.
 Cleanup deletes cache and dependency folders permanently, with no trash, and removes worktrees without force, keeping the branch.
 Each cell is checked again when `정리` is pressed and again per folder: a cell that became in use, a worktree that changed and a folder that gained tracked files are skipped with their reason and the rest go on.
