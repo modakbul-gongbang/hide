@@ -338,8 +338,9 @@ if(process.argv[2]==='agent' && process.argv[3]==='get') {
   const beforeCapacityProbe = fs.readFileSync(capacityLedgerFile, "utf8");
   const nearCap = JSON.parse(beforeCapacityProbe);
   const observedAt = new Date().toISOString();
-  // Startup can record lineage repair plus participant observations before calls resume.
-  while (nearCap.events.length < MAX_EVENTS - 5) nearCap.events.push({ seq: ++nearCap.seq, at: observedAt, type: "fixture.capacity", subjectId: "fixture", correlationId: null, detail: {} });
+  // Four free slots are fewer than a Codex start needs (its start and the four before its first turn);
+  // anything startup records before calls resume only leaves less.
+  while (nearCap.events.length < MAX_EVENTS - 4) nearCap.events.push({ seq: ++nearCap.seq, at: observedAt, type: "fixture.capacity", subjectId: "fixture", correlationId: null, detail: {} });
   fs.writeFileSync(capacityLedgerFile, `${JSON.stringify(nearCap)}\n`);
   await start();
   const resumedAtCap = JSON.parse(command(...partialArgs, "--resume-start").stdout);

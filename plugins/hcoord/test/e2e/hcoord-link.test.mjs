@@ -59,3 +59,37 @@ test("--parent here registers the current execution before spawning its child", 
   assert.deepEqual(fake.pane("local", "child-pane").tokens, { parent_pane: "parent-pane" });
   assert.equal(fake.calls("local").filter((argv) => argv[0] === "tab" && argv[1] === "create").length, 1);
 });
+
+test("lineage a Herdr restart dropped comes back while the daemon keeps running, even when Herdr returns after it", async (t) => {
+  const fake = createFakeRemote(CLI);
+  t.after(() => fake.cleanup());
+  fake.addAgent("local", "parent-pane", { name: "parent", session: "s-parent", instance: "i-parent" });
+  fake.addAgent("local", "child-pane", { name: "child", session: "s-child", instance: "i-child" });
+  const coordinator = hq(t, fake);
+  await coordinator.start();
+  const linked = spawnSync(process.execPath, [CLI, "agent", "link", "--parent-pane", "parent-pane", "--child-pane", "child-pane", "--json"], { env: coordinator.env, encoding: "utf8" });
+  assert.equal(linked.status, 0, linked.stderr || linked.stdout);
+  await coordinator.stop();
+
+  // A reboot: the daemon starts while Herdr is still down, and Herdr comes back with new terminals and no tokens.
+  fake.restartServer("local");
+  fake.flag("local", "server-down");
+  const eventsBefore = coordinator.ledger().events.length;
+  await coordinator.start();
+  await new Promise((resolve) => setTimeout(resolve, 6000));
+  const listsWhileDown = fake.calls("local").filter((argv) => argv[0] === "pane" && argv[1] === "list").length;
+  assert.ok(listsWhileDown >= 2, `the daemon keeps looking while Herdr is down (${listsWhileDown} reads)`);
+  assert.equal(coordinator.ledger().events.length, eventsBefore, "a server that does not answer adds nothing to the ledger");
+
+  fake.flag("local", "server-down", false);
+  await coordinator.until(() => fake.pane("local", "child-pane").tokens?.parent_pane === "parent-pane", "the child's parent_pane token was not written back");
+  assert.deepEqual(fake.pane("local", "child-pane").tokens, { parent_pane: "parent-pane" });
+  assert.equal(fake.pane("local", "parent-pane").tokens, undefined, "a root gets no lineage token");
+  const reconciled = coordinator.ledger().events.filter((entry) => entry.type === "lineage.reconciled");
+  assert.deepEqual(reconciled.map((entry) => entry.detail), [{ scanned: 1, filled: 1, failed: 0 }]);
+
+  const writes = () => fake.calls("local").filter((argv) => argv[0] === "pane" && argv[1] === "report-metadata").length;
+  const settled = writes();
+  await new Promise((resolve) => setTimeout(resolve, 5500));
+  assert.equal(writes(), settled, "a token that is already current is not written again");
+});

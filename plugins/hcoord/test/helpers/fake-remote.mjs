@@ -27,6 +27,8 @@ const out = (result) => process.stdout.write(JSON.stringify({ id: "cli", result 
 const fail = (code, message, exit = 1) => { process.stderr.write(JSON.stringify({ error: { code, message } })); process.exit(exit); };
 const flag = (name) => { const index = argv.indexOf(name); return index < 0 ? undefined : argv[index + 1]; };
 log("calls.jsonl", argv);
+// A stopped server: the socket is left behind and every call is refused, as after a reboot.
+if (fs.existsSync(path.join(dir, "server-down"))) { process.stderr.write("connect failed: Connection refused (os error 61)\n"); process.exit(1); }
 const agents = load("agents.json", {}), panes = load("panes.json", {});
 const info = (pane, a) => ({ pane_id: pane, name: a.name, agent: a.kind, agent_session: a.session ? { value: a.session } : undefined, terminal_id: a.instance, agent_status: a.status, interactive_ready: a.ready !== false, cwd: panes[pane]?.cwd });
 const [a0, a1, a2] = argv;
@@ -51,6 +53,7 @@ else if (a0 === "agent" && a1 === "start") {
   agents[pane] = { name: a2, kind: flag("--kind"), session: a2 + "-session", instance: a2 + "-instance", status: "idle", ready: true };
   save("agents.json", agents); out({ agent: { name: a2, pane_id: pane } });
 }
+else if (a0 === "pane" && a1 === "list") out({ type: "pane_list", panes: Object.entries(panes).map(([pane, p]) => ({ pane_id: pane, workspace_id: p.workspace, cwd: p.cwd, tokens: p.tokens ?? {}, ...(agents[pane] ? { agent_session: agents[pane].session ? { value: agents[pane].session } : undefined, terminal_id: agents[pane].instance } : {}) })) });
 else if (a0 === "pane" && a1 === "get") { const p = panes[a2]; if (!p) fail("pane_not_found", "no pane"); out({ type: "pane_info", pane: { pane_id: a2, workspace_id: p.workspace, cwd: p.cwd, tokens: p.tokens ?? {} } }); }
 else if (a0 === "pane" && a1 === "report-metadata") {
   const p = panes[a2]; if (!p) fail("pane_not_found", "no pane");
@@ -148,6 +151,11 @@ export function createFakeRemote(cliPath) {
     notifications: (host = "local") => lines(host, "notifications.jsonl"),
     worktrees: (host) => read(host, "worktrees.json", []),
     pane: (host, pane) => read(host, "panes.json", {})[pane],
+    /** What a Herdr server restart does to a pane: its tokens are gone and its terminal is new. */
+    restartServer(host) {
+      const panes = read(host, "panes.json", {}); for (const pane of Object.values(panes)) delete pane.tokens; write(host, "panes.json", panes);
+      const agents = read(host, "agents.json", {}); for (const agent of Object.values(agents)) agent.instance = `${agent.instance}-restarted`; write(host, "agents.json", agents);
+    },
     flag(host, name, on = true) { const file = path.join(hostDir(host), name); if (on) fs.writeFileSync(file, "1"); else fs.rmSync(file, { force: true }); },
     cleanup() { fs.rmSync(root, { recursive: true, force: true, maxRetries: 8, retryDelay: 50 }); },
   };

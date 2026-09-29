@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { ChildRunner } from "./spawn";
+import { spawnSync } from "node:child_process";
+import { ChildRunner, startDetached } from "./spawn";
 
 describe("the child runner", () => {
   it("returns a real child's output and exit code", async () => {
@@ -30,5 +31,24 @@ describe("the child runner", () => {
     await expect(runner.run("/bin/echo", [], 1_000)).rejects.toThrow(/over budget/);
     runner.stop();
     expect((await first).signal).toBe("SIGKILL");
+  });
+});
+
+describe("a detached start", () => {
+  it("leaves a child that leads its own process group", async () => {
+    const started = await startDetached("/bin/sleep", ["30"], { PATH: "/usr/bin:/bin" });
+    if (!("pid" in started)) throw new Error(started.spawnError);
+    try {
+      // macOS `ps` reports no session id, so the new session shows as a group the child leads.
+      const group = (pid: number) => Number(spawnSync("/bin/ps", ["-o", "pgid=", "-p", String(pid)], { encoding: "utf8" }).stdout.trim());
+      expect(group(started.pid)).toBe(started.pid);
+      expect(group(process.pid)).not.toBe(started.pid);
+    } finally {
+      process.kill(started.pid, "SIGKILL");
+    }
+  });
+
+  it("reports a binary that cannot start", async () => {
+    expect(await startDetached("/nonexistent/herdr", ["server"], {})).toEqual({ spawnError: expect.stringMatching(/ENOENT/) });
   });
 });
