@@ -131,11 +131,24 @@ fn working_directories(pids: &[u32]) -> Result<BTreeMap<u32, String>, String> {
     Ok(parse_working_directories(&output))
 }
 
+/// How long one `lsof` may run. A cleanup waits on this read while it holds
+/// the daemon's only cleanup lane, so a hung `lsof` must end as an unavailable
+/// read, which fails closed, and not as a lane that never frees.
+const LSOF_DEADLINE: Duration = Duration::from_secs(10);
+
 fn run_lsof(arguments: &[&str]) -> Result<String, String> {
-    let output = Command::new("lsof")
-        .args(arguments)
-        .output()
-        .map_err(|error| format!("lsof could not be run: {error}"))?;
+    run_within(Command::new("lsof").args(arguments), LSOF_DEADLINE)
+}
+
+fn run_within(command: &mut Command, deadline: Duration) -> Result<String, String> {
+    let output = hide_host::worktrees::output_within(command, deadline)
+        .map_err(|error| format!("lsof could not be run: {error}"))?
+        .ok_or_else(|| {
+            format!(
+                "lsof did not finish within {} seconds and was stopped",
+                deadline.as_secs().max(1)
+            )
+        })?;
     // lsof exits non-zero when some of what it was asked about is gone, which
     // is routine here: a process can exit between the two calls. Whatever it
     // did report is still true, so the output is used and only an empty
@@ -242,6 +255,17 @@ mod tests {
             port,
             cwd: cwd.to_owned(),
         }
+    }
+
+    #[test]
+    fn a_read_that_outlives_its_deadline_is_stopped_and_reported_unavailable() {
+        let started = Instant::now();
+        let error =
+            run_within(Command::new("sleep").arg("30"), Duration::from_millis(200)).unwrap_err();
+        assert!(error.contains("did not finish"), "{error}");
+        assert!(started.elapsed() < Duration::from_secs(10));
+        let ok = run_within(Command::new("echo").arg("p1"), Duration::from_secs(10)).unwrap();
+        assert_eq!(ok.trim(), "p1");
     }
 
     #[test]
