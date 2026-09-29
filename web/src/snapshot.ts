@@ -36,6 +36,8 @@ export type AgentRow = {
   delegated?: boolean;
   lineage_parent_pane_id?: string | null;
   lineage_child_pane_ids?: string[];
+  /** Every live descendant pane in the order closing this row takes them, deepest first; absent when none (PRD close-agent-subtree D-20). */
+  close_descendant_pane_ids?: string[];
   /** What every live descendant is doing, counted by state; unknown activity is in none. */
   descendant_counts?: DescendantCounts;
   /** A quiet root whose live descendant is still working or asking: drawn as a ring in Working (docs/status-model.md). */

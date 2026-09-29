@@ -776,6 +776,13 @@ pub struct SidebarAgentSnapshot {
     /// Tree-only presentation. The canonical agent list and its read axes stay flat.
     pub lineage_depth: usize,
     pub lineage_child_pane_ids: Vec<String>,
+    /// Every live descendant pane in the order a close of this row takes
+    /// them: each descendant before its parent, so the row itself would go
+    /// last (PRD close-agent-subtree D-20). A row on a device that is not
+    /// connected is never listed, because it is neither shown nor closable
+    /// (D-16). Absent from the wire when there is none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub close_descendant_pane_ids: Vec<String>,
     pub lineage_root_checkout_id: Option<String>,
     pub lineage_worktree_badge: Option<String>,
     pub lineage_orphan: bool,

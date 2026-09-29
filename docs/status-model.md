@@ -113,6 +113,12 @@ It prevents a destructive local or remote close from guessing that an unobserved
 The shell presents that remedy as the existing read-only `Check status` action and keeps the destructive close confirmation separate from it.
 An unknown row still belongs to Seen for sidebar grouping, so close safety never changes the read or ownership axes.
 
+A row with live descendants also carries `close_descendant_pane_ids`: every live descendant's pane in the order a subtree close takes them, deepest first and each pane after every pane below it, siblings in the lineage's own child order.
+`apply_lineage` derives it on the same pass as the tree, and `refresh_agent_lineage` drops the panes of a device that is not connected, so a close never lists what it cannot reach; a row with none omits the field.
+A pane or tab close asks about the subtree only when some agent that closes lists a pane outside what closes (PRD close-agent-subtree D-16), and the status check above applies to each listed descendant: an unknown one keeps `모두 닫기` disabled, while `이것만 닫기` stays available.
+Closing a parent alone does not close its children: they lose their parent on the next projection and become the operator's roots with their own state.
+Regression owners: `each_row_lists_its_live_descendants_deepest_first_and_a_leaf_lists_none`, `a_descendant_on_a_disconnected_device_is_never_listed_for_a_close`, and the tree-close tests in `herdr-core/src/runtime/tests/tree_close.rs`.
+
 Needs You and Done are the operator's own groups, so only the operator's own rows enter them.
 A delegated row can be Working or Seen and nothing else: its question, approval, error or completion is its parent's problem, and answering it is what delegation means.
 The row keeps its own demand, mark and status word, so the parent's badge can still say what its child is asking for; what changes is only which group the row sits in and whether it is drawn bright.

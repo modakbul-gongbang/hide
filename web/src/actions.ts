@@ -20,11 +20,11 @@ import {
   type CloseWatch,
   type CloseWatchFrame,
 } from "./buffers";
-import { closeDecision, statusUnknownNotice } from "./close";
+import { closeDecision, statusUnknownNotice, subtreeOf } from "./close";
 import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./settings";
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
-import { overviewScreen, pullRequestScreen, type OpenTarget } from "./navigation";
+import { allAgents, overviewScreen, pullRequestScreen, type OpenTarget } from "./navigation";
 import { expectSurface, type Surface } from "./recent";
 import { contextAgents, remoteConnected, remoteContext, remoteControl, remoteRequestId, remoteTargetOfPane, remoteView, inPlace as inPlaceEvent, withDeviceForward, type RemoteAction, type RemoteView } from "./remote";
 import {
@@ -46,7 +46,7 @@ import {
 } from "./snapshot";
 import { fileUrl } from "./browserViews";
 import { useShellStore } from "./store";
-import { SIDEBAR_MODES, useUiStore, type SidebarMode } from "./ui";
+import { SIDEBAR_MODES, useUiStore, type PendingClose, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
 import { closeShortcutPolicy, drawnViews, keyboardOwner, newTabPolicy } from "./viewFocus";
 import {
@@ -196,17 +196,39 @@ export function createActions(dispatch: DispatchFn) {
    * local close is the core's own `close_pane`/`close_tab`.
    */
   const requestClose = (kind: "pane" | "tab", id: string, panes: Tab["panes"], targetId: string | null, agents: AgentRow[]) => {
-    const decision = closeDecision(kind, panes, agents);
+    const decision = closeDecision(panes, agents);
     if (decision.action === "status_unknown") {
       ui().setNotice({ text: statusUnknownNotice(decision.label), refreshable: true });
       return;
     }
-    if (decision.action === "confirm") {
-      ui().setPendingClose({ kind, id, targetId, title: decision.title, consequence: decision.consequence, affected: decision.affected });
+    // An agent with live descendants outside what closes asks the subtree
+    // sheet instead of the Stop-work one (PRD close-agent-subtree B2); which
+    // of the two shows is re-derived while it is open (B28).
+    if (decision.action === "confirm" || subtreeOf(panes.map((pane) => pane.id), everyAgent())) {
+      ui().setPendingClose({ kind, id, targetId });
       return;
     }
     sendClose(kind, id, targetId, false);
   };
+
+  /**
+   * What an open close sheet is about, as the snapshot has it now: the
+   * target's panes and the agent rows of its host, or null once the pane or
+   * tab is gone or its device is no longer connected, which is the one thing
+   * that closes the sheet by itself (B28, D-40).
+   */
+  const closeTarget = (pending: PendingClose): { panes: Tab["panes"]; agents: AgentRow[] } | null => {
+    const status = pending.targetId ? rest()?.status?.remote?.find((row) => row.target_id === pending.targetId) : null;
+    if (pending.targetId && status?.state !== "connected") return null;
+    const workspaces = pending.targetId ? status?.session?.workspaces : rest()?.navigator?.workspaces;
+    const tabs = (workspaces ?? []).flatMap((row) => row.checkouts).flatMap((row) => row.tabs);
+    const panes = pending.kind === "tab" ? (tabs.find((tab) => tab.id === pending.id)?.panes ?? []) : tabs.flatMap((tab) => tab.panes).filter((pane) => pane.id === pending.id);
+    if (panes.length === 0) return null;
+    return { panes, agents: pending.targetId ? (status?.session?.agents ?? []) : useShellStore.getState().agents };
+  };
+
+  /** Every current agent row, this machine's and each connected device's, as the lists draw them. */
+  const everyAgent = (): AgentRow[] => allAgents(rest()?.status?.remote, rest()?.navigator?.devices, useShellStore.getState().agents).map((row) => row.agent);
 
   const sendClose = (kind: "pane" | "tab", id: string, targetId: string | null, confirmed: boolean) => {
     if (targetId) {
@@ -1219,8 +1241,13 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     /** `discardChanges`: the operator ticked the discard the core's gate offered, accepting the folder's uncommitted work is lost. */
-    removeWorktree(deviceId: string, checkoutPath: string, deleteBranch: boolean, discardChanges: boolean) {
-      dispatch({ schema_version: 2, kind: "remove_worktree", payload: { device_id: deviceId, checkout_path: checkoutPath, delete_branch: deleteBranch, discard_changes: discardChanges } });
+    /** `closeDescendants`: the agents outside the worktree the operator chose to close first (PRD close-agent-subtree D-36). */
+    removeWorktree(deviceId: string, checkoutPath: string, deleteBranch: boolean, discardChanges: boolean, closeDescendants: string[] = []) {
+      dispatch({
+        schema_version: 2,
+        kind: "remove_worktree",
+        payload: { device_id: deviceId, checkout_path: checkoutPath, delete_branch: deleteBranch, discard_changes: discardChanges, ...(closeDescendants.length > 0 ? { close_descendant_pane_ids: closeDescendants } : {}) },
+      });
     },
 
     retryTaskAgent(id: number) {
@@ -1356,7 +1383,11 @@ export function createActions(dispatch: DispatchFn) {
       requestClose("pane", id, [pane], null, useShellStore.getState().agents);
     },
 
-    /** The operator chose "Stop work and close" on the confirmation. */
+    /**
+     * The operator chose "Stop work and close" on the confirmation, or
+     * 이것만 닫기 on the subtree sheet: the target alone, as an ordinary
+     * close, with no second question (B12).
+     */
     confirmClose() {
       const pending = ui().pendingClose;
       if (!pending) return;
@@ -1365,6 +1396,27 @@ export function createActions(dispatch: DispatchFn) {
       // while it was open does not move the close to another one.
       sendClose(pending.kind, pending.id, pending.targetId, true);
     },
+
+    /** 모두 닫기: the target and exactly the descendants the sheet shows at the press, in one event (D-20, D-21). */
+    closeSubtree(ids: string[]) {
+      const pending = ui().pendingClose;
+      if (!pending) return;
+      ui().setPendingClose(null);
+      dispatch({
+        schema_version: 2,
+        kind: "close_tree",
+        payload: {
+          target: pending.kind === "pane" ? { kind: "pane", pane_id: pending.id } : { kind: "tab", tab_id: pending.id },
+          pane_ids: ids,
+          confirmed: true,
+        },
+      });
+    },
+
+    /** Every current agent row the close lists read, this machine's and each connected device's. */
+    everyAgent,
+
+    closeTarget,
 
     keepOpen() {
       ui().setPendingClose(null);
@@ -1656,8 +1708,8 @@ export function createActions(dispatch: DispatchFn) {
     },
 
     /** Removes a registration after its panes close (D-10); the folder is never touched. */
-    removeWorkspace(workspaceId: string) {
-      dispatch({ schema_version: 2, kind: "remove_workspace", payload: { workspace_id: workspaceId } });
+    removeWorkspace(workspaceId: string, closeDescendants: string[] = []) {
+      dispatch({ schema_version: 2, kind: "remove_workspace", payload: { workspace_id: workspaceId, ...(closeDescendants.length > 0 ? { close_descendant_pane_ids: closeDescendants } : {}) } });
     },
 
     /** One checkout folder's children, answered by hided as a `directory_list`. */

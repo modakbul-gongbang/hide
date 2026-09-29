@@ -1,6 +1,8 @@
 import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { memo, useRef } from "react";
 import { AgentMark } from "../AgentMark";
+import { agentClosing } from "../close";
+import { useShellStore } from "../store";
 import { branchChip, lineTone, markTone, rowAccessibleName, sidebarLine } from "../agentRow";
 import { cn } from "../lib/utils";
 import type { AgentRow } from "../snapshot";
@@ -104,6 +106,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   menu: AgentRowMenu;
 }) {
   const main = useRef<HTMLButtonElement>(null);
+  const closing = useShellStore((s) => agentClosing(s.rest?.status?.async_operations, agent.pane_id));
   const line = sidebarLine(agent);
   const branch = branchShown ? branchChip(agent) : null;
   const folded = agent.lineage_collapsed !== false;
@@ -134,7 +137,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
         <button
           ref={main}
           type="button"
-          aria-label={[rowAccessibleName(agent, device), place].filter(Boolean).join(", ")}
+          aria-label={[rowAccessibleName(agent, device), closing ? "closing" : null, place].filter(Boolean).join(", ")}
           aria-current={selected ? "true" : undefined}
           data-agent-open={agent.pane_id}
           className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
@@ -151,6 +154,11 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           <span aria-hidden="true" className={cn("pointer-events-none min-w-0 flex-auto truncate", titleTone)} data-agent-title="true">
             {agent.identity_label}
           </span>
+          {closing ? (
+            <span aria-hidden="true" className="pointer-events-none shrink-0 text-caption text-muted-foreground" data-agent-closing="true">
+              closing…
+            </span>
+          ) : null}
           {branch ? (
             <Badge aria-hidden="true" variant="secondary" className="pointer-events-none min-w-0 max-w-2/5 shrink font-mono" data-branch-chip={branch}>
               <span className="truncate">{branch}</span>
