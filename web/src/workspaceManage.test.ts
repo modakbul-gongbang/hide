@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Checkout, TaskOperation, Workspace } from "./snapshot";
-import { agentMenu, branchProblem, checkoutMenu, checkoutRemoving, deletionConsequences, folderMenu, normalizePurpose, projectMenu, projectRemovalConsequences, purposeCountLabel, purposeIsLong, purposeScope, removalFor, scalarCount, taskFor } from "./workspaceManage";
+import { agentMenu, branchProblem, checkoutMenu, checkoutRemoving, deletionFacts, factsLine, folderMenu, normalizePurpose, projectMenu, projectRemovalFacts, purposeCountLabel, purposeIsLong, purposeScope, removalFor, scalarCount, taskFor } from "./workspaceManage";
 
 const workspace = (patch: Partial<Workspace> = {}): Workspace => ({
   id: "w1",
@@ -206,13 +206,9 @@ describe("row menus", () => {
     if (row.worktree) {
       row.worktree.deletion_gate.warnings = ["3 changed files not committed", "ahead 2 unmerged"];
     }
-    expect(deletionConsequences(row, 3)).toEqual([
-      "The folder /Users/example/hide.worktrees/feature is removed from disk. This cannot be undone.",
-      "3 panes in this worktree close first, stopping whatever runs there.",
-      "Stops 2 agents: Fix the parser (Working), Review tests (Idle).",
-      "3 changed files not committed",
-      "ahead 2 unmerged",
-    ]);
+    expect(factsLine(deletionFacts(row, 3))).toBe("Folder removed for good · 3 panes close · stops 2 agents: Fix the parser (Working), Review tests (Idle)");
+    // The core's warnings are the dialog's badges, word for word.
+    expect(row.worktree?.deletion_gate.warnings).toEqual(["3 changed files not committed", "ahead 2 unmerged"]);
   });
 
   it("puts a folder's own checkout items after its project items, past a separator", () => {
@@ -225,11 +221,9 @@ describe("row menus", () => {
 
   it("says what removing a project closes and that an unregistered row leaves with Herdr's workspace (B3)", () => {
     const counted = { removal: { pane_count: 2, running_agent_count: 1 } };
-    expect(projectRemovalConsequences(workspace(counted))).toEqual([
-      "2 panes in this project close first, stopping 1 running agent.",
-      "Only the registration is removed: the folder, its repository and its worktrees stay on disk.",
-    ]);
-    expect(projectRemovalConsequences(workspace({ ...counted, registered: false }))[1]).toMatch(/keeps no registration .* row leaves once Herdr closes the workspace/);
+    expect(factsLine(projectRemovalFacts(workspace(counted)))).toBe("2 panes close · 1 agent stops · registration only · files stay on disk");
+    expect(factsLine(projectRemovalFacts(workspace({ ...counted, registered: false })))).toBe("2 panes close · 1 agent stops · the row goes with them · files stay on disk");
+    expect(factsLine(projectRemovalFacts(workspace({ removal: { pane_count: 0, running_agent_count: 0 } })))).toBe("Registration only · files stay on disk");
   });
 
   it("draws an agent's menu with its ⌥n and without Mark as seen or Stop agent (B7, B8)", () => {

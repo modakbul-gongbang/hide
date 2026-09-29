@@ -1718,6 +1718,7 @@ impl Runtime {
             changed |= self.request_device_facts(target_id);
         }
         changed |= self.refresh_agent_lineage();
+        changed |= self.advance_tree_closes();
         if changed {
             self.sync_async_operations();
         }
@@ -2231,6 +2232,7 @@ impl Runtime {
             }
         }
         changed |= self.refresh_agent_lineage();
+        changed |= self.advance_tree_closes();
         for (tab_id, reason) in &rejected_layouts {
             crate::diagnostic!(serde_json::json!({
                 "component": "session",

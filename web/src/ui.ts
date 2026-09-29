@@ -3,6 +3,7 @@
 // owns (focus, tabs, layout, sidebar visibility) stays in `store.ts`.
 
 import { create } from "zustand";
+import type { Filter as DiskFilter } from "./diskCleanup";
 import type { Relation } from "./lineage";
 import type { Opening } from "./navigation";
 import { NO_FILTER, type IssueFilter } from "./projectBoard";
@@ -22,14 +23,18 @@ export type SidebarMode = "agents" | "projects";
  * panel where the core's `right_panel_section` says it does (D-13). */
 export const SIDEBAR_MODES: readonly SidebarMode[] = ["projects", "agents"];
 
+/**
+ * A close the operator is being asked about. The sheet holds only what is
+ * being closed: every snapshot re-derives whether it is the Stop-work sheet
+ * or the subtree sheet, who is listed and in what state, and the sheet
+ * closes by itself only when the target is gone (PRD close-agent-subtree
+ * B13, B28, D-20, D-39, D-40).
+ */
 export type PendingClose = {
   kind: "pane" | "tab";
   id: string;
   /** The SSH device the pane or tab is on, or null for this machine. */
   targetId: string | null;
-  title: string;
-  consequence: string;
-  affected: string[];
 };
 
 /**
@@ -146,6 +151,8 @@ export type WorkspaceDialog =
   | { kind: "pr_delegate"; workspaceId: string; prNumber: number }
   | { kind: "purpose"; workspaceId: string; checkoutId: string }
   | { kind: "delete_worktree"; workspaceId: string; checkoutId: string }
+  /** The disk cleanup sheet of a local Git project, opened on a filter (PRD disk-layers B1-B3). */
+  | { kind: "disk_cleanup"; workspaceId: string; filter: DiskFilter }
   | { kind: "remove_project"; workspaceId: string };
 
 /** A held-modifier cycle over Recent Panels or Recent Projects; committed when the modifier is released. */

@@ -395,11 +395,18 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await expect(page.locator(`[data-pane-view="${mainPane}"]`)).toBeVisible();
     await page.keyboard.press("Meta+Shift+KeyH");
 
-    // `N merged → 정리` opens Agents › 체크아웃 with 정리할 것 unfolded (B20);
-    // the merged lane is dimmed with the merge glyph and offers 정리, whose
-    // popover says what it removes; 정리 opens the Delete worktree dialog,
-    // and cancelling changes nothing (B18, B19).
+    // `N merged → 정리` opens the disk cleanup sheet on the finished filter and
+    // leaves the lane's 정리할 것 fold as it was; Escape closes the sheet, the
+    // fold's own line unfolds it (disk-layers B3). The merged lane is dimmed
+    // with the merge glyph and offers 정리, whose popover says what it
+    // removes; 정리 opens the Delete worktree dialog, and cancelling changes
+    // nothing (B18, B19).
     await page.locator('[data-stat="merged"]').click();
+    await expect(page.locator("[data-disk-sheet]")).toHaveAttribute("data-disk-filter", "done");
+    await expect(cleanupFold).toHaveAttribute("aria-expanded", "false");
+    await page.keyboard.press("Escape");
+    await expect(page.locator("[data-disk-sheet]")).toHaveCount(0);
+    await cleanupFold.click();
     await expect(cleanupFold).toHaveAttribute("aria-expanded", "true");
     const shippedLane = lane("prd/shipped");
     await expect(shippedLane.locator(`[data-lens-node="${shippedPane}"]`)).toHaveAttribute("data-bucket", "resting");

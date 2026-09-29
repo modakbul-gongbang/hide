@@ -776,6 +776,13 @@ pub struct SidebarAgentSnapshot {
     /// Tree-only presentation. The canonical agent list and its read axes stay flat.
     pub lineage_depth: usize,
     pub lineage_child_pane_ids: Vec<String>,
+    /// Every live descendant pane in the order a close of this row takes
+    /// them: each descendant before its parent, so the row itself would go
+    /// last (PRD close-agent-subtree D-20). A row on a device that is not
+    /// connected is never listed, because it is neither shown nor closable
+    /// (D-16). Absent from the wire when there is none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub close_descendant_pane_ids: Vec<String>,
     pub lineage_root_checkout_id: Option<String>,
     pub lineage_worktree_badge: Option<String>,
     pub lineage_orphan: bool,
@@ -888,6 +895,9 @@ pub struct WorkspaceSnapshot {
     /// exactly its keys.
     #[serde(default, skip_serializing_if = "ProjectDiskSnapshot::is_empty")]
     pub disk: ProjectDiskSnapshot,
+    /// The disk cleanup review or run of this project, while there is one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cleanup: Option<crate::live::cleanup::CleanupSnapshot>,
 }
 
 /// A Git project's allocated disk: every worktree and the shared Git
@@ -900,6 +910,30 @@ pub struct ProjectDiskSnapshot {
     pub total_bytes: Option<u64>,
     pub unavailable_reason: Option<String>,
     pub measuring: bool,
+    /// Free space of the project's volume when it was measured; known
+    /// whether or not every checkout could be measured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub free_bytes: Option<u64>,
+    /// What the checkouts that could be measured add up to. `total_bytes`
+    /// stays absent while any checkout is unavailable; this is the subtotal
+    /// the entrance may show beside it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confirmed_bytes: Option<u64>,
+    /// The layers of the checkouts that could be measured, summed; absent
+    /// only while none was measured.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layers: Option<ProjectDiskLayersSnapshot>,
+}
+
+/// A project's allocated bytes by layer: the sum over its checkouts, and the
+/// shared Git directory on its own.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct ProjectDiskLayersSnapshot {
+    pub build_cache: u64,
+    pub dependencies: u64,
+    pub source: u64,
+    pub other: u64,
+    pub shared_git: u64,
 }
 
 impl ProjectDiskSnapshot {
@@ -3066,7 +3100,6 @@ pub struct ProjectWorktreesSnapshot {
     pub github: GithubStatusSnapshot,
     pub pull_requests: Vec<PullRequestSnapshot>,
     pub pull_request_window: String,
-    pub cleanup: Option<crate::live::cleanup::CleanupSnapshot>,
     pub shared_git_path: Option<String>,
     pub shared_git_disk: DiskUsageSnapshot,
     pub disk_total_bytes: Option<u64>,
@@ -3111,6 +3144,17 @@ pub struct DiskUsageSnapshot {
     pub largest_child_name: Option<String>,
     pub largest_child_bytes: Option<u64>,
     pub unavailable_reason: Option<String>,
+    /// What a checkout holds by layer, for a measured checkout row. Absent
+    /// for the shared Git directory and for a measurement that failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layers: Option<crate::disk_layers::DiskLayers>,
+    /// Free space of the volume the measured path sits on, in bytes.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub volume_free_bytes: Option<u64>,
+    /// The folders behind the layer cells. The core keeps them so a cleanup
+    /// can move them; the wire never carries a path.
+    #[serde(skip)]
+    pub folders: Vec<crate::disk_layers::LayerFolder>,
 }
 
 /// The right panel's summary card for the selected checkout.

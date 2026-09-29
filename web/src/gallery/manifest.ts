@@ -8,7 +8,7 @@ export const GALLERY = {
   "Button": ["Default", "Default Hover", "Default Focus", "Default Disabled", "Pending", "Secondary", "Secondary Hover", "Outline", "Ghost", "Ghost Hover", "Destructive", "Destructive Hover", "Link", "Small", "Large", "Icon", "Icon Small"],
   "Input": ["Default", "Placeholder", "Filled", "Focus", "Invalid", "Disabled", "Mono"],
   "Select": ["Default", "Placeholder", "Focus", "Disabled", "Open"],
-  "Checkbox": ["Unchecked", "Checked", "Focus", "Disabled", "Checked Disabled"],
+  "Checkbox": ["Unchecked", "Checked", "Indeterminate", "Focus", "Disabled", "Checked Disabled"],
   "Switch": ["Off", "On", "Focus", "Disabled"],
   "Radio Group": ["Default", "Focus", "Disabled"],
   "Toggle Group": ["Default", "Hover", "Focus", "Disabled"],

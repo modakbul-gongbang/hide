@@ -6,12 +6,13 @@ import { Button } from "./components/ui/button";
 import { Kbd } from "./components/ui/kbd";
 import { Hint } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
+import { DiskFact, LowFreeFact, openDiskCleanup } from "./DiskEntrance";
 import { FACT, FACTS_LINE, OpeningStatus, UnavailableNotice } from "./MainScreen";
 import { overviewProject } from "./navigation";
 import { useNewIssueShortcut } from "./IssueDialogs";
 import { AgentsLens, AgentsModeToggle, LensTiles, lensHandlers } from "./OverviewLenses";
 import { agentsTile, buildLanes, buildLineages, issuesTile, lastIssueRead, prsTile, scopeAgents, sessionsTile } from "./overviewLens";
-import { buildPullRequests, buildTasks, formatBytes, projectStats, type BoardProject, type BoardStats, type TaskCard } from "./projectBoard";
+import { buildPullRequests, buildTasks, projectStats, type BoardProject, type BoardStats, type TaskCard } from "./projectBoard";
 import { PullRequestsView } from "./PullRequestsView";
 import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
 import type { Workspace } from "./snapshot";
@@ -104,8 +105,8 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   const openCheckout = (card: TaskCard) => {
     if (card.checkout) actions.openWorkspace(project.device_id, card.checkout.workspace_id, card.checkout.id);
   };
-  // `N merged → 정리` opens what is only there to be removed (B20).
-  const showCleanup = () => setLens({ tab: "agents", agentsMode: "checkouts", folds: lens.folds.includes("cleanup") ? lens.folds : [...lens.folds, "cleanup"] });
+  // `N merged → 정리` opens the disk cleanup sheet on what is finished (PRD disk-layers B3).
+  const showCleanup = () => openDiskCleanup(project.id, "done");
   const page: IssuesPage = {
     openCheckout,
     startIssue: (card) => useUiStore.getState().setWorkspaceDialog({ kind: "start_issue", workspaceId: card.place.projectId, taskKey: card.task.key }),
@@ -215,8 +216,10 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
  * facts, for a Git project its worktrees, its size on disk once measured
  * (pending while the walk runs, absent when a part could not be read), main
  * behind origin only when it is, and the merged worktrees only while there
- * are any, which opens `정리할 것` on Agents › checkouts. The issue and pull
- * request counts are the tiles'.
+ * are any. The size opens the disk cleanup sheet with the layers on hover, a
+ * warning cell joins it while the volume is short of space, and `N merged`
+ * opens the same sheet on what is finished. The issue and pull request counts
+ * are the tiles'.
  */
 function Stats({ workspace, stats, onMerged }: { workspace: Workspace; stats: BoardStats; onMerged: () => void }) {
   if (!workspace.is_git) return <span />;
@@ -233,13 +236,9 @@ function Stats({ workspace, stats, onMerged }: { workspace: Workspace; stats: Bo
           </span>
         </Hint>
       ) : stats.disk === null ? null : (
-        <Hint label="Allocated on disk, shared Git data counted once">
-          <span className={FACT} data-stat="disk">
-            <HardDriveIcon aria-hidden="true" className="size-(--size-icon)" />
-            {formatBytes(stats.disk)}
-          </span>
-        </Hint>
+        <DiskFact workspace={workspace} bytes={stats.disk} />
       )}
+      <LowFreeFact workspace={workspace} />
       {stats.behind ? (
         <span className={cn(FACT, "text-warning")} data-stat="behind">
           <ArrowDownIcon aria-hidden="true" className="size-(--size-icon)" />
@@ -247,7 +246,7 @@ function Stats({ workspace, stats, onMerged }: { workspace: Workspace; stats: Bo
         </span>
       ) : null}
       {stats.merged > 0 ? (
-        <Hint label="머지된 워크트리를 정리할 것에서 보기">
+        <Hint label="머지된 워크트리를 디스크 정리에서 보기">
           <button type="button" className={cn(FACT, "rounded-xs text-pr-merged outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring")} data-stat="merged" onClick={onMerged}>
             <GitMergeIcon aria-hidden="true" className="size-(--size-icon)" />
             {stats.merged} merged → 정리

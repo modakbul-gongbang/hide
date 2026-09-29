@@ -314,6 +314,7 @@ mod tests {
             inactive_checkouts: InactiveCheckoutGroupSnapshot::default(),
             removal: Default::default(),
             disk: Default::default(),
+            cleanup: None,
         }
     }
 

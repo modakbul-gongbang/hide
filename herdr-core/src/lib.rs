@@ -9,6 +9,7 @@ mod checkout_owner;
 mod device_catalog;
 pub mod diagnostics;
 mod disk;
+mod disk_layers;
 pub mod domain;
 mod environment;
 #[cfg(test)]
@@ -44,6 +45,7 @@ pub mod tasks;
 mod terminal_attachments;
 mod terminal_recovery;
 mod usage;
+mod view_bookmarks;
 mod view_layout;
 mod wire;
 pub mod workspace;

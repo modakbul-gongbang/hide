@@ -75,6 +75,9 @@ When a connected pane selects, splits, moves, or closes a View through `hide vie
 These commands do not move the keyboard target; a close that would lose the last View of an unsaved document reports the refusal and keeps the draft.
 `hide file open` and `hide diff open` put the calling pane's file or changed-file diff into its own Workspace without selecting that Workspace by default.
 An explicit local `--reveal` brings that Workspace and the opened View forward, opening its side panel if it was closed; without it, the side panel keeps its state.
+A pane of an Agent tab that is not the Workspace's active tab, calling `hide file open`, `hide diff open`, `hide browser open` or `hide view select` without `--reveal`, adds or selects the View for its own tab's bookmark and leaves the front of every View area as the operator left it (see View bookmarks per Agent tab).
+Called from the active tab, or with no pane at all (a checkout-bound caller, which has no tab), the View comes to the front as before and the active tab remembers it; with `--reveal` it comes to the front and both the active tab and the calling tab remember it.
+`hide view split`, `move` and `close` change the shared layout, so they apply at once from any tab.
 
 ### Agent areas
 
@@ -141,6 +144,25 @@ A focused divider moves with the arrow keys along its axis, one step and one cha
 No area gets narrower or shorter than its minimum, a divider stops where either neighbour would, and each side of a split keeps between 15 and 85 percent of it.
 An area whose last view leaves disappears, and its neighbour takes the space.
 When the last view closes, tools stay visible if enabled; otherwise the panel closes, with that state saved for the Workspace.
+
+### View bookmarks per Agent tab
+
+The View list, the layout, the side panel's state, pin and width, and every document's text belong to the Workspace, so they are the same whichever Agent tab is in front.
+Each Agent tab remembers, for every View area, the View that was in front while that tab was the active one, and gets it back when it is shown again.
+Showing a tab that no Agent area of the Workspace showed a moment before makes each area that still holds that tab's bookmarked View show it, in the same frame that shows the tab.
+A tab strip click, a sidebar agent or tab choice, the palette, a tab cycle, a pane in another checkout and a tab that Herdr's own focus moved to all do this; the tab's own bookmark applies to the Workspace it belongs to.
+Nothing opens, closes or splits: an area whose bookmarked View has closed or moved to another area keeps what it shows, and a tab with no bookmark changes nothing.
+A new tab, a delegated child moved to its own tab and every tab right after an update have none.
+The area in use, the keyboard and the panel's open, closed and pin state stay where they were; while the panel is closed the bookmark still applies, so opening it shows the tab's front.
+Moving focus between Agent areas that already show their tabs, or between the panes of one tab, restores nothing, so two agents side by side never swap the panel under the operator.
+When the front of a View area changes, the active tab remembers the new front.
+The View that went behind when another tab came forward stays in the strip, one click away, and choosing it is that tab's new bookmark.
+A bookmark points at a View, not at a file, so a preview View that another tab retargeted shows the new document when it returns; a pinned View is unaffected, and there is no preview View per tab.
+Bookmarks are saved with the Workspace and survive a restart, and a tab that closed or vanished loses its bookmark.
+Connected device Workspaces follow the same rules; they have one Agent area, so the visible tab changes when its Herdr's answer lands.
+The phone never shows or changes a bookmark, and no badge, mark, notice or setting shows one.
+Web owner: none, the shell draws each area's front as the snapshot names it.
+Core owner: `herdr-core/src/runtime/view_bookmarks.rs` (`track_view_bookmarks`, `parked_caller`), `herdr-core/src/view_bookmarks.rs`, tests in `herdr-core/src/runtime/tests/view_bookmarks.rs` and `web/e2e/view-bookmarks.spec.ts`.
 
 A Workspace holds at most 6 View areas, no area sits more than 3 splits deep, and at most 64 views are open at once.
 A split past the area or depth limit is refused with its reason, and an open past the view limit says so and keeps every currently open view as it was.
@@ -241,7 +263,7 @@ A pane whose agent delegated work shows every direct child on one row under its 
 Its library masters are `Component / Pane child chip` and `Component / Pane child row`.
 A chip opens the existing child at once; while that move is in flight the chip shows a pending mark and repeats of it are ignored, and a failure shows the core's reason under the header with Retry (when the core says it can be retried) and Dismiss.
 A child pane has a compact Return mark in its identity row, named with the parent in its tooltip and accessible name.
-The pane menu (from its overflow control or a right-click on the header) lists the parent, the other siblings, and the children as explicit Open items, then Copy pane name and Close pane; opening it moves no focus and marks nothing read.
+The pane menu (from its overflow control or a right-click on the header) lists the parent, the other siblings, and the children as explicit Open items, then Copy pane name and Close pane, which asks about the agents it spawned as Closing an agent that spawned others says; opening it moves no focus and marks nothing read.
 
 A pane whose agent sleeps (PRD agent-sleep) shows its state in place of the terminal, which stays hidden until the agent is back because the shell under it is not what the operator was talking to: Sleeping with the last progress line and Wake agent; Waking… with how old the resumed conversation is; or `Couldn’t resume this conversation` with the core's plain reason, Retry, and Start new session.
 The header caption reads `☾ sleeping · 22h`, `☾ waking…` or `could not resume`, and typed input to the pane goes nowhere.
@@ -275,7 +297,42 @@ A sidebar agent row is 28 high, or 44 with its second line: line one is 20 and l
 A row's height is a minimum, not a cap: a row grows to hold its lines rather than letting them run into the next row, and it still holds still under hover and focus.
 No row draws a progress number or step the agent did not report.
 The Project Overview's agent rows keep their own density: a quiet sentence is revealed on the selected or hovered row over up to two lines, with the whole of it in the tooltip.
+While a close the core runs names an agent's pane, alone or as part of a subtree close, its sidebar row adds `closing…` after its name until the row goes.
 Web owner: `web/src/agentRow.ts` (rules, reusable by any list of agents), `web/src/components/sidebar-agent-row.tsx` (the sidebar row), `web/src/components/agent-row.tsx` (the Overview row and the descendant badge both draw), `web/src/components/agent-children-popover.tsx`.
+
+### Closing an agent that spawned others
+
+Closing a pane or a tab asks about the agents spawned from it only when one of them runs outside what closes (PRD close-agent-subtree).
+Those are the live descendants of every agent pane that closes, on this machine or a connected device, asleep or not, less the panes that close anyway; a device that is not connected contributes none.
+With none, the close is the ordinary one: a quiet pane closes at once, a working or attention pane asks the Stop-work confirmation, and an unknown status shows the status notice.
+A target whose own status is unknown still shows only the status notice.
+The Stop-work confirmation has one line under its title and lists every pane that closes, named as the sidebar names it, with its status mark; a working, asking or unknown pane adds its status word, and a quiet one is dimmed with its state in the mark's tooltip and its accessible name.
+While it is open the list is live: a pane that settles stays listed and dims, one that starts working or asking brightens, and its title, line, buttons and focus stay as they opened.
+While a listed pane's status is unknown, `Stop work and close` is disabled, `Keep open` takes the keyboard if the button held it, and a `Check status` in the confirmation reads the status again without closing it.
+`Stop work and close` sends the close the confirmation shows at the press.
+Otherwise one sheet opens in place of the Stop-work confirmation, titled `이 에이전트와 자식 N개를 닫을까요?` (a tab: `이 탭과 자식 N개를 닫을까요?`), N counting only the descendants outside.
+It has no sentence under the title, and lists the target first and then its descendants in tree order, indented by depth, each with the sidebar's status mark and name and a device chip when it runs on another device than the target; the list scrolls inside the sheet when it is long.
+Closing a tab lists every agent in the tab as a target, each followed by its own descendants, so a working agent beside the parent is shown before it closes.
+A line above the list counts, with the sidebar's marks and neutral text, the descendants that are working (`진행 중`), waiting for an answer to a question, approval or error (`답 대기`), holding an unread result (`확인 안 한 결과`) and unreadable (`상태 모름`), leaving out a kind with none; those rows are bright and add their status word in neutral text, and a quiet one (idle, read, asleep) is dimmed with no word, its state in its mark's tooltip.
+Each row is focusable, and its accessible name is its name, its device when it differs, and its status word.
+`이것만 닫기`'s tooltip and accessible description say what it leaves: the children keep running and come up into the operator's own list.
+Colour in both sheets is the status marks' and the one destructive button's (`모두 닫기`, `Stop work and close`); `취소`, `Keep open` and `이것만 닫기` are neutral.
+Its buttons are `취소`, `이것만 닫기` and `모두 닫기`, and `모두 닫기` holds the keyboard when it opens, so Enter closes the whole subtree; Escape or `취소` sends nothing and gives focus back.
+While a descendant's status is unknown, `모두 닫기` is disabled, `취소` holds the keyboard, and a `상태 확인` in the sheet reads the status again without closing it; while a target's own status is unknown, `이것만 닫기` is disabled too.
+`이것만 닫기` closes the target alone as the ordinary close, with no second question; its direct children become the operator's roots and their own children stay under them.
+While the sheet is open its list is live, as in the removal dialogs: a descendant that appears shows up, one that goes drops out, and the title's N and the count line follow.
+`모두 닫기` sends one event naming the target and exactly the descendants the sheet shows at the press: one that appears after the press is not closed, and one already gone counts as closed.
+The core checks each listed pane again as it arrives; if one now needs a status check, an earlier close of one is still unresolved, or the close slots cannot take them all, nothing closes and the one-line notice says why and what to do.
+A pane whose earlier close was refused is simply closed again, since asking again is the retry.
+If every descendant goes while the sheet is open, it turns in place into the target's Stop-work confirmation, a quiet target dimmed, whose `Stop work and close` closes the target alone; a descendant that appears under an open Stop-work confirmation turns it into this sheet the same way.
+Either one closes by itself only when its target pane or tab is gone or its device disconnects; otherwise it waits for the operator's answer and runs nothing on its own.
+A sheet that turns into the other leaves the keyboard on the sheet itself, never on a close button an Enter meant for the old one would press.
+The core closes the deepest descendants first, each pane only after every descendant below it is gone, and the target last, so no descendant ever surfaces as a root on the way; each row reads `closing…` until it goes.
+A descendant whose close is refused, times out, or loses its device keeps itself and its ancestors, the target included, open while the other branches finish; the close failure notice shows and the detail goes to the diagnostic log.
+Closing the same target again lists only what is left.
+Each local pane or tab closed this way gets its own Reopen closed tab entry; a device's close leaves none, as before.
+Every entry to a pane or tab close uses this: ⌘W or ⌥W, ⌘⇧W or ⌥⇧W, the desktop menu's commands, a tab's ×, the tab menu's and the palette's `Close tab…`, the pane header's ×, the pane menu's `Close pane`, and the agent row menu's `Close tab…`; closing a View, the phone app and the Overview are unchanged.
+Web owner: `web/src/close.ts` (which sheet, which panes and descendants, and their states), `web/src/Overlays.tsx` (both sheets), `web/src/components/subtree-list.tsx` (the list both the sheet and the removal dialogs draw); core owner: `herdr-core/src/runtime/tree_close.rs`.
 
 ## Web Project Sessions
 
@@ -357,7 +414,7 @@ A worktree whose Git state has not been read shows `?` where the files go, never
 Resting on a head brightens it and opens the checkout card: the path, the base and `↑N ↓N`, the changed files, the last commit's age and the pull request with its checks; the card's `↵ Workspace` is the head's click, which opens that checkout's Workspace, main's included.
 The issue chip opens the Issues view with that issue's panel, the PR chip opens the pull request's row on the PRs view, unfolded, and a ⌘-click anywhere on a lane or node, the PR chip's included, opens GitHub.
 A merged worktree is dimmed with the purple merge glyph and a folder-less one reads `× 폴더 없음`; both carry the one word `정리` at the head's right, whose tooltip says what it removes, and whose click opens the existing Delete worktree dialog for it.
-Worktrees with no agent fold into one line, `에이전트 없는 워크트리 N`, and merged or folder-less worktrees whose agents only rest into another, `정리할 것 N`; a click unfolds the line in place, a line at zero is not drawn, and the facts line's `N merged → 정리` opens the checkout mode with `정리할 것` unfolded.
+Worktrees with no agent fold into one line, `에이전트 없는 워크트리 N`, and merged or folder-less worktrees whose agents only rest into another, `정리할 것 N`; a click unfolds the line in place, a line at zero is not drawn.
 On the Overview of every project, each project's main lane is ranked by its agents like any other lane, first among equals, and an idle main folds with the worktrees that have no agent.
 
 A node reads the status mark, the provider mark, the title and the age on one line, and under it the line the core makes: the question in yellow with a yellow outline when it is the operator's turn, the result after ✓ for a finished agent not yet looked at, `일하는 중 N · 물음 N · 끝남 N` for an agent waiting on its children, the progress line for a working one, and nothing, dimmed, for a resting one.
@@ -478,7 +535,10 @@ The Home Overview is of the device its screen names, else the device in front, a
 The board is the Project Overview: the sidebar's project name or its Overview child (a plain folder's one row opens its checkout instead), the Overview's project row, the palette and the Workspace toolbar menu open it, and ⌘⇧H opens it for the checkout in front.
 Escape, once no dialog or menu is open and no text field holds text, returns to the Workspace in front, or to the Home Overview when there is none.
 The title row carries the path back (`Home / Project`, where Home is the project's device's), New agent and 새 이슈; directly under it is one line of facts, then the tiles, which show even while the project has no agent.
-The facts line holds only facts about storage: for a Git project the worktree count, the disk every worktree and the shared Git directory occupy, main's distance behind origin only above zero, and `N merged → 정리` only above zero; the open issues and pull requests are counted on the tiles, not here.
+The facts line holds only facts about storage: for a Local Git project the worktree count, the disk every worktree and the shared Git directory occupy, main's distance behind origin only above zero, a warning cell only while the volume is short of room, and `N merged → 정리` only above zero; the open issues and pull requests are counted on the tiles, not here.
+The disk number's tooltip lists build cache, dependencies, worktree source, the folders Hide does not know and the shared Git data, and pressing the number opens the disk cleanup sheet.
+`N merged → 정리` opens the same sheet filtered to finished checkouts; the `정리할 것` fold on Agents and the lane's own `정리` (the Delete worktree dialog) are unchanged.
+The warning cell `여유 X GB · Y GB 비울 수 있음` stands only once the measurement is back and the volume has less than 10 GB free; Y is the build cache and dependencies of finished checkouts no agent is working in, and pressing the cell opens the sheet filtered to finished checkouts.
 Opening a local Git project's Overview asks the core to measure its disk and to read its issues; the size reads `… GB` while that runs and is left out, with the reason only in the diagnostic log, when a part cannot be read, and there is no refresh control.
 The Home Overview keeps its tab row, `Tasks · Agents · Projects`: the Tasks board mixes the device's projects' issues, Agents is the same checkout lanes or lineages over those projects with the project's name above each lane head, and Projects is the device's registered projects; the device's Home folder is none of them.
 Its Agents tab carries the count of agents it is the operator's turn with; there is no band under the header.
@@ -583,7 +643,7 @@ The text that results is ordinary Markdown, with nothing hidden or special in it
 
 ## Projects and checkout context
 
-Core owner: `herdr-core/src/sidebar.rs`, `herdr-core/src/project_context.rs`, `herdr-core/src/worktrees.rs`, `herdr-core/src/disk.rs`, `herdr-core/src/worktree_cleanup.rs`, `herdr-core/src/runtime/projects.rs`. Web owner: `web/src/sidebar.tsx`, `web/src/projects.ts`.
+Core owner: `herdr-core/src/sidebar.rs`, `herdr-core/src/project_context.rs`, `herdr-core/src/worktrees.rs`, `herdr-core/src/disk.rs`, `herdr-core/src/disk_layers.rs`, `herdr-core/src/worktree_cleanup.rs`, `herdr-core/src/runtime/projects.rs`. Web owner: `web/src/sidebar.tsx`, `web/src/projects.ts`.
 
 ### Sidebar type, rows and width
 
@@ -612,13 +672,18 @@ Nothing on a row stands for its menu: a right-click, or the menu key or ⇧F10 o
 Project, checkout and agent rows each have one (PRD sidebar-context-menus), and every other item runs at once; only `Remove project…`, `Delete worktree…` and `Close tab…` go through their existing confirmations.
 A project row's menu is `Open Overview`, `New worktree…`, `New tab in main` (a new tab in the checkout the home glyph marks, brought to the front), then `Reveal in Finder` and `Copy path`, then `Pin` or `Unpin` and `Remove project…`, on every project row, registered or not.
 A checkout row's menu is `Open` (the row's open, without unfolding its agents), `New tab here`, `Open pull request #n` while GitHub knows one, then `Set purpose…`, `Set as default checkout`, `Copy branch name`, `Copy path` and `Reveal in Finder`, then `Delete worktree…` in the destructive color on a linked worktree.
-An agent row's menu, in Agents and under an opened checkout, is `Show` (the row's own open, with the ⌥n that selects the same row where the host has one), then `Copy title` and `Copy session id` (the conversation id Herdr recorded, disabled when it recorded none), then `Close tab…`, which closes the tab holding the agent's pane, wherever it is, through the tab close flow; Herdr 0.9.1 can neither mark a pane seen nor stop an agent, so neither is offered.
+An agent row's menu, in Agents and under an opened checkout, is `Show` (the row's own open, with the ⌥n that selects the same row where the host has one), then `Copy title` and `Copy session id` (the conversation id Herdr recorded, disabled when it recorded none), then `Close tab…`, which closes the tab holding the agent's pane, wherever it is, through the tab close flow, including its question about the agents spawned from it; Herdr 0.9.1 can neither mark a pane seen nor stop an agent, so neither is offered.
 `New tab in main` and `New tab here` show the registry's new-tab chord; `Reveal in Finder` is the desktop app's only (a browser tab lists no such item) and shows the folder in Finder without opening anything.
 On a device's rows `Reveal in Finder` and `Set as default checkout` are disabled with the reason; the rest act on that device as they do here.
 `Delete worktree…` is never disabled on a linked worktree, on any device and before its Git state has been read; its confirmation says what would be lost and holds the choices, and reads `Reading the worktree's Git state…` until the row arrives.
-The confirmation lists the folder's removal, the panes that close, one line naming every agent those panes stop with its state, and the core's warnings (uncommitted files with their count, a worktree inside it, the base branch, Git status unavailable, commits not merged, not pushed).
+Under the title and the path, one facts line says the folder is removed for good, how many panes close, and every agent those panes stop with its state; the core's warnings (uncommitted files with their count, a worktree inside it, the base branch, Git status unavailable, commits not merged, not pushed) follow as neutral badges.
+`Keep worktree` is a neutral button, and only the widest action is in the destructive colour.
 `Also delete branch <name>` deletes the branch with `git branch -d` when Git counts it merged, and otherwise with `git branch -D`, saying how many commits not on the base go with it or that Git could not tell; it is not offered for the base branch or a missing folder.
 A folder that holds uncommitted files, a worktree inside it, or a status Git could not read shows a `Discard …` checkbox, and Delete stays disabled until it is ticked, because that loss cannot be undone; ticked, the folder is removed with `git worktree remove --force`.
+When an agent in the worktree spawned agents that run outside it, the confirmation adds a short `N agents outside this worktree` heading over the same list, count line and states the close sheet draws, and its one Delete becomes two buttons named by their result on one row at the standard width: `Delete only`, the deletion as it is, and `Close N agents and delete`, the destructive one.
+Both follow the dialog's own conditions, the Discard checkbox included, and neither holds the keyboard when the dialog opens; while one outside agent's status is unknown, the second is disabled and a `Check status` reads it again in place.
+With the second, the core closes those agents deepest first as a subtree close does, and only once all are gone closes the worktree's panes and removes the folder; a close that is refused or times out starts no deletion and its reason shows in the dialog, and trying again continues from the agents that remain.
+With the first, the agents outside keep running and the direct children become the operator's roots.
 Files that change after the confirmation, typically written by an agent as it stops, stop an unticked removal with that reason and keep the worktree; every refusal and failure is shown in the dialog above the choices, and Delete tries again on the row as it is then.
 From the confirmation until Git answers, the checkout row and its agent rows are dimmed with a spinner where the badge was, the row opens nothing, and a right-click or the menu key on it offers no menu at all rather than an empty one; the row leaves the sidebar as the removal finishes, and a failure gives it back as it was.
 A copy that the clipboard refuses goes to the diagnostic log.
@@ -717,15 +782,38 @@ Only a row click, the header click, the `N files` chip, and the menus' explicit 
 
 ### Disk allocation and cleanup
 
+Web owner: `web/src/DiskCleanupSheet.tsx`, `web/src/diskCleanup.ts`; core owner: `herdr-core/src/disk.rs`, `herdr-core/src/disk_layers.rs`, `herdr-core/src/worktree_cleanup.rs`.
 Allocated-on-disk sums main, linked worktree folders, and the shared Git directory once; nested roots belong to the longest matching root, hard links share one inode allocation, and descendant symlinks are not followed.
-An incomplete measurement has no total; the UI separates the confirmed subtotal from unavailable target measurements, and allocated blocks are not a promise of reclaimable space.
-Cleanup opens a review sheet with separate Available and Excluded groups, exact branch and folder, allocated size or failure, and a target-specific exclusion reason.
-Nothing is preselected, and Remove is disabled until a user explicitly checks an eligible folder.
-Main/current, dirty/untracked, live-pane-use, locked, nested, detached, unknown, and not-confirmed-merged targets are excluded; only clean, unused linked worktrees merged into local main can be removed, without force.
-An ordinary merge is proven by Git ancestry; a squash merge requires the exact GitHub pull request head commit to equal the reviewed worktree HEAD and its merge commit to already be an ancestor of local main.
-Removal moves the folder into the repository's Git directory and has `git worktree remove` drop its registration, so every build cache a checkout owns goes with it and is deleted in the background, and nothing outside the folder is touched.
-Confirm rechecks current Git and Herdr state before each target and refuses changed state with a Review-again path.
-Completion lists individual removed/refused outcomes, and repeating the same completed intent does not repeat removal; Review and Cancel perform no filesystem mutations.
+Each checkout is measured under its own limit of one million entries and 30 seconds, so a checkout that exceeds it or cannot be read is the only row that has no size; the reason is in the diagnostic log.
+An incomplete measurement has no total, and allocated blocks are not a promise of reclaimable space, so the result states only the volume's free space before and after.
+Remote device projects are neither measured nor cleaned.
+
+Only what the ignore rules hide can fall into a layer, so every path git sees is worktree source and is never counted in a layer cell.
+An ignored folder holding a valid `CACHEDIR.TAG` is build cache, one Hide's ecosystem table names beside its marker file is build cache or dependencies, and every other ignored path is Other.
+Measurement reads no git index, so a tracked file inside an ignored folder is found only when the cleanup runs, and that cell is then skipped.
+The table covers Cargo, Node, Python, Gradle and Maven, Swift, Dart, Elixir, .NET and Composer, and applies only to ignored folders; a symlink, a folder holding another git repository and a folder holding tracked files are never removed.
+Other has no checkbox and its folders are never removed, because Hide cannot tell whether what a tool made there can be rebuilt.
+
+The sheet is one large dialog with no subtitle: a stacked usage bar whose segments say their layer and size on hover, the filter, and a table with a row per checkout and columns Build cache, Dependencies, Worktree, Other and a total.
+A column head is its name and the column's total for the rows shown, with no second line.
+Main leads, the rest follow by size, and checkouts under 1 GB fold into `작은 체크아웃 N · X GB`; a row that is still being measured is a skeleton with a disabled checkbox, and a row that could not be measured is dimmed with no size and cannot be chosen.
+The filter is All, Finished, Resting and Working, each with its count: Finished is a linked checkout the Overview already calls done that nothing is using, Working is a checkout something is using, and Resting is the rest.
+Checkboxes sit on each cell, on each row (its build cache and dependencies, never its worktree), on each column head and at the top left, and they reach only the rows the filter shows; a group that is partly chosen shows the middle bar, and a cell that cannot be chosen is skipped by every group.
+Choosing a worktree cell shows the same row's cache cells as included: they cannot be chosen apart and are not counted twice, and they leave with the worktree folder.
+A checkout is in use while an agent there is working, a terminal pane in it runs a process that is not a shell, or a server listens on a port opened from inside it; a pane that is merely open does not block a cache.
+A worktree cell can be chosen only for a linked checkout that is merged into local main, clean, has no open pane, is not the checkout in front, is not locked and holds no nested git repository; otherwise it is disabled and its tooltip says which.
+When Hide cannot read what is in use, the sheet says so above the table with a retry and every checkbox is disabled; no banner or alert appears.
+
+The bottom line reads `N칸 · X` (`N칸 · 워크트리 M · X` when a worktree is chosen, and a part that is zero is left out, so a worktree alone reads `워크트리 M · X`) and `정리` runs at once for caches and dependencies alone.
+With a worktree chosen a confirmation step titled `<branch> 폴더째 삭제` (`워크트리 N개 폴더째 삭제` for more than one) says only that the branch stays, lists the worktrees with their sizes and offers `워크트리 N개와 캐시 정리` and `돌아가기`, neither focused; going back deletes nothing and keeps the choice.
+Cleanup deletes cache and dependency folders permanently, with no trash, and removes worktrees without force, keeping the branch.
+Each cell is checked again when `정리` is pressed and again per folder: a cell that became in use, a worktree that changed and a folder that gained tracked files are skipped with their reason and the rest go on.
+A folder is moved into the repository's Git directory (`hide-removed`) and disappears from the checkout at once; the cleanup thread then deletes it, and the sheet reads `비우는 중 · N/M`, keeps going when the sheet is closed and shows its progress or result when opened again.
+Only one cleanup runs in a daemon, and pressing the same confirmation twice removes each folder once.
+When the cleanup ends the result is the one line `여유 A → B GB` over each cell as removed, skipped or failed with its reason; `다시 검토` measures again and `닫기` closes the sheet.
+The disk number, its tooltip and the warning cell then read the new measurement.
+Every removed, skipped and failed cell leaves one diagnostic line with its kind, checkout, layer, bytes and reason code and no file contents.
+Hover, filter and checkbox changes are local: they dispatch no core event and start no disk work, opening the sheet sends one review event and `정리` one confirm event.
 
 ### Adding a project
 
@@ -751,11 +839,12 @@ A folder holding nothing, or only `.git` and a Finder `.DS_Store`, is what a cre
 ### Removing a project's registration
 
 `Remove project…` removes only Hide's registration and never deletes files, worktrees, sessions, or Herdr workspaces.
-A project Herdr has no pane in is confirmed with registration-only copy; a project with panes is not refused, and the confirmation names the pane and running-agent counts, with the parenthetical omitted at zero running agents.
+A project with panes is not refused; under the title and the path one facts line names the panes that close, the running agents that stop (left out at zero), that only the registration goes (a row Herdr shows without one goes with its panes), and that files stay on disk; `Keep project` is a neutral button.
 On confirmation the core closes every pane in the project's checkouts and waits for confirmation before removing the registration and its row; a timeout or refusal leaves the project registered with the reason in the error banner, and a repeated request continues from the panes that remain.
+When an agent in the project spawned agents that run outside it, the confirmation lists them as Delete worktree does, with `Remove only` and `Close N agents and remove` (the destructive one) in place of its one button, neither holding the keyboard; the second closes those agents deepest first and removes the project only once all are gone, a refusal or timeout leaving the project registered with the reason in the error banner and a retry continuing from the agents that remain.
 Removing the project that holds the focused checkout moves focus and pane selection to the next project.
 An add that lands mid-removal cancels the removal and says so, rather than losing the project it just opened a pane in; a completed removal disappears from the snapshot and a repeated request is a quiet no-op.
-A row Herdr shows without a registration offers `Remove project…` too: its confirmation counts its panes the same way and says Hide keeps no registration for it, the confirmation closes those panes, and the row leaves once Herdr drops its workspace; a timeout leaves the row with the reason in the error banner, and repeating the removal closes the panes that remain.
+A row Herdr shows without a registration offers `Remove project…` too: its confirmation counts its panes the same way and says the row goes with them, the confirmation closes those panes, and the row leaves once Herdr drops its workspace; a timeout leaves the row with the reason in the error banner, and repeating the removal closes the panes that remain.
 
 ## Home
 
@@ -952,7 +1041,8 @@ The keycaps and the hover tooltip never share space: a tooltip hangs beside its 
 A browser host has no numbered chords, so holding ⌘ or ⌥ there shows nothing.
 Pane focus, active tab, tab order, zoom state, and disappearing anchors all update which controls can show a hint or tooltip; pointer exit, mouse down, scroll, key down, losing key window status, and anchor removal all dismiss an open tooltip.
 
-Destructive buttons are named by their result (`Move to Trash`, `Close 3 panes and remove`, `Stop work and close`), never by a generic "Delete" or "OK" that hides the consequence; the non-destructive option is the default/cancel action.
+Destructive buttons are named by their result (`Move to Trash`, `Close 3 panes and remove`, `Stop work and close`), never by a generic "Delete" or "OK" that hides the consequence; the non-destructive option is the default/cancel action, except in the sheet that closes an agent with the agents it spawned.
+There the operator chose `모두 닫기` as the Enter default (PRD close-agent-subtree D-07, D-18), and a descendant whose status is unknown gives the default back to `취소`; the removal dialogs that ask the same question keep no default.
 Escape closes the innermost open layer and returns focus to whatever held it before that layer opened, including a terminal that was focused when a sheet, menu, or overlay opened over it.
 A tooltip or hover card is not a layer: an Escape pressed while one shows still reaches the terminal or the screen it was meant for, and closes the tooltip on its way, whether the tooltip's own dismiss or the shell answers the press.
 A disabled control cannot activate, and destructive meaning always comes from the control's role rather than from its text color alone.

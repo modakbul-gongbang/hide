@@ -270,6 +270,7 @@ impl Runtime {
         changed |= self.expire_close_operations(now_unix_ms);
         changed |= self.expire_pane_operations(now_unix_ms);
         changed |= self.expire_remote_operations(now_unix_ms);
+        changed |= self.advance_tree_closes();
         changed |= self.reconcile_attachment_target();
         changed |= self.tick_attachment();
         changed |= self.tick_project_memory(now_unix_ms);
@@ -1075,6 +1076,7 @@ impl Runtime {
                     },
                 ),
         );
+        operations.extend(self.tree_close_operations());
         operations.extend(self.remote_operations.values().map(|operation| {
             crate::model::AsyncOperationSnapshot {
                 id: operation.id.clone(),

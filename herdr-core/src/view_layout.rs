@@ -352,6 +352,33 @@ mod tests {
         layout.split(&display, target, edge, 1).unwrap()
     }
 
+    /// A bookmark restore shows a display in its area and leaves the area in
+    /// use where it was.
+    #[test]
+    fn showing_a_display_fronts_it_without_moving_the_area_in_use() {
+        let mut layout = with_files(&["a", "b", "c"]);
+        let right = split(&mut layout, "c", "a1", Edge::Right);
+        assert_eq!(layout.active_area, right);
+        let a = id(&layout, "a");
+        let b = id(&layout, "b");
+        assert_eq!(
+            layout.area("a1").unwrap().active.as_deref(),
+            Some(b.as_str())
+        );
+
+        assert_eq!(layout.show(&a, 9), Ok(true));
+        assert_eq!(
+            layout.area("a1").unwrap().active.as_deref(),
+            Some(a.as_str())
+        );
+        assert_eq!(layout.active_area, right, "the keyboard's area stays");
+        assert_eq!(layout.show(&a, 10), Ok(false));
+        assert_eq!(
+            layout.show("nope", 11),
+            Err(LayoutError::UnknownDisplay("nope".to_owned()))
+        );
+    }
+
     #[test]
     fn a_split_past_the_area_cap_is_refused_and_changes_nothing() {
         let mut layout = with_files(&["a", "b", "c", "d", "e", "f", "g"]);

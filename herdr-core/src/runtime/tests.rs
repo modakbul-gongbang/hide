@@ -46,8 +46,11 @@ mod shortcut_import;
 mod snapshot_delta;
 #[path = "tests/terminal.rs"]
 mod terminal;
+#[path = "tests/tree_close.rs"]
+mod tree_close;
 #[path = "tests/view_areas.rs"]
 mod view_areas;
+mod view_bookmarks;
 #[path = "tests/workspace_control.rs"]
 mod workspace_control;
 #[path = "tests/workspace_view.rs"]
@@ -563,6 +566,7 @@ fn workspace(
         inactive_checkouts: Default::default(),
         removal: Default::default(),
         disk: Default::default(),
+        cleanup: None,
     }
 }
 
