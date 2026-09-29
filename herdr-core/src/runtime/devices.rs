@@ -507,11 +507,18 @@ impl Runtime {
     /// rows are rebuilt with every catalog, so this is the one place their
     /// state comes from.
     pub(crate) fn refresh_device_snapshots(&mut self) -> bool {
+        let kits = self
+            .snapshot
+            .navigator
+            .devices
+            .iter()
+            .map(|device| (device.id.clone(), self.kit_view(&device.id)))
+            .collect::<HashMap<_, _>>();
         let statuses = &self.snapshot.status.remote;
         let tests = &self.remote_device_tests;
         let mut changed = false;
         for device in &mut self.snapshot.navigator.devices {
-            let kit = self.kit_states.get(&device.id).cloned().unwrap_or_default();
+            let kit = kits.get(&device.id).cloned().unwrap_or_default();
             if device.kit != kit {
                 device.kit = kit;
                 changed = true;

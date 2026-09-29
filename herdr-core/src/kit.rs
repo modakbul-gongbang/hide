@@ -1,4 +1,4 @@
-//! This Mac's install kit worker (PRD device-parity B1, B8, B10).
+//! The install kit's workers (PRD device-parity B1, B8, B10, B13).
 //!
 //! One thread, owned by the core, runs `hide_kit` for this Mac: the launch
 //! pass, the operator's Reinstall, and a re-read every few seconds while
@@ -10,6 +10,9 @@
 //!
 //! Dropping the pump raises the kit's stop flag, which ends a child the kit
 //! is waiting on, and joins the thread (engineering rule 14).
+//!
+//! A device's kit runs on its helper (`hide_host::kit`); a worker per device
+//! makes those calls while the device has kit work queued.
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,10 +23,16 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use crate::handle::ChangeNotifier;
-use crate::runtime::{LocalKitJob, Runtime};
+use crate::host_access::call_as;
+use crate::runtime::{DeviceKitAnswer, DeviceKitCall, DeviceKitWork, KitJob, Runtime};
 use crate::workspace::LOCAL_DEVICE_ID;
 
 const PUMP_TICK: Duration = Duration::from_millis(250);
+
+/// The longest a device's kit call may take: a plugin uninstall and
+/// hcoord's daemon check are each bounded at twenty seconds on the device,
+/// and Node is probed with five, so this outlasts a whole install.
+const DEVICE_KIT_TIMEOUT: Duration = Duration::from_secs(180);
 
 pub(crate) struct KitPump {
     stop: mpsc::Sender<()>,
@@ -82,7 +91,7 @@ impl KitPump {
                     // The hook diagnosis reads the same files, so it is read
                     // again here: Memory's "update hooks" and the agent rows
                     // follow what the kit just wrote.
-                    let diagnosis = matches!(job, LocalKitJob::Apply(_))
+                    let diagnosis = matches!(job, KitJob::Apply(_))
                         .then(|| hide_agent_hooks::Diagnosis::read(&target.home));
                     let Some(core) = runtime.upgrade() else {
                         break;
@@ -110,20 +119,27 @@ impl KitPump {
     }
 }
 
-fn run(target: &hide_kit::KitTarget, job: &LocalKitJob) -> hide_kit::KitReport {
-    let report = match job {
-        LocalKitJob::Apply(scope) => hide_kit::apply(target, scope),
-        LocalKitJob::Status => return hide_kit::status(target),
-    };
-    // One record per install pass, naming each part's outcome; the reasons
-    // are the operator's diagnostic detail (engineering rule 10).
+fn run(target: &hide_kit::KitTarget, job: &KitJob) -> hide_kit::KitReport {
+    match job {
+        KitJob::Apply(scope) => {
+            let report = hide_kit::apply(target, scope);
+            completed(LOCAL_DEVICE_ID, scope, &report);
+            report
+        }
+        KitJob::Status => hide_kit::status(target),
+    }
+}
+
+/// One record per install pass on any machine, naming each part's outcome;
+/// the reasons are the operator's diagnostic detail (engineering rule 10).
+fn completed(device_id: &str, scope: &hide_kit::Scope, report: &hide_kit::KitReport) {
     crate::diagnostic!(json!({
         "component": "kit",
         "kind": "apply.completed",
-        "device_id": LOCAL_DEVICE_ID,
-        "scope": match job {
-            LocalKitJob::Apply(hide_kit::Scope::Automatic) => "automatic",
-            _ => "reinstall",
+        "device_id": device_id,
+        "scope": match scope {
+            hide_kit::Scope::Automatic => "automatic",
+            hide_kit::Scope::Reinstall(_) => "reinstall",
         },
         "components": report.components.iter().map(|part| json!({
             "id": part.id.code(),
@@ -131,7 +147,94 @@ fn run(target: &hide_kit::KitTarget, job: &LocalKitJob) -> hide_kit::KitReport {
             "reason": part.reason,
         })).collect::<Vec<_>>(),
     }));
-    report
+}
+
+/// Runs a device's queued kit calls on its helper, one at a time, until
+/// nothing is queued or the helper is gone (`Runtime::take_device_kit_call`).
+/// Each call is bounded by [`DEVICE_KIT_TIMEOUT`], and the worker ends with
+/// the core, like the device's other helper workers.
+pub(crate) fn spawn_device_worker(
+    runtime: Weak<Mutex<Runtime>>,
+    notifier: ChangeNotifier,
+    device_id: String,
+) -> std::io::Result<()> {
+    thread::Builder::new()
+        .name("herdr-core-device-kit".into())
+        .spawn(move || {
+            loop {
+                let Some(core) = runtime.upgrade() else {
+                    return;
+                };
+                let Ok(call) = core
+                    .lock()
+                    .map(|mut locked| locked.take_device_kit_call(&device_id))
+                else {
+                    return;
+                };
+                drop(core);
+                let Some(call) = call else {
+                    return;
+                };
+                let answer = call_device(&call);
+                if let (
+                    DeviceKitAnswer::Report(Ok(report)),
+                    DeviceKitWork::Job(KitJob::Apply(scope)),
+                ) = (&answer, &call.work)
+                {
+                    completed(&device_id, scope, report);
+                }
+                // A removed device's helper connection was kept open only
+                // for this call.
+                if call.work == DeviceKitWork::Remove {
+                    call.channel.close("device removed");
+                }
+                let Some(core) = runtime.upgrade() else {
+                    return;
+                };
+                let Ok(changed) = core
+                    .lock()
+                    .map(|mut locked| locked.ingest_device_kit_answer(&device_id, answer))
+                else {
+                    return;
+                };
+                drop(core);
+                if changed {
+                    notifier.notify();
+                }
+            }
+        })
+        .map(|_| ())
+}
+
+fn call_device(call: &DeviceKitCall) -> DeviceKitAnswer {
+    use hide_host::protocol::KitAction;
+    let action = match &call.work {
+        DeviceKitWork::Job(KitJob::Apply(hide_kit::Scope::Automatic)) => KitAction::Apply,
+        DeviceKitWork::Job(KitJob::Apply(hide_kit::Scope::Reinstall(components))) => {
+            KitAction::Reinstall {
+                components: components.clone(),
+            }
+        }
+        DeviceKitWork::Job(KitJob::Status) => KitAction::Status,
+        DeviceKitWork::Remove => KitAction::Remove,
+    };
+    let removing = action == KitAction::Remove;
+    let kit = hide_host::protocol::Call::Kit {
+        action,
+        cli_dir: call.cli_dir.clone(),
+        herdr_socket: call.herdr_socket.clone(),
+    };
+    if removing {
+        DeviceKitAnswer::Removed(
+            call_as(call.channel.as_ref(), kit, DEVICE_KIT_TIMEOUT)
+                .map_err(|error| error.to_string()),
+        )
+    } else {
+        DeviceKitAnswer::Report(
+            call_as(call.channel.as_ref(), kit, DEVICE_KIT_TIMEOUT)
+                .map_err(|error| error.to_string()),
+        )
+    }
 }
 
 impl Drop for KitPump {

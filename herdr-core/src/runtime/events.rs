@@ -1561,7 +1561,7 @@ impl Runtime {
             Event::KitReinstall(payload) => {
                 self.request_kit_reinstall(&payload.device_id, payload.components.as_deref())
             }
-            Event::KitCheck(_) => self.request_local_kit_check(),
+            Event::KitCheck(_) => self.request_kit_check(),
             Event::AiSettings(payload) => self.apply_ai_settings(payload),
             Event::RetryConnect(payload) => self.retry_remote_device(&payload.target_id),
             Event::CloneRepository(payload) => {
@@ -2117,23 +2117,32 @@ impl Runtime {
                     );
                     return true;
                 }
-                let before = self.snapshot.ui_state.device_registrations.len();
-                self.snapshot
+                let Some(registration) = self
+                    .snapshot
                     .ui_state
                     .device_registrations
-                    .retain(|device| device.id != payload.device_id);
-                if before == self.snapshot.ui_state.device_registrations.len() {
+                    .iter()
+                    .find(|device| device.id == payload.device_id)
+                    .cloned()
+                else {
                     self.set_error(
                         "device.unknown",
                         format!("Device {} is not registered", payload.device_id),
                         false,
                     );
                     return true;
-                }
+                };
+                self.snapshot
+                    .ui_state
+                    .device_registrations
+                    .retain(|device| device.id != payload.device_id);
+                // Hide's kit comes off the device on its own helper
+                // connection, which the disconnect below leaves open for it.
+                let kit_removal = self.queue_device_kit_removal(&registration);
                 self.disconnect_remote_device(&payload.device_id);
                 // Removing a device removes Hide's own record of it: its
                 // project registrations, expanded folders and file tabs. Its
-                // host, panes, agents and folders are not touched.
+                // panes, agents and folders are not touched.
                 let scope = format!("remote:{}:", payload.device_id);
                 let registrations = self.snapshot.ui_state.workspace_registrations.len();
                 self.snapshot
@@ -2161,8 +2170,13 @@ impl Runtime {
                 self.push_diagnostic(
                     "device.unregistered",
                     format!(
-                        "Unregistered device {} without touching its host; forgot {registrations} project registrations and closed {tabs} file tabs",
-                        payload.device_id
+                        "Unregistered device {}; forgot {registrations} project registrations and closed {tabs} file tabs; {}",
+                        payload.device_id,
+                        if kit_removal {
+                            "Hide's kit is coming off the device"
+                        } else {
+                            "Hide's kit stays on the device because its helper was not connected"
+                        }
                     ),
                 );
                 true

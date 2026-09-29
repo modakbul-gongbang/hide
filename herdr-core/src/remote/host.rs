@@ -58,8 +58,14 @@ fn present<'de, D: serde::Deserializer<'de>>(
 /// The scope the operator agrees to, versioned. A build that needs more than
 /// this contract describes bumps it, and every device asks again (B51).
 /// Contract 2 added the `hide` command installed beside the helper and its
-/// link in the consented command folder.
-pub const HOST_CONSENT_CONTRACT: u32 = 2;
+/// link in the consented command folder. Contract 3 is the whole install kit
+/// (PRD device-parity D-12): the hook entries, the labels plugin and hcoord
+/// besides the command; a contract-2 consent with the same folders is
+/// carried to 3 on its next connection without asking (D-13).
+pub const HOST_CONSENT_CONTRACT: u32 = 3;
+
+/// The contract a consent may be carried forward from without asking.
+pub const HOST_CONSENT_CARRIED_FROM: u32 = 2;
 
 /// Where the helper is installed on the device unless the daemon was started
 /// with another root; `~` is the remote account's home.
@@ -76,6 +82,16 @@ const HELPER_NAME: &str = "hide-host-helper";
 /// The pane-side Workspace CLI, the same `hide` this daemon ships, so a
 /// device's panes can reach this Hide through their return route.
 const CLI_NAME: &str = "hide";
+/// The rest of the install kit (`hide_kit`), under the names the kit reads
+/// in its folder: the hook helper, the packaged labels plugin and hcoord.
+const HOOKS_NAME: &str = "hide-agent-hooks";
+const LABELS_NAME: &str = "agent-context-labels";
+const HCOORD_NAME: &str = "hcoord";
+/// Bounds on a kit folder read into memory for upload (engineering rule
+/// 15); a folder past them is left out and the kit names the missing part.
+const MAX_PAYLOAD_FILES: usize = 1024;
+const MAX_PAYLOAD_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_PAYLOAD_DEPTH: usize = 8;
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long a draining connection waits for its admitted requests before it
 /// closes anyway. An admitted request can wait up to its timeout to be
@@ -108,29 +124,170 @@ impl HelperPackages {
         })
     }
 
-    /// The `hide` command for `os`/`arch`, found by the same rule: the
-    /// daemon's own `hide` serves a device of its own platform.
-    pub fn find_cli(&self, os: &str, arch: &str) -> Result<PathBuf, String> {
-        self.find_named(CLI_NAME, os, arch).map_err(|()| {
-            format!(
-                "This Hide build does not include the hide command for {} {arch}",
-                platform_label(os)
-            )
-        })
+    /// Everything this build puts on a device of `os`/`arch`: the helper,
+    /// which the device cannot do without, and the kit's parts, each found by
+    /// the same rule as the helper (hcoord is JavaScript and serves every
+    /// platform). A part this build does not carry is left out and named, and
+    /// the kit on the device reports it as missing from the build.
+    fn payload(&self, os: &str, arch: &str) -> Result<Payload, EstablishError> {
+        let helper = self.find(os, arch).map_err(EstablishError::Unsupported)?;
+        let helper = read_package(HELPER_NAME, &helper).map_err(EstablishError::Install)?;
+        let mut payload = Payload {
+            files: vec![helper],
+            missing: Vec::new(),
+        };
+        for name in [CLI_NAME, HOOKS_NAME] {
+            match self.find_named(name, os, arch) {
+                Ok(path) => match read_package(name, &path) {
+                    Ok(package) => payload.files.push(package),
+                    Err(reason) => payload.missing.push(reason),
+                },
+                Err(()) => payload.missing.push(format!(
+                    "This Hide build does not include {name} for {} {arch}",
+                    platform_label(os)
+                )),
+            }
+        }
+        let labels = self.find_named(LABELS_NAME, os, arch);
+        let hcoord = self
+            .directory
+            .as_ref()
+            .map(|directory| directory.join(HCOORD_NAME))
+            .filter(|folder| folder.is_dir())
+            .ok_or(());
+        for (name, folder) in [(LABELS_NAME, labels), (HCOORD_NAME, hcoord)] {
+            match folder {
+                Ok(folder) => match read_folder(name, &folder) {
+                    Ok(files) => payload.files.extend(files),
+                    Err(reason) => payload.missing.push(reason),
+                },
+                Err(()) => payload.missing.push(format!(
+                    "This Hide build does not include {name} for {} {arch}",
+                    platform_label(os)
+                )),
+            }
+        }
+        Ok(payload)
     }
 
+    /// A file or a folder named `name`, by the helper's rule.
     fn find_named(&self, name: &str, os: &str, arch: &str) -> Result<PathBuf, ()> {
         let directory = self.directory.as_ref().ok_or(())?;
         let named = directory.join(format!("{name}-{os}-{arch}"));
-        if named.is_file() {
+        if named.exists() {
             return Ok(named);
         }
         let own = directory.join(name);
-        if os == std::env::consts::OS && arch == std::env::consts::ARCH && own.is_file() {
+        if os == std::env::consts::OS && arch == std::env::consts::ARCH && own.exists() {
             return Ok(own);
         }
         Err(())
     }
+}
+
+/// One file of a build, as it goes into the device's version folder.
+struct Package {
+    /// Its path under the version folder, `/`-separated.
+    relative: String,
+    bytes: Vec<u8>,
+    digest: String,
+    executable: bool,
+}
+
+/// What a build puts on one device.
+struct Payload {
+    /// The helper first, then the kit's parts.
+    files: Vec<Package>,
+    /// Why a kit part is not among them.
+    missing: Vec<String>,
+}
+
+impl Payload {
+    /// The build's version: a digest over every file's path, mode and bytes,
+    /// so any change to any part is a new folder on the device.
+    fn version(&self) -> String {
+        let mut entries = self
+            .files
+            .iter()
+            .map(|file| {
+                format!(
+                    "{}\0{}\0{}\n",
+                    file.relative,
+                    if file.executable { "x" } else { "-" },
+                    file.digest
+                )
+            })
+            .collect::<Vec<_>>();
+        entries.sort();
+        hex_digest(entries.concat().as_bytes())
+    }
+}
+
+fn read_package(relative: &str, path: &Path) -> Result<Package, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let unreadable = |error: std::io::Error| {
+        format!("The package {} could not be read: {error}", path.display())
+    };
+    let metadata = std::fs::metadata(path).map_err(unreadable)?;
+    if !metadata.is_file() {
+        return Err(format!("The package {} is not a file", path.display()));
+    }
+    let bytes = std::fs::read(path).map_err(unreadable)?;
+    Ok(Package {
+        relative: relative.to_owned(),
+        digest: hex_digest(&bytes),
+        bytes,
+        executable: metadata.permissions().mode() & 0o111 != 0,
+    })
+}
+
+/// Every regular file under `folder`, as `<name>/<path>`. A link, a folder
+/// deeper than the bound, or a folder past the file or byte bound leaves the
+/// whole part out rather than a partial copy of it.
+fn read_folder(name: &str, folder: &Path) -> Result<Vec<Package>, String> {
+    let mut files = Vec::new();
+    let mut total = 0u64;
+    let mut pending = vec![(folder.to_path_buf(), name.to_owned(), 0usize)];
+    while let Some((path, relative, depth)) = pending.pop() {
+        if depth > MAX_PAYLOAD_DEPTH {
+            return Err(format!(
+                "{} is nested too deeply to install",
+                folder.display()
+            ));
+        }
+        let entries = std::fs::read_dir(&path)
+            .map_err(|error| format!("{} could not be read: {error}", path.display()))?;
+        for entry in entries {
+            let entry =
+                entry.map_err(|error| format!("{} could not be read: {error}", path.display()))?;
+            let Some(file_name) = entry.file_name().to_str().map(str::to_owned) else {
+                return Err(format!("{} holds a name that is not UTF-8", path.display()));
+            };
+            let kind = entry.file_type().map_err(|error| {
+                format!("{} could not be read: {error}", entry.path().display())
+            })?;
+            let child = format!("{relative}/{file_name}");
+            if kind.is_dir() {
+                pending.push((entry.path(), child, depth + 1));
+            } else if kind.is_file() {
+                let package = read_package(&child, &entry.path())?;
+                total += package.bytes.len() as u64;
+                files.push(package);
+                if files.len() > MAX_PAYLOAD_FILES || total > MAX_PAYLOAD_BYTES {
+                    return Err(format!(
+                        "{} is larger than a device install carries",
+                        folder.display()
+                    ));
+                }
+            } else {
+                return Err(format!(
+                    "{} is not a plain file, so {name} is not installed",
+                    entry.path().display()
+                ));
+            }
+        }
+    }
+    Ok(files)
 }
 
 fn platform_label(os: &str) -> &str {
@@ -208,37 +365,19 @@ pub struct Established {
     /// The helper was installed or replaced on this connection.
     pub installed: bool,
     pub helper_path: String,
-    pub cli: CliInstall,
+    /// How the build's files reached the device on this connection.
+    pub upload: Upload,
 }
 
-/// What became of the device's `hide` command on one connection. It never
-/// stops the helper: file and Git work do not depend on it.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum CliInstall {
-    /// `link` leads to `path`, the copy installed beside the helper.
-    Linked { link: String, path: String },
-    /// Installed at `path`, but `link` already names something that is not
-    /// Hide's own link, so it was left alone.
-    Occupied { link: String, path: String },
-    /// This build carries no command for the device, or it could not be put
-    /// in place or linked.
-    Unavailable(String),
-}
-
-impl CliInstall {
-    pub fn diagnostic(&self) -> serde_json::Value {
-        match self {
-            Self::Linked { link, path } => {
-                serde_json::json!({"state":"linked","link":link,"path":path})
-            }
-            Self::Occupied { link, path } => {
-                serde_json::json!({"state":"occupied","link":link,"path":path})
-            }
-            Self::Unavailable(reason) => {
-                serde_json::json!({"state":"unavailable","reason":reason})
-            }
-        }
-    }
+/// What one connection's install did with the build's files: how many it
+/// sent, how many were already there, and the kit parts left out with why.
+/// The kit on the device reports a left-out part on the device's row; this
+/// is the diagnostic detail.
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize)]
+pub struct Upload {
+    pub sent: usize,
+    pub reused: usize,
+    pub missing: Vec<String>,
 }
 
 /// A live helper connection. Cloning shares it; the SSH connection ends when
@@ -630,13 +769,7 @@ pub fn establish(
     let result = client.runtime.block_on(async {
         tokio::time::timeout(
             INSTALL_TIMEOUT,
-            start_helper(
-                &mut session,
-                client,
-                packages,
-                &consent.helper_root,
-                consent.cli_dir.as_deref(),
-            ),
+            start_helper(&mut session, client, packages, &consent.helper_root),
         )
         .await
         .unwrap_or_else(|_| {
@@ -645,7 +778,7 @@ pub fn establish(
             ))
         })
     });
-    let (channel, installed, helper_path, cli) = match result {
+    let (channel, installed, helper_path, upload) = match result {
         Ok(parts) => parts,
         Err(error) => {
             let _ = client.runtime.block_on(session.disconnect(
@@ -670,7 +803,7 @@ pub fn establish(
         hello,
         installed,
         helper_path,
-        cli,
+        upload,
     })
 }
 
@@ -696,8 +829,7 @@ async fn start_helper(
     client: &RusshRemoteClient,
     packages: &HelperPackages,
     helper_root: &str,
-    cli_dir: Option<&str>,
-) -> Result<(Channel<Msg>, bool, String, CliInstall), EstablishError> {
+) -> Result<(Channel<Msg>, bool, String, Upload), EstablishError> {
     let target = client.host.host_id.clone();
     let uname = execute_channel(
         session,
@@ -715,26 +847,7 @@ async fn start_helper(
         )));
     }
     let (os, arch) = platform_of(uname.stdout.trim()).map_err(EstablishError::Unsupported)?;
-    let package = packages
-        .find(&os, &arch)
-        .map_err(EstablishError::Unsupported)?;
-    let bytes = std::fs::read(&package).map_err(|error| {
-        EstablishError::Install(format!(
-            "The helper package {} could not be read: {error}",
-            package.display()
-        ))
-    })?;
-    let digest = hex_digest(&bytes);
-    let cli = packages.find_cli(&os, &arch).and_then(|package| {
-        let bytes = std::fs::read(&package).map_err(|error| {
-            format!(
-                "The hide command package {} could not be read: {error}",
-                package.display()
-            )
-        })?;
-        let digest = hex_digest(&bytes);
-        Ok((bytes, digest))
-    });
+    let payload = packages.payload(&os, &arch)?;
 
     let channel = session.channel_open_session().await.map_err(|error| {
         EstablishError::Install(format!("The SFTP channel could not be opened: {error}"))
@@ -747,37 +860,9 @@ async fn start_helper(
         })?;
     let raw = RawSftpSession::new(channel.into_stream());
     raw.set_timeout(30);
-    let helper = Package {
-        name: HELPER_NAME,
-        bytes: &bytes,
-        digest: &digest,
-    };
-    let command = match &cli {
-        Ok((bytes, digest)) => Ok(Package {
-            name: CLI_NAME,
-            bytes,
-            digest,
-        }),
-        Err(reason) => Err(reason.clone()),
-    };
-    let installed = install(&raw, helper_root, helper, command).await;
-    let installed = match installed {
-        Ok(installed) => installed,
-        Err(error) => {
-            let _ = raw.close_session();
-            return Err(error);
-        }
-    };
-    let cli = match (installed.cli, cli_dir) {
-        (Err(reason), _) => CliInstall::Unavailable(reason),
-        (Ok(path), None) => CliInstall::Unavailable(format!(
-            "{path} was installed, but the consent names no folder to link it in"
-        )),
-        (Ok(path), Some(cli_dir)) => {
-            link_cli(&raw, &installed.home, &installed.root, cli_dir, &path).await
-        }
-    };
+    let installed = install(&raw, helper_root, &payload).await;
     let _ = raw.close_session();
+    let installed = installed?;
     let (helper_path, fresh) = (installed.helper_path, installed.fresh);
 
     let channel = session.channel_open_session().await.map_err(|error| {
@@ -789,7 +874,7 @@ async fn start_helper(
         .map_err(|error| {
             EstablishError::Helper(format!("The helper could not be started: {error}"))
         })?;
-    Ok((channel, fresh, helper_path, cli))
+    Ok((channel, fresh, helper_path, installed.upload))
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
@@ -803,40 +888,30 @@ fn sftp_failure(what: &str, error: impl fmt::Display) -> EstablishError {
     EstablishError::Install(format!("{what}: {error}"))
 }
 
-/// One file an install puts in the version folder.
-struct Package<'a> {
-    name: &'static str,
-    bytes: &'a [u8],
-    digest: &'a str,
-}
-
-/// Where an install left things, for the link that follows it.
+/// Where an install left things.
 struct Installed {
-    home: String,
-    /// The helper root as SFTP resolved it; every installed path is below.
-    root: String,
     helper_path: String,
     /// Whether the helper itself was written on this connection.
     fresh: bool,
-    /// The installed `hide` command, or why the device has none.
-    cli: Result<String, String>,
+    upload: Upload,
 }
 
-/// Puts this build's helper, and its `hide` command when the build carries
-/// one for the device, in `<root>/<version>/`, where the version is a prefix
-/// of the digest over both. The helper is reused only after checking its
-/// bytes, because Hide runs it; the command is reused when a file of its size
-/// that only the account can change is already there, because only a
-/// verified upload is ever renamed into that private folder and reading 25
-/// MB back on every connection would delay every reconnect. Older versions
-/// under the same root are removed afterwards: the root is the one the
-/// operator allowed Hide to own. The command failing to install never stops
-/// the helper.
+/// Puts this build's helper and kit parts in `<root>/<version>/`, where the
+/// version is a prefix of the digest over all of them, keeping the folder
+/// layout the kit reads (`agent-context-labels/`, `hcoord/dist/...`). The
+/// helper is reused only after checking its bytes, because Hide runs it; any
+/// other file is reused when a file of its size that only the account can
+/// change is already there, because only a verified upload is ever renamed
+/// into that private folder and reading every part back on each connection
+/// would delay every reconnect. So an install that stopped part way resumes
+/// with the files it had not sent (B18). A kit file that cannot be placed
+/// never stops the helper: the kit on the device reports that part. The
+/// helper removes older builds once it has pointed `current` at this one
+/// (`hide_host::kit`).
 async fn install(
     raw: &RawSftpSession,
     helper_root: &str,
-    helper: Package<'_>,
-    cli: Result<Package<'_>, String>,
+    payload: &Payload,
 ) -> Result<Installed, EstablishError> {
     raw.init()
         .await
@@ -884,13 +959,18 @@ async fn install(
     // every folder was checked and none is a link, so a link on the spelled
     // path cannot be swapped between the check and the launch.
     let root = ensure_private_dirs(raw, &home, &root, owner).await?;
-    let version = match &cli {
-        Ok(cli) => hex_digest(format!("{}{}", helper.digest, cli.digest).as_bytes()),
-        Err(_) => helper.digest.to_owned(),
-    };
+    let version = payload.version();
     let version_dir = format!("{root}/{}", &version[..16]);
     ensure_private_dir(raw, &version_dir, owner).await?;
-    let final_path = format!("{version_dir}/{}", helper.name);
+    let mut upload = Upload {
+        missing: payload.missing.clone(),
+        ..Upload::default()
+    };
+    let (helper, parts) = payload
+        .files
+        .split_first()
+        .ok_or_else(|| EstablishError::Install("The build carries no helper".to_owned()))?;
+    let final_path = format!("{version_dir}/{}", helper.relative);
     let reusable = match raw.lstat(&final_path).await {
         Ok(existing) => {
             private_file(&existing.attrs, owner)
@@ -899,42 +979,58 @@ async fn install(
                     .await
                     .ok()
                     .as_deref()
-                    == Some(helper.digest)
+                    == Some(helper.digest.as_str())
         }
         Err(_) => false,
     };
     let (helper_path, fresh) = if reusable {
+        upload.reused += 1;
         (final_path, false)
     } else {
+        upload.sent += 1;
         (
-            place_file(raw, &version_dir, &helper, owner, "helper").await?,
+            place_file(raw, &version_dir, helper, owner, "helper").await?,
             true,
         )
     };
-    let cli = match cli {
-        Ok(cli) => {
-            let path = format!("{version_dir}/{}", cli.name);
+    let mut folders = std::collections::HashSet::new();
+    for part in parts {
+        let placed = async {
+            // Each folder on the way is made private before anything is put
+            // in it, parents first.
+            let mut folder = version_dir.clone();
+            if let Some((parents, _)) = part.relative.rsplit_once('/') {
+                for name in parents.split('/') {
+                    folder = format!("{folder}/{name}");
+                    if folders.insert(folder.clone()) {
+                        ensure_private_dir(raw, &folder, owner).await?;
+                    }
+                }
+            }
+            let path = format!("{version_dir}/{}", part.relative);
             match raw.lstat(&path).await {
                 Ok(existing)
                     if private_file(&existing.attrs, owner)
-                        && existing.attrs.size == Some(cli.bytes.len() as u64) =>
+                        && existing.attrs.size == Some(part.bytes.len() as u64) =>
                 {
-                    Ok(path)
+                    Ok(false)
                 }
-                _ => place_file(raw, &version_dir, &cli, owner, "hide command")
+                _ => place_file(raw, &version_dir, part, owner, &part.relative)
                     .await
-                    .map_err(|error| error.to_string()),
+                    .map(|_| true),
             }
         }
-        Err(reason) => Err(reason),
-    };
-    remove_older_builds(raw, &root, &version[..16]).await;
+        .await;
+        match placed {
+            Ok(true) => upload.sent += 1,
+            Ok(false) => upload.reused += 1,
+            Err(error) => upload.missing.push(error.to_string()),
+        }
+    }
     Ok(Installed {
-        home,
-        root,
         helper_path,
         fresh,
-        cli,
+        upload,
     })
 }
 
@@ -944,23 +1040,22 @@ async fn install(
 async fn place_file(
     raw: &RawSftpSession,
     version_dir: &str,
-    package: &Package<'_>,
+    package: &Package,
     owner: u32,
     what: &str,
 ) -> Result<String, EstablishError> {
-    let final_path = format!("{version_dir}/{}", package.name);
-    let staging = format!(
-        "{version_dir}/.upload-{}-{}",
-        package.name,
-        std::process::id()
-    );
+    let final_path = format!("{version_dir}/{}", package.relative);
+    let (folder, name) = final_path
+        .rsplit_once('/')
+        .unwrap_or((version_dir, package.relative.as_str()));
+    let staging = format!("{folder}/.upload-{name}-{}", std::process::id());
     let _ = raw.remove(&staging).await;
     let handle = raw
         .open(
             &staging,
             OpenFlags::CREATE | OpenFlags::EXCLUDE | OpenFlags::WRITE,
             FileAttributes {
-                permissions: Some(0o700),
+                permissions: Some(if package.executable { 0o700 } else { 0o600 }),
                 ..FileAttributes::empty()
             },
         )
@@ -1012,112 +1107,6 @@ async fn place_file(
         )));
     }
     Ok(final_path)
-}
-
-/// Links `<cli_dir>/hide` to the installed command. A missing folder is
-/// created for the account. The name is replaced only when it is absent or
-/// is Hide's own link, one leading into the helper root; anything else there
-/// is the operator's and stays.
-async fn link_cli(
-    raw: &RawSftpSession,
-    home: &str,
-    root: &str,
-    cli_dir: &str,
-    target: &str,
-) -> CliInstall {
-    let unavailable = |reason: String| CliInstall::Unavailable(reason);
-    let dir = match cli_dir.strip_prefix("~/") {
-        Some(rest) => format!("{}/{rest}", home.trim_end_matches('/')),
-        None if cli_dir.starts_with('/') => cli_dir.to_owned(),
-        None => {
-            return unavailable(format!(
-                "The command folder {cli_dir:?} must be absolute or start with ~/"
-            ));
-        }
-    };
-    if dir.split('/').any(|part| part == ".." || part == ".") || dir.chars().any(char::is_control) {
-        return unavailable("The command folder is not a plain path".to_owned());
-    }
-    let dir = dir.trim_end_matches('/').to_owned();
-    let link = format!("{dir}/{CLI_NAME}");
-    let mut current = String::new();
-    for part in dir.split('/').filter(|part| !part.is_empty()) {
-        current.push('/');
-        current.push_str(part);
-        match raw.stat(&current).await {
-            Ok(attrs) if attrs.attrs.is_dir() => {}
-            Ok(_) => return unavailable(format!("{current} exists and is not a folder")),
-            Err(SftpError::Status(status)) if status.status_code == StatusCode::NoSuchFile => {
-                let created = raw
-                    .mkdir(
-                        &current,
-                        FileAttributes {
-                            permissions: Some(0o755),
-                            ..FileAttributes::empty()
-                        },
-                    )
-                    .await;
-                if let Err(error) = created {
-                    return unavailable(format!("{current} could not be created: {error}"));
-                }
-            }
-            Err(error) => return unavailable(format!("{current} could not be inspected: {error}")),
-        }
-    }
-    let first_target = |name: russh_sftp::protocol::Name| {
-        name.files.into_iter().next().map(|entry| entry.filename)
-    };
-    match raw.lstat(&link).await {
-        Ok(existing) if existing.attrs.is_symlink() => {
-            match raw.readlink(&link).await.ok().and_then(first_target) {
-                Some(current) if current == target => {
-                    return CliInstall::Linked {
-                        link,
-                        path: target.to_owned(),
-                    };
-                }
-                Some(current) if current.starts_with(&format!("{root}/")) => {
-                    if let Err(error) = raw.remove(&link).await {
-                        return unavailable(format!(
-                            "Hide's older link {link} could not be replaced: {error}"
-                        ));
-                    }
-                }
-                _ => {
-                    return CliInstall::Occupied {
-                        link,
-                        path: target.to_owned(),
-                    };
-                }
-            }
-        }
-        Ok(_) => {
-            return CliInstall::Occupied {
-                link,
-                path: target.to_owned(),
-            };
-        }
-        Err(SftpError::Status(status)) if status.status_code == StatusCode::NoSuchFile => {}
-        Err(error) => return unavailable(format!("{link} could not be inspected: {error}")),
-    }
-    // OpenSSH's sftp-server reads SYMLINK's two paths in the reverse of the
-    // draft's order, target first. The readlink below confirms the result
-    // either way: reversed on another server, the call names the existing
-    // command as the new link and fails.
-    let created = raw.symlink(target, &link).await;
-    match raw.readlink(&link).await.ok().and_then(first_target) {
-        Some(current) if current == target => CliInstall::Linked {
-            link,
-            path: target.to_owned(),
-        },
-        _ => unavailable(format!(
-            "{link} could not be linked to {target}: {}",
-            created.err().map_or_else(
-                || "the link did not lead there".to_owned(),
-                |error| error.to_string()
-            )
-        )),
-    }
 }
 
 /// A helper file the account owns and no group or other account can write.
@@ -1386,37 +1375,6 @@ async fn remote_digest(
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect())
-}
-
-/// Removes `<root>/<16 hex>/` builds other than `keep`: their helper and
-/// command, then the folder. Only names this installer creates are touched;
-/// anything else stays.
-async fn remove_older_builds(raw: &RawSftpSession, root: &str, keep: &str) {
-    let Ok(directory) = raw.opendir(root).await else {
-        return;
-    };
-    let mut names = Vec::new();
-    while let Ok(listing) = raw.readdir(&directory.handle).await {
-        if listing.files.is_empty() {
-            break;
-        }
-        for entry in listing.files {
-            let name = entry.filename;
-            if name.len() == 16 && name.bytes().all(|byte| byte.is_ascii_hexdigit()) && name != keep
-            {
-                names.push(name);
-            }
-        }
-    }
-    let _ = raw.close(directory.handle).await;
-    for name in names {
-        let folder = format!("{root}/{name}");
-        let _ = raw.remove(&format!("{folder}/{CLI_NAME}")).await;
-        let helper = format!("{folder}/{HELPER_NAME}");
-        if raw.remove(&helper).await.is_ok() {
-            let _ = raw.rmdir(&folder).await;
-        }
-    }
 }
 
 fn spawn_host(
@@ -1743,22 +1701,128 @@ mod tests {
         )
         .unwrap();
         assert!(packages.find("macos", other_arch).is_ok());
-        // The command follows the same rule, independently of the helper.
-        let missing = packages
-            .find_cli(std::env::consts::OS, std::env::consts::ARCH)
-            .unwrap_err();
-        assert!(
-            missing.contains("does not include the hide command"),
-            "{missing}"
+    }
+
+    fn write(path: &Path, bytes: &[u8], mode: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap();
+    }
+
+    fn relative(payload: &Payload) -> Vec<(String, bool)> {
+        let mut files = payload
+            .files
+            .iter()
+            .map(|file| (file.relative.clone(), file.executable))
+            .collect::<Vec<_>>();
+        files.sort();
+        files
+    }
+
+    /// The kit's parts follow the helper's rule, each on its own: a build
+    /// that lacks one still installs the helper and names what it left out.
+    #[test]
+    fn a_device_payload_carries_every_kit_part_the_build_has() {
+        let directory = tempfile::tempdir().unwrap();
+        let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
+        write(&directory.path().join(HELPER_NAME), b"helper", 0o755);
+        let packages = HelperPackages::new(Some(directory.path().to_path_buf()));
+        let bare = packages.payload(os, arch).unwrap();
+        assert_eq!(bare.files[0].relative, HELPER_NAME);
+        assert_eq!(bare.files.len(), 1);
+        assert_eq!(bare.missing.len(), 4, "{:?}", bare.missing);
+
+        write(&directory.path().join(CLI_NAME), b"cli", 0o755);
+        write(&directory.path().join(HOOKS_NAME), b"hooks", 0o755);
+        let labels = directory.path().join(LABELS_NAME);
+        write(&labels.join("herdr-plugin.toml"), b"id = 'x'", 0o644);
+        write(
+            &labels.join("scripts/start-watcher.sh"),
+            b"#!/bin/sh",
+            0o644,
         );
-        std::fs::write(directory.path().join(CLI_NAME), b"cli").unwrap();
+        write(&labels.join("hide-agent-context-labels"), b"watcher", 0o755);
+        write(
+            &directory.path().join("hcoord/dist/hcoord/cli.js"),
+            b"cli",
+            0o644,
+        );
+        let full = packages.payload(os, arch).unwrap();
+        assert!(full.missing.is_empty(), "{:?}", full.missing);
         assert_eq!(
-            packages
-                .find_cli(std::env::consts::OS, std::env::consts::ARCH)
-                .unwrap(),
-            directory.path().join(CLI_NAME)
+            relative(&full),
+            vec![
+                ("agent-context-labels/herdr-plugin.toml".to_owned(), false),
+                (
+                    "agent-context-labels/hide-agent-context-labels".to_owned(),
+                    true
+                ),
+                (
+                    "agent-context-labels/scripts/start-watcher.sh".to_owned(),
+                    false
+                ),
+                ("hcoord/dist/hcoord/cli.js".to_owned(), false),
+                ("hide".to_owned(), true),
+                ("hide-agent-hooks".to_owned(), true),
+                ("hide-host-helper".to_owned(), true),
+            ]
         );
-        assert!(packages.find_cli("macos", other_arch).is_err());
+        assert_ne!(full.version(), bare.version());
+
+        // Another processor gets its own helper and platform-neutral hcoord,
+        // never this machine's binaries.
+        let other_arch = if arch == "x86_64" {
+            "aarch64"
+        } else {
+            "x86_64"
+        };
+        write(
+            &directory
+                .path()
+                .join(format!("{HELPER_NAME}-{os}-{other_arch}")),
+            b"other",
+            0o755,
+        );
+        let other = packages.payload(os, other_arch).unwrap();
+        assert_eq!(
+            relative(&other),
+            vec![
+                ("hcoord/dist/hcoord/cli.js".to_owned(), false),
+                ("hide-host-helper".to_owned(), true),
+            ]
+        );
+        assert_eq!(other.missing.len(), 3, "{:?}", other.missing);
+    }
+
+    /// Any change to any part is a new version folder on the device, so a
+    /// hook never runs a mix of two builds.
+    #[test]
+    fn the_payload_version_follows_every_file_and_mode() {
+        let directory = tempfile::tempdir().unwrap();
+        let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
+        write(&directory.path().join(HELPER_NAME), b"helper", 0o755);
+        write(
+            &directory.path().join("hcoord/dist/hcoord/cli.js"),
+            b"one",
+            0o644,
+        );
+        let packages = HelperPackages::new(Some(directory.path().to_path_buf()));
+        let first = packages.payload(os, arch).unwrap().version();
+        assert_eq!(packages.payload(os, arch).unwrap().version(), first);
+        write(
+            &directory.path().join("hcoord/dist/hcoord/cli.js"),
+            b"two",
+            0o644,
+        );
+        let second = packages.payload(os, arch).unwrap().version();
+        assert_ne!(second, first);
+        write(
+            &directory.path().join("hcoord/dist/hcoord/cli.js"),
+            b"two",
+            0o755,
+        );
+        assert_ne!(packages.payload(os, arch).unwrap().version(), second);
     }
 }
 

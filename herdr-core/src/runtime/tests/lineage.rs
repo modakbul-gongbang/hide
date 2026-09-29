@@ -1673,12 +1673,12 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
     assert!(local(&runtime).busy, "the row shows the install running");
     assert_eq!(
         runtime.take_local_kit_job(std::time::Instant::now()),
-        Some(crate::runtime::LocalKitJob::Apply(
-            hide_kit::Scope::Reinstall(vec![
+        Some(crate::runtime::KitJob::Apply(hide_kit::Scope::Reinstall(
+            vec![
                 hide_kit::ComponentId::ClaudeCodeHook,
                 hide_kit::ComponentId::Labels,
-            ])
-        )),
+            ]
+        ))),
         "two presses are one install of the two parts that need it"
     );
 

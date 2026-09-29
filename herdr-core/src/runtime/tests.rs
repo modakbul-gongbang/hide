@@ -12,6 +12,8 @@ mod agents_settings_remote;
 mod appearance;
 #[path = "tests/device_catalog.rs"]
 mod device_catalog;
+#[path = "tests/device_kit.rs"]
+mod device_kit;
 #[path = "tests/device_worktrees.rs"]
 mod device_worktrees;
 #[path = "tests/devices.rs"]
