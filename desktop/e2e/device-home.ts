@@ -101,8 +101,7 @@ export const readSettings = (file: string) => JSON.parse(fs.readFileSync(file, "
 /**
  * Puts the private HOME back to a device that has never met Hide: Herdr
  * installed in ~/.local/bin, the test's hcoord daemon unloaded, the kit's
- * folders gone, and each agent runtime's file holding only another tool's
- * hook, which every step must leave as it is.
+ * folders gone, and the agent files seeded by `seedAgentFiles`.
  */
 export function resetDeviceHome(home: string, label: string): { claude: AgentSettings; codex: AgentSettings } {
   bootoutTestLabel(label);
@@ -110,6 +109,11 @@ export function resetDeviceHome(home: string, label: string): { claude: AgentSet
   fs.rmSync(path.join(home, "Library", "LaunchAgents", `${label}.plist`), { force: true });
   fs.mkdirSync(path.join(home, ".local", "bin"), { recursive: true });
   fs.symlinkSync(herdrBinary(), path.join(home, ".local", "bin", "herdr"));
+  return seedAgentFiles(home);
+}
+
+/** Each agent runtime's file holding only another tool's hook and setting, which every kit step must leave as it is. */
+export function seedAgentFiles(home: string): { claude: AgentSettings; codex: AgentSettings } {
   const claude: AgentSettings = { theme: "dark", hooks: { SessionStart: [{ hooks: [{ type: "command", command: "/usr/bin/true other-tool-claude", timeout: 5 }] }] } };
   const codex: AgentSettings = { hooks: { SessionStart: [{ hooks: [{ type: "command", command: "/usr/bin/true other-tool-codex" }] }] } };
   for (const [file, settings] of [[claudeSettings(home), claude], [codexHooks(home), codex]] as const) {
