@@ -8,15 +8,26 @@
 
 import {frame, icon, num, text} from './pen-system.mjs';
 
-export function diskCleanupRows(tokens, {themedXref, screenButton}, s) {
+export function diskCleanupRows(tokens, {themedXref, screenButton, screenDialogSurface}, s) {
   const HAIR = num(tokens, '--size-hairline');
   const DIM = num(tokens, '--opacity-dimmed');
+  const SECONDARY = num(tokens, '--opacity-secondary');
   const DISABLED = num(tokens, '--opacity-disabled');
   const BODY = num(tokens, '--text-body');
-  const CAPTION = num(tokens, '--text-caption');
   const spacer = id => frame(id, 'Spacer', {width: 'fill_container', height: 1}, []);
   const rule = (id, width = 'fill_container') => frame(id, 'Rule', {width, height: HAIR, fill: '$--border'}, []);
-  const gb = value => value === 0 ? '–' : value < 1 ? `${Math.round(value * 1000)} MB` : `${value.toFixed(1)} GB`;
+
+  // The shell's own size wording (projectBoard.ts formatBytes): one decimal under 10, none above.
+  const GB = 1024 ** 3;
+  function fmt(gb) {
+    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let value = gb * GB;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) { value /= 1024; unit += 1; }
+    if (unit === 0) return `${Math.trunc(value)} B`;
+    return `${value < 10 ? value.toFixed(1) : value.toFixed(0)} ${units[unit]}`;
+  }
+  const gigabytes = gb => `${gb.toFixed(1)} GB`;
 
   // Pen draws no ellipsis, so a name the web truncates is written already cut.
   function textWidth(content, size, mono = false) {
@@ -39,32 +50,35 @@ export function diskCleanupRows(tokens, {themedXref, screenButton}, s) {
     return `${cut.trimEnd()}…`;
   }
 
-  // -- the model ---------------------------------------------------------------------
+  // -- the model (web/src/diskCleanup.ts) ----------------------------------------------
 
-  const BUILD = {name: '빌드 캐시', glyph: 'hammer', tone: '$--file-orange', total: 38.2};
-  const DEPS = {name: '의존성', glyph: 'package', tone: '$--file-blue', total: 7.9};
-  const TREE = {name: '워크트리', glyph: 'folder-git-2', tone: '$--muted-foreground'};
-  const OTHER = {name: '기타', glyph: 'circle-dashed', tone: '$--file-yellow', total: 3.9};
-  const SOURCE_REST = 6.5;
-  const VOLUME = {size: 460, free: 1.6};
-
-  // state: work (in use), rest (idle, not finished), done (PR merged or closed); tree: 'ok', a refusal in words, or 'none' (main)
-  const CHECKOUTS = [
-    {id: 'main', name: 'main', kind: 'main', state: 'rest', build: 4.9, deps: 0.66, other: 2.6, tree: 'none'},
-    {id: 'rwb', name: 'fix/remote-workspace-bridge', pr: [227, 'merged'], state: 'done', build: 7.3, deps: 0.65, other: 0.005, tree: 'ok'},
-    {id: 'oif', name: 'feat/overview-issue-first', pr: [218, 'closed'], state: 'done', build: 5.9, deps: 0.33, other: 0, tree: '머지되지 않음'},
-    {id: 'mc', name: 'mobile-conversation', pr: [252, 'open'], state: 'work', build: 4.1, deps: 0.33, other: 0, tree: '에이전트 작업 중'},
-    {id: 'cas', name: 'prd/close-agent-subtree', state: 'work', build: 3.7, deps: 0, other: 0, tree: '에이전트 작업 중'},
-    {id: 'pfs', name: 'fix/pane-find-scroll', state: 'rest', build: 3.6, deps: 0.33, other: 0.1, tree: '바뀐 파일 3'},
-    {id: 'ol', name: 'feat/overview-lenses', pr: [238, 'merged'], state: 'done', build: 3.4, deps: 0.33, other: 0, tree: 'ok'},
-    {id: 'crl', name: 'ci/runner-layout', pr: [248, 'merged'], state: 'done', build: 2.4, deps: 0.33, other: 0, tree: 'ok'},
-    {id: 'atg', name: 'prd/agent-tab-groups', pr: [217, 'merged'], state: 'done', build: 0, deps: 0.33, other: 0.82, tree: 'ok'},
-  ].map(checkout => ({...checkout, total: checkout.build + checkout.deps + checkout.other + 0.6}));
-  const FILTERS = [['전체', 36], ['끝난 것', 19], ['쉬는 것', 11], ['작업 중', 6]];
+  const LAYERS = {
+    build_cache: {label: '빌드 캐시', glyph: 'hammer', dot: '$--accent-choice-amber'},
+    dependencies: {label: '의존성', glyph: 'package', dot: '$--file-blue'},
+    worktree: {label: '워크트리', glyph: 'folder-git-2'},
+    other: {label: '기타', dot: '$--file-yellow'},
+    source: {label: '워크트리 소스', dot: '$--file-neutral'},
+    shared_git: {label: '공유 Git', dot: '$--file-neutral'},
+  };
   const PR_TONE = {open: '$--pr-open', merged: '$--pr-merged', closed: '$--pr-closed'};
-  const PR_GLYPH = {open: 'git-pull-request', merged: 'git-merge', closed: 'git-pull-request'};
+  const OTHER_TEXT = 'hide가 모르는 폴더라 지우지 않는다';
 
-  const cacheState = (checkout, key) => !checkout[key] ? 'none' : checkout.state === 'work' ? 'work' : 'ok';
+  // inUse: the words inUseText gives; tree: 'ok', or the reason the worktree cell is a lock; sizes in GB
+  const CHECKOUTS = [
+    {id: 'main', name: 'main', main: true, build: 4.9, deps: 0.64, other: 2.6, source: 0.6},
+    {id: 'rwb', name: 'fix/remote-workspace-bridge', pr: [227, 'merged'], build: 7.3, deps: 0.63, other: 0.005, source: 0.6, tree: 'ok'},
+    {id: 'oif', name: 'feat/overview-issue-first', pr: [218, 'closed'], build: 5.9, deps: 0.32, other: 0, source: 0.6, tree: 'main에 머지되지 않음'},
+    {id: 'mc', name: 'mobile-conversation', pr: [252, 'open'], build: 4.1, deps: 0.32, other: 0, source: 0.6, inUse: '에이전트 작업 중', tree: '에이전트 작업 중'},
+    {id: 'vt', name: 'feat/vite-dev-server', build: 3.9, deps: 0.32, other: 0, source: 0.6, inUse: '터미널에서 vite 실행 중', tree: '터미널에서 vite 실행 중'},
+    {id: 'pfs', name: 'fix/pane-find-scroll', build: 3.6, deps: 0.32, other: 0.1, source: 0.6, tree: '바뀐 파일 3'},
+    {id: 'ol', name: 'feat/overview-lenses', pr: [238, 'merged'], build: 3.4, deps: 0.32, other: 0, source: 0.6, tree: 'ok'},
+    {id: 'crl', name: 'ci/runner-layout', pr: [248, 'merged'], build: 2.4, deps: 0.32, other: 0, source: 0.6, tree: 'ok'},
+    {id: 'atg', name: 'prd/agent-tab-groups', pr: [217, 'merged'], build: 0, deps: 0.32, other: 0.82, source: 0.6, tree: 'ok'},
+  ].map(checkout => ({...checkout, total: checkout.build + checkout.deps + checkout.other + checkout.source}));
+  const byId = Object.fromEntries(CHECKOUTS.map(checkout => [checkout.id, checkout]));
+  const FILTERS = [['전체', 36], ['끝난 것', 19], ['쉬는 것', 11], ['작업 중', 6]];
+
+  const cacheBlocked = checkout => Boolean(checkout.inUse);
 
   // -- parts -------------------------------------------------------------------------
 
@@ -81,51 +95,31 @@ export function diskCleanupRows(tokens, {themedXref, screenButton}, s) {
     });
   }
 
-  const prChip = (id, [number, state]) => frame(id, `PR #${number}`, {layout: 'horizontal', gap: 2, alignItems: 'center'}, [
-    icon(`${id}-g`, PR_GLYPH[state], {size: 11, fill: PR_TONE[state]}),
-    text(`${id}-n`, `#${number}`, {size: '$--text-caption', fill: PR_TONE[state], mono: true}),
+  const dot = (id, fill) => frame(id, 'Swatch', {width: 8, height: 8, cornerRadius: 4, fill}, []);
+  const tooltip = (id, content) => frame(id, 'Tooltip', {padding: ['$--spacing-xxs', '$--spacing-sm'], fill: '$--popover', cornerRadius: '$--radius-sm', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
+    text(`${id}-t`, content, {size: '$--text-caption'}),
   ]);
 
-  function checkoutMark(id, checkout) {
-    const box = {width: 12, height: 12, layout: 'horizontal', justifyContent: 'center', alignItems: 'center'};
-    if (checkout.kind === 'main') return frame(id, 'Mark', box, [icon(`${id}-i`, 'house', {size: 11, fill: '$--subtle-foreground'})]);
-    if (checkout.state === 'work') return frame(id, 'Mark', box, [{type: 'ellipse', id: `${id}-dot`, name: 'Dot', width: 7, height: 7, fill: '$--agent-working'}]);
-    if (checkout.state === 'rest') return frame(id, 'Mark', box, [{type: 'ellipse', id: `${id}-ring`, name: 'Ring', width: 7, height: 7, stroke: '$--muted-foreground', strokeWidth: HAIR, strokeAlignment: 'inner'}]);
-    return frame(id, 'Mark', box, [icon(`${id}-i`, 'git-branch', {size: 11, fill: '$--muted-foreground'})]);
-  }
+  // The usage bar: the layers, and one grey part for the source and the shared Git.
+  const USAGE = [['build_cache', 38.2], ['dependencies', 7.9], ['other', 3.9], ['source', 6.4]];
+  const USAGE_TOTAL = USAGE.reduce((sum, [, gb]) => sum + gb, 0);
+  const USAGE_LABEL = {build_cache: '빌드 캐시', dependencies: '의존성', other: '기타', source: '소스 · .git'};
 
-  function checkoutName(id, checkout, width) {
-    const prWidth = checkout.pr ? 44 : 0;
-    return frame(id, checkout.name, {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width}, [
-      checkoutMark(`${id}-m`, checkout),
-      text(`${id}-t`, fitText(checkout.name, width - 20 - prWidth, BODY), {size: '$--text-body', fill: checkout.state === 'done' ? '$--subtle-foreground' : '$--foreground'}),
-      ...(checkout.pr ? [prChip(`${id}-pr`, checkout.pr)] : []),
-    ]);
-  }
-
-  function layerBar(id, parts, width, height = 8) {
-    const total = parts.reduce((sum, [, value]) => sum + value, 0);
-    const shown = parts.filter(([, value]) => value > 0);
-    return frame(id, 'Bar', {layout: 'horizontal', gap: 1, width, height, cornerRadius: height / 2, clip: true},
-      shown.map(([fill, value], index) => frame(`${id}-${index}`, 'Part', {width: Math.max(2, Math.round((width - shown.length) * value / total)), height, fill}, [])));
-  }
-
-  const PARTS = [[BUILD.name, BUILD.tone, BUILD.total], [DEPS.name, DEPS.tone, DEPS.total], [OTHER.name, OTHER.tone, OTHER.total], ['소스 · .git', '$--muted-foreground', SOURCE_REST]];
-
-  function volumeLine(id, width) {
-    const project = PARTS.reduce((sum, [, , value]) => sum + value, 0);
-    return frame(id, 'Volume', {layout: 'vertical', gap: '$--spacing-xs', width}, [
-      frame(`${id}-top`, 'Numbers', {layout: 'horizontal', alignItems: 'center', gap: '$--spacing-sm', width}, [
-        text(`${id}-p`, `이 프로젝트 ${project.toFixed(1)} GB`, {size: '$--text-caption', fill: '$--subtle-foreground', mono: true}),
+  function usageBar(id, width, {partial = false, free = 1.6} = {}) {
+    const shown = USAGE.filter(([, gb]) => gb > 0);
+    const height = 6;
+    return frame(id, 'Usage', {layout: 'vertical', gap: '$--spacing-xs', width}, [
+      frame(`${id}-top`, 'Numbers', {layout: 'horizontal', alignItems: 'baseline', gap: '$--spacing-md', width}, [
+        text(`${id}-p`, `이 프로젝트 ${partial ? '≥ ' : ''}${fmt(USAGE_TOTAL)}`, {size: '$--text-caption', fill: '$--subtle-foreground', mono: true}),
         spacer(`${id}-sp`),
-        icon(`${id}-w`, 'triangle-alert', {size: 12, fill: '$--warning'}),
-        text(`${id}-f`, `디스크 여유 ${VOLUME.free} GB / ${VOLUME.size} GB`, {size: '$--text-caption', fill: '$--warning', mono: true}),
+        text(`${id}-f`, `디스크 여유 ${fmt(free)}`, {size: '$--text-caption', fill: '$--subtle-foreground', mono: true}),
       ]),
-      layerBar(`${id}-bar`, PARTS.map(([, tone, value]) => [tone, value]), width),
-      frame(`${id}-lg`, 'Legend', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'center'}, PARTS.map(([name, tone], index) =>
-        frame(`${id}-lg${index}`, name, {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
-          frame(`${id}-lg${index}-sw`, 'Swatch', {width: 8, height: 8, cornerRadius: 2, fill: tone}, []),
-          text(`${id}-lg${index}-t`, name, {size: '$--text-caption', fill: '$--subtle-foreground'}),
+      frame(`${id}-bar`, 'Bar', {layout: 'horizontal', gap: 1, width, height, cornerRadius: 2, clip: true, fill: '$--muted'},
+        shown.map(([key, gb], index) => frame(`${id}-bar${index}`, LAYERS[key].label, {width: Math.max(2, Math.round((width - shown.length) * gb / USAGE_TOTAL)), height, fill: LAYERS[key].dot ?? '$--file-neutral'}, []))),
+      frame(`${id}-lg`, 'Legend', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'center'}, USAGE.map(([key], index) =>
+        frame(`${id}-lg${index}`, USAGE_LABEL[key], {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+          dot(`${id}-lg${index}-sw`, LAYERS[key].dot ?? '$--file-neutral'),
+          text(`${id}-lg${index}-t`, USAGE_LABEL[key], {size: '$--text-caption', fill: '$--muted-foreground'}),
         ]))),
     ]);
   }
@@ -140,18 +134,14 @@ export function diskCleanupRows(tokens, {themedXref, screenButton}, s) {
         spacer(`${id}-hs`),
         icon(`${id}-x`, 'x', {size: 16, fill: '$--muted-foreground'}),
       ]),
-      frame(`${id}-b`, 'Body', {layout: 'vertical', gap: '$--spacing-md', width, padding: ['$--spacing-sm', '$--spacing-lg', '$--spacing-md', '$--spacing-lg']}, body),
-      ...(footer ? [rule(`${id}-fr`, width), frame(`${id}-f`, 'Footer', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width, padding: ['$--spacing-sm', '$--spacing-lg']}, footer)] : []),
+      frame(`${id}-b`, 'Body', {layout: 'vertical', gap: '$--spacing-md', width, padding: ['$--spacing-md', '$--spacing-lg']}, body),
+      ...(footer ? [rule(`${id}-fr`, width), frame(`${id}-f`, 'Footer', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'start', width, padding: ['$--spacing-md', '$--spacing-lg']}, footer)] : []),
     ]);
   }
 
-  const tooltip = (id, content) => frame(id, 'Tooltip', {padding: ['$--spacing-xxs', '$--spacing-sm'], fill: '$--popover', cornerRadius: '$--radius-sm', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
-    text(`${id}-t`, content, {size: '$--text-caption'}),
-  ]);
+  const SUBTITLE = count => `herdr-ide · ${count} 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다`;
 
-  const SUBTITLE = 'herdr-ide · 36 체크아웃 · 크기는 할당된 블록이고 실제로 비워지는 양은 정리 후 디스크에서 잰다';
-
-  // -- entry: the Overview's facts line ------------------------------------------------
+  // -- entry: the Overview's facts line (DiskEntrance.tsx) ---------------------------------
 
   function fact(id, glyph, label, {fill = '$--subtle-foreground', underline = false} = {}) {
     return frame(id, label, {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', ...(underline ? {padding: [0, 0, 1, 0], stroke: fill, strokeWidth: {bottom: HAIR}} : {})}, [
@@ -160,45 +150,55 @@ export function diskCleanupRows(tokens, {themedXref, screenButton}, s) {
     ]);
   }
 
-  function breakdown(id) {
-    const rows = [['할당 56.5 GB · 눌러서 정리', '', null], ...PARTS.map(([name, tone, value]) => [name === OTHER.name ? '기타 · 지우지 않음' : name, `${value} GB`, tone])];
-    return frame(id, 'Tooltip', {layout: 'vertical', gap: 2, padding: ['$--spacing-xs', '$--spacing-sm'], fill: '$--popover', cornerRadius: '$--radius-sm', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner'},
-      rows.map(([label, value, tone], index) => frame(`${id}-${index}`, label, {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: 196}, [
-        ...(tone ? [frame(`${id}-${index}-sw`, 'Swatch', {width: 8, height: 8, cornerRadius: 2, fill: tone}, [])] : []),
-        text(`${id}-${index}-l`, label, {size: '$--text-caption', fill: tone ? '$--subtle-foreground' : '$--foreground'}),
+  // Lines in the app's order: caches, the source of the worktrees, other, the shared Git.
+  function breakdown(id, size, partial) {
+    const lines = [['build_cache', '빌드 캐시', 38.2], ['dependencies', '의존성', 7.9], ['source', '워크트리 소스', 5.6], ['other', '기타 · 지우지 않음', 3.9], ['shared_git', '공유 Git', 0.8]];
+    const head = frame(`${id}-h`, 'Head', {layout: 'horizontal', width: 220}, [text(`${id}-ht`, `할당 ${size} · 눌러서 정리`, {size: '$--text-caption', fill: '$--foreground'})]);
+    const warn = partial ? [frame(`${id}-w`, 'Partial', {layout: 'horizontal', width: 220}, [text(`${id}-wt`, '일부 체크아웃은 크기를 재지 못해 잰 것만 합했다', {size: '$--text-caption', fill: '$--warning', width: 220})])] : [];
+    return frame(id, 'Tooltip', {layout: 'vertical', gap: 2, padding: ['$--spacing-xs', '$--spacing-sm'], fill: '$--popover', cornerRadius: '$--radius-sm', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
+      head, ...warn,
+      ...lines.map(([key, label, gb], index) => frame(`${id}-${index}`, label, {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'center', width: 220}, [
+        frame(`${id}-${index}-l`, label, {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+          dot(`${id}-${index}-sw`, LAYERS[key].dot),
+          text(`${id}-${index}-t`, label, {size: '$--text-caption', fill: '$--foreground'}),
+        ]),
         spacer(`${id}-${index}-sp`),
-        text(`${id}-${index}-v`, value, {size: '$--text-caption', fill: '$--subtle-foreground', mono: true}),
-      ])));
-  }
-
-  function entry(low) {
-    const k = low ? 'l' : 'n';
-    const facts = [
-      fact(`en-${k}-wt-${s}`, 'folder-git-2', '36 worktrees'),
-      fact(`en-${k}-disk-${s}`, 'hard-drive', '56.5 GB', {underline: !low}),
-      ...(low ? [fact(`en-l-free-${s}`, 'triangle-alert', '여유 1.6 GB · 23 GB 비울 수 있음', {fill: '$--warning', underline: true})] : []),
-      fact(`en-${k}-mg-${s}`, 'git-merge', '4 merged → 정리', {fill: '$--pr-merged'}),
-    ];
-    return frame(`en-${k}-${s}`, low ? 'Entry: low disk' : 'Entry: disk under the pointer', {layout: 'vertical', gap: '$--spacing-sm', width: 640, padding: '$--spacing-md', fill: '$--background', cornerRadius: '$--radius-md', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
-      frame(`en-${k}-title-${s}`, 'Title row', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-        text(`en-${k}-c1-${s}`, 'Overview', {size: '$--text-caption', fill: '$--subtle-foreground'}),
-        text(`en-${k}-c2-${s}`, '/', {size: '$--text-caption', fill: '$--muted-foreground'}),
-        text(`en-${k}-c3-${s}`, 'herdr-ide', {size: '$--text-headline', weight: '600'}),
-      ]),
-      frame(`en-${k}-facts-${s}`, 'Facts', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'center'}, facts),
-      ...(low ? [] : [frame(`en-${k}-tipwrap-${s}`, 'Tooltip anchor', {padding: [0, 0, 0, 96]}, [breakdown(`en-${k}-tip-${s}`)])]),
+        text(`${id}-${index}-v`, fmt(gb), {size: '$--text-caption', fill: '$--foreground', mono: true}),
+      ])),
     ]);
   }
 
-  // -- the table and its checkboxes ----------------------------------------------------------
+  // kind: 'plain' (tooltip on the number), 'partial' (a checkout could not be measured: `≥`), 'low' (the warning cell)
+  function entry(kind) {
+    const partial = kind === 'partial';
+    const size = `${partial ? '≥ ' : ''}${fmt(USAGE_TOTAL)}`;
+    const facts = [
+      fact(`en-${kind}-wt-${s}`, 'folder-git-2', '36 worktrees'),
+      fact(`en-${kind}-disk-${s}`, 'hard-drive', size, {underline: kind !== 'low'}),
+      ...(kind === 'low' ? [fact(`en-low-free-${s}`, 'triangle-alert', `여유 ${fmt(1.6)} · ${fmt(23)} 비울 수 있음`, {fill: '$--warning', underline: true})] : []),
+      fact(`en-${kind}-mg-${s}`, 'git-merge', '4 merged → 정리', {fill: '$--pr-merged'}),
+    ];
+    return frame(`en-${kind}-${s}`, `Entry: ${kind}`, {layout: 'vertical', gap: '$--spacing-sm', width: 560, padding: '$--spacing-md', fill: '$--background', cornerRadius: '$--radius-md', stroke: '$--border', strokeWidth: HAIR, strokeAlignment: 'inner'}, [
+      frame(`en-${kind}-title-${s}`, 'Title row', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+        text(`en-${kind}-c1-${s}`, 'Overview', {size: '$--text-caption', fill: '$--subtle-foreground'}),
+        text(`en-${kind}-c2-${s}`, '/', {size: '$--text-caption', fill: '$--muted-foreground'}),
+        text(`en-${kind}-c3-${s}`, 'herdr-ide', {size: '$--text-headline', weight: '600'}),
+      ]),
+      frame(`en-${kind}-facts-${s}`, 'Facts', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'center'}, facts),
+      ...(kind === 'low' ? [] : [frame(`en-${kind}-tipwrap-${s}`, 'Tooltip anchor', {padding: [0, 0, 0, 96]}, [breakdown(`en-${kind}-tip-${s}`, size, partial)])]),
+    ]);
+  }
 
-  const W = 880;
+  // -- the table (DiskCleanupSheet.tsx GRID) --------------------------------------------------
+
+  const W = 1160;
   const INNER = W - 48;
-  const SEL = 28;
-  const COL = 116;
-  const OTHER_COL = 84;
-  const TOTAL_COL = 76;
-  const NAME = INNER - SEL - COL * 3 - OTHER_COL - TOTAL_COL;
+  const GAP = 8;
+  const SEL = 24;
+  const FR = (INNER - SEL - GAP * 6) / 8;
+  const NAME = Math.round(FR * 2.6);
+  const COL = Math.round(FR * 1.2);
+  const NARROW = Math.round(FR * 0.9);
 
   function segmented(id, active, counts = {}) {
     return frame(id, 'Filter', {layout: 'horizontal', gap: 2, padding: 2, fill: '$--muted', cornerRadius: '$--radius-sm'}, FILTERS.map(([label, total], index) =>
@@ -208,139 +208,142 @@ export function diskCleanupRows(tokens, {themedXref, screenButton}, s) {
       ])));
   }
 
-  function headCell(id, layer, {state, total, reach, checkable = true}) {
-    return frame(id, layer.name, {layout: 'vertical', gap: 2, width: layer === OTHER ? OTHER_COL : COL, padding: [0, 0, 0, '$--spacing-xs']}, [
+  const skeleton = (id, width = 40) => frame(id, 'Skeleton', {width, height: 12, cornerRadius: '$--radius-xs', fill: '$--muted'}, []);
+  const rowFrame = {layout: 'horizontal', alignItems: 'center', gap: GAP, width: INNER, padding: ['$--spacing-sm', 0], stroke: '$--border', strokeWidth: {bottom: HAIR}};
+
+  function headCell(id, label, {state, bytes, reach, checkable = true, align = 'start', width = COL}) {
+    return frame(id, label, {layout: 'vertical', gap: 2, width, ...(align === 'end' ? {alignItems: 'end'} : {})}, [
       frame(`${id}-n`, 'Name', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
-        ...(checkable ? [checkbox(`${id}-c`, state)] : []),
-        icon(`${id}-g`, layer.glyph, {size: 12, fill: layer.tone}),
-        text(`${id}-t`, layer.name, {size: '$--text-caption', weight: '600'}),
+        ...(checkable ? [checkbox(`${id}-c`, state === 'none' ? 'off' : state, {disabled: state === 'none'})] : []),
+        text(`${id}-t`, label, {size: '$--text-caption', weight: '500'}),
       ]),
-      text(`${id}-v`, total, {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
-      text(`${id}-r`, reach, {size: '$--text-caption', fill: '$--muted-foreground'}),
+      text(`${id}-v`, bytes, {size: '$--text-caption', fill: '$--muted-foreground', mono: true, ...(checkable ? {} : {})}),
+      ...(reach ? [text(`${id}-r`, reach, {size: '$--text-caption', fill: '$--muted-foreground'})] : []),
     ]);
   }
 
-  const cellBase = {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: COL, padding: [0, 0, 0, '$--spacing-xs']};
-  const skeletonBar = (id, width = 40) => frame(id, 'Skeleton', {width, height: 8, cornerRadius: 4, fill: '$--muted'}, []);
-
-  // A cache cell: its checkbox and size, dimmed with the reason's glyph when it cannot be chosen.
-  function cacheCell(id, checkout, key, pick, measured = true) {
-    if (!measured) return frame(id, 'Measuring', cellBase, [checkbox(`${id}-c`, 'off', {disabled: true}), skeletonBar(`${id}-sk`)]);
-    const state = cacheState(checkout, key);
-    if (state === 'none') return frame(id, 'Empty', cellBase, [text(`${id}-t`, '–', {size: '$--text-caption', fill: '$--muted-foreground', mono: true})]);
-    if (state === 'work') return frame(id, 'In use', {...cellBase, opacity: DIM}, [
-      icon(`${id}-g`, 'loader-circle', {size: 12, fill: '$--muted-foreground'}),
-      text(`${id}-t`, gb(checkout[key]), {size: '$--text-caption', mono: true, fill: '$--muted-foreground'}),
+  function tableHead(tag, states, reach, sums) {
+    return frame(`ma-head-${tag}`, 'Head', {...rowFrame, alignItems: 'end', padding: [0, 0, '$--spacing-sm', 0]}, [
+      frame(`ma-hsel-${tag}`, 'Select all', {width: SEL, layout: 'horizontal'}, [checkbox(`ma-hsel-c-${tag}`, states.all === 'none' ? 'off' : states.all, {disabled: states.all === 'none'})]),
+      frame(`ma-hn-${tag}`, '체크아웃', {width: NAME, layout: 'horizontal'}, [text(`ma-hn-t-${tag}`, '체크아웃 · 크기순', {size: '$--text-caption', fill: '$--subtle-foreground'})]),
+      headCell(`ma-hb-${tag}`, '빌드 캐시', {state: states.build, bytes: sums.build, reach: reach.build}),
+      headCell(`ma-hd-${tag}`, '의존성', {state: states.deps, bytes: sums.deps, reach: reach.deps}),
+      headCell(`ma-ht-${tag}`, '워크트리', {state: states.tree, bytes: sums.tree, reach: reach.tree}),
+      frame(`ma-ho-${tag}`, '기타', {layout: 'vertical', gap: 2, width: NARROW, alignItems: 'end'}, [
+        text(`ma-ho-t-${tag}`, '기타', {size: '$--text-caption', fill: '$--subtle-foreground'}),
+        text(`ma-ho-v-${tag}`, sums.other, {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
+        text(`ma-ho-r-${tag}`, '지우지 않음', {size: '$--text-caption', fill: '$--muted-foreground'}),
+      ]),
+      frame(`ma-htot-${tag}`, '합계', {layout: 'vertical', gap: 2, width: NARROW, alignItems: 'end'}, [
+        text(`ma-htot-t-${tag}`, '합계', {size: '$--text-caption', fill: '$--subtle-foreground'}),
+        text(`ma-htot-v-${tag}`, sums.total, {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
+      ]),
     ]);
-    return frame(id, 'Cell', cellBase, [
+  }
+
+  function checkoutName(id, checkout, width) {
+    const pr = checkout.pr ? [text(`${id}-pr`, `#${checkout.pr[0]}`, {size: '$--text-caption', fill: PR_TONE[checkout.pr[1]], mono: true})] : [];
+    const busy = checkout.inUse ? [text(`${id}-use`, checkout.inUse, {size: '$--text-caption', fill: '$--warning'})] : [];
+    const reserve = (checkout.pr ? 40 : 0) + (checkout.inUse ? textWidth(checkout.inUse, 12) + 8 : 0);
+    return frame(id, checkout.name, {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width}, [
+      icon(`${id}-g`, checkout.main ? 'house' : 'git-branch', {size: 14, fill: '$--muted-foreground'}),
+      text(`${id}-t`, fitText(checkout.name, width - 22 - reserve, BODY), {size: '$--text-body', fill: '$--foreground'}),
+      ...pr, ...busy,
+    ]);
+  }
+
+  const cellFrame = (id, name, extra = {}, children = []) => frame(id, name, {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: COL, ...extra}, children);
+
+  // A cache cell: a checkbox and its size; the cell of a checkout in use keeps both, dimmed and unticked.
+  function cacheCell(id, checkout, key, pick, variant) {
+    if (variant === 'pending') return cellFrame(id, 'Measuring', {}, [checkbox(`${id}-c`, 'off', {disabled: true}), skeleton(`${id}-sk`)]);
+    if (variant === 'unavailable') return cellFrame(id, 'Unavailable');
+    if (!checkout[key]) return cellFrame(id, 'Empty', {}, [text(`${id}-t`, '-', {size: '$--text-body', fill: '$--muted-foreground'})]);
+    const included = pick === 'included';
+    const blocked = cacheBlocked(checkout);
+    return cellFrame(id, blocked ? 'In use' : 'Cell', {...(included || blocked ? {opacity: SECONDARY} : {})}, [
+      checkbox(`${id}-c`, included ? 'included' : blocked ? 'off' : pick, {disabled: blocked}),
+      text(`${id}-t`, fmt(checkout[key]), {size: '$--text-body', fill: '$--foreground', mono: true}),
+    ]);
+  }
+
+  function treeCell(id, checkout, pick, variant) {
+    if (checkout.main) return cellFrame(id, 'None');
+    if (variant === 'pending') return cellFrame(id, 'Measuring', {}, [checkbox(`${id}-c`, 'off', {disabled: true}), skeleton(`${id}-sk`)]);
+    if (variant === 'unavailable') return cellFrame(id, 'Unavailable');
+    if (checkout.tree !== 'ok') return cellFrame(id, 'Blocked', {opacity: SECONDARY}, [icon(`${id}-g`, 'lock', {size: 14, fill: '$--muted-foreground'})]);
+    return cellFrame(id, 'Cell', {}, [
       checkbox(`${id}-c`, pick),
-      text(`${id}-t`, gb(checkout[key]), {size: '$--text-caption', mono: true, fill: pick === 'included' ? '$--muted-foreground' : key === 'deps' ? '$--subtle-foreground' : '$--foreground'}),
-      ...(key === 'deps' ? [icon(`${id}-sh`, 'link-2', {size: 11, fill: '$--muted-foreground'})] : []),
+      text(`${id}-t`, fmt(checkout.total), {size: '$--text-body', mono: true, fill: pick === 'on' ? '$--destructive' : '$--foreground'}),
     ]);
   }
 
-  function treeCell(id, checkout, pick, measured = true) {
-    if (checkout.tree === 'none') return frame(id, 'None', cellBase, []);
-    if (!measured) return frame(id, 'Measuring', cellBase, [checkbox(`${id}-c`, 'off', {disabled: true}), skeletonBar(`${id}-sk`)]);
-    if (checkout.tree !== 'ok') return frame(id, 'Refused', {...cellBase, opacity: DIM}, [icon(`${id}-g`, 'lock', {size: 12, fill: '$--muted-foreground'})]);
-    return frame(id, 'Cell', cellBase, [
-      checkbox(`${id}-c`, pick),
-      text(`${id}-t`, gb(checkout.total), {size: '$--text-caption', mono: true, fill: pick === 'on' ? '$--destructive' : '$--foreground'}),
-    ]);
-  }
+  const otherCell = (id, checkout, variant) => frame(id, 'Other', {layout: 'horizontal', justifyContent: 'end', alignItems: 'center', width: NARROW}, variant === 'plain' && checkout.other > 0
+    ? [text(`${id}-t`, fmt(checkout.other), {size: '$--text-body', mono: true, fill: '$--subtle-foreground'})] : []);
 
-  const otherCell = (id, checkout, measured = true) => frame(id, 'Other', {layout: 'horizontal', alignItems: 'center', width: OTHER_COL, padding: [0, 0, 0, '$--spacing-xs']}, [
-    measured ? text(`${id}-t`, gb(checkout.other), {size: '$--text-caption', mono: true, fill: '$--muted-foreground'}) : skeletonBar(`${id}-sk`, 28),
-  ]);
-
-  const totalCell = (id, checkout, measured = true) => frame(id, 'Total', {layout: 'horizontal', justifyContent: 'end', alignItems: 'center', width: TOTAL_COL}, [
-    measured ? text(`${id}-t`, gb(checkout.total), {size: '$--text-caption', mono: true, fill: '$--subtle-foreground'}) : skeletonBar(`${id}-sk`, 36),
+  const totalCell = (id, checkout, variant) => frame(id, 'Total', {layout: 'horizontal', justifyContent: 'end', alignItems: 'center', width: NARROW}, [
+    ...(variant === 'plain' ? [text(`${id}-t`, fmt(checkout.total), {size: '$--text-body', mono: true, fill: '$--subtle-foreground'})] : variant === 'pending' ? [skeleton(`${id}-sk`, 36)] : []),
   ]);
 
   // The row checkbox reaches the caches only; a worktree pick counts them as included.
   function rowPick(checkout, pick) {
-    if (checkout.state === 'work') return 'off';
-    const cells = ['build', 'deps'].filter(key => cacheState(checkout, key) === 'ok').map(key => pick[key]);
-    if (cells.every(value => value === 'on' || value === 'included')) return 'on';
+    if (cacheBlocked(checkout)) return 'none';
+    const cells = ['build', 'deps'].filter(key => checkout[key]).map(key => pick[key]);
+    if (cells.length === 0) return 'none';
+    if (cells.every(value => value === 'on' || value === 'included')) return pick.tree === 'on' ? 'included' : 'on';
     return cells.some(value => value === 'on' || value === 'included') ? 'mixed' : 'off';
   }
 
-  // A row of the table. `variant` picks the state a row can be in besides the plain one:
-  // measuring (skeleton cells, checkbox disabled) or unmeasured (dimmed, sizes blank, B6).
+  // A row of the table. variant: plain, pending (measuring: skeletons, boxes disabled) or unavailable (dimmed and blank, B6).
   function tableRow(tag, checkout, pick = {}, {variant = 'plain'} = {}) {
     const id = `ma-${checkout.id}-${tag}`;
-    const work = checkout.state === 'work';
     const included = pick.tree === 'on';
     const p = {build: included ? 'included' : pick.build ?? 'off', deps: included ? 'included' : pick.deps ?? 'off', tree: pick.tree ?? 'off'};
-    if (variant === 'unmeasured') {
-      return frame(id, checkout.name, {layout: 'horizontal', alignItems: 'center', width: INNER, height: 32, opacity: DIM}, [
-        frame(`${id}-sel`, 'Row select', {width: SEL, layout: 'horizontal', alignItems: 'center', padding: [0, 0, 0, 4]}, [checkbox(`${id}-rc`, 'off', {disabled: true})]),
-        checkoutName(`${id}-n`, checkout, NAME - 8),
-        ...['b', 'd', 't'].map(k => frame(`${id}-${k}`, 'Empty', cellBase, [])),
-        frame(`${id}-o`, 'Empty', {width: OTHER_COL}, []),
-        frame(`${id}-tot`, 'Empty', {width: TOTAL_COL}, []),
-      ]);
-    }
-    const measured = variant !== 'measuring';
-    return frame(id, checkout.name, {layout: 'horizontal', alignItems: 'center', width: INNER, height: 32, ...(pick.hover ? {fill: '$--accent', cornerRadius: '$--radius-sm'} : {})}, [
-      frame(`${id}-sel`, 'Row select', {width: SEL, layout: 'horizontal', alignItems: 'center', padding: [0, 0, 0, 4]}, [checkbox(`${id}-rc`, measured ? rowPick(checkout, p) : 'off', {disabled: work || !measured})]),
-      checkoutName(`${id}-n`, checkout, NAME - 8),
-      cacheCell(`${id}-b`, checkout, 'build', p.build, measured),
-      cacheCell(`${id}-d`, checkout, 'deps', p.deps, measured),
-      treeCell(`${id}-t`, checkout, p.tree, measured),
-      otherCell(`${id}-o`, checkout, measured),
-      totalCell(`${id}-tot`, checkout, measured),
+    const box = variant === 'plain' ? rowPick(checkout, p) : 'none';
+    const rowBox = box === 'none' ? checkbox(`${id}-rc`, 'off', {disabled: true}) : checkbox(`${id}-rc`, box);
+    return frame(id, checkout.name, {...rowFrame, ...(variant === 'unavailable' ? {opacity: DIM} : {}), ...(pick.hover ? {fill: '$--muted'} : {})}, [
+      frame(`${id}-sel`, 'Row select', {width: SEL, layout: 'horizontal', alignItems: 'center'}, [rowBox]),
+      checkoutName(`${id}-n`, checkout, NAME),
+      cacheCell(`${id}-b`, checkout, 'build', p.build, variant),
+      cacheCell(`${id}-d`, checkout, 'deps', p.deps, variant),
+      treeCell(`${id}-t`, checkout, p.tree, variant),
+      otherCell(`${id}-o`, checkout, variant),
+      totalCell(`${id}-tot`, checkout, variant),
     ]);
   }
 
-  function tableHead(tag, states, reach) {
-    return frame(`ma-head-${tag}`, 'Head', {layout: 'horizontal', alignItems: 'end', width: INNER, padding: [0, 0, '$--spacing-xs', 0]}, [
-      frame(`ma-hsel-${tag}`, 'Select all', {width: SEL, layout: 'horizontal', padding: [0, 0, 2, 4]}, [checkbox(`ma-hsel-c-${tag}`, states.all)]),
-      frame(`ma-hn-${tag}`, '체크아웃', {width: NAME, layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center', padding: [0, 0, 2, 0]}, [
-        text(`ma-hn-t-${tag}`, '체크아웃', {size: '$--text-caption', weight: '600', fill: '$--subtle-foreground'}),
-        text(`ma-hn-s-${tag}`, '· 크기순', {size: '$--text-caption', fill: '$--muted-foreground'}),
-        icon(`ma-hn-g-${tag}`, 'arrow-down', {size: 11, fill: '$--muted-foreground'}),
-      ]),
-      headCell(`ma-hb-${tag}`, BUILD, {state: states.build, total: `${BUILD.total} GB`, reach: reach.build}),
-      headCell(`ma-hd-${tag}`, DEPS, {state: states.deps, total: `${DEPS.total} GB`, reach: reach.deps}),
-      headCell(`ma-ht-${tag}`, TREE, {state: states.tree, total: '머지 4 · 12.8 GB', reach: reach.tree}),
-      headCell(`ma-ho-${tag}`, OTHER, {checkable: false, total: `${OTHER.total} GB`, reach: '지우지 않음'}),
-      frame(`ma-htot-${tag}`, '합계', {layout: 'vertical', gap: 2, width: TOTAL_COL, alignItems: 'end'}, [
-        text(`ma-htot-t-${tag}`, '합계', {size: '$--text-caption', weight: '600'}),
-        text(`ma-htot-v-${tag}`, '56.5 GB', {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
-      ]),
-    ]);
-  }
-
-  const filterBar = (tag, active) => frame(`ma-fb-${tag}`, 'Filter bar', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: INNER}, [
-    segmented(`ma-seg-${tag}`, active),
+  const filterBar = (tag, active, counts) => frame(`ma-fb-${tag}`, 'Filter bar', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'center', width: INNER}, [
+    segmented(`ma-seg-${tag}`, active, counts),
     spacer(`ma-fb-sp-${tag}`),
     text(`ma-fb-n-${tag}`, '체크박스는 보이는 행에만 닿는다', {size: '$--text-caption', fill: '$--muted-foreground'}),
   ]);
 
-  function selectionFooter(tag, {summary, warning, note, go, goDisabled = false, goVariant = 'default'}) {
+  // The bottom line: summary, the red worktree line, the note; cancel and the clean button (B16).
+  function selectionFooter(tag, {summary, warning, note, go = '정리', goDisabled = false}) {
     return [
       frame(`ma-sum-${tag}`, 'Selection', {layout: 'vertical', gap: 2}, [
-        text(`ma-sum-t-${tag}`, summary, {size: '$--text-body', weight: '500', mono: true, ...(goDisabled ? {fill: '$--muted-foreground'} : {})}),
-        ...(warning ? [frame(`ma-sum-w-${tag}`, 'Worktree warning', {layout: 'horizontal', gap: '$--spacing-xxs', alignItems: 'center'}, [
-          icon(`ma-sum-wg-${tag}`, 'triangle-alert', {size: 11, fill: '$--destructive'}),
-          text(`ma-sum-wt-${tag}`, warning, {size: '$--text-caption', fill: '$--destructive'}),
+        text(`ma-sum-t-${tag}`, summary || ' ', {size: '$--text-subhead', weight: '600', mono: false}),
+        ...(warning ? [frame(`ma-sum-w-${tag}`, 'Worktree warning', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center'}, [
+          icon(`ma-sum-wg-${tag}`, 'triangle-alert', {size: 14, fill: '$--destructive'}),
+          text(`ma-sum-wt-${tag}`, warning, {size: '$--text-body', fill: '$--destructive'}),
         ])] : []),
-        ...(note ? [text(`ma-sum-n-${tag}`, note, {size: '$--text-caption', fill: '$--muted-foreground'})] : []),
+        ...(note ? [text(`ma-sum-n-${tag}`, note, {size: '$--text-body', fill: '$--muted-foreground'})] : []),
       ]),
       spacer(`ma-fsp-${tag}`),
       screenButton(`ma-cancel-${tag}`, '취소', {variant: 'ghost'}),
       goDisabled
-        ? {...screenButton(`ma-go-${tag}`, go, {variant: goVariant, icon: 'trash-2'}), opacity: DISABLED}
-        : screenButton(`ma-go-${tag}`, go, {variant: goVariant, icon: 'trash-2'}),
+        ? {...screenButton(`ma-go-${tag}`, go, {variant: 'default', icon: 'trash-2'}), opacity: DISABLED}
+        : screenButton(`ma-go-${tag}`, go, {variant: 'default', icon: 'trash-2'}),
     ];
   }
 
-  const fold = (tag, label, state) => frame(`ma-fold-${tag}`, 'Fold', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: INNER, height: 28}, [
-    frame(`ma-fold-sel-${tag}`, 'Row select', {width: SEL - 4, layout: 'horizontal', padding: [0, 0, 0, 4]}, [checkbox(`ma-fold-c-${tag}`, state)]),
-    icon(`ma-fold-g-${tag}`, 'chevron-right', {size: 12, fill: '$--muted-foreground'}),
-    text(`ma-fold-t-${tag}`, label, {size: '$--text-caption', fill: '$--muted-foreground'}),
+  const fold = (tag, label, state) => frame(`ma-fold-${tag}`, 'Fold', {...rowFrame, gap: '$--spacing-sm'}, [
+    checkbox(`ma-fold-c-${tag}`, state),
+    icon(`ma-fold-g-${tag}`, 'chevron-right', {size: 14, fill: '$--muted-foreground'}),
+    text(`ma-fold-t-${tag}`, label, {size: '$--text-body', fill: '$--subtle-foreground'}),
   ]);
+
+  const usageLine = tag => usageBar(`ma-usage-${tag}`, INNER);
 
   // Everything shown, a hand-made mix: a whole row, single cells, one worktree.
   function sheetMixed() {
@@ -348,71 +351,99 @@ export function diskCleanupRows(tokens, {themedXref, screenButton}, s) {
     const picks = {rwb: {build: 'on', deps: 'on'}, oif: {build: 'on'}, crl: {build: 'on'}, ol: {tree: 'on'}, pfs: {hover: true}};
     const rows = CHECKOUTS.map(checkout => tableRow(tag, checkout, picks[checkout.id]));
     const tipAt = CHECKOUTS.findIndex(checkout => checkout.id === 'pfs') + 1;
-    const tip = frame(`ma-tipwrap-${tag}`, 'Tooltip anchor', {padding: [0, 0, 0, SEL + NAME + COL * 2 - 100]}, [tooltip(`ma-tip-${tag}`, '바뀐 파일 3 · 워크트리째는 못 지움, 캐시는 가능')]);
+    const tip = frame(`ma-tipwrap-${tag}`, 'Tooltip anchor', {padding: [0, 0, 0, SEL + NAME + COL * 2 + GAP * 3 - 40]}, [tooltip(`ma-tip-${tag}`, '바뀐 파일 3')]);
     return dialog(`ma-${tag}`, {
-      title: '디스크 정리', subtitle: SUBTITLE, width: W,
+      title: '디스크 정리', subtitle: SUBTITLE(36), width: W,
       body: [
-        volumeLine(`ma-vol-${tag}`, INNER),
+        usageLine(tag),
         filterBar(tag, 0),
         frame(`ma-table-${tag}`, 'Table', {layout: 'vertical', width: INNER}, [
-          tableHead(tag, {all: 'mixed', build: 'mixed', deps: 'mixed', tree: 'mixed'}, {build: '고를 수 있는 5곳', deps: '고를 수 있는 6곳', tree: '고를 수 있는 4곳'}),
-          rule(`ma-hr-${tag}`, INNER),
+          tableHead(tag, {all: 'mixed', build: 'mixed', deps: 'mixed', tree: 'mixed'}, {build: '고를 수 있는 5곳', deps: '고를 수 있는 6곳', tree: '고를 수 있는 4곳'}, {build: fmt(38.2), deps: fmt(7.9), tree: fmt(46), other: fmt(3.9), total: fmt(56.4)}),
           ...rows.slice(0, tipAt), tip, ...rows.slice(tipAt),
-          fold(tag, '작은 체크아웃 27 · 9.8 GB', 'off'),
+          fold(tag, `작은 체크아웃 27 · ${fmt(9.8)}`, 'off'),
         ]),
       ],
-      footer: selectionFooter(tag, {summary: '빌드 캐시 3 · 의존성 1 · 워크트리 1 · 19.9 GB', warning: 'feat/overview-lenses는 폴더째 지워진다', note: '의존성은 다음 install이 다시 받는다', go: '정리'}),
+      footer: selectionFooter(tag, {summary: `빌드 캐시 3 · 의존성 1 · 워크트리 1 · ${fmt(19.9)}`, warning: 'feat/overview-lenses은 폴더째 지워진다', note: '의존성은 다음 install이 다시 받는다'}),
     });
   }
 
   // The 끝난 것 filter, then the top-left checkbox: every finished checkout's caches.
   function sheetDone() {
     const tag = `${s}2`;
-    const rows = CHECKOUTS.filter(checkout => checkout.state === 'done').map(checkout => tableRow(tag, checkout, {build: 'on', deps: 'on'}));
+    const rows = CHECKOUTS.filter(checkout => !checkout.main && !checkout.inUse && checkout.pr && checkout.pr[1] === 'merged').map(checkout => tableRow(tag, checkout, {build: 'on', deps: 'on'}));
     return dialog(`ma-${tag}`, {
-      title: '디스크 정리', subtitle: SUBTITLE, width: W,
+      title: '디스크 정리', subtitle: SUBTITLE(36), width: W,
       body: [
+        usageLine(tag),
         filterBar(tag, 1),
         frame(`ma-table-${tag}`, 'Table', {layout: 'vertical', width: INNER}, [
-          tableHead(tag, {all: 'on', build: 'on', deps: 'on', tree: 'off'}, {build: '4곳 선택됨', deps: '5곳 선택됨', tree: '고를 수 있는 4곳'}),
-          rule(`ma-hr-${tag}`, INNER),
+          tableHead(tag, {all: 'on', build: 'on', deps: 'on', tree: 'off'}, {build: '4곳 선택됨', deps: '5곳 선택됨', tree: '고를 수 있는 4곳'}, {build: fmt(19.4), deps: fmt(2.1), tree: fmt(9.3), other: fmt(0.9), total: fmt(23.1)}),
           ...rows,
-          fold(tag, '작은 체크아웃 14 · 캐시 2.1 GB 모두 선택', 'on'),
+          fold(tag, `작은 체크아웃 14 · ${fmt(2.1)}`, 'on'),
         ]),
       ],
-      footer: selectionFooter(tag, {summary: '끝난 19곳의 빌드 캐시 · 의존성 · 23.1 GB', note: '의존성은 다음 install이 다시 받는다', go: '정리'}),
+      footer: selectionFooter(tag, {summary: `빌드 캐시 19 · 의존성 19 · 워크트리 0 · ${fmt(23.1)}`, note: '의존성은 다음 install이 다시 받는다'}),
     });
   }
 
-  // The states a row and the sheet carry besides a plain one: usage unreadable (B25),
-  // measuring (B5), not measured (B6), in use with its reason (B14), another cleanup running (B20).
+  // Measuring (B5), not measured (B6), and in use with its reason (B14): the rows a sheet carries before and beside a plain one.
   function sheetStates() {
     const tag = `${s}3`;
-    const notice = frame(`ma-notice-${tag}`, 'Usage unreadable', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: INNER, padding: ['$--spacing-xs', '$--spacing-sm'], cornerRadius: '$--radius-sm', fill: '$--muted'}, [
-      icon(`ma-notice-g-${tag}`, 'circle-help', {size: 13, fill: '$--muted-foreground'}),
-      text(`ma-notice-t-${tag}`, '지금 쓰는 중인지 확인할 수 없다', {size: '$--text-caption', fill: '$--subtle-foreground'}),
-      spacer(`ma-notice-sp-${tag}`),
-      screenButton(`ma-notice-b-${tag}`, '다시', {variant: 'secondary', height: 22}),
-    ]);
-    const byId = Object.fromEntries(CHECKOUTS.map(checkout => [checkout.id, checkout]));
-    const tip = frame(`ma-tipwrap-${tag}`, 'Tooltip anchor', {padding: [0, 0, 0, SEL + NAME - 40]}, [tooltip(`ma-tip-${tag}`, '터미널에서 vite 실행 중')]);
+    const tip = frame(`ma-tipwrap-${tag}`, 'Tooltip anchor', {padding: [0, 0, 0, SEL + NAME - 60]}, [tooltip(`ma-tip-${tag}`, '터미널에서 vite 실행 중')]);
     return dialog(`ma-${tag}`, {
-      title: '디스크 정리', subtitle: SUBTITLE, width: W,
+      title: '디스크 정리', subtitle: SUBTITLE(36), width: W,
       body: [
+        filterBar(tag, 0),
+        frame(`ma-table-${tag}`, 'Table', {layout: 'vertical', width: INNER}, [
+          tableHead(tag, {all: 'none', build: 'none', deps: 'none', tree: 'none'}, {build: '확인 중…', deps: '확인 중…', tree: '확인 중…'}, {build: fmt(0), deps: fmt(0), tree: fmt(0), other: fmt(0), total: fmt(0)}),
+          tableRow(tag, byId.main, {}, {variant: 'pending'}),
+          tableRow(tag, byId.rwb, {}, {variant: 'pending'}),
+          tableRow(tag, byId.mc),
+          tableRow(tag, byId.vt),
+          tip,
+          tableRow(tag, byId.ol, {}, {variant: 'unavailable'}),
+        ]),
+      ],
+      footer: selectionFooter(tag, {summary: '검토하는 중…', goDisabled: true}),
+    });
+  }
+
+  // B25: usage cannot be read, so nothing is ticked and the notice stands over the table.
+  function sheetUnreadable() {
+    const tag = `${s}5`;
+    const notice = frame(`ma-notice-${tag}`, 'Usage unreadable', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: INNER}, [
+      text(`ma-notice-t-${tag}`, '지금 쓰는 중인지 확인할 수 없다', {size: '$--text-body', fill: '$--warning'}),
+      screenButton(`ma-notice-b-${tag}`, '다시', {variant: 'ghost', height: 28, icon: 'refresh-cw'}),
+    ]);
+    return dialog(`ma-${tag}`, {
+      title: '디스크 정리', subtitle: SUBTITLE(36), width: W,
+      body: [
+        usageLine(tag),
         notice,
         filterBar(tag, 0),
         frame(`ma-table-${tag}`, 'Table', {layout: 'vertical', width: INNER}, [
-          tableHead(tag, {all: 'off', build: 'off', deps: 'off', tree: 'off'}, {build: '고를 수 있는 곳 없음', deps: '고를 수 있는 곳 없음', tree: '고를 수 있는 곳 없음'}),
-          rule(`ma-hr-${tag}`, INNER),
-          tableRow(tag, byId.main, {}, {variant: 'measuring'}),
-          tableRow(tag, byId.rwb, {}, {variant: 'measuring'}),
-          tableRow(tag, byId.mc),
-          tip,
-          tableRow(tag, byId.cas),
-          tableRow(tag, byId.ol, {}, {variant: 'unmeasured'}),
+          tableHead(tag, {all: 'none', build: 'none', deps: 'none', tree: 'none'}, {build: '고를 수 있는 곳 없음', deps: '고를 수 있는 곳 없음', tree: '고를 수 있는 곳 없음'}, {build: fmt(38.2), deps: fmt(7.9), tree: fmt(46), other: fmt(3.9), total: fmt(56.4)}),
+          ...['main', 'rwb', 'crl'].map(id => tableRow(tag, byId[id], {}, {})),
         ]),
       ],
-      footer: selectionFooter(tag, {summary: '비울 캐시가 없다', go: '다른 정리가 진행 중', goDisabled: true}),
+      footer: selectionFooter(tag, {summary: '쓰는 중인지 확인해야 고를 수 있다', goDisabled: true}),
+    });
+  }
+
+  // B20: another project's cleanup is running; the clean button says so and the summary is empty.
+  function sheetBusy() {
+    const tag = `${s}6`;
+    return dialog(`ma-${tag}`, {
+      title: '디스크 정리', subtitle: SUBTITLE(36), width: W,
+      body: [
+        usageLine(tag),
+        filterBar(tag, 0),
+        frame(`ma-table-${tag}`, 'Table', {layout: 'vertical', width: INNER}, [
+          tableHead(tag, {all: 'none', build: 'none', deps: 'none', tree: 'none'}, {build: '고를 수 있는 곳 없음', deps: '고를 수 있는 곳 없음', tree: '고를 수 있는 곳 없음'}, {build: fmt(38.2), deps: fmt(7.9), tree: fmt(46), other: fmt(3.9), total: fmt(56.4)}),
+          ...['main', 'rwb'].map(id => tableRow(tag, byId[id], {}, {})),
+        ]),
+      ],
+      footer: selectionFooter(tag, {summary: '', go: '다른 정리가 진행 중', goDisabled: true}),
     });
   }
 
@@ -420,106 +451,93 @@ export function diskCleanupRows(tokens, {themedXref, screenButton}, s) {
   function sheetEmpty() {
     const tag = `${s}4`;
     return dialog(`ma-${tag}`, {
-      title: '디스크 정리', subtitle: SUBTITLE, width: 640,
+      title: '디스크 정리', subtitle: SUBTITLE(36), width: 640,
       body: [
         frame(`ma-fb-${tag}`, 'Filter bar', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: 592}, [segmented(`ma-seg-${tag}`, 3, {3: 0})]),
-        frame(`ma-empty-${tag}`, 'Empty', {layout: 'vertical', gap: '$--spacing-sm', alignItems: 'center', justifyContent: 'center', width: 592, height: 120}, [
+        frame(`ma-empty-${tag}`, 'Empty', {layout: 'vertical', gap: '$--spacing-sm', alignItems: 'center', justifyContent: 'center', width: 592, height: 96}, [
           text(`ma-empty-t-${tag}`, '이 필터에 맞는 체크아웃이 없다', {size: '$--text-body', fill: '$--muted-foreground'}),
-          screenButton(`ma-empty-b-${tag}`, '전체 보기', {variant: 'secondary'}),
+          screenButton(`ma-empty-b-${tag}`, '전체 보기', {variant: 'secondary', height: 28}),
         ]),
       ],
-      footer: selectionFooter(tag, {summary: '비울 캐시가 없다', go: '정리', goDisabled: true}),
+      footer: selectionFooter(tag, {summary: '비울 캐시가 없다', goDisabled: true}),
     });
   }
 
   // -- confirm, running, result -----------------------------------------------------------------
 
-  // B18: a worktree is in the selection, so the one confirmation names it. Neither button holds the keyboard.
+  // B18: an AlertDialog over the sheet, only when a worktree is picked; neither button holds the keyboard.
   function confirmStep() {
+    const width = 470;
+    const inner = width - 32;
+    const cells = 4;
+    return screenDialogSurface(`cf-${s}`, {
+      width, title: '워크트리 1개를 폴더째 지운다', description: '되돌릴 수 없다. 브랜치와 Git 기록은 남는다.', prose: true,
+      body: [
+        frame(`cf-row-${s}`, 'feat/overview-lenses', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'baseline', width: inner}, [
+          text(`cf-row-t-${s}`, 'feat/overview-lenses', {size: '$--text-body', mono: true}),
+          spacer(`cf-row-sp-${s}`),
+          text(`cf-row-v-${s}`, fmt(3.6), {size: '$--text-body', mono: true, fill: '$--muted-foreground'}),
+        ]),
+        text(`cf-sum-t-${s}`, `다른 체크아웃의 캐시 칸 ${cells}개 · ${fmt(16.3)}도 함께 비운다`, {size: '$--text-body', fill: '$--subtle-foreground', width: inner}),
+      ],
+      actions: [screenButton(`cf-back-${s}`, '돌아가기', {variant: 'secondary'}), screenButton(`cf-go-${s}`, '워크트리 1개와 캐시 정리', {variant: 'destructive'})],
+    });
+  }
+
+  // B20: the deleting has begun, the folders are already gone from their checkouts.
+  function runningStep() {
+    const width = 560;
+    return dialog(`rn-${s}`, {
+      title: '디스크 정리', subtitle: SUBTITLE(36), width,
+      body: [
+        frame(`rn-body-${s}`, 'Running', {layout: 'vertical', gap: '$--spacing-sm', width: width - 48, padding: ['$--spacing-lg', 0]}, [
+          frame(`rn-head-${s}`, 'Title', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, [
+            icon(`rn-spin-${s}`, 'loader-circle', {size: 14, fill: '$--muted-foreground'}),
+            text(`rn-t-${s}`, '비우는 중 · 3/7', {size: '$--text-title', weight: '600'}),
+          ]),
+          text(`rn-n-${s}`, '닫아도 정리는 계속된다. 다시 열면 진행이나 결과가 보인다.', {size: '$--text-body', fill: '$--muted-foreground'}),
+        ]),
+      ],
+    });
+  }
+
+  // B22: the free space before and after leads; the allocated total is the lesser number beside it.
+  function resultStep() {
     const width = 560;
     const inner = width - 48;
-    return dialog(`cf-${s}`, {
-      title: '워크트리 1개를 폴더째 지운다', subtitle: 'feat/overview-lenses 폴더가 통째로 사라지고 되돌릴 수 없다. 브랜치는 남는다.', width,
-      body: [
-        frame(`cf-list-${s}`, 'Worktrees', {layout: 'vertical', width: inner}, [
-          rule(`cf-r0-${s}`, inner),
-          frame(`cf-row-${s}`, 'feat/overview-lenses', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: inner, height: 32}, [
-            icon(`cf-row-g-${s}`, 'folder-git-2', {size: 14, fill: '$--destructive'}),
-            text(`cf-row-t-${s}`, 'feat/overview-lenses', {size: '$--text-body'}),
-            spacer(`cf-row-sp-${s}`),
-            text(`cf-row-v-${s}`, '3.6 GB', {size: '$--text-caption', mono: true, fill: '$--destructive'}),
-          ]),
-          rule(`cf-r1-${s}`, inner),
-        ]),
-        frame(`cf-sum-${s}`, 'Caches', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', width: inner}, [
-          icon(`cf-sum-g-${s}`, 'hammer', {size: 12, fill: '$--muted-foreground'}),
-          text(`cf-sum-t-${s}`, '캐시 칸 4곳 · 16.3 GB는 바로 비운다', {size: '$--text-caption', fill: '$--subtle-foreground', mono: true}),
-        ]),
-      ],
-      footer: [spacer(`cf-fsp-${s}`), screenButton(`cf-back-${s}`, '돌아가기', {variant: 'secondary'}), screenButton(`cf-go-${s}`, '워크트리 1개와 캐시 정리', {variant: 'destructive', icon: 'trash-2'})],
-    });
-  }
-
-  const outcomeLine = (width, id, glyph, tone, label, what, value, note) => frame(`${id}-${s}`, label, {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width, height: 28}, [
-    icon(`${id}-g-${s}`, glyph, {size: 13, fill: tone}),
-    text(`${id}-t-${s}`, label, {size: '$--text-body'}),
-    text(`${id}-w-${s}`, what, {size: '$--text-caption', fill: '$--subtle-foreground'}),
-    ...(note ? [text(`${id}-n-${s}`, note, {size: '$--text-caption', fill: '$--muted-foreground'})] : []),
-    spacer(`${id}-sp-${s}`),
-    text(`${id}-v-${s}`, value, {size: '$--text-caption', mono: true, fill: '$--subtle-foreground'}),
-  ]);
-
-  // B20: the folders are already gone from their checkouts; the volume's free space is read once the deleting ends.
-  function runningStep() {
-    const width = 640;
-    const inner = width - 48;
-    return dialog(`rn-${s}`, {
-      title: '비우는 중 · 3/7', subtitle: '시트를 닫아도 정리는 계속된다. 끝나면 다시 열었을 때 결과가 보인다.', width,
-      body: [
-        layerBar(`rn-bar-${s}`, [['$--primary', 3], ['$--muted', 4]], inner, 6),
-        frame(`rn-list-${s}`, 'Progress', {layout: 'vertical', width: inner}, [
-          rule(`rn-r0-${s}`, inner),
-          outcomeLine(inner, 'rn-a', 'circle-check', '$--success', 'fix/remote-workspace-bridge', '빌드 캐시 · 의존성', '8.0 GB'),
-          outcomeLine(inner, 'rn-b', 'circle-check', '$--success', 'feat/overview-issue-first', '빌드 캐시', '5.9 GB'),
-          outcomeLine(inner, 'rn-c', 'loader-circle', '$--muted-foreground', 'feat/overview-lenses', '워크트리 삭제', '3.6 GB'),
-          outcomeLine(inner, 'rn-d', 'circle-dashed', '$--muted-foreground', 'ci/runner-layout', '빌드 캐시', '2.4 GB'),
-          rule(`rn-r1-${s}`, inner),
-        ]),
-      ],
-      footer: [spacer(`rn-fsp-${s}`), {...screenButton(`rn-go-${s}`, '다른 정리가 진행 중', {variant: 'default', icon: 'trash-2'}), opacity: DISABLED}],
-    });
-  }
-
-  // B22: the free space before and after leads; allocated total sits beside it as the lesser number.
-  function resultStep() {
-    const width = 640;
-    const inner = width - 48;
+    const lines = [
+      ['fix/remote-workspace-bridge', '빌드 캐시 · 의존성', 'removed', null, fmt(7.3 + 0.63)],
+      ['feat/overview-issue-first', '빌드 캐시', 'removed', null, fmt(5.9)],
+      ['feat/overview-lenses', '워크트리 삭제', 'removed', null, fmt(3.6)],
+      ['ci/runner-layout', '빌드 캐시', 'skipped', '확인 사이에 쓰는 중이 됨', null],
+      ['prd/agent-tab-groups', '의존성', 'failed', '폴더를 지우지 못함', null],
+    ];
+    const allocated = 7.3 + 0.63 + 5.9 + 3.6;
+    const OUTCOME = {removed: ['지움', '$--success'], skipped: ['건너뜀', '$--warning'], failed: ['실패', '$--destructive']};
+    const line = ([label, what, outcome, reason, size], index) => frame(`rs-l${index}-${s}`, label, {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'baseline', width: inner, padding: ['$--spacing-sm', 0], ...(index ? {stroke: '$--border', strokeWidth: {top: HAIR}} : {})}, [
+      text(`rs-l${index}-a-${s}`, fitText(label, 150, BODY), {size: '$--text-body', width: 150}),
+      text(`rs-l${index}-b-${s}`, what, {size: '$--text-body', fill: '$--muted-foreground', width: 120}),
+      text(`rs-l${index}-c-${s}`, `${OUTCOME[outcome][0]}${reason ? ` · ${reason}` : ''}`, {size: '$--text-caption', fill: OUTCOME[outcome][1], width: 170}),
+      spacer(`rs-l${index}-sp-${s}`),
+      text(`rs-l${index}-d-${s}`, size ?? ' ', {size: '$--text-caption', mono: true, fill: '$--subtle-foreground'}),
+    ]);
     return dialog(`rs-${s}`, {
-      title: '디스크 정리', subtitle: '선택한 칸을 정리했다', width,
+      title: '디스크 정리', subtitle: SUBTITLE(36), width,
       body: [
-        frame(`rs-top-${s}`, 'Outcome', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'end', width: inner}, [
-          frame(`rs-big-${s}`, 'Freed', {layout: 'vertical', gap: 2}, [
+        frame(`rs-top-${s}`, 'Outcome', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start', width: inner}, [
+          frame(`rs-big-${s}`, 'Freed', {layout: 'vertical', gap: '$--spacing-xxs'}, [
             text(`rs-big-l-${s}`, '디스크에서 잰 여유', {size: '$--text-caption', fill: '$--muted-foreground'}),
-            frame(`rs-big-v-${s}`, 'Value', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'end'}, [
-              text(`rs-big-a-${s}`, '1.6', {size: '$--text-title', mono: true, fill: '$--muted-foreground'}),
-              icon(`rs-big-ar-${s}`, 'arrow-right', {size: 14, fill: '$--muted-foreground'}),
-              text(`rs-big-b-${s}`, '18.3 GB', {size: '$--text-headline', weight: '600', mono: true}),
-            ]),
+            text(`rs-big-v-${s}`, `${gigabytes(1.6)} → ${gigabytes(18.3)}`, {size: '$--text-headline', weight: '600', mono: true}),
           ]),
           spacer(`rs-sp-${s}`),
-          text(`rs-note-${s}`, '할당 합계 17.5 GB · 실제로 늘어난 여유 16.7 GB', {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
+          text(`rs-note-${s}`, `할당 합계 ${fmt(allocated)} · 실제로 늘어난 여유 ${fmt(18.3 - 1.6)}`, {size: '$--text-caption', fill: '$--subtle-foreground', mono: true}),
         ]),
-        frame(`rs-list-${s}`, 'Outcomes', {layout: 'vertical', width: inner}, [
-          rule(`rs-r0-${s}`, inner),
-          outcomeLine(inner, 'rs-a', 'circle-check', '$--success', 'fix/remote-workspace-bridge', '빌드 캐시 · 의존성', '8.0 GB'),
-          outcomeLine(inner, 'rs-b', 'circle-check', '$--success', 'feat/overview-issue-first', '빌드 캐시', '5.9 GB'),
-          outcomeLine(inner, 'rs-c', 'circle-check', '$--success', 'feat/overview-lenses', '워크트리 삭제', '3.6 GB'),
-          outcomeLine(inner, 'rs-d', 'ban', '$--warning', 'ci/runner-layout', '빌드 캐시', '2.4 GB', '확인 사이에 빌드가 시작돼 건너뜀'),
-          outcomeLine(inner, 'rs-e', 'circle-x', '$--destructive', 'prd/agent-tab-groups', '의존성', '0.3 GB', '지우지 못함 · 권한 없음'),
-          rule(`rs-r1-${s}`, inner),
+        frame(`rs-list-${s}`, 'Outcomes', {layout: 'vertical', width: inner, stroke: '$--border', strokeWidth: {top: HAIR, bottom: HAIR}}, lines.map(line)),
+        frame(`rs-act-${s}`, 'Actions', {layout: 'horizontal', gap: '$--spacing-sm', justifyContent: 'end', width: inner}, [
+          screenButton(`rs-again-${s}`, '다시 검토', {variant: 'ghost', icon: 'refresh-cw'}),
+          screenButton(`rs-close-${s}`, '닫기', {variant: 'secondary'}),
         ]),
       ],
-      footer: [spacer(`rs-fsp-${s}`), screenButton(`rs-again-${s}`, '다시 검토', {variant: 'ghost', icon: 'refresh-cw'}), screenButton(`rs-close-${s}`, '닫기', {variant: 'secondary'})],
     });
   }
 
@@ -534,23 +552,26 @@ export function diskCleanupRows(tokens, {themedXref, screenButton}, s) {
 
   return [frame(`dc-${s}`, 'Disk Cleanup', {layout: 'vertical', gap: '$--spacing-xl'}, [
     row(`dc-r0-${s}`, [
-      labelled(`dc-l-en-${s}`, '입구 · 디스크 숫자 위에 올리면', '요약 줄의 디스크 숫자가 레이어별 내역을 툴팁으로 보여주고, 누르면 정리 시트가 열린다.', entry(false), 640),
-      labelled(`dc-l-el-${s}`, '입구 · 디스크가 모자랄 때만', '볼륨 여유가 10 GB 미만일 때만 경고 칸이 생긴다. 비울 수 있는 양은 끝난 체크아웃의 캐시. 누르면 끝난 것 필터로 열린다.', entry(true), 640),
+      labelled(`dc-l-en-${s}`, '입구 · 디스크 숫자 위에 올리면', '요약 줄의 디스크 숫자가 레이어별 내역을 툴팁으로 보여주고, 누르면 정리 시트가 열린다.', entry('plain'), 560),
+      labelled(`dc-l-ep-${s}`, '입구 · 재지 못한 체크아웃이 있을 때', '재지 못한 체크아웃이 있으면 잰 것만 합해 ≥ 로 적고 툴팁이 그렇게 말한다. 시스템이 만들 수 없는 총합은 적지 않는다.', entry('partial'), 560),
+      labelled(`dc-l-el-${s}`, '입구 · 디스크가 모자랄 때만', '볼륨 여유가 10 GB 미만일 때만 경고 칸이 생긴다. 비울 수 있는 양은 끝난 체크아웃의 캐시. 누르면 끝난 것 필터로 열린다.', entry('low'), 560),
     ]),
-    row(`dc-r1-${s}`, [
-      labelled(`dc-l-m1-${s}`, '시트 · 전체에서 손으로 고르기', '행 하나 통째, 칸 몇 개, 워크트리 하나를 고른 상태. 열 머리와 왼쪽 위는 일부만 골라서 가운데 줄. 쓰는 중인 행은 흐리고 이유는 멈추면 뜬다.', sheetMixed(), W),
-      labelled(`dc-l-m3-${s}`, '시트 · 측정 중, 재지 못함, 확인 불가', '측정 중인 행은 skeleton과 비활성 체크박스, 재지 못한 행은 흐리고 비어 있다. 쓰는 중인지 읽지 못하면 표 위에 한 줄과 다시, 체크박스는 모두 비활성.', sheetStates(), W),
+    labelled(`dc-l-m1-${s}`, '시트 · 전체에서 손으로 고르기', '행 하나 통째, 칸 몇 개, 워크트리 하나를 고른 상태. 열 머리와 왼쪽 위는 일부만 골라서 가운데 줄. 쓰는 중인 행은 흐리고 이유가 이름 옆에 선다. 워크트리 칸을 켜면 같은 행의 캐시 칸은 포함됨.', sheetMixed(), W),
+    labelled(`dc-l-m2-${s}`, '시트 · 끝난 것 필터 + 왼쪽 위 체크', '가장 흔한 정리: 끝난 체크아웃의 빌드 캐시와 의존성을 클릭 두 번에. 워크트리는 켜지지 않는다.', sheetDone(), W),
+    labelled(`dc-l-m3-${s}`, '시트 · 측정 중, 재지 못함, 쓰는 중', '측정 중인 칸은 skeleton과 비활성 체크박스, 재지 못한 행은 흐리고 비어 있다. 쓰는 중인 행은 캐시 칸이 비활성이고 이유는 멈추면 뜬다.', sheetStates(), W),
+    row(`dc-r4-${s}`, [
+      labelled(`dc-l-m5-${s}`, '시트 · 쓰는 중인지 읽지 못함', '표 위에 한 줄과 다시. 체크박스는 모두 비활성이고 배너나 알림은 없다.', sheetUnreadable(), W),
     ]),
-    row(`dc-r2-${s}`, [
-      labelled(`dc-l-m2-${s}`, '시트 · 끝난 것 필터 + 왼쪽 위 체크', '가장 흔한 정리: 끝난 체크아웃의 빌드 캐시와 의존성을 클릭 두 번에. 워크트리는 켜지지 않는다.', sheetDone(), W),
-      frame(`dc-c2-${s}`, 'Steps', {layout: 'vertical', gap: '$--spacing-xl'}, [
-        labelled(`dc-l-cf-${s}`, '확인 · 워크트리가 든 정리만', '캐시와 의존성만 고르면 확인 없이 바로 실행된다. 어느 버튼도 기본 포커스가 아니고 돌아가기는 선택을 그대로 둔다.', confirmStep(), 560),
-        labelled(`dc-l-em-${s}`, '필터 결과 없음', '맞는 체크아웃이 없으면 한 줄과 전체 보기. 정리는 비활성.', sheetEmpty(), 640),
-      ]),
+    row(`dc-r5-${s}`, [
+      labelled(`dc-l-m6-${s}`, '시트 · 다른 정리가 진행 중', '정리 버튼이 이유를 말하고 요약 줄은 비어 있다.', sheetBusy(), W),
     ]),
-    row(`dc-r3-${s}`, [
-      labelled(`dc-l-rn-${s}`, '실행 중', '폴더는 체크아웃에서 곧바로 사라진다. 시트를 닫아도 계속되고 다시 열면 진행이나 결과가 보인다.', runningStep(), 640),
-      labelled(`dc-l-rs-${s}`, '결과', '크기는 정리 전후 볼륨 여유로 말한다. 확인 사이에 상태가 바뀐 칸은 건너뛰고 이유를 적는다.', resultStep(), 640),
+    row(`dc-r6-${s}`, [
+      labelled(`dc-l-cf-${s}`, '확인 · 워크트리가 든 정리만', '캐시와 의존성만 고르면 확인 없이 바로 실행된다. 어느 버튼도 기본 포커스가 아니고 돌아가기는 선택을 그대로 둔다.', confirmStep(), 470),
+      labelled(`dc-l-em-${s}`, '필터 결과 없음', '맞는 체크아웃이 없으면 한 줄과 전체 보기. 정리는 비활성.', sheetEmpty(), 640),
+    ]),
+    row(`dc-r7-${s}`, [
+      labelled(`dc-l-rn-${s}`, '실행 중', '폴더는 체크아웃에서 곧바로 사라진다. 시트를 닫아도 계속되고 다시 열면 진행이나 결과가 보인다.', runningStep(), 560),
+      labelled(`dc-l-rs-${s}`, '결과', '크기는 정리 전후 볼륨 여유로 말한다. 확인 사이에 상태가 바뀐 칸은 건너뛰고 이유를 적는다.', resultStep(), 560),
     ]),
   ])];
 }
