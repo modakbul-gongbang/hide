@@ -37,6 +37,9 @@ pub enum ErrorCode {
     Unsupported,
     /// The host is at its concurrency or queue limit; nothing was started.
     Busy,
+    /// `~/hide` exists and is not a Home Hide made, or its marker cannot be
+    /// read; nothing was written.
+    HomeConflict,
     Cancelled,
     Io,
 }

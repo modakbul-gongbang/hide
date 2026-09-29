@@ -16,7 +16,8 @@ use crate::root::RootIdentity;
 /// helper that reports another version and installs the one it carries.
 /// 9: `changes` takes the View displays' `diffs` and answers each (PRD S7
 /// A5); a helper on 8 would ignore them and answer none.
-pub const PROTOCOL_VERSION: u32 = 9;
+/// 10: `home_sync`, Hide's Home folder and its project links.
+pub const PROTOCOL_VERSION: u32 = 10;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -146,6 +147,12 @@ pub enum Call {
     /// host's own home folder (`hide_host::register::check`).
     Registrable {
         path: String,
+    },
+    /// Makes this host's Hide Home folder (`~/hide`) hold one link per
+    /// project in `projects` and nothing Hide did not make
+    /// (`hide_host::home::sync`).
+    HomeSync {
+        projects: Vec<String>,
     },
     /// Rechecks and removes one operator-confirmed linked worktree, forced
     /// only as far as the operator accepted

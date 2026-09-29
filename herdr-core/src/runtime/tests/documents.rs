@@ -1355,7 +1355,7 @@ fn a_device_workspaces_displays_wait_for_its_helper_after_a_restart() {
         );
 
         let stale_helper = Some(
-            "The device helper speaks protocol 8, this Hide needs 9; the helper this Hide carries does not match it, so rebuild or reinstall Hide"
+            "The device helper speaks protocol 8, this Hide needs 10; the helper this Hide carries does not match it, so rebuild or reinstall Hide"
                 .to_owned(),
         );
         runtime.device_hosts.get_mut(DEVICE).unwrap().phase =
