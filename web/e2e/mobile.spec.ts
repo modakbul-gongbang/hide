@@ -194,6 +194,22 @@ function report(herdr: HerdrFixture, pane: string, set: Record<string, string>, 
 
 const STATES = ["status_question_new", "status_working", "status_done", "expected_reply"];
 
+const SESSION = "0f0e0d0c-0b0a-4000-8000-000000000001";
+
+/** One Claude transcript record: an operator's prompt or the agent's text. */
+function turn(type: "user" | "assistant", text: string, minute: number): string {
+  const timestamp = `2026-09-29T${String(9 + Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}:00Z`;
+  return JSON.stringify(
+    type === "user"
+      ? { type, userType: "external", promptId: `prompt-${minute}`, timestamp, message: { role: "user", content: text } }
+      : { type, timestamp, message: { role: "assistant", content: [{ type: "text", text }] } },
+  );
+}
+
+function toolOutput(text: string): string {
+  return JSON.stringify({ type: "user", timestamp: "2026-09-29T10:05:00Z", message: { role: "user", content: [{ type: "tool_result", content: text }] } });
+}
+
 function ask(herdr: HerdrFixture, pane: string, question: string): void {
   report(herdr, pane, { status_question_new: "?", expected_reply: question }, STATES.filter((name) => name !== "status_question_new" && name !== "expected_reply"));
 }
@@ -358,13 +374,51 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     expect(agentFrames() - idleStart).toBeLessThanOrEqual(1);
     await screenshot(phone, "mobile-phone-list");
 
-    // B24: the detail shows the head and the pane's recent rows, newest at the bottom.
+    // The agent's conversation: Herdr reports one's Claude session, whose
+    // transcript holds 70 turns with tool output and injected context among them.
+    const transcript = path.join(daemon.home, ".claude", "projects", "-fixture", `${SESSION}.jsonl`);
+    fs.mkdirSync(path.dirname(transcript), { recursive: true });
+    const turns = Array.from({ length: 70 }, (_, index) => turn(index % 2 === 0 ? "user" : "assistant", `turn ${String(index).padStart(2, "0")}`, index));
+    turns.splice(66, 0, toolOutput("SECRET-TOOL-OUTPUT"), turn("user", "<system-reminder>INJECTED-CONTEXT</system-reminder>", 66));
+    fs.writeFileSync(transcript, `${turns.join("\n")}\n`);
+    execFileSync(herdr.bin, ["pane", "report-agent-session", one, "--source", "herdr:claude", "--agent", "claude", "--agent-session-id", SESSION], { env: herdr.env, timeout: 30_000 });
+
+    // B24: the detail shows the head and the agent's newest 30 messages, newest at the bottom.
     const history = [...Array.from({ length: 260 }, (_, index) => `line ${String(index + 1).padStart(3, "0")}`), `wide ${"w".repeat(300)}`].join("\n");
     execFileSync(herdr.bin, ["pane", "send-text", one, `${history}\n`], { env: herdr.env, timeout: 30_000 });
     await oneRow.tap();
     const detail = phone.locator("[data-phone-detail]");
     await expect(detail).toHaveAttribute("data-phone-detail", new RegExp(`\\|${one}$`));
     await expect(detail).toContainText("Agent one");
+    const conversation = phone.locator("[data-phone-conversation]");
+    await expect(conversation).toHaveAttribute("data-phone-conversation", "30", { timeout: 20_000 });
+    await expect(conversation.locator("[data-phone-message]").last()).toContainText("turn 69");
+    await expect(conversation).not.toContainText("turn 39");
+    await expect(conversation.locator('[data-phone-message="you"]').first()).toContainText("turn 40");
+    // Pulling to the top brings the older pages, down to the first turn.
+    await conversation.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    await expect(conversation).toHaveAttribute("data-phone-conversation", "60", { timeout: 20_000 });
+    await conversation.evaluate((element) => {
+      element.scrollTop = 0;
+    });
+    await expect(conversation).toHaveAttribute("data-phone-conversation", "70", { timeout: 20_000 });
+    await expect(conversation.locator("[data-phone-message]").first()).toContainText("turn 00");
+    await expect(phone.locator("[data-phone-older]")).toHaveCount(0);
+    // What the agent writes next arrives on its own.
+    fs.appendFileSync(transcript, `${turn("assistant", "turn 70 arrived", 70)}\n`);
+    await expect(conversation.locator("[data-phone-message]").last()).toContainText("turn 70 arrived", { timeout: 20_000 });
+    // Tool output and injected context never leave the Mac.
+    expect(frames.some((frame) => frame.includes("SECRET-TOOL-OUTPUT") || frame.includes("INJECTED-CONTEXT"))).toBe(false);
+    expect(await conversation.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
+    await conversation.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await screenshot(phone, "mobile-phone-conversation");
+
+    // 터미널: the pane's recent rows.
+    await phone.locator('[data-phone-view="terminal"]').tap();
     const rows = phone.locator('[aria-label="터미널 최근 출력"]');
     await expect(rows).toContainText("line 260", { timeout: 20_000 });
     await expect(rows).not.toContainText("line 001");
@@ -481,7 +535,10 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     expect(closed.payload.clear).toContain(`${closed.payload.device_id}|${two}`);
 
     // B28: the pane closes under an open detail; the reply bar goes inert.
+    // Two reported no session, so its detail is its terminal alone.
     await twoRow.tap();
+    await expect(phone.locator("[data-phone-scrollback]")).toBeVisible({ timeout: 20_000 });
+    await expect(phone.locator("[data-phone-view]")).toHaveCount(0);
     execFileSync(herdr.bin, ["pane", "close", two], { env: herdr.env, timeout: 30_000 });
     await expect(phone.locator('[data-phone-rows-state="gone"]')).toHaveText("이 pane은 더 이상 열려 있지 않아요.", { timeout: 20_000 });
     await expect(phone.locator('[data-phone-reply="true"]')).toBeDisabled();

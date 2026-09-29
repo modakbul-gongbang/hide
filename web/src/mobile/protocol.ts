@@ -33,12 +33,36 @@ export type PushMode = "off" | "app_closed" | "always";
 
 export type RowsState = "ok" | "gone" | "device_unreachable" | "unavailable";
 
+/** Which half of a detail the phone shows. */
+export type DetailView = "conversation" | "terminal";
+
+/** One message of an agent's conversation (hided/src/mobile/conversation.rs). */
+export type ConversationMessage = {
+  /** The byte offset of its transcript record: unique and in order. */
+  id: number;
+  who: "you" | "agent" | "stopped";
+  text: string;
+  truncated: boolean;
+  at_ms: number;
+};
+
 export type ServerFrame =
   | { type: "paired"; credential: string; phone_id: string; name: string }
   | { type: "hello"; mac_name: string; phone_id: string; name: string | null; vapid_public_key: string; notifications: Notifications }
   | { type: "meta"; push_mode: PushMode; other_phones: number }
   | { type: "agents"; groups: AgentGroup[] }
   | { type: "rows"; device_id: string; pane_id: string; state: RowsState; text?: string; lines?: number; more?: boolean }
+  | {
+      type: "conversation";
+      device_id: string;
+      pane_id: string;
+      /** `none`: the pane has no conversation to show, so its terminal stands alone. */
+      state: "ok" | "none";
+      mode?: "reset" | "append" | "older";
+      messages?: ConversationMessage[];
+      /** The cursor for the page before the oldest message; null at the start. */
+      before?: number | null;
+    }
   | { type: "input_result"; request_id?: string; ok: boolean; reason: string | null }
   | { type: "push_state"; notifications: "on" | "refused" }
   | { type: "refused"; reason: string }
@@ -46,7 +70,9 @@ export type ServerFrame =
 
 /** The only messages a phone sends after its first frame. */
 export type PhoneMessage =
-  | { type: "open"; device_id: string; pane_id: string }
+  | { type: "open"; device_id: string; pane_id: string; view: DetailView }
+  | { type: "view"; view: DetailView }
+  | { type: "older"; before: number }
   | { type: "more" }
   | { type: "close" }
   | ({ type: "input"; request_id: string; device_id: string; pane_id: string } & ({ text: string } | { key: QuickKey }))
@@ -161,6 +187,38 @@ export function rowsProblem(state: RowsState): string | null {
  */
 export function boxDrawingRow(text: string): boolean {
   return /^[\s\u2500-\u257f]*[\u2500-\u257f][\s\u2500-\u257f]*$/.test(text);
+}
+
+/** The most messages a detail holds; at it, no older page is asked for. */
+export const MAX_MESSAGES = 300;
+
+export type Conversation = { messages: ConversationMessage[]; before: number | null };
+
+/** What a detail holds after one conversation frame: a fresh page, appended messages, or an older page. */
+export function mergeConversation(
+  current: Conversation | null,
+  frame: { mode?: "reset" | "append" | "older"; messages?: ConversationMessage[]; before?: number | null },
+): Conversation {
+  const incoming = frame.messages ?? [];
+  if (!current || frame.mode === "reset" || !frame.mode) return { messages: incoming, before: frame.before ?? null };
+  if (frame.mode === "older") {
+    const first = current.messages[0]?.id ?? Number.POSITIVE_INFINITY;
+    return { messages: [...incoming.filter((message) => message.id < first), ...current.messages], before: frame.before ?? null };
+  }
+  const last = current.messages.at(-1)?.id ?? -1;
+  const messages = [...current.messages, ...incoming.filter((message) => message.id > last)];
+  if (messages.length <= MAX_MESSAGES) return { messages, before: current.before };
+  // Past the cap the oldest go, and the page before the new oldest is still there to read.
+  const kept = messages.slice(-MAX_MESSAGES);
+  return { messages: kept, before: kept[0]?.id ?? null };
+}
+
+/** A message's time: the hour and minute today, with the day before today. */
+export function messageTime(atMs: number, now: Date = new Date()): string {
+  const at = new Date(atMs);
+  const time = `${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}`;
+  const sameDay = at.getFullYear() === now.getFullYear() && at.getMonth() === now.getMonth() && at.getDate() === now.getDate();
+  return sameDay ? time : `${at.getMonth() + 1}/${at.getDate()} ${time}`;
 }
 
 /** The QR's payload (D-22): `{v:1, endpoint, code}` as base64url JSON. */

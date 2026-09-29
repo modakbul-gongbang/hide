@@ -870,7 +870,10 @@ The list's header shows hide, the Mac's name, how many other phones are connecte
 Agents sit in 내 확인 대기, 끝, 진행 중 and 확인함 with their counts, each row with its status mark, provider mark, task name, project and branch, the SSH device's chip, the elapsed time and the request or news line, and the list updates live.
 With no agents the list is one line, 실행 중인 에이전트가 없어요.
 When hided is out of reach the last list stays dimmed under "연결 안 됨 · 맥의 hide가 꺼져 있거나 폰의 Tailscale이 꺼져 있어요. 다시 시도 중", the app retries on its own, and it shows the same line when opened without a network.
-A row opens its detail: ← 목록, the elapsed time, the row's head, and the pane's recent rows read-only in the terminal's colours with the newest at the bottom, each row wrapped at the phone's width so the detail never scrolls sideways; pulling to the top loads older rows until the pane has no more.
+A row opens its detail: ← 목록, the elapsed time, the row's head, and 대화 | 터미널 when the agent has a conversation to show, a Claude Code or Codex agent on this Mac whose session Herdr reports.
+대화 is the agent's own conversation, its newest 30 messages with the newest at the bottom: the operator's messages as ❯ blocks on a grey ground, the agent's text at full width, an interruption as 중단됨, and the time after each turn; pulling to the top loads 30 older messages at a time up to the first, and at 300 it says 최근 300개까지 볼 수 있어요.
+What the agent writes next arrives on its own, and tool output and injected context are never shown.
+터미널, and the whole detail of any other agent, is the pane's recent rows read-only in the terminal's colours with the newest at the bottom, each row wrapped at the phone's width so the detail never scrolls sideways; pulling to the top loads older rows until the pane has no more.
 Every detail has the quick keys (Enter, Escape, 위 화살표, 아래 화살표, Ctrl-C by accessible name) and a one-line reply with 보내기; a reply is sent with Enter after it and clears on success, a failure keeps the text with the reason under it, and a reply over 2,000 characters is named before it is sent.
 When hide cannot tell whether a reply reached the pane, the line says so and asks the operator to check the terminal before sending it again.
 A closed pane shows "이 pane은 더 이상 열려 있지 않아요" and disables the reply bar; a disconnected SSH device shows that its device is not connected.

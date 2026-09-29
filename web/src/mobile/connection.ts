@@ -4,6 +4,7 @@
 // but `/ws`; the page, its script and the service worker are the static shell.
 
 import {
+  MAX_MESSAGES,
   credentialHash,
   inputFailure,
   macNameOf,
@@ -11,6 +12,7 @@ import {
   refusalOf,
   replyProblem,
   type AgentKey,
+  type DetailView,
   type PhoneMessage,
   type QuickKey,
   type ServerFrame,
@@ -156,7 +158,10 @@ function openPending(): void {
 
 function reopenDetail(): void {
   const detail = usePhone.getState().detail;
-  if (detail) send({ type: "open", device_id: detail.key.device_id, pane_id: detail.key.pane_id });
+  if (!detail) return;
+  // A new detail on hided starts the conversation over from its newest page.
+  patch({ detail: { ...detail, olderAskedAt: null, moreAskedAt: null } });
+  send({ type: "open", device_id: detail.key.device_id, pane_id: detail.key.pane_id, view: detail.view });
 }
 
 export function openDetail(key: AgentKey): void {
@@ -165,8 +170,17 @@ export function openDetail(key: AgentKey): void {
     patch({ pendingOpen: key });
     return;
   }
-  patch({ detail: { key, rows: null, moreAskedAt: null }, inputError: null, pendingInput: null });
-  send({ type: "open", device_id: key.device_id, pane_id: key.pane_id });
+  const view: DetailView = "conversation";
+  patch({ detail: { key, view, rows: null, moreAskedAt: null, conversation: null, olderAskedAt: null }, inputError: null, pendingInput: null });
+  send({ type: "open", device_id: key.device_id, pane_id: key.pane_id, view });
+}
+
+/** 대화 or 터미널: hided reads only what the phone shows. */
+export function setView(view: DetailView): void {
+  const detail = usePhone.getState().detail;
+  if (!detail || detail.view === view) return;
+  patch({ detail: { ...detail, view } });
+  send({ type: "view", view });
 }
 
 export function closeDetail(): void {
@@ -180,6 +194,17 @@ export function loadMore(): void {
   if (!detail?.rows?.more || detail.moreAskedAt === detail.rows.lines) return;
   patch({ detail: { ...detail, moreAskedAt: detail.rows.lines } });
   send({ type: "more" });
+}
+
+/** Asks for the page of messages before the oldest one held, once per page and up to MAX_MESSAGES. */
+export function loadOlder(): void {
+  const detail = usePhone.getState().detail;
+  const conversation = detail?.conversation;
+  if (!detail || !conversation || conversation === "none") return;
+  const before = conversation.before;
+  if (before === null || conversation.messages.length >= MAX_MESSAGES || detail.olderAskedAt === before) return;
+  patch({ detail: { ...detail, olderAskedAt: before } });
+  send({ type: "older", before });
 }
 
 let requestCounter = 0;
