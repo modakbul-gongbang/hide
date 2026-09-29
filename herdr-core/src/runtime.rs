@@ -17,6 +17,7 @@ mod editor;
 mod events;
 mod hosts;
 mod issues;
+mod kit;
 mod memory;
 mod operations;
 mod project_sessions;
@@ -31,6 +32,7 @@ mod workspace_control;
 mod workspace_view;
 
 pub use hosts::WorkspaceRemoteRoute;
+pub(crate) use kit::LocalKitJob;
 pub use snapshot_delta::serialize_snapshot_delta;
 
 use agent_areas::AgentLayoutPayload;
@@ -1047,9 +1049,18 @@ pub struct Runtime {
     /// thread. `None` until that first read lands, which reads as "not known
     /// yet" rather than as "not installed".
     hook_diagnosis: Option<hide_agent_hooks::Diagnosis>,
-    /// Runtimes the operator has approved an install for, waiting for the
-    /// coordinator to do the file write off the mutex.
-    pending_hook_installs: BTreeSet<hide_agent_hooks::AgentRuntime>,
+    /// Each machine's install kit as its last check found it, keyed by
+    /// device id (`local` for this Mac); `runtime/kit.rs` owns it.
+    kit_states: BTreeMap<String, crate::model::KitSnapshot>,
+    /// The install this Mac's kit worker runs next, merged across requests.
+    local_kit_pending: Option<hide_kit::Scope>,
+    /// When this Mac's kit is next re-read while Settings is on screen.
+    local_kit_next_status: Option<Instant>,
+    /// A Settings tab asked for one read of this Mac's kit.
+    local_kit_check_requested: bool,
+    /// The install each device's helper runs on its next kit call, merged
+    /// across requests, keyed by device id.
+    device_kit_pending: BTreeMap<String, hide_kit::Scope>,
     /// The operator's background AI choice as the core holds it. `None` until
     /// the coordinator's first read lands, which reads as "not known yet"
     /// rather than as "the defaults".
@@ -1503,7 +1514,11 @@ impl Runtime {
             pane_relocations_in_flight: BTreeMap::new(),
             pane_hook_tokens: BTreeMap::new(),
             hook_diagnosis: None,
-            pending_hook_installs: BTreeSet::new(),
+            kit_states: BTreeMap::new(),
+            local_kit_pending: None,
+            local_kit_next_status: None,
+            local_kit_check_requested: false,
+            device_kit_pending: BTreeMap::new(),
             ai_settings: None,
             pending_ai_settings_save: None,
             ai_observing: false,

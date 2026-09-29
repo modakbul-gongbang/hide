@@ -9,9 +9,8 @@
 //! - a removal takes only the entries carrying Hide's marker (PRD D-57);
 //! - installing twice converges instead of duplicating (PRD B25).
 
-use std::ffi::OsStr;
 use std::fs;
-use std::io::{self, ErrorKind, Write};
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -40,17 +39,6 @@ pub enum InstallFailure {
     /// Hide's entry points at a helper that is no longer on disk, so the hook
     /// runs nothing. Reinstalling from the running app repairs it.
     HelperMissing { path: String, helper: String },
-    /// The executable asking for the install is not inside an application
-    /// bundle, so there is no durable path to write into the hook.
-    ///
-    /// This is a refusal, not a failure to try. A hook command is a path
-    /// stored in the operator's own configuration and run by every future
-    /// session of that agent; a development build's executable lives under
-    /// `target/debug/deps`, which Cargo deletes on the next rebuild. Writing
-    /// it would leave every session on the machine running a command that no
-    /// longer exists, which is what happened on 2026-09-10 (engineering
-    /// rule 4: an invalid state is surfaced, never written through).
-    HelperNotBundled { executable: String },
 }
 
 impl InstallFailure {
@@ -68,10 +56,6 @@ impl InstallFailure {
             Self::HelperMissing { helper, .. } => {
                 format!("the installed hook points at {helper}, which is missing")
             }
-            Self::HelperNotBundled { executable } => format!(
-                "{executable} is not inside an application bundle, so Hide has no lasting path \
-                 for the hook to run; install hooks from the installed app"
-            ),
         }
     }
 }
@@ -114,73 +98,6 @@ pub struct RemoveOutcome {
 const HOOKS_KEY: &str = "hooks";
 
 /// Judges one runtime without changing anything.
-/// Claims the one automatic install this machine gets, and reports whether
-/// this call is the one that got it.
-///
-/// Hide installs its hooks once, on first run, and then leaves the operator's
-/// configuration alone; an operator who removes a hook has removed it, and
-/// the next launch must not quietly put it back (PRD B25, D-31). The claim is
-/// a marker file created exclusively, so two launches racing each other still
-/// install once, and it lives in Hide's own directory rather than in the
-/// rendered UI state, which the shell echoes back and could reset.
-pub fn claim_first_run(home: &Path) -> io::Result<bool> {
-    let path = crate::counters::state_directory(home)
-        .parent()
-        .expect("the counter directory is always nested")
-        .join("installed-once");
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    match fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-    {
-        Ok(_) => Ok(true),
-        Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(false),
-        Err(error) => Err(error),
-    }
-}
-
-/// Where the hook helper lives for the executable that is running.
-///
-/// A hook command outlives the process that wrote it: it is a path kept in
-/// the operator's own configuration file and run by every future session of
-/// that agent. So the only path worth writing is one that survives a
-/// rebuild, and inside this project that means the bundle's own
-/// `Contents/Resources`, where the daemon and the helper ship side by side.
-/// A development build's executable sits under `target/debug/deps`, which
-/// Cargo removes on the next build; installing from there once left every
-/// Claude and Codex session on the machine failing four hooks per turn.
-///
-/// So this refuses rather than resolving something plausible. The layout is
-/// checked, not the file name: `<name>.app/Contents/Resources/<executable>`.
-pub fn helper_for(executable: &Path) -> Result<PathBuf, InstallFailure> {
-    let refuse = || InstallFailure::HelperNotBundled {
-        executable: executable.display().to_string(),
-    };
-    let resources = executable.parent().ok_or_else(refuse)?;
-    if resources.file_name() != Some(OsStr::new("Resources")) {
-        return Err(refuse());
-    }
-    let contents = resources.parent().ok_or_else(refuse)?;
-    if contents.file_name() != Some(OsStr::new("Contents")) {
-        return Err(refuse());
-    }
-    let bundle = contents.parent().ok_or_else(refuse)?;
-    if bundle.extension() != Some(OsStr::new("app")) {
-        return Err(refuse());
-    }
-    let helper = resources.join(crate::runtime::HELPER_BINARY_NAME);
-    if !helper.is_file() {
-        return Err(InstallFailure::HelperMissing {
-            path: bundle.display().to_string(),
-            helper: helper.display().to_string(),
-        });
-    }
-    Ok(helper)
-}
-
 pub fn status(runtime: AgentRuntime, home: &Path) -> HookStatus {
     if !runtime.home_directory(home).is_dir() {
         return HookStatus::RuntimeAbsent;
@@ -519,99 +436,6 @@ fn write_document(path: &Path, document: &Value) -> Result<(), InstallFailure> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn the_automatic_install_is_claimed_once_and_a_removed_hook_stays_removed() {
-        let fixture = Fixture::new("first-run");
-        assert!(
-            claim_first_run(fixture.home()).unwrap(),
-            "the first launch on this machine installs"
-        );
-        assert!(
-            !claim_first_run(fixture.home()).unwrap(),
-            "every later launch leaves the operator's configuration alone"
-        );
-        // The claim does not depend on any hook file, so removing one does
-        // not hand the next launch a fresh install (PRD D-31).
-        for runtime in AgentRuntime::ALL {
-            let _ = fs::remove_file(runtime.config_path(fixture.home()));
-        }
-        assert!(!claim_first_run(fixture.home()).unwrap());
-    }
-
-    #[test]
-    fn a_cargo_build_directory_is_refused_instead_of_written_into_a_hook() {
-        let fixture = Fixture::new("not-bundled");
-        // The exact shape that reached two of the operator's configuration
-        // files on 2026-09-10. Cargo deletes this directory on the next
-        // build, so every session afterwards ran a command that was gone.
-        let deps = fixture.home().join("target/debug/deps");
-        fs::create_dir_all(&deps).unwrap();
-        let executable = deps.join("hided");
-        fs::write(&executable, b"binary").unwrap();
-        fs::write(deps.join(crate::runtime::HELPER_BINARY_NAME), b"binary").unwrap();
-
-        // The helper sitting right beside it is not enough: it is the
-        // directory that does not survive, not the file that is missing.
-        let refusal = helper_for(&executable).expect_err("a build directory is refused");
-        assert!(
-            matches!(refusal, InstallFailure::HelperNotBundled { .. }),
-            "got {refusal:?}"
-        );
-        assert!(
-            refusal
-                .message()
-                .contains("not inside an application bundle"),
-            "the operator is told why: {}",
-            refusal.message()
-        );
-    }
-
-    #[test]
-    fn only_the_bundles_own_resources_directory_resolves_the_helper() {
-        let fixture = Fixture::new("bundled");
-        let resources = fixture.home().join("hide.app/Contents/Resources");
-        fs::create_dir_all(&resources).unwrap();
-        let executable = resources.join("hided");
-        fs::write(&executable, b"binary").unwrap();
-
-        // A bundle that shipped without the helper is a missing file, not a
-        // wrong location, and says so.
-        let missing = helper_for(&executable).expect_err("a bundle without the helper is refused");
-        assert!(
-            matches!(missing, InstallFailure::HelperMissing { .. }),
-            "got {missing:?}"
-        );
-
-        let helper = resources.join(crate::runtime::HELPER_BINARY_NAME);
-        fs::write(&helper, b"binary").unwrap();
-        assert_eq!(helper_for(&executable).unwrap(), helper);
-
-        // A directory that merely ends in .app is not enough on its own, and
-        // neither is a Resources directory outside one, nor the bundle's
-        // Contents/MacOS, where the host executable lives without the helper.
-        for wrong in [
-            fixture.home().join("hide.app/Resources/hided"),
-            fixture.home().join("elsewhere/Contents/Resources/hided"),
-            fixture.home().join("hide.app/Contents/MacOS/hided"),
-        ] {
-            fs::create_dir_all(wrong.parent().unwrap()).unwrap();
-            fs::write(&wrong, b"binary").unwrap();
-            fs::write(
-                wrong.with_file_name(crate::runtime::HELPER_BINARY_NAME),
-                b"binary",
-            )
-            .unwrap();
-            assert!(
-                matches!(
-                    helper_for(&wrong),
-                    Err(InstallFailure::HelperNotBundled { .. })
-                ),
-                "{} is not a bundle layout",
-                wrong.display()
-            );
-        }
-    }
 
     #[test]
     fn hide_can_take_out_its_own_entries_after_the_helper_they_name_is_gone() {

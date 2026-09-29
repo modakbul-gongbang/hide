@@ -94,6 +94,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
         agent_count: 0,
         test: None,
         host: Default::default(),
+        kit: Default::default(),
     });
     runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
         target_id: "mini".to_owned(),

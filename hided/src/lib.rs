@@ -275,6 +275,13 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
                 .display()
                 .to_string(),
         ),
+        // The install kit's parts ship beside this binary in the app bundle;
+        // a daemon anywhere else installs nothing (PRD device-parity D-19).
+        kit_dir: std::env::current_exe()
+            .ok()
+            .as_deref()
+            .and_then(hide_kit::bundled_kit_dir)
+            .map(|dir| dir.display().to_string()),
     };
     let boundary = Arc::new(boundary::Boundary::new(&env.home)?);
     let core = Arc::new(CoreHandle::spawn(options)?);

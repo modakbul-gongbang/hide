@@ -56,6 +56,9 @@ import {
   helperConsentTerms,
   herdrLine,
   hostLine,
+  kitHookMachines,
+  kitPartLine,
+  kitPartNeedsReinstall,
   offeredModels,
   ownerLine,
   providerLine,
@@ -84,7 +87,7 @@ import {
   type CommandId,
   sheetRows,
 } from "./shortcuts";
-import type { AgentHookRuntime, Device, IssueSettings } from "./snapshot";
+import type { Device, IssueSettings } from "./snapshot";
 import { latestDraft } from "./editor/draft";
 import { MobileTab } from "./MobileTab";
 import { useShellStore } from "./store";
@@ -406,18 +409,13 @@ function AppearanceTab({ actions }: { actions: Actions }) {
 // --- Agents --------------------------------------------------------------------
 
 function AgentsTab({ actions }: { actions: Actions }) {
-  const daemonHost = useShellStore((s) => s.daemon?.host_name ?? null);
-  const selectedDevice = useShellStore((s) => {
-    const id = s.rest?.navigator?.focused_device_id ?? "local";
-    return s.rest?.navigator?.devices?.find((device) => device.id === id && device.kind === "remote") ?? null;
-  });
   const ai = useShellStore((s) => s.rest?.status?.background_ai);
   const hooks = useShellStore((s) => s.rest?.status?.agent_hooks);
+  const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const [changedAt, setChangedAt] = useState<number | null>(null);
   const aiError = useErrorSince(changedAt, ["ai_settings."]);
-  const [installing, setInstalling] = useState<AgentHookRuntime | null>(null);
-  const [pressed, setPressed] = useState<{ id: string; at: number; headline: string } | null>(null);
-  const hookError = useErrorSince(pressed?.at ?? null, ["agent_hooks."]);
+  const [pressedAt, setPressedAt] = useState<number | null>(null);
+  const kitError = useErrorSince(pressedAt, ["kit."]);
 
   // The provider probe and the hook diagnosis run only while a page shows
   // this tab (B8). A hidden browser tab is not looking either; the daemon
@@ -429,6 +427,7 @@ function AgentsTab({ actions }: { actions: Actions }) {
     if (!live) return;
     const report = () => actions.observeAgents(document.visibilityState === "visible");
     report();
+    actions.checkKit();
     document.addEventListener("visibilitychange", report);
     return () => {
       document.removeEventListener("visibilitychange", report);
@@ -437,22 +436,10 @@ function AgentsTab({ actions }: { actions: Actions }) {
   }, [actions, live]);
 
   const selected = ai?.providers.find((provider) => provider.id === ai.provider) ?? null;
-  const pendingRow = pressed ? hooks?.runtimes.find((row) => row.id === pressed.id) : null;
-  const installSettled = pendingRow && pressed ? pendingRow.headline !== pressed.headline || hookError !== null : true;
+  const machines = kitHookMachines(devices ?? []);
 
   return (
     <>
-      {selectedDevice ? (
-        // A device's agents run under that machine's own hook files and CLIs
-        // (PRD S5.5 B37); nothing here reads or writes them.
-        <Row
-          label={
-            <Note tone="warn" data-agents-device-note={selectedDevice.id}>
-              {selectedDevice.label} is selected, but everything on this page belongs to {daemonHost ?? "the daemon's machine"}. Hooks and Background AI for agents on {selectedDevice.label} are set up on that machine, by running Hide there and pressing Install hook in its own Settings. Hide does not copy hooks or AI settings over SSH or install anything on {selectedDevice.label} for them.
-            </Note>
-          }
-        />
-      ) : null}
       <Group title="Agent CLIs" note="Asked on the daemon's machine while this tab is open: installed, signed in, or why not.">
         {(ai?.providers ?? []).length === 0 ? <Row label={<Note>Not read yet.</Note>} /> : null}
         {(ai?.providers ?? []).map((provider) => {
@@ -529,65 +516,56 @@ function AgentsTab({ actions }: { actions: Actions }) {
         ) : null}
       </Group>
       <Group
-        title="Subagent visibility"
-        note="A hook reports what each agent spawns inside its own process. Hide installs it only when you press Install, into the file shown on the daemon's machine."
+        title="Agent hooks"
+        note="Hide installs its hook on every machine it runs agents on, This Mac and each device, and never touches another tool's entries. A hook you removed stays removed until you press Reinstall."
+        data-agent-hooks="true"
       >
-        {(hooks?.runtimes ?? []).length === 0 ? <Row label={<Note>Hook state has not been read yet.</Note>} /> : null}
-        {(hooks?.runtimes ?? []).map((runtime) => {
-          const pending = pressed?.id === runtime.id && !installSettled;
-          return (
+        {machines.map(({ device, parts, unavailable }) => (
+          <div key={device.id} data-hook-machine={device.id}>
             <Row
-              key={runtime.id}
-              label={
-                <span className="flex min-w-0 flex-col">
-                  <span className="font-semibold">{runtime.label}</span>
-                  <span className="break-all font-mono text-caption text-muted-foreground">{runtime.path}</span>
-                </span>
-              }
-              detail={pressed?.id === runtime.id && hookError ? <Note tone="error" data-hook-error={runtime.id}>Nothing was written: {hookError}</Note> : null}
-            >
-              <Status tone={runtime.installed ? "ok" : "warn"} data-hook-state={runtime.id}>
-                {pending ? "Installing…" : runtime.headline}
-              </Status>
-              {runtime.offers_install ? (
-                <Button variant="secondary" disabled={pending} onClick={() => setInstalling(runtime)} data-install-hook={runtime.id}>
-                  {runtime.installed ? "Update hook" : "Install hook"}
-                </Button>
-              ) : null}
-            </Row>
-          );
-        })}
+              label={<span className="font-semibold">{device.id === "local" ? "This Mac" : device.label}</span>}
+              detail={unavailable ? <Note data-hook-unavailable={device.id}>{unavailable}</Note> : parts.length === 0 ? <Note>Not checked yet.</Note> : null}
+            />
+            {parts.map((part) => {
+              const line = kitPartLine(part);
+              return (
+                <Row
+                  key={part.id}
+                  label={
+                    <span className="flex min-w-0 flex-col pl-md">
+                      <span>{part.label}</span>
+                      {part.location ? <span className="break-all font-mono text-caption text-muted-foreground">{part.location}</span> : null}
+                    </span>
+                  }
+                  detail={part.reason && part.state !== "installed" ? <Note tone={line.tone === "error" ? "error" : "muted"}>{part.reason}</Note> : null}
+                >
+                  <Status tone={line.tone} data-hook-state={`${device.id}:${part.id}:${part.state}`}>
+                    {line.text}
+                  </Status>
+                  {kitPartNeedsReinstall(part) ? (
+                    <Button
+                      variant="secondary"
+                      disabled={device.kit?.busy === true}
+                      onClick={() => {
+                        setPressedAt(Date.now());
+                        actions.reinstallKit(device.id, [part.id]);
+                      }}
+                      data-hook-reinstall={`${device.id}:${part.id}`}
+                    >
+                      {device.kit?.busy ? "Reinstalling…" : "Reinstall"}
+                    </Button>
+                  ) : null}
+                </Row>
+              );
+            })}
+          </div>
+        ))}
+        {kitError ? <Row label={<Note tone="error" data-hook-error="true">{kitError}</Note>} /> : null}
         {hooks?.last_report_failure ? <Row label={<Note tone="error">{hooks.last_report_failure}</Note>} /> : null}
         {(hooks?.sessions_predating_install ?? []).map((pane) => (
           <Row key={pane.pane_id} label={<Note tone="warn">{`${pane.label} (${pane.pane_id}): ${pane.message}`}</Note>} />
         ))}
       </Group>
-      {installing ? (
-        <AlertDialog open onOpenChange={(next) => { if (!next) setInstalling(null); }}>
-          <AlertDialogContent data-hook-confirm={installing.id}>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Install the Hide hook for {installing.label}?</AlertDialogTitle>
-              <AlertDialogDescription className="break-all font-mono text-caption text-muted-foreground">{installing.path}</AlertDialogDescription>
-            </AlertDialogHeader>
-            <p className="text-body text-subtle-foreground">
-              Hide adds its own entries, marked hide-subagents, to this file on the daemon's machine. Every other entry and setting in it is kept as it is, and no other machine's file is written.
-            </p>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                variant="default"
-                data-hook-install-confirm="true"
-                onClick={() => {
-                  setPressed({ id: installing.id, at: Date.now(), headline: installing.headline });
-                  actions.installHook(installing.id);
-                }}
-              >
-                Install into {installing.label}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-      ) : null}
     </>
   );
 }

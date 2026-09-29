@@ -42,6 +42,7 @@ pub fn local_device() -> DeviceSnapshot {
             )),
             ..Default::default()
         },
+        kit: crate::model::KitSnapshot::default(),
     }
 }
 
@@ -67,6 +68,7 @@ pub fn devices(registrations: &[DeviceRegistration]) -> Vec<DeviceSnapshot> {
                 agent_count: 0,
                 test: None,
                 host: crate::model::DeviceHostSnapshot::default(),
+                kit: crate::model::KitSnapshot::default(),
             });
         }
     }

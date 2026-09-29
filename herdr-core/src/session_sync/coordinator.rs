@@ -61,12 +61,12 @@ fn run_coordinator(
     };
     // The hook-install state is two small file reads of this machine's own
     // configuration, so the local coordinator takes it once before the first
-    // connect. It is not a poll: it changes only when the operator installs,
-    // reinstalls or removes, and each of those republishes it (PRD B36).
+    // connect. It is not a poll: it changes only when the kit installs or the
+    // operator removes, and the kit worker republishes it after each install
+    // (PRD B36). The install itself is the kit's (`crate::kit`).
     if context.is_local()
         && let Some(home) = home_path.as_deref()
     {
-        install_agent_hooks_on_first_run(home);
         publish_hook_diagnosis(&context, hide_agent_hooks::Diagnosis::read(home));
     }
     // Kept for the counter sweep below, which runs on a fresh snapshot.
@@ -297,38 +297,7 @@ fn run_coordinator(
                 }
             }
 
-            // An install the operator approved. The file write happens here,
-            // outside every lock, and the diagnosis is read back afterwards so
-            // the screen shows what the file now says rather than what was asked
-            // for (PRD B28, D-31).
             if let Some(home) = hook_home.as_deref() {
-                let Some(requested) = take_agent_hook_installs(&context) else {
-                    stop_subscription(&mut subscription);
-                    return;
-                };
-                if !requested.is_empty() {
-                    // An install the operator pressed for reports back to the
-                    // operator. The diagnosis that follows reads the file, so a
-                    // refusal that never reached the file would otherwise leave
-                    // the screen unchanged and the press unanswered (PRD B28,
-                    // engineering rule 4).
-                    let mut refusal = None;
-                    for runtime in requested {
-                        refusal = install_agent_hook(home, runtime).or(refusal);
-                    }
-                    publish_hook_diagnosis(&context, hide_agent_hooks::Diagnosis::read(home));
-                    if let Some(refusal) = refusal
-                        && let Some(core) = context.runtime.upgrade()
-                        && let Ok(mut locked) = core.lock()
-                    {
-                        locked.set_error("agent_hooks.install_refused", refusal.message(), false);
-                        drop(locked);
-                        // The refusal is the answer to the operator's press;
-                        // without an announcement it waited for an unrelated
-                        // change to reach any screen.
-                        context.notifier.notify();
-                    }
-                }
                 // While the Settings agents tab is on screen the diagnosis is
                 // read back once a second, because the hook helper records a
                 // report it could not deliver from its own process and that
@@ -650,114 +619,6 @@ pub(crate) fn agent_tick_needs_publish(
 ) -> bool {
     replica.state.agents != agents
         || catalog_cache.is_none_or(|cache| cache.built_at.elapsed() >= CATALOG_REFRESH_INTERVAL)
-}
-
-/// Installs Hide's hooks the first time this machine runs Hide, and never
-/// again on its own.
-///
-/// Only a runtime that is here and carries no hook of Hide's is installed
-/// into. An outdated hook is left alone and asked about in the Settings
-/// diagnosis, and a runtime whose configuration could not be read is not
-/// written to on a guess (PRD B25, B28, D-31).
-fn install_agent_hooks_on_first_run(home: &std::path::Path) {
-    match hide_agent_hooks::claim_first_run(home) {
-        Ok(false) => return,
-        Ok(true) => {}
-        Err(error) => {
-            crate::diagnostic!(json!({
-                "component": "agent_hooks",
-                "kind": "first_run.unavailable",
-                "message": error.to_string(),
-            }));
-            return;
-        }
-    }
-    for runtime in first_run_hook_installs(&hide_agent_hooks::Diagnosis::read(home)) {
-        install_agent_hook(home, runtime);
-    }
-}
-
-fn first_run_hook_installs(
-    diagnosis: &hide_agent_hooks::Diagnosis,
-) -> Vec<hide_agent_hooks::AgentRuntime> {
-    diagnosis
-        .runtimes
-        .iter()
-        .filter(|row| {
-            row.memory_compatibility.supports_injection()
-                && matches!(row.status, hide_agent_hooks::HookStatus::NotInstalled)
-        })
-        .map(|row| row.runtime)
-        .collect()
-}
-
-/// Reads the approved installs out under a brief lock. `None` means the core
-/// is gone and the coordinator should stop.
-fn take_agent_hook_installs(
-    context: &SessionSyncContext,
-) -> Option<Vec<hide_agent_hooks::AgentRuntime>> {
-    let runtime = context.runtime.upgrade()?;
-    let requested = runtime.lock().ok()?.take_agent_hook_installs();
-    drop(runtime);
-    Some(requested)
-}
-
-/// Writes one runtime's hook, and records what happened either way.
-///
-/// The helper ships inside the bundle that is running, and
-/// [`hide_agent_hooks::helper_for`] refuses anything else: what goes into the
-/// hook is a path the operator's own configuration keeps and every future
-/// session of that agent runs, so a build directory is not an answer. The
-/// refusal is reported, never worked around.
-fn install_agent_hook(
-    home: &std::path::Path,
-    runtime: hide_agent_hooks::AgentRuntime,
-) -> Option<hide_agent_hooks::InstallFailure> {
-    let helper = match std::env::current_exe() {
-        Ok(executable) => hide_agent_hooks::helper_for(&executable),
-        Err(error) => {
-            crate::diagnostic!(json!({
-                "component": "agent_hooks",
-                "kind": "install.failed",
-                "runtime": runtime.id(),
-                "message": format!("Hide could not locate its own executable: {error}"),
-            }));
-            return None;
-        }
-    };
-    let helper = match helper {
-        Ok(helper) => helper,
-        Err(refusal) => {
-            crate::diagnostic!(json!({
-                "component": "agent_hooks",
-                "kind": "install.refused",
-                "runtime": runtime.id(),
-                "message": refusal.message(),
-            }));
-            return Some(refusal);
-        }
-    };
-    match hide_agent_hooks::install(runtime, home, &helper) {
-        Ok(outcome) => {
-            crate::diagnostic!(json!({
-                "component": "agent_hooks",
-                "kind": "install.completed",
-                "runtime": runtime.id(),
-                "changed": outcome.changed,
-                "preserved_entries": outcome.preserved_entries,
-            }));
-            None
-        }
-        Err(failure) => {
-            crate::diagnostic!(json!({
-                "component": "agent_hooks",
-                "kind": "install.failed",
-                "runtime": runtime.id(),
-                "message": failure.message(),
-            }));
-            Some(failure)
-        }
-    }
 }
 
 /// Drops the subagent counts of panes Herdr no longer lists.
@@ -1274,48 +1135,4 @@ fn stale_if_projected(
         return error;
     }
     SessionFetchError::Stale(error.message().to_owned())
-}
-
-#[cfg(test)]
-mod hook_install_tests {
-    use super::first_run_hook_installs;
-    use hide_agent_hooks::{
-        AgentRuntime, Diagnosis, HookStatus, MemoryCompatibility, RuntimeDiagnosis,
-    };
-
-    fn row(runtime: AgentRuntime, supported: bool) -> RuntimeDiagnosis {
-        RuntimeDiagnosis {
-            runtime,
-            label: runtime.label().to_owned(),
-            path: format!("/fixture/{}.json", runtime.id()),
-            status: HookStatus::NotInstalled,
-            current_version: hide_agent_hooks::HOOK_VERSION,
-            memory_compatibility: if supported {
-                MemoryCompatibility::Supported {
-                    version: "current".to_owned(),
-                }
-            } else {
-                MemoryCompatibility::UpdateRequired {
-                    installed_version: Some("old".to_owned()),
-                    minimum_version: "current".to_owned(),
-                }
-            },
-        }
-    }
-
-    #[test]
-    fn first_run_installs_only_memory_compatible_runtimes() {
-        let diagnosis = Diagnosis {
-            runtimes: vec![
-                row(AgentRuntime::ClaudeCode, false),
-                row(AgentRuntime::Codex, true),
-            ],
-            last_report_failure: None,
-        };
-
-        assert_eq!(
-            first_run_hook_installs(&diagnosis),
-            vec![AgentRuntime::Codex]
-        );
-    }
 }

@@ -511,6 +511,11 @@ impl Runtime {
         let tests = &self.remote_device_tests;
         let mut changed = false;
         for device in &mut self.snapshot.navigator.devices {
+            let kit = self.kit_states.get(&device.id).cloned().unwrap_or_default();
+            if device.kit != kit {
+                device.kit = kit;
+                changed = true;
+            }
             if device.kind != "remote" {
                 continue;
             }

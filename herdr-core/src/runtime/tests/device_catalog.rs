@@ -955,6 +955,7 @@ fn a_device_agent_opened_over_an_expanded_panel_uncovers_its_own_workspace() {
         agent_count: 0,
         test: None,
         host: Default::default(),
+        kit: Default::default(),
     });
     runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
         target_id: TARGET.to_owned(),

@@ -76,6 +76,7 @@ impl ChangeNotifier {
 pub struct Core {
     _terminal_maintenance: Option<crate::terminal_recovery::Maintenance>,
     _changes: Option<crate::changes::ChangesPump>,
+    _kit: Option<crate::kit::KitPump>,
     _session_sync: Option<crate::session_sync::SessionSyncHandle>,
     runtime: Arc<Mutex<Runtime>>,
     notifier: ChangeNotifier,
@@ -151,6 +152,7 @@ impl Core {
         }
         let mut options = options;
         let environment = environment::read_and_validate();
+        let environment_home = environment.home_path.clone();
         let usage_paths = crate::usage::UsagePaths {
             home: environment.home_path.clone(),
             claude_cwd: std::path::Path::new(&options.app_state_path)
@@ -218,9 +220,46 @@ impl Core {
                     None
                 }
             };
+        // This Mac's install kit runs whether or not Herdr answers; only the
+        // labels plugin needs it (PRD device-parity B1, B6).
+        let herdr_socket = options
+            .herdr_socket_path
+            .as_ref()
+            .map(std::path::PathBuf::from)
+            .or_else(|| {
+                environment_home
+                    .as_ref()
+                    .map(|home| home.join(".config/herdr/herdr.sock"))
+            })
+            .unwrap_or_default();
+        let kit = match crate::kit::local_target(
+            options.kit_dir.as_deref(),
+            environment_home,
+            herdr_socket,
+            std::sync::Arc::default(),
+        ) {
+            Ok(target) => {
+                lock_recover(&runtime).queue_local_kit_launch();
+                match crate::kit::KitPump::spawn(Arc::downgrade(&runtime), notifier.clone(), target)
+                {
+                    Ok(pump) => Some(pump),
+                    Err(error) => {
+                        lock_recover(&runtime).set_local_kit_unavailable(&format!(
+                            "Hide could not start its installer: {error}"
+                        ));
+                        None
+                    }
+                }
+            }
+            Err(reason) => {
+                lock_recover(&runtime).set_local_kit_unavailable(&reason);
+                None
+            }
+        };
         Some(Box::new(Core {
             _terminal_maintenance: maintenance,
             _changes: changes,
+            _kit: kit,
             _session_sync: session_sync,
             runtime,
             notifier,

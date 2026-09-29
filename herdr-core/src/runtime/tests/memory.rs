@@ -423,6 +423,17 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
         last_report_failure: None,
     };
     runtime.ingest_hook_diagnosis(diagnosis(hide_agent_hooks::HookStatus::NotInstalled));
+    runtime.ingest_kit_report(
+        "local",
+        &hide_kit::KitReport {
+            components: vec![hide_kit::ComponentReport {
+                id: hide_kit::ComponentId::CodexHook,
+                state: hide_kit::ComponentState::NotInstalled,
+                reason: None,
+                location: None,
+            }],
+        },
+    );
 
     runtime.apply_memory_action(crate::runtime::events::MemoryActionPayload {
         action: "enable".to_owned(),
@@ -433,7 +444,7 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
         conflict_choice: None,
     });
     assert!(!runtime.memory_enable_after_hook_update);
-    assert!(runtime.take_agent_hook_installs().is_empty());
+    assert_eq!(runtime.take_local_kit_job(std::time::Instant::now()), None);
 
     runtime.apply_memory_action(crate::runtime::events::MemoryActionPayload {
         action: "update_hooks".to_owned(),
@@ -445,8 +456,10 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
     });
     assert!(runtime.memory_enable_after_hook_update);
     assert_eq!(
-        runtime.take_agent_hook_installs(),
-        [hide_agent_hooks::AgentRuntime::Codex]
+        runtime.take_local_kit_job(std::time::Instant::now()),
+        Some(crate::runtime::LocalKitJob::Apply(
+            hide_kit::Scope::Reinstall(vec![hide_kit::ComponentId::CodexHook])
+        ))
     );
 
     runtime.ingest_hook_diagnosis(diagnosis(hide_agent_hooks::HookStatus::Installed {
@@ -500,12 +513,4 @@ fn one_unsupported_runtime_does_not_disable_another_supported_runtime() {
     });
 
     assert!(runtime.hooks_support_memory());
-    assert_eq!(
-        runtime.snapshot.status.agent_hooks.runtimes[0].headline,
-        "Update required"
-    );
-    assert_eq!(
-        runtime.snapshot.status.agent_hooks.runtimes[1].headline,
-        "Installed (v6)"
-    );
 }

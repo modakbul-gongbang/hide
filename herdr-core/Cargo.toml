@@ -10,6 +10,7 @@ name = "herdr_core"
 [dependencies]
 anyhow = "=1.0.104"
 hide-agent-hooks = { path = "../hide-agent-hooks" }
+hide-kit = { path = "../hide-kit" }
 hide-ai = { path = "../hide-ai" }
 hide-herdr-client = { path = "../hide-herdr-client" }
 hide-host = { path = "../hide-host" }

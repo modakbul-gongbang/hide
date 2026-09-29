@@ -3,7 +3,7 @@
 // Nothing here reads the store, so every rule is tested without a browser.
 
 import type { DaemonInfo } from "./store";
-import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, HerdrStatus, IssueSettings, RemoteStatus, Workspace } from "./snapshot";
+import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, HerdrStatus, IssueSettings, KitComponent, KitComponentId, RemoteStatus, Workspace } from "./snapshot";
 
 export type SettingsTab = "general" | "appearance" | "agents" | "issues" | "devices" | "mobile" | "performance" | "shortcuts";
 
@@ -254,6 +254,46 @@ export function helperConsentTerms(helperRoot: string | null, cliDir: string | n
     "It changes no hook, AI or shell settings there, and every move to the Trash or worktree removal still asks you for its target each time.",
     "A wider permission or a different SSH identity asks again; revoking stops new work and deletes no draft or remote file.",
   ];
+}
+
+/** A kit part's state as the machine rows word it (PRD device-parity B7). */
+export function kitPartLine(part: KitComponent): { text: string; tone: "ok" | "warn" | "error" | "muted" } {
+  switch (part.state) {
+    case "installed":
+      return { text: "Installed", tone: "ok" };
+    case "outdated":
+      return { text: "Outdated", tone: "warn" };
+    case "not_installed":
+      return { text: "Not installed", tone: "warn" };
+    case "removed":
+      return { text: "Removed", tone: "warn" };
+    case "failed":
+      return { text: "Failed", tone: "error" };
+    case "absent":
+      return { text: "Not on this machine", tone: "muted" };
+  }
+}
+
+/** Whether Reinstall would change this part: the same four states the core repairs (B8). */
+export function kitPartNeedsReinstall(part: KitComponent): boolean {
+  return part.state === "outdated" || part.state === "not_installed" || part.state === "removed" || part.state === "failed";
+}
+
+export const KIT_HOOK_PARTS: readonly KitComponentId[] = ["claude_code_hook", "codex_hook"];
+
+/**
+ * Every machine's hook parts for the Agents tab (B27): This Mac first, then
+ * each device in the Devices tab's order. A machine whose kit does not run
+ * carries its reason instead of rows; one not checked yet carries neither.
+ */
+export function kitHookMachines(devices: readonly Device[]): { device: Device; parts: KitComponent[]; unavailable: string | null }[] {
+  return devices
+    .filter((device) => device.kind === "remote" || device.id === "local")
+    .map((device) => ({
+      device,
+      parts: (device.kit?.components ?? []).filter((part) => KIT_HOOK_PARTS.includes(part.id)),
+      unavailable: device.kit?.unavailable ?? null,
+    }));
 }
 
 /** A device Herdr socket must be an absolute single-line path on that device, or left empty. */

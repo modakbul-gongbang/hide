@@ -31,8 +31,8 @@ pub use diagnosis::{
     runtime_compatibility,
 };
 pub use install::{
-    HookStatus, InstallFailure, InstallOutcome, RemoveOutcome, claim_first_run, helper_for,
-    install, installed_helper_path, remove,
+    HookStatus, InstallFailure, InstallOutcome, RemoveOutcome, install, installed_helper_path,
+    remove,
 };
 pub use runtime::{
     AgentRuntime, HELPER_BINARY_NAME, HOOK_SOURCE_NAME, HOOK_VERSION, HookEvent, PURPOSE_CONTEXT,
