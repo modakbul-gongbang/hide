@@ -95,7 +95,7 @@ test("Add a project picks a folder with the native picker, and a cancel or a ref
     await expect(dialog).toHaveCount(0);
 
     // The Overview's Add project opens the same dialog, and its × closes it.
-    await page.locator("[data-overview-destination]").click();
+    await page.locator("[data-home-destination]").click();
     await page.locator("[data-main-add-project]").click();
     await expect(dialog).toBeVisible();
     await captureWindow(app, page, "add-project-dialog");

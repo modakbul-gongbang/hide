@@ -197,7 +197,6 @@ export type ProjectTasks = {
 /** How starting work from an issue behaves (`IssueSettingsSnapshot`, Settings › Issues). */
 export type IssueSettings = {
   ai_worktree_name: boolean;
-  default_agent: "claude" | "codex" | "terminal";
   closes_instruction: boolean;
 };
 

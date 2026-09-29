@@ -39,6 +39,11 @@ describe("shortcut registry", () => {
     expect(displayCommand("new_workspace", "electron")).toBe("⇧⌘N");
   });
 
+  it("offers Start agent only in the desktop app, where ⌘N is not the browser's", () => {
+    expect(displayCommand("start_agent", "browser")).toBe("");
+    expect(displayCommand("start_agent", "electron")).toBe("⌘N");
+  });
+
   it("gives the desktop app the macOS chords", () => {
     // The macOS chord set as the operator reads it; Keyboard shortcuts has no
     // macOS chord and keeps the browser's.
@@ -49,6 +54,7 @@ describe("shortcut registry", () => {
       recent_panel: "⌃⇥",
       previous_recent_panel: "⌃⇧⇥",
       new_workspace: "⇧⌘N",
+      start_agent: "⌘N",
       recent_project: "⌥⇥",
       previous_recent_project: "⌥⇧⇥",
       search: "⌘K",

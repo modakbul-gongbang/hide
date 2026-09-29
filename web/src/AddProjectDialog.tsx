@@ -15,7 +15,7 @@ import { Button } from "./components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
 import { Kbd } from "./components/ui/kbd";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
+import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from "./components/ui/select";
 import { RegistrationStatus, useRegistration } from "./registration";
 import type { WorkspaceRegistration } from "./snapshot";
 import { useShellStore } from "./store";
@@ -36,6 +36,9 @@ const OTHER_WAYS: readonly OtherWay[] = [
   { id: "clone", label: "Clone from URL", detail: "A Git repository copied into a new folder", icon: LinkIcon },
   { id: "create", label: "Create new project", detail: "A new folder with its own Git repository", icon: FolderPlusIcon },
 ];
+
+/** The Host list's last entry; it opens Add device instead of choosing a host. */
+const ADD_DEVICE = "__add_device__";
 
 function AddProject({ actions }: { actions: Actions }) {
   const close = () => useUiStore.getState().closeOverlay("add_project");
@@ -109,6 +112,12 @@ function AddProject({ actions }: { actions: Actions }) {
                 <Select
                   value={host.id}
                   onValueChange={(next) => {
+                    // The list's last entry is Add device, the one form every entry point opens (PRD home-device-rail B13).
+                    if (next === ADD_DEVICE) {
+                      close();
+                      actions.openAddDevice();
+                      return;
+                    }
                     setChosen(next);
                     registration.reset();
                     hostChanged.current = true;
@@ -131,6 +140,10 @@ function AddProject({ actions }: { actions: Actions }) {
                         {row.label}
                       </SelectItem>
                     ))}
+                    <SelectSeparator />
+                    <SelectItem value={ADD_DEVICE} data-host-option-add-device="true">
+                      기기 추가…
+                    </SelectItem>
                   </SelectContent>
                 </Select>
               </div>

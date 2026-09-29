@@ -1,9 +1,10 @@
 import { areaFrame } from "./areaFrames";
-import { ChevronRightIcon, FolderIcon, GitBranchIcon } from "lucide-react";
+import { ChevronRightIcon, FolderIcon, GitBranchIcon, ServerIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { AgentMark } from "./AgentMark";
+import { DeviceChip } from "./components/device-chip";
 import { Command, CommandDialog, CommandGroup, CommandInput, CommandItem, CommandList } from "./components/ui/command";
 import { Kbd } from "./components/ui/kbd";
 import { changedFiles } from "./newTab";
@@ -78,10 +79,13 @@ function PaletteRow({
   detail,
   mono = false,
   unavailable = false,
+  chip,
 }: {
   icon?: ReactNode;
   title: string;
   detail?: string;
+  /** The device a result is on, while it is not the one in front. */
+  chip?: { label: string; local: boolean };
   /** Machine text such as a path. */
   mono?: boolean;
   unavailable?: boolean;
@@ -90,7 +94,10 @@ function PaletteRow({
     <>
       {icon}
       <span className="flex min-w-0 flex-1 flex-col">
-        <span className="truncate font-medium">{title}</span>
+        <span className="flex min-w-0 items-center gap-xs">
+          <span className="min-w-0 truncate font-medium">{title}</span>
+          {chip ? <DeviceChip label={chip.label} local={chip.local} className="max-w-2/5" /> : null}
+        </span>
         {detail ? (
           <span data-palette-detail="true" className={`text-caption text-muted-foreground ${unavailable ? "" : "truncate"} ${mono ? "font-mono" : ""}`}>
             {detail}
@@ -214,12 +221,19 @@ function SearchPalette({ actions }: { actions: Actions }) {
       else if ("tool" in entry.command) actions.setTool(entry.command.tool, entry.command.visible);
       else if ("agent" in entry.command) actions.runAgentCommand(entry.command.agent);
       else if ("view" in entry.command) actions.runViewCommand(entry.command.view);
+      else if ("startAgent" in entry.command) actions.openStartPanel();
       else actions.openFilePaletteBeside();
+    } else if (entry.kind === "device" && entry.deviceId) {
+      actions.focusDevice(entry.deviceId);
     } else if (entry.kind === "agent" && entry.paneId) {
       actions.openAgent(entry.paneId);
     } else if (entry.kind === "project" && entry.workspaceId) {
+      // The rail and sidebar follow the project's device; the Overview shows at once.
+      if (entry.deviceId) actions.focusDevice(entry.deviceId);
       useUiStore.getState().setScreen(overviewScreen(useShellStore.getState().rest, entry.workspaceId));
     } else if (entry.workspaceId && entry.checkoutId) {
+      // A checkout on another device comes forward with its device, as one event, and the screen follows once it is in front.
+      if (entry.chip && entry.deviceId) return actions.openWorkspace(entry.deviceId, entry.workspaceId, entry.checkoutId);
       useUiStore.getState().setScreen({ kind: "workspace" });
       actions.focusCheckout(entry.workspaceId, entry.checkoutId);
     }
@@ -245,6 +259,7 @@ function SearchPalette({ actions }: { actions: Actions }) {
                     detail={entry.kind === "command" ? (entry.unavailable ?? undefined) : entry.subtitle}
                     mono={entry.kind === "project" || entry.kind === "checkout"}
                     unavailable={Boolean(entry.unavailable)}
+                    chip={entry.chip}
                   />
                 </button>
               </CommandItem>
@@ -259,7 +274,7 @@ function SearchPalette({ actions }: { actions: Actions }) {
 /** An agent's own mark (the sidebar's), else a line icon for the entry's kind, in the mark's width so titles align. */
 function EntryIcon({ entry }: { entry: SearchEntry }) {
   if (entry.kind === "agent") return <AgentMark kind={entry.agentKind} />;
-  const Icon = entry.kind === "project" ? FolderIcon : entry.kind === "checkout" ? GitBranchIcon : ChevronRightIcon;
+  const Icon = entry.kind === "project" ? FolderIcon : entry.kind === "checkout" ? GitBranchIcon : entry.kind === "device" ? ServerIcon : ChevronRightIcon;
   return (
     <span className="flex w-(--size-agent-badge-compact) shrink-0 justify-center" aria-hidden="true">
       <Icon />

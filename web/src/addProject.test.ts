@@ -52,6 +52,8 @@ describe("Add a project", () => {
     expect(defaultProjectParent([])).toBe("~");
     expect(defaultProjectParent([registration("/home/me/work/a"), registration("/home/me/side/b/"), registration("/home/me/x", "mini")])).toBe("/home/me/side");
     expect(defaultProjectParent([registration("/home/me/a", "mini")])).toBe("~");
+    // The device's Home is no project: a project added after it is not expected beside `~/hide`.
+    expect(defaultProjectParent([registration("/home/me/work/a"), { ...registration("/home/me/hide"), home: true }])).toBe("/home/me/work");
   });
 
   it("takes one folder name, and says why another is not one", () => {

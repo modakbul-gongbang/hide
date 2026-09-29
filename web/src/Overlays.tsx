@@ -10,6 +10,7 @@ import { useShellStore } from "./store";
 import { focusTerminal } from "./terminals";
 import { useUiStore } from "./ui";
 import { markTone } from "./agentRow";
+import { DeviceChip } from "./components/device-chip";
 import { StatusMark } from "./components/status-mark";
 import { Kbd } from "./components/ui/kbd";
 import { hostKind } from "./host";
@@ -49,13 +50,16 @@ export function CycleOverlay() {
               data-cycle-row={item.target.kind === "surface" ? item.target.surface.id : item.key}
               data-cycle-kind={item.kind}
               aria-selected={selected}
-              aria-label={[item.title, item.agent && `${item.agent.agent_kind} agent`, item.agent?.status_label, item.detail].filter(Boolean).join(", ")}
+              aria-label={[item.title, item.agent && `${item.agent.agent_kind} agent`, item.agent?.status_label, item.detail, item.chip?.label].filter(Boolean).join(", ")}
               className={`flex items-center gap-sm px-md py-xxs ${selected ? "bg-secondary text-foreground" : "text-subtle-foreground"}`}
             >
               <CycleMarks item={item} />
               <span className="flex min-w-0 flex-1 flex-col">
                 <span className="truncate text-body">{item.title}</span>
-                <span className="truncate text-caption text-muted-foreground">{item.detail}</span>
+                <span className="flex min-w-0 items-center gap-xs text-caption text-muted-foreground">
+                  <span className="min-w-0 truncate">{item.detail}</span>
+                  {item.chip ? <DeviceChip label={item.chip.label} local={item.chip.local} className="max-w-2/5" /> : null}
+                </span>
               </span>
             </div>
           );

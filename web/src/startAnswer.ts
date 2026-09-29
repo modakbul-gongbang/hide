@@ -1,0 +1,30 @@
+// The answer to one start request (PRD home-device-rail D-17, D-26): the core
+// has one task slot and one last-error slot for every surface, so a start
+// surface reads only the receipt that carries the id it sent. Another
+// surface's start, or an older one of its own, is never its answer.
+
+import type { SnapshotRest } from "./snapshot";
+
+export type StartAnswer =
+  | { phase: "pending" }
+  /** The core refused the request before any work: the reason is the operator's to act on. */
+  | { phase: "refused"; message: string }
+  | { phase: "failed"; message: string }
+  /** The tab exists; `agentPhase` says whether the agent behind it started (`starting`, `started`, `failed`). */
+  | { phase: "ready"; taskId: number; paneId: string | null; agentPhase: string | null; agentMessage: string | null };
+
+/** 1-64 characters of `[A-Za-z0-9_-]`, the core's request id format. */
+export function startRequestId(): string {
+  const random = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+  return `start-${random}`;
+}
+
+export function startAnswer(rest: SnapshotRest | null, requestId: string): StartAnswer {
+  const error = rest?.status?.last_error;
+  if (error?.request_id === requestId) return { phase: "refused", message: error.message };
+  const operation = rest?.task_operation;
+  if (operation?.request_id !== requestId || operation.kind !== "agent_start") return { phase: "pending" };
+  if (operation.phase === "failed") return { phase: "failed", message: operation.message ?? "에이전트를 시작하지 못했습니다." };
+  if (operation.phase !== "ready") return { phase: "pending" };
+  return { phase: "ready", taskId: operation.id, paneId: operation.pane_id, agentPhase: operation.agent_phase, agentMessage: operation.agent_message };
+}

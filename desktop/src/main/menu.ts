@@ -51,7 +51,7 @@ export function accelerator(chord: Chord): string {
  */
 export const MENU_LAYOUT: Readonly<Record<"app" | "File" | "Edit" | "View" | "Pane" | "Help", readonly (CommandId | null)[]>> = {
   app: ["settings"],
-  File: ["new_tab", "new_workspace", "reopen_closed_tab", null, "save_file", null, "close_pane", "close_tab"],
+  File: ["new_tab", "start_agent", "new_workspace", "reopen_closed_tab", null, "save_file", null, "close_pane", "close_tab"],
   Edit: ["find_in_pane"],
   View: [
     "search",

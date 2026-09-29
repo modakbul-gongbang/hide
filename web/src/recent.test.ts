@@ -187,7 +187,7 @@ describe("Recent Panels over the every-project Overview and each Project's Overv
     expect(rows(rest).slice(0, 2)).toEqual(["herdr Fix the build (hide · main · Terminal)", "overview notes (Overview)"]);
   });
 
-  it("keeps one row per Overview, moves a revisited one to the front, and has the every-project Overview as its own row, read as its sidebar row", () => {
+  it("keeps one row per Overview, moves a revisited one to the front, and has the device Home Overview as its own row, read as its sidebar row", () => {
     const rest = session("c-main", "t1");
     show(rest, { kind: "main" });
     show(rest, overview("w-notes"));
@@ -198,7 +198,7 @@ describe("Recent Panels over the every-project Overview and each Project's Overv
       "overview notes (Overview)",
       "overview hide (Overview)",
       "herdr Fix the build (hide · main · Terminal)",
-      "main Overview (2 projects)",
+      "main Home (2 projects)",
       "herdr t2 label (hide · main · Terminal)",
       "herdr t3 label (hide · Terminal)",
       "herdr t4 label (notes · Terminal)",
@@ -260,13 +260,13 @@ describe("Recent Projects", () => {
     observeProject("w-hide");
     expect(recentProjectOrder(["w-notes", "w-hide", "w-new"])).toEqual(["w-hide", "w-notes", "w-new"]);
     expect(lastSurfaceOf("w-notes")?.id).toBe("d1");
-    const row = projectItem(main.navigator!.workspaces![1]!, main, true);
+    const row = projectItem(main.navigator!.workspaces![1]!, main);
     expect(row).toMatchObject({ title: "notes", detail: "plan.md · notes", target: { kind: "surface", surface: { id: "d1", kind: "browser" } } });
   });
 
   it("comes forward on its checkout when no surface of it was used", () => {
     const rest = session("c-main", "t1");
-    const row = projectItem(rest.navigator!.workspaces![1]!, rest, false);
+    const row = projectItem(rest.navigator!.workspaces![1]!, rest);
     expect(row).toMatchObject({ target: { kind: "checkout", checkoutId: "c-notes" }, detail: "notes" });
   });
 });

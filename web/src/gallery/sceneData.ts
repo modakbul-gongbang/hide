@@ -11,6 +11,20 @@ import type { AgentRow, Checkout, MarkCounts, PullRequest, SnapshotRest, Workspa
 /** Which titles the scene carries: the Pen frame's, or long Korean ones for truncation. */
 export type SceneContent = "reference" | "long";
 
+/**
+ * How many devices the scene registers: This Mac alone (no rail, the Home row
+ * above the tabs, the footer's laptop button), or This Mac, a connected `mini`
+ * and a disconnected one with a long Korean name (the rail, PRD
+ * home-device-rail).
+ */
+export type SceneDevices = "one" | "two";
+
+/** The device the scene opens in front: a rail tile's id, or the Inbox. */
+export type SceneFront = "local" | "mini" | "offline" | "inbox";
+
+/** The registered-but-unreachable device of the two-device scene. */
+export const OFFLINE_DEVICE = "build-box";
+
 /** The fold choices the core would keep in its ui state. */
 export type SceneFolds = {
   expandedCheckouts: string[];
@@ -19,6 +33,8 @@ export type SceneFolds = {
   expandedAgents: string[];
   inactiveCheckoutsOpen: string[];
   inactiveProjectsOpen: boolean;
+  /** The device the core has in front (`focus_device`); a rail tile changes it. */
+  frontDevice: string;
 };
 
 /** The folds `Screen / Projects Sidebar` draws: main's agents open, a1 unfolded, sasu folded. */
@@ -28,6 +44,7 @@ export const REFERENCE_FOLDS: SceneFolds = {
   expandedAgents: ["a1"],
   inactiveCheckoutsOpen: [],
   inactiveProjectsOpen: false,
+  frontDevice: "local",
 };
 
 const ROOT = "/work";
@@ -169,7 +186,7 @@ function workspace(id: string, extra: Partial<Workspace> & Pick<Workspace, "chec
 const INACTIVE = ["feat/ui", ...Array.from({ length: 13 }, (_, index) => `chore/cleanup-${index + 1}`)];
 
 /** The scene's snapshot and agents for one content set and one set of folds. */
-export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: number): { rest: SnapshotRest; agents: AgentRow[] } {
+export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: number, devices: SceneDevices = "one"): { rest: SnapshotRest; agents: AgentRow[] } {
   const now = Math.floor(nowMs / 1000);
   const title = TITLES[content];
   const unfolded = (id: string) => folds.expandedAgents.includes(id);
@@ -245,6 +262,8 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
     agent({ pane_id: "e1", identity_label: "단축키 연결", group: "working", symbol: "●", status_label: "Working", activity: "working", elapsed: "2h" }),
   ];
 
+  if (devices === "two") agents.push(...HOME_AGENTS[content]);
+
   const herdrCheckouts: Checkout[] = [
     checkout({ id: "herdr-ide:main", workspace: "herdr-ide", branch: "main", primary: true, age: 10, purpose: "사이드바 가독성 개선", panes: ["a1", "a1c2", "a2", "a2c1", "a2c2", "a3"], marks: { question: 2, working: 3, idle: 1 } }, now),
     checkout({ id: "herdr-ide:155", workspace: "herdr-ide", branch: "quick/155-browser-display", age: 40 * 60, purpose: issueTitle(155, "browser display (WebContentsView)"), panes: ["q1"], marks: { question: 1 } }, now),
@@ -274,23 +293,110 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
     ),
   ];
 
+  const world = devices === "two" ? deviceWorld(content, workspaces, now, folds) : null;
   const rest: SnapshotRest = {
     navigator: {
-      workspaces,
+      workspaces: world ? [...workspaces, world.home] : workspaces,
       inactive_projects: [{ device_id: "local", expanded: folds.inactiveProjectsOpen, project_ids: ["old-prototype", "dotfiles", "research-notes"] }],
       agents,
-      devices: [{ id: "local", label: "This Mac", kind: "local", state: "local", message: null, ssh_alias: null, agent_count: agents.length, test: null }],
-      focused_device_id: "local",
+      devices: [{ id: "local", label: "This Mac", kind: "local", state: "local", message: null, ssh_alias: null, agent_count: agents.length, test: null }, ...(world?.devices ?? [])],
+      focused_device_id: folds.frontDevice,
       focused_checkout_id: null,
     },
     ui_state: {
       left_sidebar_visible: true,
       collapsed_workspace_ids: folds.collapsedWorkspaces,
       expanded_checkout_ids: folds.expandedCheckouts,
-      workspace_registrations: [],
+      workspace_registrations: world?.registrations ?? workspaces.map((row) => registrationOf(row, "local")),
     },
+    ...(world ? { status: { remote: world.remote } } : {}),
   };
   return { rest, agents };
+}
+
+const HOME_AGENTS: Record<SceneContent, AgentRow[]> = {
+  reference: [
+    agent({ pane_id: "h1", identity_label: "블로그 초안 정리", group: "needs_you", symbol: "?", status_label: "Question", demand: "question", elapsed: "2m", unread: true, detail: "톤을 이대로 갈까요?" }),
+    agent({ pane_id: "h2", identity_label: "두 프로젝트 비교 조사", agent_kind: "codex", group: "seen", symbol: "○", status_label: "Idle", elapsed: "14m" }),
+  ],
+  long: [
+    agent({ pane_id: "h1", identity_label: "여러 프로젝트에 걸친 블로그 초안 정리와 어투 통일 작업을 이어서 진행하는 에이전트", group: "needs_you", symbol: "?", status_label: "Question", demand: "question", elapsed: "2m", unread: true, detail: "톤을 이대로 갈까요, 아니면 조금 더 딱딱하게 다듬을까요?" }),
+    agent({ pane_id: "h2", identity_label: "두 프로젝트의 구조와 의존성을 나란히 비교 조사하는 작업", agent_kind: "codex", group: "seen", symbol: "○", status_label: "Idle", elapsed: "14m" }),
+  ],
+};
+
+const REMOTE_AGENTS: Record<SceneContent, AgentRow[]> = {
+  reference: [
+    agent({ pane_id: "remote:mini:pane:1", identity_label: "배치 감시", agent_kind: "codex", group: "needs_you", symbol: "?", status_label: "Question", demand: "question", elapsed: "5m", unread: true, detail: "풀 리퀘스트 머지할까요?" }),
+    agent({ pane_id: "remote:mini:pane:2", identity_label: "릴리스 빌드 확인", agent_kind: "codex", group: "working", symbol: "●", status_label: "Working", activity: "working", elapsed: "1m" }),
+  ],
+  long: [
+    agent({ pane_id: "remote:mini:pane:1", identity_label: "밤새 도는 배치 작업의 실패 원인과 재시도 여부를 감시하는 에이전트", agent_kind: "codex", group: "needs_you", symbol: "?", status_label: "Question", demand: "question", elapsed: "5m", unread: true, detail: "풀 리퀘스트 머지할까요?" }),
+    agent({ pane_id: "remote:mini:pane:2", identity_label: "릴리스 빌드 확인", agent_kind: "codex", group: "working", symbol: "●", status_label: "Working", activity: "working", elapsed: "1m" }),
+  ],
+};
+
+/** The registration the core keeps for a project on `deviceId`; `home` marks the device's Home. */
+function registrationOf(workspace: Workspace, deviceId: string, extra: { home?: boolean } = {}) {
+  return { id: workspace.id, label: workspace.label, path: workspace.path, device_id: deviceId, pinned: workspace.pinned, ...extra };
+}
+
+/**
+ * The devices of the two-device scene: a Home on this Mac (its agents are the
+ * Home row's children), a connected `mini` with its own project, Home and
+ * agents, and a registered device that is not connected, named at length to
+ * try the rail's and the header's truncation.
+ */
+function deviceWorld(content: SceneContent, workspaces: Workspace[], now: number, folds: SceneFolds) {
+  const offlineLabel = content === "long" ? "연구실 빌드 서버 자동화 장비 (긴 이름 확인용)" : "build-box";
+  const home = workspace(
+    "home",
+    { label: "hide", path: `${ROOT}/hide`, is_home: true, is_git: false, checkouts: [checkout({ id: "home:folder", workspace: "home", branch: null, folder: true, panes: ["h1", "h2"], marks: { question: 1, idle: 1 } }, now)] },
+    folds,
+  );
+  const remoteWorkspace = (id: string, label: string, extra: Partial<Workspace>, panes: string[]): Workspace => ({
+    ...workspace(id, { checkouts: [], ...extra }, folds),
+    label,
+    path: `/srv/${label}`,
+    device_id: "mini",
+    checkouts: [{ ...checkout({ id: `${id}:main`, workspace: id, branch: "main", primary: true, age: 300, panes }, now), workspace_id: id }],
+  });
+  const miniWorkspaces = [
+    remoteWorkspace("remote:mini:workspace:web", "web", {}, ["remote:mini:pane:1", "remote:mini:pane:2"]),
+    { ...remoteWorkspace("remote:mini:workspace:home", "hide", { is_home: true, is_git: false }, []), path: "/Users/mini/hide" },
+  ];
+  return {
+    home,
+    devices: [
+      { id: "mini", label: "mini", kind: "remote", state: "ready", message: null, ssh_alias: "mini", agent_count: 2, test: null },
+      { id: OFFLINE_DEVICE, label: offlineLabel, kind: "remote", state: "unavailable", message: null, ssh_alias: OFFLINE_DEVICE, agent_count: 0, test: null },
+    ],
+    registrations: [
+      ...workspaces.map((row) => registrationOf(row, "local")),
+      registrationOf(home, "local", { home: true }),
+      registrationOf(miniWorkspaces[0]!, "mini"),
+      registrationOf(miniWorkspaces[1]!, "mini", { home: true }),
+    ],
+    remote: [
+      {
+        target_id: "mini",
+        state: "connected",
+        message: null,
+        herdr_version: "0.9.1",
+        session: {
+          workspaces: miniWorkspaces,
+          agents: REMOTE_AGENTS[content],
+          active_tab_ids: {},
+          focused_workspace_id: "remote:mini:workspace:web",
+          focused_checkout_id: "remote:mini:workspace:web:main",
+          focused_tab_id: "remote:mini:workspace:web:main:t1",
+          focused_pane_id: null,
+          pane_layouts: [],
+        },
+      },
+      { target_id: OFFLINE_DEVICE, state: "not_connected", message: null, herdr_version: null, session: null },
+    ],
+  };
 }
 
 /** A purpose that names its issue the way an agent's title does, `#<number> <title>`. */
@@ -318,5 +424,6 @@ export function applyEvent(folds: SceneFolds, event: { kind: string; payload: Re
   if (kind === "agent_tree_toggle") return { ...folds, expandedAgents: toggled(folds.expandedAgents, String(payload.pane_id)) };
   if (kind === "inactive_checkouts_toggle") return { ...folds, inactiveCheckoutsOpen: toggled(folds.inactiveCheckoutsOpen, String(payload.project_path)) };
   if (kind === "inactive_projects_toggle") return { ...folds, inactiveProjectsOpen: !folds.inactiveProjectsOpen };
+  if (kind === "focus_device") return { ...folds, frontDevice: String(payload.device_id) };
   return null;
 }

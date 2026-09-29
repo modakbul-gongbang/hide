@@ -6,12 +6,13 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
+import { rememberedSelection, sendableModel, type AgentSelection } from "./agentPicker";
 import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./components/ui/alert-dialog";
+import { AgentPicker } from "./components/agent-picker";
 import { Button } from "./components/ui/button";
 import { Checkbox } from "./components/ui/checkbox";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
-import { RadioGroup, RadioGroupItem } from "./components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Note, Status } from "./components/settings-rows";
 import { NewIssueDialog, StartIssueDialog } from "./IssueDialogs";
@@ -208,17 +209,12 @@ function DialogIntro({ title, detail }: { title: string; detail?: string }) {
   );
 }
 
-const AGENTS = [
-  { id: "terminal", label: "Terminal only" },
-  { id: "claude", label: "Claude" },
-  { id: "codex", label: "Codex" },
-] as const;
-
 function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; workspace: Workspace; onClose: () => void }) {
   const branches = workspace.branches ?? [];
   const [branch, setBranch] = useState("");
   const [base, setBase] = useState(workspace.default_branch && branches.includes(workspace.default_branch) ? workspace.default_branch : (branches[0] ?? ""));
-  const [agent, setAgent] = useState<(typeof AGENTS)[number]["id"]>("terminal");
+  // The remembered kind and model, not a terminal (PRD home-device-rail B36); Terminal only is the menu's first item.
+  const [agent, setAgent] = useState<AgentSelection>(() => rememberedSelection(useShellStore.getState().rest?.ui_state?.agent_start));
   const [purpose, setPurpose] = useState("");
   const [request, setRequest] = useState<{ afterId: number; branch: string; at: number } | null>(null);
   const operation = useShellStore((s) => s.rest?.task_operation);
@@ -245,7 +241,8 @@ function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; 
       repositoryRoot: workspace.path,
       branch: name,
       baseBranch: base || null,
-      agentKind: agent === "terminal" ? null : agent,
+      agentKind: agent.kind === "terminal" ? null : agent.kind,
+      model: sendableModel(agent, useShellStore.getState().rest?.status?.background_ai),
       purpose: purpose.trim() ? normalizePurpose(purpose.trim()) : null,
     });
   };
@@ -282,17 +279,10 @@ function NewWorktreeDialog({ actions, workspace, onClose }: { actions: Actions; 
                 </SelectContent>
               </Select>
             </label>
-            <fieldset className="text-body text-subtle-foreground" disabled={working}>
-              <legend>Start in the new pane</legend>
-              <RadioGroup className="mt-xxs grid-flow-col justify-start gap-md" value={agent} onValueChange={(value) => setAgent(value as (typeof AGENTS)[number]["id"])}>
-                {AGENTS.map((row) => (
-                  <label key={row.id} className="inline-flex items-center gap-xs text-foreground">
-                    <RadioGroupItem value={row.id} data-worktree-agent={row.id} />
-                    {row.label}
-                  </label>
-                ))}
-              </RadioGroup>
-            </fieldset>
+            <div className="text-body text-subtle-foreground">
+              Start in the new pane
+              <AgentPicker actions={actions} value={agent} onChange={setAgent} withTerminal disabled={working} className="mt-xxs" />
+            </div>
             <label className="block text-body text-subtle-foreground">
               Purpose (optional)
               <Input value={purpose} disabled={working} maxLength={PURPOSE_HARD_LIMIT * 2} className="mt-xxs" onChange={(event) => setPurpose(normalizePurpose(event.target.value))} data-worktree-purpose="true" />

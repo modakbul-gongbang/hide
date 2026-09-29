@@ -88,7 +88,7 @@ export function RemotePaneCanvas({
   const transports = new Map(transportRows.map((row) => [row.pane_id, row]));
   const frames = layout.zoomed ? [{ pane_id: layout.focused_pane_id, x: 0, y: 0, width: 1, height: 1 }] : layout.frames;
   return (
-    <div className="relative min-h-0 min-w-0 flex-1" data-canvas={tab.id ?? ""} data-remote-canvas="true" data-zoomed={layout.zoomed ? "true" : "false"}>
+    <div className="relative min-h-0 min-w-0 flex-1 border border-device-remote" data-canvas={tab.id ?? ""} data-remote-canvas="true" data-zoomed={layout.zoomed ? "true" : "false"}>
       {frames.map((frame) => {
         const pane = panes.get(frame.pane_id);
         return (

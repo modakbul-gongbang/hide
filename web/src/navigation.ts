@@ -8,6 +8,7 @@
 import { sectionCount, sectionTree, directChildren, type TreeRow } from "./agentRow";
 import type { BoardProject } from "./projectBoard";
 import { folderCheckout } from "./projects";
+import { projectsOf } from "./remote";
 import { entryLane } from "./overviewLens";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, type AgentRow, type Device, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
 import { entryLens, useUiStore, type Screen } from "./ui";
@@ -163,7 +164,7 @@ function checkoutPlaces(workspaces: Workspace[]): Map<string, string> {
   for (const workspace of workspaces) {
     const folder = folderCheckout(workspace) !== null;
     for (const checkout of workspace.checkouts) {
-      const place = folder ? workspace.label : `${workspace.label} › ${checkout.branch ?? checkout.label}`;
+      const place = workspace.is_home ? "Home" : folder ? workspace.label : `${workspace.label} › ${checkout.branch ?? checkout.label}`;
       for (const tab of checkout.tabs) for (const pane of tab.panes) if (!places.has(pane.id)) places.set(pane.id, place);
     }
   }
@@ -254,19 +255,21 @@ function byPinThenLabel(left: ProjectEntry, right: ProjectEntry): number {
 }
 
 /**
- * All projects: one section per device, this machine first. A device with a session
- * lists its projected Projects; one without lists its registrations with no
- * counts, marked loading or unavailable, so nothing is guessed (B3, B21).
+ * The Overview of a device's projects: one section per device, this machine
+ * first, or the one `deviceId` names. A device with a session lists its
+ * projected Projects; one without lists its registrations with no counts,
+ * marked loading or unavailable, so nothing is guessed (B3, B21). The
+ * device's Home is no project and is not listed.
  */
-export function mainSections(rest: SnapshotRest | null, localAgents: AgentRow[]): DeviceSection[] {
-  const devices = rest?.navigator?.devices ?? [];
-  const registrations = rest?.ui_state?.workspace_registrations ?? [];
+export function mainSections(rest: SnapshotRest | null, localAgents: AgentRow[], deviceId?: string): DeviceSection[] {
+  const devices = (rest?.navigator?.devices ?? []).filter((device) => deviceId === undefined || device.id === deviceId);
+  const registrations = (rest?.ui_state?.workspace_registrations ?? []).filter((row) => !row.home);
   const sections: DeviceSection[] = [];
   const local = devices.find((device) => device.kind !== "remote");
   if (local) {
     const availability = localAvailability(rest);
     // The checkouts are this machine's own facts; only the agents need Herdr.
-    const projects = (rest?.navigator?.workspaces ?? []).map((workspace) => entryOf(workspace, localAgents, availability.state === "ready", true));
+    const projects = projectsOf(rest?.navigator?.workspaces ?? []).map((workspace) => entryOf(workspace, localAgents, availability.state === "ready", true));
     sections.push({ device: local, local: true, availability, projects: [...projects].sort(byPinThenLabel) });
   }
   for (const device of devices.filter((row) => row.kind === "remote")) {
@@ -274,7 +277,7 @@ export function mainSections(rest: SnapshotRest | null, localAgents: AgentRow[])
     const availability = deviceAvailability(device, status);
     const session = status?.session ?? null;
     const projects = session
-      ? session.workspaces.map((workspace) => entryOf(workspace, session.agents, availability.state === "ready"))
+      ? projectsOf(session.workspaces).map((workspace) => entryOf(workspace, session.agents, availability.state === "ready"))
       : registrations.filter((row) => row.device_id === device.id).map(registrationEntry);
     sections.push({ device, local: false, availability, projects: [...projects].sort(byPinThenLabel) });
   }
@@ -282,18 +285,18 @@ export function mainSections(rest: SnapshotRest | null, localAgents: AgentRow[])
 }
 
 /**
- * How many Projects All projects lists, counted the way `mainSections` lists
+ * How many Projects an Overview lists, counted the way `mainSections` lists
  * them: this machine's catalog, and each device's session or, before it
- * answers, its registrations. A number, so the sidebar's All projects row
- * reads it without building the sections.
+ * answers, its registrations, Home excluded. A number, so a caller reads it
+ * without building the sections.
  */
-export function allProjectsCount(rest: SnapshotRest | null): number {
-  const devices = rest?.navigator?.devices ?? [];
-  const registrations = rest?.ui_state?.workspace_registrations ?? [];
-  let count = devices.some((device) => device.kind !== "remote") ? (rest?.navigator?.workspaces ?? []).length : 0;
+export function allProjectsCount(rest: SnapshotRest | null, deviceId?: string): number {
+  const devices = (rest?.navigator?.devices ?? []).filter((device) => deviceId === undefined || device.id === deviceId);
+  const registrations = (rest?.ui_state?.workspace_registrations ?? []).filter((row) => !row.home);
+  let count = devices.some((device) => device.kind !== "remote") ? projectsOf(rest?.navigator?.workspaces ?? []).length : 0;
   for (const device of devices.filter((row) => row.kind === "remote")) {
     const session = rest?.status?.remote?.find((row) => row.target_id === device.id)?.session ?? null;
-    count += session ? session.workspaces.length : registrations.filter((row) => row.device_id === device.id).length;
+    count += session ? projectsOf(session.workspaces).length : registrations.filter((row) => row.device_id === device.id).length;
   }
   return count;
 }
@@ -304,13 +307,17 @@ export function allProjectsCount(rest: SnapshotRest | null): number {
  * machine's catalog, then each device's session. A device with no session
  * has no catalog rows to draw, and its section says why on the Projects view.
  */
-export function boardProjects(rest: SnapshotRest | null, localAgents: AgentRow[]): BoardProject[] {
-  const projects: BoardProject[] = (rest?.navigator?.workspaces ?? []).map((workspace) => ({ workspace, agents: localAgents, device: null }));
+export function boardProjects(rest: SnapshotRest | null, localAgents: AgentRow[], deviceId?: string): BoardProject[] {
+  const localId = rest?.navigator?.devices?.find((row) => row.kind !== "remote")?.id ?? "local";
+  const projects: BoardProject[] =
+    deviceId === undefined || deviceId === localId
+      ? projectsOf(rest?.navigator?.workspaces ?? []).map((workspace) => ({ workspace, agents: localAgents, device: null }))
+      : [];
   for (const status of rest?.status?.remote ?? []) {
     const session = status.session;
-    if (!session) continue;
+    if (!session || (deviceId !== undefined && status.target_id !== deviceId)) continue;
     const device = rest?.navigator?.devices?.find((row) => row.id === status.target_id)?.label ?? status.target_id;
-    for (const workspace of session.workspaces) projects.push({ workspace, agents: session.agents, device });
+    for (const workspace of projectsOf(session.workspaces)) projects.push({ workspace, agents: session.agents, device });
   }
   return projects;
 }

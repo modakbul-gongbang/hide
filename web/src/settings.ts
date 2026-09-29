@@ -3,7 +3,7 @@
 // Nothing here reads the store, so every rule is tested without a browser.
 
 import type { DaemonInfo } from "./store";
-import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, HerdrStatus, IssueSettings, RemoteStatus, Workspace } from "./snapshot";
+import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, HerdrStatus, RemoteStatus, Workspace } from "./snapshot";
 
 export type SettingsTab = "general" | "appearance" | "agents" | "issues" | "devices" | "mobile" | "performance" | "shortcuts";
 
@@ -97,13 +97,6 @@ export function issueSourceChoices(
   ];
   return { value: options.find((option) => option.id === stored)?.id ?? "auto", options };
 }
-
-/** The agents the Start dialog can select first (`issue_settings.default_agent`). */
-export const ISSUE_AGENT_CHOICES: readonly { id: IssueSettings["default_agent"]; label: string }[] = [
-  { id: "claude", label: "Claude" },
-  { id: "codex", label: "Codex" },
-  { id: "terminal", label: "터미널만" },
-];
 
 /** The interface font sizes Appearance offers, the native Settings range. */
 export const FONT_SIZE_MIN = 11;
@@ -250,7 +243,7 @@ export function helperConsentTerms(helperRoot: string | null, cliDir: string | n
   return [
     `Hide copies its helper and the hide command into ${helperRoot ?? "the helper folder in the device account's home"} on the device, and replaces them there when this version of Hide needs newer ones.`,
     `It links hide in ${cliDir ?? "the account's command folder"} so the device's panes can open files, diffs and pages in this Hide; a hide already there that is not Hide's own link is left alone.`,
-    "It runs only while Hide holds the SSH connection and serves file, Git and worktree work for projects registered on that device. Nothing stays resident and nothing starts at login.",
+    "It runs only while Hide holds the SSH connection and serves file, Git and worktree work for projects registered on that device, and manages the device's Home (~/hide and the links to those projects in it). Nothing stays resident and nothing starts at login.",
     "It changes no hook, AI or shell settings there, and every move to the Trash or worktree removal still asks you for its target each time.",
     "A wider permission or a different SSH identity asks again; revoking stops new work and deletes no draft or remote file.",
   ];

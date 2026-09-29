@@ -202,6 +202,9 @@ describe("settings rules", () => {
     const terms = helperConsentTerms("/opt/hide", "/opt/bin");
     expect(terms[0]).toContain("/opt/hide");
     expect(terms[1]).toContain("/opt/bin");
+    // The Home folder and its links sit inside an existing sentence, so the consent keeps its five steps (PRD home-device-rail B14).
+    expect(terms).toHaveLength(5);
+    expect(terms[2]).toContain("~/hide");
     expect(socketProblem("")).toBeNull();
     expect(socketProblem("/tmp/herdr.sock")).toBeNull();
     expect(socketProblem("herdr.sock")).not.toBeNull();

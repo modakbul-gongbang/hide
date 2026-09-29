@@ -22,14 +22,15 @@ const RAISED_GROUPS = new Set(["needs_you", "done"]);
 /**
  * `listed` is every agent the Agents list shows. A raised section holds, in
  * the core's order, the Needs You or Done agents whose pane a drawn project's
- * checkout owns, so every raised agent is also in the tree below; an empty
+ * (or the device's Home's) checkout owns, so every raised agent is also in the tree below; an empty
  * section is left out, and a raised row never unfolds, so it is handed on
  * folded (docs/status-model.md, The descendant badge).
  */
-export function projectRows(workspaces: Workspace[], groups: InactiveProjectGroup[], listed: ListedAgent[]): ProjectRow[] {
+export function projectRows(workspaces: Workspace[], groups: InactiveProjectGroup[], listed: ListedAgent[], home: Workspace | null = null): ProjectRow[] {
   const rows: ProjectRow[] = [];
   const drawnPanes = new Set<string>();
-  for (const workspace of workspaces) {
+  // The device's Home is drawn as its own row above, so its agents are raised like a project's.
+  for (const workspace of home ? [...workspaces, home] : workspaces) {
     for (const checkout of workspace.checkouts) for (const tab of checkout.tabs) for (const pane of tab.panes) drawnPanes.add(pane.id);
   }
   for (const { group, label } of AGENT_GROUPS) {

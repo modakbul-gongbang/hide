@@ -1,4 +1,4 @@
-import { ArrowLeftRightIcon, Maximize2Icon, Minimize2Icon, PanelRightDashedIcon, PanelRightIcon, PinIcon, PinOffIcon } from "lucide-react";
+import { ArrowLeftRightIcon, Maximize2Icon, Minimize2Icon, PanelRightDashedIcon, PanelRightIcon, PinIcon, PinOffIcon, ServerIcon } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { EntryContextMenu, type MenuEntry } from "./components/entry-menu";
@@ -205,9 +205,16 @@ function WorkspaceToolbar({ checkout, view, panelShown, actions }: { checkout: C
   return (
     <EntryContextMenu label={`Workspace ${name}`} items={menuItems} onSelect={select} className="shrink-0" data-workspace-menu="true">
       <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border bg-sidebar pl-sm pr-sm text-caption" data-workspace-toolbar="true">
+        {device ? (
+          // The front thing is a remote device's: its color and name lead the toolbar, and the pane border wears the same color (PRD home-device-rail D-15).
+          <span className="-ml-sm flex h-full max-w-(--size-recent-location-max) shrink-0 items-center gap-xs bg-device-remote px-sm font-medium text-primary-foreground" data-device-band={device.id}>
+            <ServerIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
+            <span className="min-w-0 truncate">{device.label}</span>
+          </span>
+        ) : null}
         <nav aria-label="Location" className="flex min-w-0 flex-1 items-center gap-xs">
           <button type="button" className="shrink-0 rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setScreen({ kind: "main" })}>
-            Overview
+            Home
           </button>
           <span aria-hidden="true" className="text-muted-foreground">/</span>
           {project ? (
@@ -228,13 +235,6 @@ function WorkspaceToolbar({ checkout, view, panelShown, actions }: { checkout: C
               {name}
             </span>
           </Hint>
-          {device ? (
-            <Hint label={`On ${device.label}`}>
-              <span className="shrink-0 rounded-xs bg-secondary px-xs text-micro text-subtle-foreground" data-workspace-device={device.id}>
-                {device.label}
-              </span>
-            </Hint>
-          ) : null}
         </nav>
         {panelShown ? null : <PanelToggle view={view} actions={actions} />}
       </div>

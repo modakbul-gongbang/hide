@@ -247,7 +247,7 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     const overviewRow = repoRow.locator("xpath=ancestor::li[@data-project]").locator("[data-project-overview]");
     await expect(overviewRow).toHaveAttribute("aria-current", "page");
     await expect(repoRow).not.toHaveAttribute("aria-current", "page");
-    await expect(page.locator("[data-overview-destination]")).not.toHaveAttribute("aria-current", "page");
+    await expect(page.locator("[data-home-destination]")).not.toHaveAttribute("aria-current", "page");
     await expect(page.locator('[data-project-list] [data-checkout][aria-current="true"]')).toHaveCount(0);
     // The project row takes the checkout rule: on its own open, unfolded
     // Overview a click folds the project and the Overview stays.
@@ -674,7 +674,7 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
 
     // All projects keeps its tab row; its Agents view is the same lanes,
     // each head carrying its project's name (B30).
-    const allProjects = page.locator("[data-overview-destination]");
+    const allProjects = page.locator("[data-home-destination]");
     await allProjects.click();
     await expect(main).toBeVisible();
     await expect(allProjects).toHaveAttribute("aria-current", "page");
@@ -805,7 +805,8 @@ test("a project's Overview: tiles, checkout lanes, lineage, and the Issues board
     await expect(start).toBeVisible();
     await expect(start.locator("[data-start-name]")).toHaveValue(/^3-/);
     await start.locator("[data-start-name]").fill("3-graph-view");
-    await start.locator('[data-start-agent="claude"]').click();
+    // The kind and model start from the remembered choice, Claude before any (PRD home-device-rail B35).
+    await expect(start.locator('[data-agent-kind="claude"]')).toBeVisible();
     await start.locator('[data-start-submit="start"]').click();
     await expect(start).toHaveCount(0, { timeout: 30_000 });
     await expect(workspace).toBeVisible({ timeout: 30_000 });

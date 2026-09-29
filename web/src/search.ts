@@ -6,8 +6,9 @@ import { agentCommands, type AgentCommand, type AgentFrame } from "./agentLayout
 // hided, beside the walk.
 
 import { projectPaneIds } from "./navigation";
-import { contextAgents, contextWorkspaces } from "./remote";
-import type { SnapshotRest } from "./snapshot";
+import { frontDeviceId, localDeviceId } from "./devices";
+import { projectsOf } from "./remote";
+import type { AgentRow, Device, SnapshotRest, Workspace } from "./snapshot";
 import { besideUnavailable, shownTool, viewCommands, type Geometry, type LayoutSizes, type ToolsPlacement, type ViewCommandId } from "./viewLayout";
 import { PANEL_STATES, workspaceViewOf, type PanelState, type Tool } from "./workspace";
 
@@ -15,8 +16,11 @@ import { PANEL_STATES, workspaceViewOf, type PanelState, type Tool } from "./wor
 export type SearchGroup = { id: string; label: string };
 
 const COMMANDS_GROUP: SearchGroup = { id: "commands", label: "WORKSPACE > COMMANDS" };
+/** Commands every screen has, unlike the Workspace's. */
+const GLOBAL_COMMANDS_GROUP: SearchGroup = { id: "global-commands", label: "COMMANDS" };
 const PROJECTS_GROUP: SearchGroup = { id: "projects", label: "WORKSPACES > PROJECTS" };
 const CHECKOUTS_GROUP: SearchGroup = { id: "checkouts", label: "WORKSPACES > CHECKOUTS" };
+const DEVICES_GROUP: SearchGroup = { id: "devices", label: "DEVICES" };
 /** An agent whose pane is in none of the listed projects' checkouts. */
 const AGENTS_GROUP: SearchGroup = { id: "agents", label: "AGENTS" };
 
@@ -24,8 +28,12 @@ export type SearchEntry = {
   id: string;
   title: string;
   subtitle: string;
-  kind: "agent" | "project" | "checkout" | "command";
+  kind: "agent" | "project" | "checkout" | "command" | "device";
   group: SearchGroup;
+  /** The device the entry is on, which activating it brings forward; absent on a command. */
+  deviceId?: string;
+  /** The device's chip while the entry is not on the device in front (PRD home-device-rail B40). */
+  chip?: { label: string; local: boolean };
   /** An agent's kind, which picks its mark. */
   agentKind?: string;
   /** The ids the entry activates: a pane, or a workspace/checkout pair. */
@@ -33,7 +41,7 @@ export type SearchEntry = {
   workspaceId?: string;
   checkoutId?: string;
   /** What a command entry changes on the Workspace in front. */
-  command?: { panel: PanelState } | { pinned: boolean } | { tool: Tool; visible: boolean } | { agent: AgentCommand } | { view: ViewCommandId } | { openBeside: true };
+  command?: { panel: PanelState } | { pinned: boolean } | { tool: Tool; visible: boolean } | { agent: AgentCommand } | { view: ViewCommandId } | { openBeside: true } | { startAgent: true };
   /** Why a command cannot run now; the palette shows it and runs nothing. */
   unavailable?: string | null;
 };
@@ -136,53 +144,107 @@ export function workspaceCommands(rest: SnapshotRest | null, screen: WorkspaceOn
   return entries;
 }
 
+/** `에이전트 시작…` opens the start panel on every screen, and is how a browser tab reaches it, where ⌘N is the browser's (PRD home-device-rail D-21). */
+const START_AGENT_ENTRY: SearchEntry = {
+  id: "command:start-agent",
+  title: "에이전트 시작…",
+  subtitle: "Start an agent",
+  kind: "command",
+  group: GLOBAL_COMMANDS_GROUP,
+  command: { startAgent: true },
+};
+
+const THIS_MAC = { id: "local", label: "This Mac", kind: "local" } as Device;
+
+/** What ⌘K reads from one device: its label, its agents and its projects (not its Home, which the device entry stands for). */
+type SearchDevice = { device: Device; agents: AgentRow[]; workspaces: Workspace[]; allWorkspaces: Workspace[] };
+
+/** This machine and each connected device, in the rail's order; a device that is not connected has no current agents or projects to find. */
+function searchDevices(rest: SnapshotRest): SearchDevice[] {
+  const rows: SearchDevice[] = [];
+  // A snapshot that names no device is this machine's alone.
+  const devices = rest.navigator?.devices?.length ? rest.navigator.devices : [THIS_MAC];
+  for (const device of devices) {
+    if (device.id === localDeviceId(rest)) {
+      const all = rest.navigator?.workspaces ?? [];
+      rows.push({ device, agents: rest.navigator?.agents ?? [], workspaces: projectsOf(all), allWorkspaces: all });
+      continue;
+    }
+    const status = rest.status?.remote?.find((row) => row.target_id === device.id);
+    const session = status?.state === "connected" ? status.session : null;
+    rows.push({ device, agents: session?.agents ?? [], workspaces: projectsOf(session?.workspaces ?? []), allWorkspaces: session?.workspaces ?? [] });
+  }
+  return rows;
+}
+
 /**
  * The snapshot rows ⌘K searches: Workspace commands when a Workspace is on
- * screen, then agents, projects and checkouts of the context on screen, so a
- * pick on a selected SSH device focuses that host's row rather than one on
- * this machine behind it. An agent is grouped under the first project whose
- * checkouts hold its pane.
+ * screen, then every device's agents, projects and checkouts and the devices
+ * themselves (PRD home-device-rail D-16, B40), so a pick on another device
+ * moves rail, sidebar and center there. A row not on the device in front
+ * carries that device's chip. An agent is grouped under the first project
+ * whose checkouts hold its pane, the device's Home when that holds it.
  */
 export function searchEntries(rest: SnapshotRest | null, screen: WorkspaceOnScreen | null = null): SearchEntry[] {
   if (!rest) return [];
-  const entries: SearchEntry[] = screen ? workspaceCommands(rest, screen) : [];
-  const workspaces = contextWorkspaces(rest);
-  const agentGroups = new Map<string, SearchGroup>();
-  for (const workspace of workspaces) {
-    const group = { id: `agents:${workspace.id}`, label: `${workspace.label} > AGENTS` };
-    for (const paneId of projectPaneIds(workspace)) if (!agentGroups.has(paneId)) agentGroups.set(paneId, group);
-  }
-  for (const agent of contextAgents(rest, rest.navigator?.agents ?? [])) {
-    entries.push({
-      id: `agent:${agent.pane_id}`,
-      title: agent.identity_label,
-      subtitle: agent.detail || agent.status_label,
-      kind: "agent",
-      group: agentGroups.get(agent.pane_id) ?? AGENTS_GROUP,
-      agentKind: agent.agent_kind,
-      paneId: agent.pane_id,
-    });
-  }
-  for (const workspace of workspaces) {
-    entries.push({
-      id: `project:${workspace.id}`,
-      title: workspace.label,
-      subtitle: workspace.path,
-      kind: "project",
-      group: PROJECTS_GROUP,
-      workspaceId: workspace.id,
-    });
-    for (const checkout of workspace.checkouts) {
+  const entries: SearchEntry[] = [START_AGENT_ENTRY, ...(screen ? workspaceCommands(rest, screen) : [])];
+  const front = frontDeviceId(rest);
+  const devices = searchDevices(rest);
+  for (const { device, agents, workspaces, allWorkspaces } of devices) {
+    const chip = device.id === front ? undefined : { label: device.label, local: device.kind !== "remote" };
+    const agentGroups = new Map<string, SearchGroup>();
+    for (const workspace of allWorkspaces) {
+      const group = { id: `agents:${workspace.id}`, label: `${workspace.is_home ? "Home" : workspace.label} > AGENTS` };
+      for (const paneId of projectPaneIds(workspace)) if (!agentGroups.has(paneId)) agentGroups.set(paneId, group);
+    }
+    for (const agent of agents) {
       entries.push({
-        id: `checkout:${checkout.id}`,
-        title: `${workspace.label} / ${checkout.label}`,
-        subtitle: checkout.path,
-        kind: "checkout",
-        group: CHECKOUTS_GROUP,
-        workspaceId: workspace.id,
-        checkoutId: checkout.id,
+        id: `agent:${agent.pane_id}`,
+        title: agent.identity_label,
+        subtitle: agent.detail || agent.status_label,
+        kind: "agent",
+        group: agentGroups.get(agent.pane_id) ?? AGENTS_GROUP,
+        agentKind: agent.agent_kind,
+        paneId: agent.pane_id,
+        deviceId: device.id,
+        chip,
       });
     }
+    for (const workspace of workspaces) {
+      entries.push({
+        id: `project:${workspace.id}`,
+        title: workspace.label,
+        subtitle: workspace.path,
+        kind: "project",
+        group: PROJECTS_GROUP,
+        workspaceId: workspace.id,
+        deviceId: device.id,
+        chip,
+      });
+      for (const checkout of workspace.checkouts) {
+        entries.push({
+          id: `checkout:${checkout.id}`,
+          title: `${workspace.label} / ${checkout.label}`,
+          subtitle: checkout.path,
+          kind: "checkout",
+          group: CHECKOUTS_GROUP,
+          workspaceId: workspace.id,
+          checkoutId: checkout.id,
+          deviceId: device.id,
+          chip,
+        });
+      }
+    }
+  }
+  for (const { device } of devices) {
+    entries.push({
+      id: `device:${device.id}`,
+      title: device.label,
+      subtitle: device.kind === "remote" ? "Remote device" : "This device",
+      kind: "device",
+      group: DEVICES_GROUP,
+      deviceId: device.id,
+    });
   }
   return entries;
 }

@@ -37,8 +37,11 @@ export type PendingClose = {
  * the sidebar's mode: every value it shows is the core's, and the Workspace
  * it shows is the core's front checkout.
  * `null` until the first snapshot decides where the page starts (D-11).
+ * `main` is one device's all-projects Overview, the screen its Home row opens
+ * (PRD home-device-rail D-13): `deviceId` names the device, and without one it
+ * is the device in front.
  */
-export type Screen = { kind: "main" } | { kind: "overview"; projectId: string; lens: OverviewLens } | { kind: "workspace" };
+export type Screen = { kind: "main"; deviceId?: string } | { kind: "overview"; projectId: string; lens: OverviewLens } | { kind: "workspace" };
 
 /**
  * How All projects is looked at: every Project's tasks, every agent, or the
@@ -187,6 +190,15 @@ type UiStore = {
   /** The focus asked for by a chip, a Return or a relationship Open, until another replaces it (S6 B15, B16). */
   relation: Relation | null;
   sidebarMode: SidebarMode;
+  /**
+   * The Inbox tile is the rail's selection: the sidebar lists every device's
+   * agents and the center stays where it was (PRD home-device-rail D-10, D-27).
+   * Page state beside the sidebar mode, not a core field; a device tile or a
+   * pick that moves to a device ends it.
+   */
+  inbox: boolean;
+  /** The `request_id` of the Home row's new-tab start this page sent, until its pane is opened or it is refused. */
+  homeStart: string | null;
   /** The Explorer row the operator last touched; the core owns the opened
    * document's `selected_path`, and a reveal syncs that into here. */
   explorerSelection: string | null;
@@ -261,6 +273,8 @@ type UiStore = {
   setLens: (patch: Partial<OverviewLens>) => void;
   setRelation: (relation: Relation | null) => void;
   setSidebarMode: (mode: SidebarMode) => void;
+  setInbox: (inbox: boolean) => void;
+  setHomeStart: (requestId: string | null) => void;
   toggleSidebarMode: () => void;
   setExplorerSelection: (path: string | null) => void;
   requestEditorFind: (displayId: string | null) => void;
@@ -302,6 +316,8 @@ export const useUiStore = create<UiStore>((set, get) => ({
   agentsMode: "checkouts",
   relation: null,
   sidebarMode: "projects",
+  inbox: false,
+  homeStart: null,
   explorerSelection: null,
   editorFindRequest: 0,
   editorFindDisplay: null,
@@ -341,6 +357,10 @@ export const useUiStore = create<UiStore>((set, get) => ({
   },
   setRelation: (relation) => set({ relation }),
   setSidebarMode: (sidebarMode) => set({ sidebarMode }),
+  setInbox: (inbox) => {
+    if (get().inbox !== inbox) set({ inbox });
+  },
+  setHomeStart: (homeStart) => set({ homeStart }),
   toggleSidebarMode: () => {
     const index = SIDEBAR_MODES.indexOf(get().sidebarMode);
     set({ sidebarMode: SIDEBAR_MODES[(index + 1) % SIDEBAR_MODES.length] });

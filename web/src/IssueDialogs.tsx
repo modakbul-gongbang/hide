@@ -7,12 +7,13 @@
 import { FileTextIcon, CircleDotIcon, RotateCcwIcon, SparklesIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import type { Actions } from "./actions";
+import { rememberedSelection, sendableModel, type AgentSelection } from "./agentPicker";
+import { AgentPicker } from "./components/agent-picker";
 import { Button } from "./components/ui/button";
 import { Checkbox } from "./components/ui/checkbox";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
 import { Kbd } from "./components/ui/kbd";
-import { RadioGroup, RadioGroupItem } from "./components/ui/radio-group";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Hint } from "./components/ui/tooltip";
 import { Note, Status } from "./components/settings-rows";
@@ -24,14 +25,7 @@ import { useUiStore } from "./ui";
 import { branchProblem, taskFor } from "./workspaceManage";
 import { useErrorSince } from "./WorkspaceDialogs";
 
-const AGENTS = [
-  { id: "terminal", label: "터미널만" },
-  { id: "claude", label: "Claude" },
-  { id: "codex", label: "Codex" },
-] as const;
-export type AgentChoice = (typeof AGENTS)[number]["id"];
-
-export const DEFAULT_SETTINGS: IssueSettings = { ai_worktree_name: true, default_agent: "claude", closes_instruction: true };
+export const DEFAULT_SETTINGS: IssueSettings = { ai_worktree_name: true, closes_instruction: true };
 
 /** A multi-line field in the text field's look; the issue body and the first prompt. */
 export function TextArea({ className, ...props }: ComponentProps<"textarea">) {
@@ -66,9 +60,9 @@ export function submitOnCommandEnter(event: React.KeyboardEvent<HTMLFormElement>
   }
 }
 
-/** The projects on this Mac an issue can be made in: each with its source. */
+/** The projects on this Mac an issue can be made in: each with its source, never the Home, which is no project. */
 function issueProjects(workspaces: readonly Workspace[] | undefined): Workspace[] {
-  return (workspaces ?? []).filter((workspace) => !workspace.remote_target_id && workspace.tasks?.source);
+  return (workspaces ?? []).filter((workspace) => !workspace.remote_target_id && !workspace.is_home && workspace.tasks?.source);
 }
 
 /** `herdr-ide · GitHub owner/repo`, `notes · Local`: where a new issue lands. */
@@ -223,7 +217,7 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
   const [name, setName] = useState(() => defaultWorktreeName(task));
   const [edited, setEdited] = useState(false);
   const [base, setBase] = useState(workspace.default_branch && branches.includes(workspace.default_branch) ? workspace.default_branch : (branches[0] ?? ""));
-  const [agent, setAgent] = useState<AgentChoice>(settings.default_agent);
+  const [agent, setAgent] = useState<AgentSelection>(() => rememberedSelection(useShellStore.getState().rest?.ui_state?.agent_start));
   const [prompt, setPrompt] = useState(() => firstPrompt(task, null, settings.closes_instruction));
   const promptEdited = useRef(false);
   const detail = useShellStore((s) => (s.rest?.issue_work?.detail?.task_key === task.key ? s.rest.issue_work.detail : null));
@@ -264,7 +258,6 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
   const problem = git ? branchProblem(branch) : null;
   const existing = git && branches.includes(branch) ? (workspace.checkouts.find((checkout) => checkout.branch === branch) ?? null) : null;
   const taken = git && branches.includes(branch);
-  const withAgent = agent !== "terminal";
   const failure = created?.phase === "failed" ? (created.message ?? "워크트리를 만들지 못했습니다.") : refused;
 
   const submit = () => {
@@ -274,11 +267,13 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
       onClose();
       return;
     }
-    const text = withAgent ? prompt.trim() : "";
+    const text = prompt.trim();
+    const model = sendableModel(agent, useShellStore.getState().rest?.status?.background_ai);
     if (!git) {
       const folder = workspace.checkouts[0];
       if (!folder) return;
-      actions.startAgent(folder.path, agent, text || null);
+      if (agent.kind === "terminal") return;
+      actions.startAgent({ target: { checkoutPath: folder.path }, deviceId: workspace.device_id, provider: agent.kind, model, prompt: text || null });
       onClose();
       return;
     }
@@ -289,7 +284,8 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
       repositoryRoot: workspace.path,
       branch,
       baseBranch: base || null,
-      agentKind: withAgent ? agent : null,
+      agentKind: agent.kind === "terminal" ? null : agent.kind,
+      model,
       purpose: null,
       taskKey: task.key,
       prompt: text || null,
@@ -354,14 +350,13 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
                       </SelectContent>
                     </Select>
                   </Field>
-                  <AgentChoiceField agent={agent} disabled={working} onChange={setAgent} />
+                  <AgentField agent={agent} actions={actions} disabled={working} onChange={setAgent} />
                 </div>
               </>
             ) : (
-              <AgentChoiceField agent={agent} disabled={working} onChange={setAgent} />
+              <AgentField agent={agent} actions={actions} disabled={working} onChange={setAgent} />
             )}
-            {withAgent ? (
-              <Field label="첫 지시" aside={<span className="text-muted-foreground">{detail?.phase === "reading" ? "이슈 본문 읽는 중…" : "이슈 본문에서 채움 · 고칠 수 있음"}</span>}>
+            <Field label="첫 지시" aside={<span className="text-muted-foreground">{detail?.phase === "reading" ? "이슈 본문 읽는 중…" : "이슈 본문에서 채움 · 고칠 수 있음"}</span>}>
                 <TextArea
                   value={prompt}
                   rows={5}
@@ -373,7 +368,6 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
                   data-start-prompt="true"
                 />
               </Field>
-            ) : null}
             {detail?.phase === "failed" ? <Note tone="warn">{`본문을 읽지 못해 제목만 넣었습니다: ${detail.message ?? ""}`}</Note> : null}
             {failure ? <Note tone="error" data-start-error="true">{failure}</Note> : null}
             {working ? <Status tone="pending">워크트리를 만드는 중…</Status> : null}
@@ -391,20 +385,13 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
   );
 }
 
-/** The agent to start; `agents` narrows the choice where a terminal alone has nothing to do (a pull request handed on). */
-export function AgentChoiceField({ agent, disabled, onChange, agents = AGENTS.map((row) => row.id) }: { agent: AgentChoice; disabled: boolean; onChange: (agent: AgentChoice) => void; agents?: readonly AgentChoice[] }) {
+/** The kind and model to start with, the same control ⌘N's panel has (PRD home-device-rail B35). */
+export function AgentField({ agent, actions, disabled, onChange }: { agent: AgentSelection; actions: Actions; disabled: boolean; onChange: (agent: AgentSelection) => void }) {
   return (
-    <fieldset className="text-body text-subtle-foreground" disabled={disabled}>
-      <legend>에이전트</legend>
-      <RadioGroup className="mt-xxs grid-flow-col justify-start gap-md" value={agent} onValueChange={(value) => onChange(value as AgentChoice)}>
-        {AGENTS.filter((row) => agents.includes(row.id)).map((row) => (
-          <label key={row.id} className="inline-flex h-(--size-control) items-center gap-xs text-foreground">
-            <RadioGroupItem value={row.id} data-start-agent={row.id} />
-            {row.label}
-          </label>
-        ))}
-      </RadioGroup>
-    </fieldset>
+    <div className="text-body text-subtle-foreground">
+      에이전트
+      <AgentPicker actions={actions} value={agent} onChange={onChange} disabled={disabled} className="mt-xxs" />
+    </div>
   );
 }
 
