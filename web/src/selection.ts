@@ -25,6 +25,19 @@
  */
 export type CellRow = (string | null)[];
 
+/** The part of xterm's buffer line a row is read from. */
+export type BufferLineCells = { getCell(x: number): { getWidth(): number; getChars(): string } | undefined };
+
+/** A buffer line as cells: its chars, `""` where nothing was written, `null` for a wide glyph's trailing half. */
+export function bufferRow(line: BufferLineCells | undefined, cols: number): CellRow {
+  const cells: CellRow = [];
+  for (let x = 0; x < cols; x += 1) {
+    const cell = line?.getCell(x);
+    cells.push(cell ? (cell.getWidth() === 0 ? null : cell.getChars()) : "");
+  }
+  return cells;
+}
+
 function rowText(cells: CellRow, from: number, to: number): string {
   let text = "";
   for (let column = from; column < to && column < cells.length; column += 1) {

@@ -14,7 +14,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { app, BrowserWindow, dialog, ipcMain, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import type { CommandId } from "../../../web/src/shortcuts";
-import { BINDINGS_CHANNEL, COMMAND_CHANNEL, PICK_FOLDER_CHANNEL, REVEAL_CHANNEL } from "../channel";
+import { BINDINGS_CHANNEL, COMMAND_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL } from "../channel";
 import { BrowserViews, type ResolvedPage } from "./browser";
 import {
   loginPathCommand,
@@ -37,6 +37,7 @@ import { chooseHerdr, ensureServer, parseServerStatus, serverEnvironment, type H
 import { loadFailureFields, type HostLog } from "./log";
 import { ChildRunner, startDetached, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
+import { openRoute, probe, probeRequest } from "./localPath";
 import { revealablePath } from "./reveal";
 
 declare const __HIDE_BACKGROUND__: string;
@@ -126,6 +127,7 @@ export class DesktopHost {
     );
     this.listenReveal();
     this.listenPickFolder();
+    this.listenLocalPaths();
     this.openWindow();
     void this.discover("launch");
   }
@@ -202,6 +204,60 @@ export class DesktopHost {
       const folder = picked.canceled ? null : (picked.filePaths[0] ?? null);
       this.log.event("pick_folder.answered", { picked: folder !== null });
       return folder;
+    });
+  }
+
+  /**
+   * Terminal links on this Mac: a probe answers which of the named paths
+   * exist and what they are, and an open hands one to macOS, in its default
+   * application or as a Finder window, or revealed in Finder when opening
+   * would run it (`localPath.ts`). Only this window's page on the daemon
+   * origin is heard; a probe is not logged, since it runs on hover, and an
+   * open logs its route and never the path.
+   */
+  private listenLocalPaths(): void {
+    ipcMain.handle(PROBE_PATHS_CHANNEL, async (event: IpcMainInvokeEvent, reported: unknown) => {
+      if (!this.fromShell(event)) {
+        this.log.event("probe_paths.refused", { reason: "sender" });
+        return [];
+      }
+      const paths = probeRequest(reported);
+      if (paths === null) {
+        this.log.event("probe_paths.refused", { reason: "paths" });
+        return [];
+      }
+      return probe(paths);
+    });
+    ipcMain.on(OPEN_PATH_CHANNEL, (event: IpcMainEvent, reported: unknown) => {
+      if (!this.fromShell(event)) {
+        this.log.event("open_path.refused", { reason: "sender" });
+        return;
+      }
+      const target = revealablePath(reported);
+      if (target === null) {
+        this.log.event("open_path.refused", { reason: "path" });
+        return;
+      }
+      void openRoute(target).then(async (route) => {
+        if (route.action === "refuse") {
+          this.log.event("open_path.refused", { reason: route.reason });
+          return;
+        }
+        if (route.action === "reveal") shell.showItemInFolder(target);
+        else {
+          // Judged a moment ago; a link swapped in since is refused, not followed.
+          if ((await fs.promises.realpath(target).catch(() => null)) !== target) {
+            this.log.event("open_path.refused", { reason: "not_physical" });
+            return;
+          }
+          const failure = await shell.openPath(target);
+          if (failure) {
+            this.log.event("open_path.failed", { kind: route.kind });
+            return;
+          }
+        }
+        this.log.event(`open_path.${route.action}`, { kind: route.kind, reason: route.reason });
+      }).catch(() => this.log.event("open_path.failed", {}));
     });
   }
 
