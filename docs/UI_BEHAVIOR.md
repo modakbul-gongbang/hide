@@ -237,7 +237,7 @@ A pane whose agent delegated work shows every direct child on one row under its 
 Its library masters are `Component / Pane child chip` and `Component / Pane child row`.
 A chip opens the existing child at once; while that move is in flight the chip shows a pending mark and repeats of it are ignored, and a failure shows the core's reason under the header with Retry (when the core says it can be retried) and Dismiss.
 A child pane has a compact Return mark in its identity row, named with the parent in its tooltip and accessible name.
-The pane menu (from its overflow control or a right-click on the header) lists the parent, the other siblings, and the children as explicit Open items, then Copy pane name and Close pane; opening it moves no focus and marks nothing read.
+The pane menu (from its overflow control or a right-click on the header) lists the parent, the other siblings, and the children as explicit Open items, then Copy pane name and Close pane, which asks about the agents it spawned as Closing an agent that spawned others says; opening it moves no focus and marks nothing read.
 
 A pane whose agent sleeps (PRD agent-sleep) shows its state in place of the terminal, which stays hidden until the agent is back because the shell under it is not what the operator was talking to: Sleeping with the last progress line and Wake agent; Waking… with how old the resumed conversation is; or `Couldn’t resume this conversation` with the core's plain reason, Retry, and Start new session.
 The header caption reads `☾ sleeping · 22h`, `☾ waking…` or `could not resume`, and typed input to the pane goes nowhere.
@@ -271,7 +271,31 @@ A sidebar agent row is 28 high, or 44 with its second line: line one is 20 and l
 A row's height is a minimum, not a cap: a row grows to hold its lines rather than letting them run into the next row, and it still holds still under hover and focus.
 No row draws a progress number or step the agent did not report.
 The Project Overview's agent rows keep their own density: a quiet sentence is revealed on the selected or hovered row over up to two lines, with the whole of it in the tooltip.
+While a close the core runs names an agent's pane, alone or as part of a subtree close, its sidebar row adds `closing…` after its name until the row goes.
 Web owner: `web/src/agentRow.ts` (rules, reusable by any list of agents), `web/src/components/sidebar-agent-row.tsx` (the sidebar row), `web/src/components/agent-row.tsx` (the Overview row and the descendant badge both draw), `web/src/components/agent-children-popover.tsx`.
+
+### Closing an agent that spawned others
+
+Closing a pane or a tab asks about the agents spawned from it only when one of them runs outside what closes (PRD close-agent-subtree).
+Those are the live descendants of every agent pane that closes, on this machine or a connected device, asleep or not, less the panes that close anyway; a device that is not connected contributes none.
+With none, the close is the ordinary one: a quiet pane closes at once, a working or attention pane asks the Stop-work confirmation, and an unknown status shows the status notice.
+A target whose own status is unknown still shows only the status notice.
+Otherwise one sheet opens in place of the Stop-work confirmation, titled `이 에이전트와 자식 N개를 닫을까요?` (a tab: `이 탭과 자식 N개를 닫을까요?`), N counting only the descendants outside.
+It lists the target first and then its descendants in tree order, indented by depth, each with the sidebar's status mark, name and status word, and a device chip when it runs on another device than the target; the list scrolls inside the sheet when it is long.
+A line above the list counts, with the sidebar's marks, the descendants that are working (`진행 중`), waiting for an answer to a question, approval or error (`답 대기`), holding an unread result (`확인 안 한 결과`) and unreadable (`상태 모름`), leaving out a kind with none; those rows are bright and a quiet one (idle, read, asleep) is dimmed, its status word still said.
+Each row is focusable, and its accessible name is its name, its device when it differs, and its status word.
+The sheet says in one line what `이것만 닫기` leaves: the children keep running and come up into the operator's own list.
+Its buttons are `취소`, `이것만 닫기` and `모두 닫기`, and `모두 닫기` holds the keyboard when it opens, so Enter closes the whole subtree; Escape or `취소` sends nothing and gives focus back.
+While a descendant's status is unknown, `모두 닫기` is disabled, `취소` holds the keyboard, and a `상태 확인` in the sheet reads the status again without closing it.
+`이것만 닫기` closes the target alone as the ordinary close, with no second question; its direct children become the operator's roots and their own children stay under them.
+`모두 닫기` sends one event naming the target and exactly the descendants the sheet listed: one that appeared since is not closed, and one already gone counts as closed.
+The core checks each listed pane again as it arrives; if one now needs a status check, or the close slots cannot take them all, nothing closes and the one-line notice says why and what to do.
+The core closes the deepest descendants first, each pane only after every descendant below it is gone, and the target last, so no descendant ever surfaces as a root on the way; each row reads `closing…` until it goes.
+A descendant whose close is refused, times out, or loses its device keeps itself and its ancestors, the target included, open while the other branches finish; the close failure notice shows and the detail goes to the diagnostic log.
+Closing the same target again lists only what is left.
+Each local pane or tab closed this way gets its own Reopen closed tab entry; a device's close leaves none, as before.
+Every entry to a pane or tab close uses this: ⌘W or ⌥W, ⌘⇧W or ⌥⇧W, the desktop menu's commands, a tab's ×, the tab menu's and the palette's `Close tab…`, the pane header's ×, the pane menu's `Close pane`, and the agent row menu's `Close tab…`; closing a View, the phone app and the Overview are unchanged.
+Web owner: `web/src/close.ts` (which descendants and their states), `web/src/Overlays.tsx` (the sheet), `web/src/components/subtree-list.tsx` (the list both the sheet and the removal dialogs draw); core owner: `herdr-core/src/runtime/tree_close.rs`.
 
 ## Web Project Sessions
 
@@ -607,13 +631,17 @@ Nothing on a row stands for its menu: a right-click, or the menu key or ⇧F10 o
 Project, checkout and agent rows each have one (PRD sidebar-context-menus), and every other item runs at once; only `Remove project…`, `Delete worktree…` and `Close tab…` go through their existing confirmations.
 A project row's menu is `Open Overview`, `New worktree…`, `New tab in main` (a new tab in the checkout the home glyph marks, brought to the front), then `Reveal in Finder` and `Copy path`, then `Pin` or `Unpin` and `Remove project…`, on every project row, registered or not.
 A checkout row's menu is `Open` (the row's open, without unfolding its agents), `New tab here`, `Open pull request #n` while GitHub knows one, then `Set purpose…`, `Set as default checkout`, `Copy branch name`, `Copy path` and `Reveal in Finder`, then `Delete worktree…` in the destructive color on a linked worktree.
-An agent row's menu, in Agents and under an opened checkout, is `Show` (the row's own open, with the ⌥n that selects the same row where the host has one), then `Copy title` and `Copy session id` (the conversation id Herdr recorded, disabled when it recorded none), then `Close tab…`, which closes the tab holding the agent's pane, wherever it is, through the tab close flow; Herdr 0.9.1 can neither mark a pane seen nor stop an agent, so neither is offered.
+An agent row's menu, in Agents and under an opened checkout, is `Show` (the row's own open, with the ⌥n that selects the same row where the host has one), then `Copy title` and `Copy session id` (the conversation id Herdr recorded, disabled when it recorded none), then `Close tab…`, which closes the tab holding the agent's pane, wherever it is, through the tab close flow, including its question about the agents spawned from it; Herdr 0.9.1 can neither mark a pane seen nor stop an agent, so neither is offered.
 `New tab in main` and `New tab here` show the registry's new-tab chord; `Reveal in Finder` is the desktop app's only (a browser tab lists no such item) and shows the folder in Finder without opening anything.
 On a device's rows `Reveal in Finder` and `Set as default checkout` are disabled with the reason; the rest act on that device as they do here.
 `Delete worktree…` is never disabled on a linked worktree, on any device and before its Git state has been read; its confirmation says what would be lost and holds the choices, and reads `Reading the worktree's Git state…` until the row arrives.
 The confirmation lists the folder's removal, the panes that close, one line naming every agent those panes stop with its state, and the core's warnings (uncommitted files with their count, a worktree inside it, the base branch, Git status unavailable, commits not merged, not pushed).
 `Also delete branch <name>` deletes the branch with `git branch -d` when Git counts it merged, and otherwise with `git branch -D`, saying how many commits not on the base go with it or that Git could not tell; it is not offered for the base branch or a missing folder.
 A folder that holds uncommitted files, a worktree inside it, or a status Git could not read shows a `Discard …` checkbox, and Delete stays disabled until it is ticked, because that loss cannot be undone; ticked, the folder is removed with `git worktree remove --force`.
+When an agent in the worktree spawned agents that run outside it, the confirmation adds `N agents spawned from this worktree run outside it:` and the same list, count line and states the close sheet draws, and its one Delete becomes two buttons named by their result: `Delete only this worktree`, the deletion as it is, and `Close N agents outside, then delete`.
+Both follow the dialog's own conditions, the Discard checkbox included, and neither holds the keyboard when the dialog opens; while one outside agent's status is unknown, the second is disabled and a `Check status` reads it again in place.
+With the second, the core closes those agents deepest first as a subtree close does, and only once all are gone closes the worktree's panes and removes the folder; a close that is refused or times out starts no deletion and its reason shows in the dialog, and trying again continues from the agents that remain.
+With the first, the agents outside keep running and the direct children become the operator's roots.
 Files that change after the confirmation, typically written by an agent as it stops, stop an unticked removal with that reason and keep the worktree; every refusal and failure is shown in the dialog above the choices, and Delete tries again on the row as it is then.
 From the confirmation until Git answers, the checkout row and its agent rows are dimmed with a spinner where the badge was, the row opens nothing, and a right-click or the menu key on it offers no menu at all rather than an empty one; the row leaves the sidebar as the removal finishes, and a failure gives it back as it was.
 A copy that the clipboard refuses goes to the diagnostic log.
@@ -743,6 +771,7 @@ A folder holding nothing, or only `.git` and a Finder `.DS_Store`, is what a cre
 `Remove project…` removes only Hide's registration and never deletes files, worktrees, sessions, or Herdr workspaces.
 A project Herdr has no pane in is confirmed with registration-only copy; a project with panes is not refused, and the confirmation names the pane and running-agent counts, with the parenthetical omitted at zero running agents.
 On confirmation the core closes every pane in the project's checkouts and waits for confirmation before removing the registration and its row; a timeout or refusal leaves the project registered with the reason in the error banner, and a repeated request continues from the panes that remain.
+When an agent in the project spawned agents that run outside it, the confirmation lists them as Delete worktree does, with `Remove only this project` and `Close N agents outside, then remove` in place of its one button, neither holding the keyboard; the second closes those agents deepest first and removes the project only once all are gone, a refusal or timeout leaving the project registered with the reason in the error banner and a retry continuing from the agents that remain.
 Removing the project that holds the focused checkout moves focus and pane selection to the next project.
 An add that lands mid-removal cancels the removal and says so, rather than losing the project it just opened a pane in; a completed removal disappears from the snapshot and a repeated request is a quiet no-op.
 A row Herdr shows without a registration offers `Remove project…` too: its confirmation counts its panes the same way and says Hide keeps no registration for it, the confirmation closes those panes, and the row leaves once Herdr drops its workspace; a timeout leaves the row with the reason in the error banner, and repeating the removal closes the panes that remain.
@@ -895,6 +924,7 @@ A browser host has no numbered chords, so holding ⌘ or ⌥ there shows nothing
 Pane focus, active tab, tab order, zoom state, and disappearing anchors all update which controls can show a hint or tooltip; pointer exit, mouse down, scroll, key down, losing key window status, and anchor removal all dismiss an open tooltip.
 
 Destructive buttons are named by their result (`Move to Trash`, `Close 3 panes and remove`, `Stop work and close`), never by a generic "Delete" or "OK" that hides the consequence; the non-destructive option is the default/cancel action.
+The one exception is the sheet that closes an agent with the agents it spawned: the operator chose `모두 닫기` as its Enter default (PRD close-agent-subtree D-07, D-18), and a descendant whose status is unknown gives the default back to `취소`; the removal dialogs that ask the same question keep no default.
 Escape closes the innermost open layer and returns focus to whatever held it before that layer opened, including a terminal that was focused when a sheet, menu, or overlay opened over it.
 A tooltip or hover card is not a layer: an Escape pressed while one shows still reaches the terminal or the screen it was meant for, and closes the tooltip on its way, whether the tooltip's own dismiss or the shell answers the press.
 A disabled control cannot activate, and destructive meaning always comes from the control's role rather than from its text color alone.

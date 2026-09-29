@@ -255,6 +255,13 @@ Only an authoritative absence promotes a reservation into the confirmed LIFO sta
 The snapshot exposes the count, top label, pending reservations, in-flight state, async operation records, and inline notices; the shell routes the menu and shortcut and renders those values without keeping a second stack.
 Unknown agent activity is a separate close guard: the core refuses local and remote destructive close until a fresh status is available, while ordinary working or unresolved demand uses the existing one-time confirmation.
 
+A subtree close (`close_tree`, PRD close-agent-subtree) is one event naming the target pane or tab and the descendant panes the sheet showed, and `runtime/tree_close.rs` runs it as one operation made of the ordinary closes above.
+Admission happens once, as the event arrives: the listed panes are intersected with the live descendants outside the target, an absent one counts as closed, a pane that now needs a status check or an unconfirmed risky pane refuses the whole close, and the close slots must hold every local node, so a refusal closes nothing.
+At most 64 panes per tree and four trees run at once; the admitted tree's local nodes reserve their slots against `RECENT_CLOSED_LIMIT`, so ordinary closes cannot take them halfway through.
+Each node starts only when every descendant it waits on is confirmed absent, as a local `close_pane`/`close_tab` through the same capture path (reopen entry included) or as a device's `remote_control` close; the ingest paths and the async-operation tick advance the trees, so nothing waits or blocks under `Mutex<Runtime>`.
+A refused, timed-out or disconnected node fails itself and every ancestor, which never start, while other branches finish; the tree publishes one `tree.close` async operation per node and writes `tree_close.started`, `tree_close.pane_failed` and `tree_close.finished` diagnostics with the tree and pane ids.
+Delete worktree and Remove project take the same tree as a prelude when the operator chose to close the agents outside: the removal is recorded first, the tree runs, and only a tree with no failure hands over to the ordinary pane close and removal; a failed tree fails the removal with its reason, and a retry lists only what is left.
+
 Recreation also runs outside `Mutex<Runtime>`.
 Pane restore uses the captured parent path, direct neighbor, split direction, original first-child ratio, and cwd, falling back to the tab's current pane and then the checkout root when the original facts no longer exist.
 A direct pane sibling uses `pane.split`; a sibling subtree is wrapped at its captured nested parent with `layout.apply`, preserving the surrounding tree and every existing ratio.
