@@ -199,7 +199,7 @@ function RemoveProjectDialog({ actions, workspace, listed, onClose }: { actions:
   return (
     <AlertDialog open onOpenChange={(next) => { if (!next) onClose(); }}>
       {/* Three result-named buttons need the wider sheet to stay on one row. */}
-      <AlertDialogContent data-remove-project={workspace.id} className={subtree && offering ? "w-(--size-removal-choice-sheet-w)" : undefined}>
+      <AlertDialogContent data-remove-project={workspace.id} className={subtree && (offering || closingOutside) ? "w-(--size-removal-choice-sheet-w)" : undefined}>
         <AlertDialogHeader>
           <AlertDialogTitle className="break-words">Remove project {workspace.label}?</AlertDialogTitle>
           <AlertDialogDescription className="break-all font-mono text-caption text-muted-foreground">{workspace.path}</AlertDialogDescription>
@@ -488,7 +488,7 @@ function DeleteWorktreeDialog({ actions, deviceId, checkout, onClose }: { action
   };
   return (
     <AlertDialog open onOpenChange={(next) => { if (!next) hide(); }}>
-      <AlertDialogContent data-delete-worktree={checkout.id} className={subtree && choosing ? "w-(--size-removal-choice-sheet-w)" : undefined}>
+      <AlertDialogContent data-delete-worktree={checkout.id} className={subtree && (choosing || closingOutside) ? "w-(--size-removal-choice-sheet-w)" : undefined}>
         <AlertDialogHeader>
           <AlertDialogTitle className="break-words">Delete worktree {branch ?? checkout.label}?</AlertDialogTitle>
           <AlertDialogDescription className="break-all font-mono text-caption text-muted-foreground">{checkout.path}</AlertDialogDescription>
