@@ -45,6 +45,7 @@ pub mod tasks;
 mod terminal_attachments;
 mod terminal_recovery;
 mod usage;
+mod view_bookmarks;
 mod view_layout;
 mod wire;
 pub mod workspace;

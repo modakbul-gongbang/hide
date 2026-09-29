@@ -56,11 +56,15 @@ impl Runtime {
             .filter(|(_, (scope, _, _))| scope == key)
             .map(|(id, _)| id.clone())
             .collect();
-        store
+        let changed = store
             .views
             .entry(&key.0, &key.1)
             .agent_layout
-            .reconcile_admissions(topology, reserved, &admitted)
+            .reconcile_admissions(topology, reserved, &admitted)?;
+        // A tab that left Herdr takes its View bookmark with it (D-11).
+        let listed: Vec<&str> = topology.iter().map(|(id, _)| id.as_str()).collect();
+        // Not `||`: the prune must run whether or not the layout changed.
+        Ok(self.prune_view_bookmarks(key, &listed) | changed)
     }
 
     pub(super) fn sync_agent_lineage_layouts(&mut self) {

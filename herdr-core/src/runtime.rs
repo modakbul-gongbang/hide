@@ -27,6 +27,7 @@ mod session;
 mod snapshot_delta;
 mod terminal;
 mod view_areas;
+mod view_bookmarks;
 mod workspace_control;
 mod workspace_view;
 
