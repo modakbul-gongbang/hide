@@ -84,12 +84,16 @@ export class DesktopHost {
   private state: HostState = { kind: "connecting" };
   private window: BrowserWindow | null = null;
   /**
-   * The status page load still in flight. A shell load waits for it: started
-   * while the status page is still navigating (a daemon that answers at once,
-   * as on a relaunch), Chromium lands on the shell but rejects the load with
-   * an empty code, and the renderer's own navigation tracking stays pending.
+   * The status page load still in flight. The window takes one navigation at
+   * a time, so every render waits for it: a shell load started while the
+   * status page is still navigating (a daemon that answers at once, as on a
+   * relaunch) lands but is rejected with an empty code and leaves the
+   * renderer's navigation tracking pending, and a hash set before the page
+   * commits is lost. Electron settles the load when its window is destroyed.
    */
   private statusLoad: Promise<unknown> | null = null;
+  /** Whether a render already waits for `statusLoad`; it renders whatever state is current then. */
+  private renderWaits = false;
   private readonly runner = new ChildRunner();
   /** Every CLI child runs through this chain, so the runner's cap of one is never crossed. */
   private cliChain: Promise<unknown> = Promise.resolve();
@@ -433,16 +437,20 @@ export class DesktopHost {
   private render(): void {
     const window = this.window;
     if (!window) return;
-    const state = this.state;
-    if (state.kind === "attached" || state.kind === "lost") {
-      if (this.statusLoad) {
-        // The status page is a local file, so this waits a few milliseconds; a newer state renders itself.
+    if (this.statusLoad) {
+      // A local file, so this waits a few milliseconds.
+      if (!this.renderWaits) {
+        this.renderWaits = true;
         const rerender = () => {
-          if (this.state === state) this.render();
+          this.renderWaits = false;
+          this.render();
         };
         this.statusLoad.then(rerender, rerender);
-        return;
       }
+      return;
+    }
+    const state = this.state;
+    if (state.kind === "attached" || state.kind === "lost") {
       this.load(window.loadURL(state.url), state.kind);
       return;
     }
