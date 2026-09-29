@@ -360,16 +360,16 @@ describe("footer (B13, B16, B17, B18)", () => {
 
   it("says there is nothing to clear when no cell can be ticked", () => {
     const nothing = ready([checkout("main", { main: true, build: 0, deps: 0 })]);
-    expect(footerOf(nothing, EMPTY_SELECTION)).toMatchObject({ nothingToClear: true, empty: true, summary: "비울 캐시가 없다" });
+    expect(footerOf(nothing, EMPTY_SELECTION)).toMatchObject({ empty: true, summary: "비울 캐시가 없다" });
   });
 
   it("asks for a choice when cells exist but none is ticked", () => {
-    expect(footerOf(rows, EMPTY_SELECTION)).toMatchObject({ nothingToClear: false, empty: true, summary: "고른 칸 없음" });
+    expect(footerOf(rows, EMPTY_SELECTION)).toMatchObject({ empty: true, summary: "고른 칸 없음" });
   });
 
   it("says only how many cells and how much, with no explaining sentence", () => {
     const selection = toggleBundle(EMPTY_SELECTION, bundleRefs(rows, EMPTY_SELECTION, ["build_cache", "dependencies"]));
-    expect(footerOf(rows, selection)).toEqual({ nothingToClear: false, empty: false, summary: "3칸 · 6.0 GB" });
+    expect(footerOf(rows, selection)).toEqual({ empty: false, summary: "3칸 · 6.0 GB" });
     expect(needsConfirm(planOf(rows, selection))).toBe(false);
   });
 

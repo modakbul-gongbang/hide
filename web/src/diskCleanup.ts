@@ -313,8 +313,6 @@ export function planOf(rows: readonly SheetRow[], selection: Selection): Cleanup
 }
 
 export type Footer = {
-  /** Nothing in the visible rows can be ticked at all (B13). */
-  nothingToClear: boolean;
   empty: boolean;
   /** `N칸 · X`, with `워크트리 M` between only when a worktree is ticked (B16); the explaining is the confirm step's. */
   summary: string;
@@ -339,7 +337,7 @@ export function footerOf(rows: readonly SheetRow[], selection: Selection, state:
       ? "고른 칸 없음"
       : "비울 캐시가 없다"
     : `${plan.cells.length}칸${plan.worktrees.length > 0 ? ` · 워크트리 ${plan.worktrees.length}` : ""} · ${formatBytes(plan.bytes)}`;
-  return { nothingToClear: !anySelectable, empty, summary };
+  return { empty, summary };
 }
 
 /** The confirm step is asked only when a worktree is in the plan (D-15). */
