@@ -819,6 +819,8 @@ Without a connected helper, the registration goes and a `kit` `device.kit_left` 
 The hooks, the `hide` link and the helper root belong to the device account rather than to one registration, so while another registration's consent is bound to the same user and host key, removing one of them leaves the kit for the other, records the same `device.kit_left`, and the device row's `kit.shares_account_with` names that registration for the confirmation.
 Each machine's report reaches the shell as `DeviceSnapshot.kit` (`components` with `kit_component_id` and `kit_component_state` from `contracts/snapshot-wire-enums.json`, `busy`, `unavailable`, `offers_reinstall`), and every apply writes one `kit` `apply.completed` record naming each part's outcome.
 A device's agent panes are judged by the same `hide_agent_hooks::diagnosis::instrumentation` as a local pane, from the pane's hook tokens (`RemoteSessionSnapshot.pane_hook_tokens`, not sent to the shell) and that device's kit (`agent_hooks::device_hook_status`), in `Runtime::derive_device_session` (D-21).
+`desktop/e2e/device-kit.spec.ts` proves a device's kit over a real SSH connection: the install, each part's row, the installed hook's SessionStart in a device pane, a part the operator took out staying out until Reinstall, and removal leaving another tool's entries and hcoord.
+The isolated sshd it runs against logs in as the account running the suite, so its sessions must get the private HOME and `HCOORD_HOME` that `desktop/e2e/device-home.ts` describes and proves before a device is registered; without them the kit would write that account's own files and replace its hcoord daemon.
 
 ### Device catalogs
 
