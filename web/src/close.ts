@@ -93,6 +93,8 @@ export type Subtree = {
   counts: Record<Exclude<SubtreeState, "quiet">, number>;
   /** A listed descendant's activity is unknown, so closing it too waits for a status check. */
   unknown: boolean;
+  /** A target row's activity is unknown, so nothing closes until a status check (B28). */
+  targetUnknown: boolean;
 };
 
 export function subtreeState(agent: AgentRow): SubtreeState {
@@ -113,7 +115,7 @@ export function subtreeState(agent: AgentRow): SubtreeState {
  * connected device's. Null when nothing would be left behind, which keeps
  * the ordinary close (B1).
  */
-export function subtreeOf(inside: readonly string[], agents: readonly AgentRow[]): Subtree | null {
+export function subtreeOf(inside: readonly string[], agents: readonly AgentRow[], options: { everyTarget?: boolean } = {}): Subtree | null {
   const within = new Set(inside);
   const byPane = new Map(agents.map((agent) => [agent.pane_id, agent]));
   const ids: string[] = [];
@@ -140,7 +142,8 @@ export function subtreeOf(inside: readonly string[], agents: readonly AgentRow[]
     }
   };
   for (const agent of agents) {
-    if (!within.has(agent.pane_id) || !(agent.close_descendant_pane_ids ?? []).some((pane) => listed.has(pane))) continue;
+    if (!within.has(agent.pane_id)) continue;
+    if (!options.everyTarget && !(agent.close_descendant_pane_ids ?? []).some((pane) => listed.has(pane))) continue;
     rows.push({ agent, depth: 0, target: true, state: subtreeState(agent) });
     visit(agent, agent.lineage_depth ?? 0);
   }
@@ -152,7 +155,7 @@ export function subtreeOf(inside: readonly string[], agents: readonly AgentRow[]
   }
   const counts = { working: 0, waiting: 0, unread: 0, unknown: 0 };
   for (const row of rows) if (!row.target && row.state !== "quiet") counts[row.state] += 1;
-  return { ids, rows, counts, unknown: counts.unknown > 0 };
+  return { ids, rows, counts, unknown: counts.unknown > 0, targetUnknown: rows.some((row) => row.target && row.state === "unknown") };
 }
 
 /** Which sheet an open close shows. */
@@ -166,7 +169,10 @@ export type CloseSheet = { sheet: "subtree"; subtree: Subtree } | { sheet: "stop
  * target's own host; `everyAgent` is every listed agent row.
  */
 export function closeSheet(panes: readonly PaneRow[], hostAgents: readonly AgentRow[], everyAgent: readonly AgentRow[]): CloseSheet {
-  const subtree = subtreeOf(panes.map((pane) => pane.id), everyAgent);
+  // Every agent that closes is a target row, not only the ones with
+  // descendants: a working agent beside them in the tab closes too, so the
+  // sheet shows it (only an agent pane can be working or asking).
+  const subtree = subtreeOf(panes.map((pane) => pane.id), everyAgent, { everyTarget: true });
   return subtree ? { sheet: "subtree", subtree } : { sheet: "stop_work", stopWork: stopWorkOf(panes, hostAgents) };
 }
 

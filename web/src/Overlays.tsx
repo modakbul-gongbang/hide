@@ -114,15 +114,17 @@ export function ConfirmClose({ actions }: { actions: Actions }) {
     if (gone) actions.keepOpen();
   }, [gone, actions]);
   const sheet = target ? closeSheet(target.panes, target.agents, actions.everyAgent()) : null;
-  const blocked = sheet?.sheet === "subtree" ? sheet.subtree.unknown : sheet?.stopWork.unknown != null;
+  const blocked = sheet?.sheet === "subtree" ? sheet.subtree.unknown || sheet.subtree.targetUnknown : sheet?.stopWork.unknown != null;
   // A pane or descendant whose status turns unknown while the sheet is open
-  // disables the close under the keyboard; the cancel button takes it, as when
-  // the subtree sheet opens blocked (D-19, B28).
+  // disables a close under the keyboard; the cancel button takes it, as when
+  // the subtree sheet opens blocked (D-19, B28). A sheet that turns into the
+  // other in place leaves the keyboard on the dialog itself, never on a
+  // destructive button an Enter meant for the old one would press (D-40).
   const footer = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!blocked) return;
     const active = document.activeElement;
-    if (active && active !== document.body && !active.matches("[data-close-proceed]")) return;
+    if (active && active !== document.body && !active.matches(":disabled")) return;
     footer.current?.querySelector<HTMLElement>("[data-close-cancel]")?.focus();
   }, [blocked]);
   return (
@@ -183,7 +185,7 @@ function StopWorkClose({ actions, kind, stopWork, footer }: { actions: Actions; 
       ) : null}
       <AlertDialogFooter ref={footer}>
         <AlertDialogCancel data-close-cancel="true">Keep open</AlertDialogCancel>
-        <AlertDialogAction disabled={stopWork.unknown != null} onClick={() => actions.confirmClose()} data-close-proceed="true">
+        <AlertDialogAction disabled={stopWork.unknown != null} onClick={() => actions.confirmClose()}>
           Stop work and close
         </AlertDialogAction>
       </AlertDialogFooter>
@@ -200,6 +202,7 @@ function StopWorkClose({ actions, kind, stopWork, footer }: { actions: Actions; 
 function SubtreeClose({ actions, kind, targetId, subtree, footer }: { actions: Actions; kind: "pane" | "tab"; targetId: string | null; subtree: Subtree; footer: RefObject<HTMLDivElement | null> }) {
   const count = subtree.rows.filter((row) => !row.target).length;
   const targetDevice = subtree.rows.find((row) => row.target)?.agent.device_id;
+  const closeAllBlocked = subtree.unknown || subtree.targetUnknown;
   return (
     <>
       <AlertDialogHeader>
@@ -207,9 +210,11 @@ function SubtreeClose({ actions, kind, targetId, subtree, footer }: { actions: A
         <AlertDialogDescription data-subtree-consequence="true">이것만 닫기: 자식은 계속 실행되고 내 목록으로 올라옵니다.</AlertDialogDescription>
       </AlertDialogHeader>
       <SubtreeList subtree={subtree} targetDevice={targetDevice ?? (targetId ?? undefined)} />
-      {subtree.unknown ? (
+      {closeAllBlocked ? (
         <p className="flex flex-wrap items-center gap-xs text-caption text-subtle-foreground" data-subtree-blocked="true">
-          <span className="min-w-0 break-words">상태를 모르는 자식이 있어 모두 닫기 전에 상태를 확인해야 합니다.</span>
+          <span className="min-w-0 break-words">
+            {subtree.targetUnknown ? "상태를 모르는 에이전트가 있어 닫기 전에 상태를 확인해야 합니다." : "상태를 모르는 자식이 있어 모두 닫기 전에 상태를 확인해야 합니다."}
+          </span>
           <Button size="sm" variant="secondary" onClick={() => actions.refreshStatus()} data-subtree-check-status="true">
             상태 확인
           </Button>
@@ -219,16 +224,15 @@ function SubtreeClose({ actions, kind, targetId, subtree, footer }: { actions: A
         <AlertDialogCancel data-subtree-cancel="true" data-close-cancel="true">
           취소
         </AlertDialogCancel>
-        <Button variant="secondary" onClick={() => actions.confirmClose()} data-subtree-close-only="true">
+        <Button variant="secondary" disabled={subtree.targetUnknown} onClick={() => actions.confirmClose()} data-subtree-close-only="true">
           이것만 닫기
         </Button>
         <Button
           variant="destructive"
-          disabled={subtree.unknown}
+          disabled={closeAllBlocked}
           onClick={() => actions.closeSubtree(subtree.ids)}
           data-subtree-close-all="true"
-          data-close-proceed="true"
-          data-initial-focus={subtree.unknown ? undefined : "true"}
+          data-initial-focus={closeAllBlocked ? undefined : "true"}
         >
           모두 닫기
         </Button>

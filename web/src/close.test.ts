@@ -157,6 +157,23 @@ describe("closeSheet", () => {
     expect(after.sheet === "stop_work" && after.stopWork.rows.map((row) => [row.pane.id, row.state])).toEqual([["p3", "quiet"]]);
   });
 
+  it("lists every agent of a closing tab as a target, so a working one beside the parent is shown", () => {
+    const agents = [...family(), agent("p5", { lineage_depth: 0, activity: "working", requires_close_confirmation: true })];
+    const sheet = closeSheet([pane("p1"), pane("p5")], agents, agents);
+    expect(sheet.sheet === "subtree" && sheet.subtree.rows.filter((row) => row.target).map((row) => [row.agent.pane_id, row.state])).toEqual([
+      ["p1", "quiet"],
+      ["p5", "working"],
+    ]);
+    // The removal dialogs keep listing only the agents whose descendants run outside.
+    expect(subtreeOf(["p1", "p5"], agents)?.rows.filter((row) => row.target).map((row) => row.agent.pane_id)).toEqual(["p1"]);
+  });
+
+  it("blocks both closes while a target's own status is unknown", () => {
+    const agents = [...family(), agent("p5", { lineage_depth: 0, requires_close_status_check: true })];
+    expect(closeSheet([pane("p1"), pane("p5")], agents, agents)).toMatchObject({ sheet: "subtree", subtree: { unknown: false, targetUnknown: true } });
+    expect(closeSheet([pane("p1")], family(), family())).toMatchObject({ sheet: "subtree", subtree: { targetUnknown: false } });
+  });
+
   it("turns the Stop-work sheet into the subtree sheet when a descendant appears", () => {
     const target = [pane("p1", { requires_close_confirmation: true })];
     expect(closeSheet(target, [agent("p1")], [agent("p1")]).sheet).toBe("stop_work");

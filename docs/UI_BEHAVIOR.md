@@ -285,11 +285,12 @@ While a listed pane's status is unknown, `Stop work and close` is disabled, `Kee
 `Stop work and close` sends the close the confirmation shows at the press.
 Otherwise one sheet opens in place of the Stop-work confirmation, titled `이 에이전트와 자식 N개를 닫을까요?` (a tab: `이 탭과 자식 N개를 닫을까요?`), N counting only the descendants outside.
 It lists the target first and then its descendants in tree order, indented by depth, each with the sidebar's status mark, name and status word, and a device chip when it runs on another device than the target; the list scrolls inside the sheet when it is long.
+Closing a tab lists every agent in the tab as a target, each followed by its own descendants, so a working agent beside the parent is shown before it closes.
 A line above the list counts, with the sidebar's marks, the descendants that are working (`진행 중`), waiting for an answer to a question, approval or error (`답 대기`), holding an unread result (`확인 안 한 결과`) and unreadable (`상태 모름`), leaving out a kind with none; those rows are bright and a quiet one (idle, read, asleep) is dimmed, its status word still said.
 Each row is focusable, and its accessible name is its name, its device when it differs, and its status word.
 The sheet says in one line what `이것만 닫기` leaves: the children keep running and come up into the operator's own list.
 Its buttons are `취소`, `이것만 닫기` and `모두 닫기`, and `모두 닫기` holds the keyboard when it opens, so Enter closes the whole subtree; Escape or `취소` sends nothing and gives focus back.
-While a descendant's status is unknown, `모두 닫기` is disabled, `취소` holds the keyboard, and a `상태 확인` in the sheet reads the status again without closing it.
+While a descendant's status is unknown, `모두 닫기` is disabled, `취소` holds the keyboard, and a `상태 확인` in the sheet reads the status again without closing it; while a target's own status is unknown, `이것만 닫기` is disabled too.
 `이것만 닫기` closes the target alone as the ordinary close, with no second question; its direct children become the operator's roots and their own children stay under them.
 While the sheet is open its list is live, as in the removal dialogs: a descendant that appears shows up, one that goes drops out, and the title's N and the count line follow.
 `모두 닫기` sends one event naming the target and exactly the descendants the sheet shows at the press: one that appears after the press is not closed, and one already gone counts as closed.
@@ -297,6 +298,7 @@ The core checks each listed pane again as it arrives; if one now needs a status 
 A pane whose earlier close was refused is simply closed again, since asking again is the retry.
 If every descendant goes while the sheet is open, it turns in place into the target's Stop-work confirmation, a quiet target dimmed, whose `Stop work and close` closes the target alone; a descendant that appears under an open Stop-work confirmation turns it into this sheet the same way.
 Either one closes by itself only when its target pane or tab is gone or its device disconnects; otherwise it waits for the operator's answer and runs nothing on its own.
+A sheet that turns into the other leaves the keyboard on the sheet itself, never on a close button an Enter meant for the old one would press.
 The core closes the deepest descendants first, each pane only after every descendant below it is gone, and the target last, so no descendant ever surfaces as a root on the way; each row reads `closing…` until it goes.
 A descendant whose close is refused, times out, or loses its device keeps itself and its ancestors, the target included, open while the other branches finish; the close failure notice shows and the detail goes to the diagnostic log.
 Closing the same target again lists only what is left.
