@@ -547,7 +547,7 @@ export function WorkspaceNotices({ actions }: { actions: Actions }) {
       <span className="min-w-0 flex-1 break-words">
         {task.agent_phase === "starting"
           ? `Starting ${task.agent_kind} in the new pane…`
-          : `${task.agent_message ?? "The agent did not start."} The worktree and its pane are kept.`}
+          : `${task.agent_message ?? "The agent did not start."} ${task.kind === "worktree_create" ? "The worktree and its pane are kept." : "Its pane is kept."}`}
       </span>
       {task.agent_phase === "failed" ? (
         <button type="button" className="text-foreground underline" onClick={() => actions.retryTaskAgent(task.id)} data-task-agent-retry="true">
