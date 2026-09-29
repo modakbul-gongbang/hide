@@ -34,9 +34,9 @@ import {
 import type { DesktopEnv } from "./env";
 import { readJsonFile, writeJsonFile } from "./jsonFile";
 import { bundledHcoord, hcoordEnvironment, installHcoordShim, parseHcoordEnsure } from "./hcoord";
-import { chooseHerdr, type HerdrChoice } from "./herdr";
+import { chooseHerdr, parseServerStatus, serverEnvironment, type HerdrChoice } from "./herdr";
 import { loadFailureFields, type HostLog } from "./log";
-import { ChildRunner, type ChildResult } from "./spawn";
+import { ChildRunner, startDetached, type ChildResult } from "./spawn";
 import { MIN_SIZE, readWindowState, restoreBounds, windowStatePath, writeWindowState } from "./windowState";
 import { revealablePath } from "./reveal";
 
@@ -50,6 +50,9 @@ const HEALTH_INTERVAL_MS = 2_000;
 const HEALTH_TIMEOUT_MS = 1_500;
 const LOST_AFTER_MISSES = 2;
 const LOST_POLL_MS = 3_000;
+/** A started Herdr answered within 0.1 s in a 2026-09-29 run; restoring many panes can take longer. */
+const HERDR_START_WAIT_MS = 5_000;
+const HERDR_START_POLL_MS = 200;
 const STATUS_PAGE = path.join(__dirname, "static", "status.html");
 const STATUS_PAGE_URL = pathToFileURL(STATUS_PAGE).href;
 const CLIPBOARD_PERMISSIONS = new Set(["clipboard-read", "clipboard-sanitized-write"]);
@@ -220,6 +223,8 @@ export class DesktopHost {
     this.log.event("discovery.start", { attempt, trigger, herdr: herdr.source, replaced_pane_herdr: herdr.replacedPaneValue ?? undefined });
     const cli = await this.findCli(attempt);
     if (!cli) return this.fail(attempt, "cli_missing", "no executable hide CLI");
+    await this.ensureHerdrServer(attempt);
+    if (this.quitting) return;
     const answer = parseConnect(await this.runCli(cli.path, ["connect"], CONNECT_TIMEOUT_MS));
     if (this.quitting) return;
     if (answer.kind === "failed") return this.fail(attempt, answer.reason, answer.detail);
@@ -298,6 +303,38 @@ export class DesktopHost {
     const inheritedPath = this.env.path || "/usr/bin:/bin:/usr/sbin:/sbin";
     const searchPath = [...new Set([...inheritedPath.split(":"), ...wellKnownDirs(this.env.home)].filter(Boolean))].join(":");
     return { ...this.env.inherited, PATH: searchPath, ...(herdr ? { HERDR_BIN_PATH: herdr } : {}) };
+  }
+
+  /**
+   * Starts the Herdr this app bundles when no server answers on the socket
+   * its children would use, as `herdr` does when a terminal runs it: after a
+   * reboot nothing else starts one, and hided only reads a missing server as
+   * absent. A server that answers is never touched, and neither an unpackaged
+   * host nor an explicit HERDR_BIN_PATH override starts anything, so a
+   * development or e2e run keeps the server it made. Every failure goes to the
+   * log and the connect goes ahead, where the shell shows Herdr unreachable.
+   */
+  private async ensureHerdrServer(attempt: number): Promise<void> {
+    const herdr = this.herdr();
+    if (herdr.source !== "bundled" || herdr.path === null) return;
+    const bin = herdr.path;
+    const env = serverEnvironment(this.childEnvironment());
+    const status = () => this.runChild(bin, ["status", "server", "--json"], STATUS_TIMEOUT_MS, env).then(parseServerStatus);
+    const before = await status();
+    if ("unreadable" in before) return this.log.event("herdr.status_failed", { attempt, detail: before.unreadable });
+    if (before.running) return;
+    const started = Date.now();
+    const spawned = await startDetached(bin, ["server"], env);
+    if ("spawnError" in spawned) return this.log.event("herdr.server_start_failed", { attempt, detail: spawned.spawnError });
+    while (Date.now() - started < HERDR_START_WAIT_MS && !this.quitting) {
+      await new Promise((resolve) => setTimeout(resolve, HERDR_START_POLL_MS));
+      const now = await status();
+      if ("running" in now && now.running) {
+        this.log.event("herdr.server_started", { attempt, pid: spawned.pid, elapsed_ms: Date.now() - started });
+        return;
+      }
+    }
+    this.log.event("herdr.server_start_failed", { attempt, pid: spawned.pid, detail: "no answer", elapsed_ms: Date.now() - started });
   }
 
   /**
