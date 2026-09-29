@@ -113,25 +113,36 @@ export type SheetState =
 
 export type SheetModel = { state: SheetState; rows: SheetRow[] };
 
+/** What the disabled `정리` says while another project's worker holds the daemon: honest about a review that only reads. */
+export const BUSY_TEXT: Record<Elsewhere, string> = { loading: "다른 프로젝트를 검토하는 중", removing: "다른 정리가 진행 중" };
+
 const EMPTY_CELL: DiskCell = { bytes: 0, folders: 0, largest_name: null };
 
-/** The busiest cleanup on this daemon: a removing one anywhere blocks a new one (B20). */
-export function removingElsewhere(workspaces: readonly Workspace[], workspaceId: string): boolean {
-  return workspaces.some((workspace) => workspace.id !== workspaceId && workspace.cleanup?.phase === "removing");
+/** What another project's cleanup is doing: `loading` is its review still reading, `removing` its confirmed cleanup. */
+export type Elsewhere = "loading" | "removing";
+
+/**
+ * The daemon runs one cleanup worker at a time, and the core refuses a review
+ * or a dismiss while it runs, so a review or a removal of another project
+ * holds this one back (B20). A finished review that nobody closed does not.
+ */
+export function cleanupElsewhere(workspaces: readonly Workspace[], workspaceId: string): Elsewhere | null {
+  const phases = workspaces.filter((workspace) => workspace.id !== workspaceId).map((workspace) => workspace.cleanup?.phase);
+  return phases.includes("removing") ? "removing" : phases.includes("loading") ? "loading" : null;
 }
 
-export function sheetModel(workspace: Workspace, busyElsewhere: boolean): SheetModel {
+export function sheetModel(workspace: Workspace, elsewhere: Elsewhere | null): SheetModel {
   const cleanup = workspace.cleanup ?? null;
   const phase = cleanup?.phase ?? null;
   let state: SheetState = "pending";
   if (phase === "removing") state = "removing";
   else if (phase === "complete") state = "complete";
-  else if (busyElsewhere) state = "busy";
+  else if (elsewhere) state = "busy";
   else if (phase === "failed" || (phase === "review" && cleanup?.usage_error)) state = "unreadable";
   else if (phase === "review") state = "ready";
   // The in-use answer arrives before the slow worktree checks: caches may be
   // ticked from then on, a worktree only once the review is whole.
-  const open = !busyElsewhere && !cleanup?.usage_error && (phase === "review" || (phase === "loading" && cleanup?.usage_ready === true));
+  const open = !elsewhere && !cleanup?.usage_error && (phase === "review" || (phase === "loading" && cleanup?.usage_ready === true));
   const rows = workspace.checkouts.filter((checkout) => checkout.worktree).map((checkout) => rowOf(checkout, cleanup, open, state === "ready"));
   return { state, rows };
 }

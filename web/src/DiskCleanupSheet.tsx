@@ -12,7 +12,9 @@ import {
   FILTERS,
   FILTER_LABEL,
   LAYER_LABEL,
+  BUSY_TEXT,
   allocatedTotal,
+  cleanupElsewhere,
   bundleRefs,
   bundleState,
   filterCounts,
@@ -26,7 +28,6 @@ import {
   needsConfirm,
   planOf,
   pruneSelection,
-  removingElsewhere,
   resultLines,
   sheetModel,
   signedBytes,
@@ -77,8 +78,8 @@ const CONFIRM_ANSWER_MS = 5000;
 
 export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, onClose }: { actions: Actions; workspace: Workspace; filter: Filter; onClose: () => void }) {
   const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
-  const busyElsewhere = removingElsewhere(workspaces ?? [], workspace.id);
-  const model = useMemo(() => sheetModel(workspace, busyElsewhere), [workspace, busyElsewhere]);
+  const elsewhere = cleanupElsewhere(workspaces ?? [], workspace.id);
+  const model = useMemo(() => sheetModel(workspace, elsewhere), [workspace, elsewhere]);
   const cleanup = workspace.cleanup ?? null;
   const [filter, setFilter] = useState<Filter>(initialFilter);
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
@@ -90,12 +91,12 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
   const phase = cleanup?.phase ?? null;
 
   // Opening reviews the project, unless a cleanup that already ran or is running is what there is to show (B20).
-  // Another project's cleanup that ends while the sheet is open leaves this project unreviewed: review when it does.
+  // Another project's review or cleanup that ends while the sheet is open leaves this project unreviewed: review when it does.
   useEffect(() => {
-    if (busyElsewhere || phase === "removing" || phase === "complete") return;
+    if (elsewhere || phase === "removing" || phase === "complete") return;
     actions.reviewDiskCleanup(workspace.id);
     // On opening and when the daemon's other cleanup ends; a later `다시 검토` is its own press.
-  }, [busyElsewhere]);
+  }, [elsewhere === null]);
   // A new review starts from nothing ticked, and a settled press can be made again.
   useEffect(() => {
     setSelection(EMPTY_SELECTION);
@@ -203,7 +204,7 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
                 </Button>
                 <Button onClick={press} disabled={footer.empty || model.state !== "ready" || sent} data-disk-clean="true">
                   <Trash2Icon aria-hidden="true" />
-                  {model.state === "busy" ? "다른 정리가 진행 중" : "정리"}
+                  {model.state === "busy" && elsewhere ? BUSY_TEXT[elsewhere] : "정리"}
                 </Button>
               </div>
             </DialogFooter>

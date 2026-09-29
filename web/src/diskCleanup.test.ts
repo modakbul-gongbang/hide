@@ -8,6 +8,7 @@ import {
   EMPTY_SELECTION,
   LOW_FREE_BYTES,
   SMALL_CHECKOUT_BYTES,
+  BUSY_TEXT,
   allocatedTotal,
   bundleRefs,
   bundleState,
@@ -26,7 +27,7 @@ import {
   pruneSelection,
   reasonText,
   reclaimable,
-  removingElsewhere,
+  cleanupElsewhere,
   resultLines,
   sheetModel,
   toggleBundle,
@@ -103,7 +104,7 @@ function workspace(checkouts: Checkout[], cleanup: Partial<DiskCleanup> | null, 
 }
 
 function ready(checkouts: Checkout[], rows: Record<string, Partial<CleanupRow>> = {}): SheetRow[] {
-  return sheetModel(workspace(checkouts, {}, rows), false).rows;
+  return sheetModel(workspace(checkouts, {}, rows), null).rows;
 }
 
 const merged = { merged: true };
@@ -159,7 +160,7 @@ describe("layout (B4, D-21)", () => {
 
 describe("cell availability (B5, B6, B14, B15, B25)", () => {
   it("is a skeleton with nothing selectable while the review has not answered", () => {
-    const pending = sheetModel(workspace([checkout("a")], { phase: "loading", usage_ready: false }), false);
+    const pending = sheetModel(workspace([checkout("a")], { phase: "loading", usage_ready: false }), null);
     expect(pending.state).toBe("pending");
     expect(pending.rows[0]?.cache.build_cache.selectable).toBe(false);
   });
@@ -190,7 +191,7 @@ describe("cell availability (B5, B6, B14, B15, B25)", () => {
   });
 
   it("makes nothing selectable when in-use could not be read, without a banner state of its own", () => {
-    const model = sheetModel(workspace([checkout("a")], { usage_error: "Herdr is not connected" }), false);
+    const model = sheetModel(workspace([checkout("a")], { usage_error: "Herdr is not connected" }), null);
     expect(model.state).toBe("unreadable");
     expect(model.rows[0]?.cache.build_cache.selectable).toBe(false);
     expect(model.rows[0]?.worktree?.selectable).toBe(false);
@@ -199,22 +200,37 @@ describe("cell availability (B5, B6, B14, B15, B25)", () => {
   it("is busy while another project's cleanup removes", () => {
     const other = workspace([checkout("a")], { phase: "removing" }, {}, "other");
     const mine = workspace([checkout("a")], null);
-    expect(removingElsewhere([other, mine], "p")).toBe(true);
-    expect(removingElsewhere([other], "other")).toBe(false);
-    expect(sheetModel(mine, true).state).toBe("busy");
+    expect(cleanupElsewhere([other, mine], "p")).toBe("removing");
+    expect(cleanupElsewhere([other], "other")).toBeNull();
+    expect(sheetModel(mine, "removing").state).toBe("busy");
+    expect(BUSY_TEXT.removing).toBe("다른 정리가 진행 중");
+  });
+
+  it("is busy while another project's review still reads, and ready again once that worker ends", () => {
+    // The core refuses a review while a worker runs, so this project would wait on "검토하는 중…" for good without the busy state.
+    const reading = workspace([checkout("a")], { phase: "loading", usage_ready: false }, {}, "other");
+    const mine = workspace([checkout("a")], null);
+    expect(cleanupElsewhere([reading, mine], "p")).toBe("loading");
+    expect(sheetModel(mine, "loading").state).toBe("busy");
+    expect(BUSY_TEXT.loading).toBe("다른 프로젝트를 검토하는 중");
+    // The other review ends and stays open with nobody closing it: it no longer holds this project back.
+    const finished = workspace([checkout("a")], { phase: "review" }, {}, "other");
+    expect(cleanupElsewhere([finished, mine], "p")).toBeNull();
+    const reviewed = workspace([checkout("a")], { phase: "review" });
+    expect(sheetModel(reviewed, cleanupElsewhere([finished, reviewed], "p")).state).toBe("ready");
   });
 
   it("opens the cache cells once the in-use answer is in and the worktree cells only with the whole review", () => {
-    const early = sheetModel(workspace([checkout("main", { main: true }), checkout("ok", merged)], { phase: "loading", usage_ready: true }), false);
+    const early = sheetModel(workspace([checkout("main", { main: true }), checkout("ok", merged)], { phase: "loading", usage_ready: true }), null);
     expect(early.state).toBe("pending");
     expect(early.rows[1]?.cache.build_cache.selectable).toBe(true);
     expect(early.rows[1]?.worktree?.selectable).toBe(false);
-    const waiting = sheetModel(workspace([checkout("ok", merged)], { phase: "loading", usage_ready: false }), false);
+    const waiting = sheetModel(workspace([checkout("ok", merged)], { phase: "loading", usage_ready: false }), null);
     expect(waiting.rows[0]?.cache.build_cache.selectable).toBe(false);
   });
 
   it("draws the rows from the checkouts when the review failed, with the reason for the notice", () => {
-    const failed = sheetModel(workspace([checkout("a"), checkout("b")], { phase: "failed", message: "no herdr", usage_error: "no herdr", usage_ready: false }), false);
+    const failed = sheetModel(workspace([checkout("a"), checkout("b")], { phase: "failed", message: "no herdr", usage_error: "no herdr", usage_ready: false }), null);
     expect(failed.state).toBe("unreadable");
     expect(failed.rows).toHaveLength(2);
     expect(failed.rows.every((row) => !row.cache.build_cache.selectable && row.total !== null)).toBe(true);
@@ -363,9 +379,9 @@ describe("footer (B13, B16, B17, B18)", () => {
   });
 
   it("says what it waits for instead of claiming there is nothing to clear while the review is out or unreadable", () => {
-    const pending = sheetModel(workspace([checkout("a")], { phase: "loading", usage_ready: false }), false);
+    const pending = sheetModel(workspace([checkout("a")], { phase: "loading", usage_ready: false }), null);
     expect(footerOf(pending.rows, EMPTY_SELECTION, pending.state).summary).toBe("검토하는 중…");
-    const unreadable = sheetModel(workspace([checkout("a")], { usage_error: "no herdr" }), false);
+    const unreadable = sheetModel(workspace([checkout("a")], { usage_error: "no herdr" }), null);
     expect(footerOf(unreadable.rows, EMPTY_SELECTION, unreadable.state).summary).toBe("쓰는 중인지 확인해야 고를 수 있다");
   });
 
