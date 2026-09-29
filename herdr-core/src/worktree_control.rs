@@ -818,6 +818,16 @@ pub struct CheckoutTabRequest {
     pub host: crate::checkout_owner::TabHost,
 }
 
+/// What the task's worker starts once the creation is settled: the pane, the
+/// agent kind, its first prompt and its CLI arguments.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PendingAgentStart {
+    pub pane_id: String,
+    pub kind: String,
+    pub prompt: Option<String>,
+    pub args: Vec<String>,
+}
+
 /// How starting the chosen agent in a task's created pane ended.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TaskAgentOutcome {
@@ -851,12 +861,18 @@ fn start_task_agent(
         Ok(guard) => guard.pending_task_agent_start(id),
         Err(_) => return,
     };
-    let Some((pane_id, kind, prompt)) = pending else {
+    let Some(PendingAgentStart {
+        pane_id,
+        kind,
+        prompt,
+        args,
+    }) = pending
+    else {
         return;
     };
-    let mut outcome = launch_agent(connector, local, id, &pane_id, &kind);
+    let mut outcome = launch_agent(connector, local, id, &pane_id, &kind, args);
     if let (TaskAgentOutcome::Started, Some(prompt)) = (&outcome, prompt) {
-        outcome = send_first_prompt(connector, id, &pane_id, &prompt);
+        outcome = send_first_prompt(connector, id, &pane_id, &prompt, PROMPT_READY_WAIT);
     }
     if let Ok(mut guard) = runtime.lock() {
         guard.ingest_task_agent_result(id, outcome);
@@ -866,33 +882,82 @@ fn start_task_agent(
     notifier.notify();
 }
 
-/// Hands a started agent its first prompt (the issue it was started from).
-/// The agent is running either way, so a refusal is reported on the started
-/// agent rather than as a failed start.
+/// How long a first prompt waits for an agent that answered its start but
+/// is holding a question (a folder trust prompt): the operator answers it in
+/// the pane, and the prompt goes in after (PRD home-device-rail D-26). Past
+/// this the prompt is reported unsent rather than typed into the question.
+pub(crate) const PROMPT_READY_WAIT: Duration = Duration::from_secs(600);
+const PROMPT_READY_POLL: Duration = Duration::from_secs(1);
+const AGENT_BLOCKED: &str = "agent_blocked";
+
+/// Hands a started agent its first prompt (the text the operator started it
+/// with). Herdr refuses a prompt to an agent holding a question without
+/// typing anything, so a refusal of that kind waits for the question to be
+/// answered and sends then. The agent is running either way, so a prompt
+/// that could not be sent is reported on the started agent rather than as a
+/// failed start.
 fn send_first_prompt(
     connector: &dyn ApiConnector,
     id: u64,
     pane_id: &str,
     prompt: &str,
+    ready_wait: Duration,
 ) -> TaskAgentOutcome {
     let params = match wire::agent_prompt_params(pane_id, prompt) {
         Ok(params) => params,
         Err(message) => return TaskAgentOutcome::StartedWithoutPrompt(message),
     };
-    match request_with_correlation_id(
-        connector,
-        &format!("herdr-core:task:{id}:prompt"),
-        "agent.prompt",
-        params,
-        Duration::from_secs(15),
-    )
-    .map_err(|error| error.to_string())
-    .and_then(wire::prompted_agent)
-    {
-        Ok(()) => TaskAgentOutcome::Started,
-        Err(message) => TaskAgentOutcome::StartedWithoutPrompt(format!(
+    let deadline = Instant::now() + ready_wait;
+    loop {
+        let answer = request_with_correlation_id(
+            connector,
+            &format!("herdr-core:task:{id}:prompt"),
+            "agent.prompt",
+            params.clone(),
+            Duration::from_secs(15),
+        );
+        let message = match answer {
+            Ok(value) => match wire::prompted_agent(value) {
+                Ok(()) => return TaskAgentOutcome::Started,
+                Err(message) => message,
+            },
+            Err(ApiError::Remote { code, .. }) if code == AGENT_BLOCKED => {
+                match wait_until_unblocked(connector, pane_id, deadline) {
+                    Ok(()) => continue,
+                    Err(message) => message,
+                }
+            }
+            Err(error) => error.to_string(),
+        };
+        return TaskAgentOutcome::StartedWithoutPrompt(format!(
             "The agent started, but its first prompt was not sent ({message}). Paste it into the pane."
-        )),
+        ));
+    }
+}
+
+/// Waits until the agent in `pane_id` no longer holds a question, reading
+/// `agent.get` once a second, until `deadline`.
+fn wait_until_unblocked(
+    connector: &dyn ApiConnector,
+    pane_id: &str,
+    deadline: Instant,
+) -> Result<(), String> {
+    loop {
+        if Instant::now() >= deadline {
+            return Err("the agent is still waiting on a question in its pane".into());
+        }
+        thread::sleep(PROMPT_READY_POLL);
+        let state = request_with_connector(
+            connector,
+            "agent.get",
+            wire::agent_target_params(pane_id)?,
+            Duration::from_secs(5),
+        )
+        .map_err(|error| format!("agent.get failed: {error}"))
+        .and_then(wire::agent_state)?;
+        if state.status != "blocked" {
+            return Ok(());
+        }
     }
 }
 
@@ -918,6 +983,7 @@ fn launch_agent(
     id: u64,
     pane_id: &str,
     kind: &str,
+    args: Vec<String>,
 ) -> TaskAgentOutcome {
     // Herdr would type the command into the pane's shell and wait for an
     // agent that can never appear; say so before asking it. A device's PATH
@@ -928,7 +994,7 @@ fn launch_agent(
         ));
     }
     let name = crate::fork::task_agent_name(kind, pane_id);
-    let params = match wire::agent_start_params(pane_id, &name, kind, Vec::new()) {
+    let params = match wire::agent_start_params(pane_id, &name, kind, args) {
         Ok(params) => params,
         Err(message) => return TaskAgentOutcome::Failed(message),
     };
@@ -2611,5 +2677,77 @@ mod tests {
         let error = migrate_branch(&server, &git, &task("feature")).unwrap_err();
         assert!(error.contains("main worktree is now on main"));
         assert!(error.contains("open the repository at /fixture/repo and check out feature"));
+    }
+
+    fn agent(status: &str) -> Value {
+        json!({
+            "pane_id": "w1:p1", "tab_id": "w1:t1", "workspace_id": "w1", "terminal_id": "term_1",
+            "agent": "claude", "agent_status": status, "state_change_seq": 1,
+            "focused": false, "interactive_ready": true, "revision": 0
+        })
+    }
+    fn shell_ready() -> Value {
+        json!({"result":{"type":"pane_process_info","process_info":{
+            "pane_id":"w1:p1","shell_pid":4100,"foreground_process_group_id":4100,
+            "foreground_processes":[{"pid":4100,"name":"zsh"}]
+        }}})
+    }
+    fn blocked() -> Value {
+        json!({"error":{"code":"agent_blocked","message":"the agent is waiting on a question"}})
+    }
+
+    /// PRD home-device-rail D-18, D-26: the model and folders a start names
+    /// reach `agent.start` as the CLI's own arguments, and a first prompt
+    /// refused because the agent holds a question (a folder trust prompt)
+    /// waits until the question is answered and is sent then.
+    #[test]
+    fn a_blocked_first_prompt_is_sent_once_the_agent_is_free() {
+        let server = server(vec![
+            shell_ready(),
+            json!({"result":{"type":"agent_started","argv":[],"agent":agent("idle")}}),
+            blocked(),
+            json!({"result":{"type":"agent_info","agent":agent("blocked")}}),
+            json!({"result":{"type":"agent_info","agent":agent("idle")}}),
+            json!({"result":{"type":"agent_prompted","agent":agent("working")}}),
+        ]);
+        let args: Vec<String> = ["--model", "opus", "--add-dir", "/work/my app"]
+            .map(String::from)
+            .into();
+        let started = launch_agent(&server, false, 7, "w1:p1", "claude", args.clone());
+        assert!(matches!(started, TaskAgentOutcome::Started));
+        let outcome = send_first_prompt(&server, 7, "w1:p1", "fix the tests", PROMPT_READY_WAIT);
+        assert!(matches!(outcome, TaskAgentOutcome::Started), "{outcome:?}");
+
+        let requests = server.requests.lock().unwrap().clone();
+        let methods: Vec<&str> = requests
+            .iter()
+            .map(|request| request["method"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            methods,
+            [
+                "pane.process_info",
+                "agent.start",
+                "agent.prompt",
+                "agent.get",
+                "agent.get",
+                "agent.prompt"
+            ]
+        );
+        assert_eq!(requests[1]["params"]["args"], json!(args));
+        assert_eq!(requests[5]["params"]["text"], json!("fix the tests"));
+    }
+
+    /// D-26, B31: a question left unanswered past the wait is reported on the
+    /// started agent; nothing is typed into the question.
+    #[test]
+    fn a_first_prompt_still_blocked_at_the_deadline_is_reported_unsent() {
+        let server = server(vec![blocked()]);
+        let outcome = send_first_prompt(&server, 7, "w1:p1", "fix the tests", Duration::ZERO);
+        let TaskAgentOutcome::StartedWithoutPrompt(message) = outcome else {
+            panic!("expected an unsent prompt, got {outcome:?}");
+        };
+        assert!(message.contains("still waiting on a question"), "{message}");
+        assert_eq!(server.requests.lock().unwrap().len(), 1);
     }
 }

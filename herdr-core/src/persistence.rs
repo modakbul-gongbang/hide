@@ -116,10 +116,26 @@ struct StoredUiState {
     #[serde(default)]
     project_issue_sources: BTreeMap<String, String>,
     #[serde(default)]
-    issue_settings: crate::model::IssueSettingsSnapshot,
+    issue_settings: StoredIssueSettings,
+    /// The agent kind and per-kind model last started with. Absent in a
+    /// store written before it existed, which seeds it once from the removed
+    /// `issue_settings.default_agent` (PRD home-device-rail D-18).
+    #[serde(default)]
+    agent_start: Option<crate::model::AgentStartChoice>,
     /// The stamps and the sleeping agents; absent loads as none.
     #[serde(default)]
     agent_sleep: crate::agent_sleep::AgentSleepStore,
+}
+
+/// Settings › Issues as stored. `default_agent` is only ever read: it named
+/// the Start dialog's first agent until every start surface shared one
+/// remembered choice, and it seeds that choice once; the next save drops it.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+struct StoredIssueSettings {
+    #[serde(flatten)]
+    settings: crate::model::IssueSettingsSnapshot,
+    #[serde(default, skip_serializing)]
+    default_agent: Option<String>,
 }
 
 /// A store written before the pet existed carries no visibility, and the pet
@@ -271,7 +287,12 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
                     source == crate::tasks::GITHUB || source == crate::tasks::LOCAL
                 })
                 .collect(),
-            issue_settings: stored.issue_settings,
+            agent_start: stored.agent_start.unwrap_or_else(|| {
+                crate::model::AgentStartChoice::seeded(
+                    stored.issue_settings.default_agent.as_deref(),
+                )
+            }),
+            issue_settings: stored.issue_settings.settings,
             agent_sleep: {
                 let mut store = stored.agent_sleep;
                 store.after_load();
@@ -333,7 +354,11 @@ pub fn save(
         pane_terminal_sizes: pane_terminal_sizes.clone(),
         agent_sleep_after_hours: state.agent_sleep_after_hours,
         project_issue_sources: state.project_issue_sources.clone(),
-        issue_settings: state.issue_settings.clone(),
+        issue_settings: StoredIssueSettings {
+            settings: state.issue_settings.clone(),
+            default_agent: None,
+        },
+        agent_start: Some(state.agent_start.clone()),
         agent_sleep: state.agent_sleep.clone(),
     };
     let bytes = serde_json::to_vec_pretty(&stored)
@@ -408,6 +433,46 @@ mod tests {
             serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert!(rewritten.get("collapsed_agent_pane_ids").is_none());
         assert_eq!(rewritten["expanded_agent_pane_ids"], serde_json::json!([]));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    // PRD home-device-rail D-18: the Settings default agent is gone. A store
+    // written before the remembered choice seeds it once from that field,
+    // and the next save drops the field.
+    #[test]
+    fn a_stored_default_agent_seeds_the_remembered_choice_and_is_dropped() {
+        let root = std::env::temp_dir().join(format!("herdr-core-seed-{}", std::process::id()));
+        let path = root.join("state.json");
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        save(
+            &path,
+            &UiStateSnapshot::default(),
+            &PaneTerminalSizes::new(),
+        )
+        .unwrap();
+        let mut persisted: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        persisted.as_object_mut().unwrap().remove("agent_start");
+        persisted["issue_settings"]["default_agent"] = serde_json::json!("codex");
+        fs::write(&path, serde_json::to_vec(&persisted).unwrap()).unwrap();
+
+        let (state, _, disposition) = load(&path);
+        assert_eq!(disposition, LoadDisposition::Loaded);
+        assert_eq!(state.agent_start.kind.as_deref(), Some("codex"));
+        assert!(state.agent_start.models.is_empty());
+
+        save(&path, &state, &PaneTerminalSizes::new()).unwrap();
+        let rewritten: serde_json::Value =
+            serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+        assert!(rewritten["issue_settings"].get("default_agent").is_none());
+        assert_eq!(rewritten["agent_start"]["kind"], "codex");
+
+        // Once the choice is stored, an old field no longer decides it.
+        let mut again = rewritten;
+        again["issue_settings"]["default_agent"] = serde_json::json!("claude");
+        fs::write(&path, serde_json::to_vec(&again).unwrap()).unwrap();
+        assert_eq!(load(&path).0.agent_start.kind.as_deref(), Some("codex"));
         let _ = fs::remove_dir_all(&root);
     }
 

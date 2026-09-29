@@ -2121,6 +2121,16 @@ impl Runtime {
                 }
             },
         };
+        let model = match agent_choice::chosen_model(
+            payload.agent_kind.as_deref(),
+            payload.model.as_deref(),
+        ) {
+            Ok(model) => model,
+            Err(message) => {
+                self.set_error("worktree.create_unknown_model", message, false);
+                return true;
+            }
+        };
         let prompt = payload.agent_kind.as_ref().and(payload.prompt.clone());
         let id = match self.begin_task_operation(
             "worktree_create",
@@ -2135,7 +2145,12 @@ impl Runtime {
                 return true;
             }
         };
-        self.set_task_agent_prompt(id, prompt);
+        self.remember_agent_choice(payload.agent_kind.as_deref(), model.as_deref());
+        self.set_task_agent_launch(
+            id,
+            prompt,
+            agent_choice::agent_arguments(model.as_deref(), &[]),
+        );
         if let Some(operation) = self.snapshot.task_operation.as_mut() {
             operation.device_id = device.clone();
         }
@@ -2363,24 +2378,40 @@ impl Runtime {
     /// worktree sheet already reports through. The shell starts the provider
     /// in the pane the slot names, so `terminal` needs nothing more from it.
     pub(super) fn agent_start_in_checkout(&mut self, payload: AgentStartInCheckoutPayload) -> bool {
+        let request_id = payload.request_id.clone();
         let agent_kind = match payload.provider.as_str() {
             "terminal" => None,
             "claude" | "codex" => Some(payload.provider.clone()),
             other => {
-                self.set_error(
+                self.set_request_error(
                     "agent_start.unknown_provider",
                     format!("No agent provider named {other}"),
                     false,
+                    request_id.as_deref(),
                 );
                 return true;
             }
         };
+        let model =
+            match agent_choice::chosen_model(agent_kind.as_deref(), payload.model.as_deref()) {
+                Ok(model) => model,
+                Err(message) => {
+                    self.set_request_error(
+                        "agent_start.unknown_model",
+                        message,
+                        false,
+                        request_id.as_deref(),
+                    );
+                    return true;
+                }
+            };
         let Some((workspace_id, checkout_id)) = self.local_checkout_ids(&payload.checkout_path)
         else {
-            self.set_error(
+            self.set_request_error(
                 "overview.unknown_checkout",
                 format!("Checkout is not listed: {}", payload.checkout_path),
                 false,
+                request_id.as_deref(),
             );
             return true;
         };
@@ -2408,15 +2439,23 @@ impl Runtime {
             Some(workspace_path),
             None,
             None,
-            agent_kind,
+            agent_kind.clone(),
         ) {
             Ok(id) => id,
             Err(message) => {
-                self.set_error("task_operation.busy", message, true);
+                self.set_request_error("task_operation.busy", message, true, request_id.as_deref());
                 return true;
             }
         };
-        self.set_task_agent_prompt(id, prompt);
+        if let Some(operation) = self.snapshot.task_operation.as_mut() {
+            operation.request_id = request_id;
+        }
+        self.remember_agent_choice(agent_kind.as_deref(), model.as_deref());
+        self.set_task_agent_launch(
+            id,
+            prompt,
+            agent_choice::agent_arguments(model.as_deref(), &[]),
+        );
         let request = live::CheckoutTabRequest {
             id,
             checkout_path: payload.checkout_path,

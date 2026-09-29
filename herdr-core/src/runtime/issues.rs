@@ -625,23 +625,10 @@ impl Runtime {
 
     /// Settings › Issues: how starting work from an issue behaves.
     pub(super) fn set_issue_settings(&mut self, payload: IssueSettingsSetPayload) -> bool {
-        if let Some(agent) = payload.default_agent.as_deref()
-            && !matches!(agent, "claude" | "codex" | "terminal")
-        {
-            self.set_error(
-                "issue_settings.unknown_agent",
-                format!("No agent named {agent}"),
-                false,
-            );
-            return true;
-        }
         let settings = &mut self.snapshot.ui_state.issue_settings;
         let before = settings.clone();
         if let Some(value) = payload.ai_worktree_name {
             settings.ai_worktree_name = value;
-        }
-        if let Some(value) = payload.default_agent {
-            settings.default_agent = value;
         }
         if let Some(value) = payload.closes_instruction {
             settings.closes_instruction = value;

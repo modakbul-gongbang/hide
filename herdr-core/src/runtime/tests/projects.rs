@@ -1614,6 +1614,68 @@ fn agent_start_in_checkout_reports_through_the_task_operation_slot() {
     assert_eq!(operation.pane_id, None);
 }
 
+/// PRD home-device-rail D-18, D-20: a start's kind and model are the next
+/// default on every start surface, a terminal is never remembered, and each
+/// answer carries the id of the request that asked, so a surface reads only
+/// its own (a refusal on `last_error`, a started one on the task operation).
+#[test]
+fn agent_start_remembers_its_choice_and_answers_its_own_request() {
+    let mut runtime = runtime();
+    runtime.ingest_session(Ok(context_payload()));
+    let checkout = runtime.snapshot.navigator.workspaces[0].checkouts[0].clone();
+    let start = |provider: &str, model: &str, request: &str| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION, "kind": "agent_start_in_checkout",
+            "payload": {"checkout_path": checkout.path, "provider": provider,
+                        "model": model, "request_id": request}
+        }))
+        .unwrap()
+    };
+
+    assert!(runtime.dispatch_json(&start("codex", "--yolo", "r1")));
+    let error = runtime.snapshot.status.last_error.clone().expect("refusal");
+    assert_eq!(error.kind, "agent_start.unknown_model");
+    assert_eq!(error.request_id.as_deref(), Some("r1"));
+    assert!(runtime.snapshot.task_operation.is_none());
+    assert_eq!(runtime.snapshot.ui_state.agent_start, Default::default());
+
+    assert!(runtime.dispatch_json(&start("codex", " gpt-6-astra ", "r2")));
+    let operation = runtime.snapshot.task_operation.clone().expect("operation");
+    assert_eq!(operation.request_id.as_deref(), Some("r2"));
+    assert_eq!(operation.agent_kind.as_deref(), Some("codex"));
+    let choice = &runtime.snapshot.ui_state.agent_start;
+    assert_eq!(choice.kind.as_deref(), Some("codex"));
+    assert_eq!(
+        choice.models.get("codex").map(String::as_str),
+        Some("gpt-6-astra")
+    );
+
+    // The operation failed without a live Herdr, which leaves the slot free.
+    assert!(runtime.dispatch_json(&start("claude", "", "r3")));
+    let choice = runtime.snapshot.ui_state.agent_start.clone();
+    assert_eq!(choice.kind.as_deref(), Some("claude"));
+    assert_eq!(
+        choice.models.get("codex").map(String::as_str),
+        Some("gpt-6-astra"),
+        "a start with no model keeps each kind's last one"
+    );
+    assert!(!choice.models.contains_key("claude"));
+
+    let (restored, _, _) = persistence::load(&runtime.state_path);
+    assert_eq!(restored.agent_start, choice);
+
+    assert!(runtime.dispatch_json(&start("terminal", "opus", "r4")));
+    let error = runtime.snapshot.status.last_error.clone().expect("refusal");
+    assert_eq!(error.kind, "agent_start.unknown_model");
+    assert_eq!(error.request_id.as_deref(), Some("r4"));
+
+    assert!(runtime.dispatch_json(&start("terminal", "", "r5")));
+    let operation = runtime.snapshot.task_operation.clone().expect("operation");
+    assert_eq!(operation.request_id.as_deref(), Some("r5"));
+    assert_eq!(operation.agent_kind, None);
+    assert_eq!(runtime.snapshot.ui_state.agent_start, choice);
+}
+
 #[test]
 fn projects_follow_authoritative_activity_and_identical_snapshots_settle() {
     let mut runtime = runtime();
@@ -2736,7 +2798,12 @@ fn a_task_agent_start_reports_apart_from_the_creation_it_follows() {
     assert_eq!(operation.agent_phase.as_deref(), Some("starting"));
     assert_eq!(
         runtime.pending_task_agent_start(id),
-        Some(("w1:p9".to_owned(), "claude".to_owned(), None))
+        Some(live::PendingAgentStart {
+            pane_id: "w1:p9".to_owned(),
+            kind: "claude".to_owned(),
+            prompt: None,
+            args: Vec::new(),
+        })
     );
     // An acknowledgement while the agent is still starting keeps the slot.
     runtime.acknowledge_task_operation(id);

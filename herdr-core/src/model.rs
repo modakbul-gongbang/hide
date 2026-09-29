@@ -2164,6 +2164,11 @@ pub struct UiStateSnapshot {
     /// How starting work from an issue behaves (Settings › Issues).
     #[serde(default)]
     pub issue_settings: IssueSettingsSnapshot,
+    /// The agent kind and each kind's model the operator last started with,
+    /// from any start surface (PRD home-device-rail D-18, D-20): the next
+    /// start anywhere preselects them.
+    #[serde(default)]
+    pub agent_start: AgentStartChoice,
     /// Each pane's last state change and last look, and the agents Hide has
     /// put to sleep. Persisted with the rest of this store and never on the
     /// wire: the last look of the tab on screen moves every minute, and a
@@ -2230,10 +2235,6 @@ pub struct IssueSettingsSnapshot {
     /// name from the issue's number and title stands until it answers.
     #[serde(default = "default_true")]
     pub ai_worktree_name: bool,
-    /// The agent the Start dialog selects first: `claude`, `codex` or
-    /// `terminal`.
-    #[serde(default = "default_issue_agent")]
-    pub default_agent: String,
     /// End the first prompt by asking for a pull request that closes the
     /// issue, so the PR and the issue link themselves (`Closes #N`).
     #[serde(default = "default_true")]
@@ -2244,16 +2245,42 @@ fn default_true() -> bool {
     true
 }
 
-fn default_issue_agent() -> String {
-    "claude".into()
-}
-
 impl Default for IssueSettingsSnapshot {
     fn default() -> Self {
         Self {
             ai_worktree_name: true,
-            default_agent: default_issue_agent(),
             closes_instruction: true,
+        }
+    }
+}
+
+/// The agents Hide starts in a pane itself. `terminal` (a tab alone) is a
+/// start choice too, but never a remembered one (PRD home-device-rail D-20).
+pub const AGENT_KINDS: [&str; 2] = ["claude", "codex"];
+
+/// The agent kind and each kind's model the operator last chose, kept in the
+/// core's store so every start surface and every window preselects the same
+/// pair (PRD home-device-rail D-18). A kind with no model here starts with
+/// its CLI's own default, and no kind at all means the first start of this
+/// store.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AgentStartChoice {
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub models: BTreeMap<String, String>,
+}
+
+impl AgentStartChoice {
+    /// The first choice of a store written before this one existed: the
+    /// agent the removed `issue_settings.default_agent` named, when it named
+    /// one Hide starts (D-18: that value becomes the first remembered one).
+    pub fn seeded(default_agent: Option<&str>) -> Self {
+        Self {
+            kind: default_agent
+                .filter(|kind| AGENT_KINDS.contains(kind))
+                .map(str::to_owned),
+            models: BTreeMap::new(),
         }
     }
 }
@@ -2459,6 +2486,7 @@ impl Default for UiStateSnapshot {
             agent_sleep_after_hours: None,
             project_issue_sources: BTreeMap::new(),
             issue_settings: IssueSettingsSnapshot::default(),
+            agent_start: AgentStartChoice::default(),
             agent_sleep: crate::agent_sleep::AgentSleepStore::default(),
         }
     }
@@ -2974,6 +3002,10 @@ pub struct TaskOperationSnapshot {
     /// when the task started no agent.
     pub agent_phase: Option<String>,
     pub agent_message: Option<String>,
+    /// The id the start surface sent with the request, so it follows its own
+    /// task and never another window's or phone's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
 }
 
 /// The one repository clone Add a project started, and how far it got.
@@ -3410,6 +3442,11 @@ pub struct LastErrorSnapshot {
     pub message: String,
     pub retryable: bool,
     pub occurred_at: u64,
+    /// The request this refusal answers, when the event carried one, so the
+    /// surface that sent it (the start panel, a phone) reads its own answer
+    /// and no other.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
 }
 
 impl Snapshot {

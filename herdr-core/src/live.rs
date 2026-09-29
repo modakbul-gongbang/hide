@@ -50,8 +50,8 @@ pub(crate) mod cleanup;
 #[path = "worktree_control.rs"]
 mod worktree_control;
 pub use worktree_control::{
-    CheckoutTabRequest, IssueWriteFailure, PurposeMirror, PurposeTaskOutcome, PurposeTaskRequest,
-    TaskAgentOutcome, WorktreeTarget, WorktreeTaskOutcome, WorktreeTaskRequest,
+    CheckoutTabRequest, IssueWriteFailure, PendingAgentStart, PurposeMirror, PurposeTaskOutcome,
+    PurposeTaskRequest, TaskAgentOutcome, WorktreeTarget, WorktreeTaskOutcome, WorktreeTaskRequest,
     spawn_branch_migration, spawn_checkout_tab_create, spawn_existing_branch_worktree,
     spawn_issue_write, spawn_local_issue_write, spawn_purpose_write, spawn_remote_purpose_write,
     spawn_task_agent_start, spawn_workspace_close, spawn_worktree_close, spawn_worktree_create,

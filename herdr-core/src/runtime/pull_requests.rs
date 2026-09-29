@@ -500,6 +500,8 @@ impl Runtime {
                 checkout_path: checkout.path.clone(),
                 provider: payload.provider,
                 prompt,
+                model: payload.model,
+                request_id: None,
             }),
             None => self.start_worktree_task(
                 CreateWorktreePayload {
@@ -511,6 +513,7 @@ impl Runtime {
                     purpose: None,
                     task_key: None,
                     prompt,
+                    model: payload.model,
                 },
                 true,
             ),
