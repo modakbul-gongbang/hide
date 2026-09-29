@@ -680,10 +680,7 @@ pub fn ignored_repository(worktree: &Path) -> Result<Option<String>, String> {
             "-z",
         ],
     )?;
-    let mut budget = WalkBudget {
-        entries: IGNORED_WALK_ENTRIES,
-        until: std::time::Instant::now() + IGNORED_WALK_TIME,
-    };
+    let mut budget = WalkBudget::worktree();
     for folder in listed.split('\0').filter(|entry| entry.ends_with('/')) {
         if holds_repository(&worktree.join(folder), &mut budget)? {
             return Ok(Some(folder.trim_end_matches('/').to_owned()));
@@ -698,10 +695,34 @@ pub fn ignored_repository(worktree: &Path) -> Result<Option<String>, String> {
 const IGNORED_WALK_ENTRIES: usize = 2_000_000;
 const IGNORED_WALK_TIME: Duration = Duration::from_secs(30);
 
-struct WalkBudget {
+pub struct WalkBudget {
     entries: usize,
     until: std::time::Instant,
 }
+
+impl WalkBudget {
+    /// The budget of one worktree removal's look through its ignored folders.
+    fn worktree() -> Self {
+        Self {
+            entries: IGNORED_WALK_ENTRIES,
+            until: std::time::Instant::now() + IGNORED_WALK_TIME,
+        }
+    }
+
+    /// One budget for everything a cleanup run looks through, so a run over
+    /// many big folders is bounded as a whole and not folder by folder.
+    pub fn for_run() -> Self {
+        Self {
+            entries: RUN_WALK_ENTRIES,
+            until: std::time::Instant::now() + RUN_WALK_TIME,
+        }
+    }
+}
+
+/// The bound on one cleanup run's look for repositories inside the folders it
+/// empties. Crossing it leaves the remaining folders unverified, so kept.
+const RUN_WALK_ENTRIES: usize = 20_000_000;
+const RUN_WALK_TIME: Duration = Duration::from_secs(300);
 
 /// Whether `folder` or any folder below it holds a `.git`. Links are not
 /// followed: removal deletes the link, not what it points to.
@@ -1185,10 +1206,26 @@ pub fn set_aside_folder(common: &Path, folder: &Path) -> Result<PathBuf, std::io
     Ok(entry)
 }
 
+/// The names of the entries waiting in the repository's [`TRASH`] now.
+pub fn trash_entries(common: &Path) -> std::collections::BTreeSet<PathBuf> {
+    std::fs::read_dir(common.join(TRASH))
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .collect()
+}
+
 /// Starts the deletion of everything waiting in the repository's [`TRASH`]
-/// and waits up to `wait` for it to finish, sweeping again every few seconds
-/// so a deletion that stopped is retried. Returns how many entries remain.
-pub fn drain_trash(common: &Path, wait: Duration) -> usize {
+/// and waits up to `wait` for the `ours` entries to finish, sweeping again
+/// every few seconds so a deletion that stopped is retried. Entries another
+/// process put there are swept too but never waited for. Returns how many of
+/// `ours` remain.
+pub fn drain_trash(
+    common: &Path,
+    ours: &std::collections::BTreeSet<PathBuf>,
+    wait: Duration,
+) -> usize {
     let trash = common.join(TRASH);
     let until = std::time::Instant::now() + wait;
     let mut swept = None;
@@ -1197,7 +1234,10 @@ pub fn drain_trash(common: &Path, wait: Duration) -> usize {
             sweep_trash(&trash);
             swept = Some(std::time::Instant::now());
         }
-        let remaining = std::fs::read_dir(&trash).map_or(0, Iterator::count);
+        let remaining = ours
+            .iter()
+            .filter(|entry| std::fs::symlink_metadata(entry).is_ok())
+            .count();
         if remaining == 0 || std::time::Instant::now() >= until {
             return remaining;
         }
@@ -1206,15 +1246,9 @@ pub fn drain_trash(common: &Path, wait: Duration) -> usize {
 }
 
 /// Whether `folder` or any folder below it holds a `.git`, looked through
-/// within the same bounds a worktree removal uses.
-pub fn contains_repository(folder: &Path) -> Result<bool, String> {
-    holds_repository(
-        folder,
-        &mut WalkBudget {
-            entries: IGNORED_WALK_ENTRIES,
-            until: std::time::Instant::now() + IGNORED_WALK_TIME,
-        },
-    )
+/// within `budget`, which the caller shares across a whole run.
+pub fn contains_repository(folder: &Path, budget: &mut WalkBudget) -> Result<bool, String> {
+    holds_repository(folder, budget)
 }
 
 /// Entries of a trash folder being deleted by this process, so two sweeps
@@ -1231,13 +1265,19 @@ pub fn sweep_trash(trash: &Path) {
     let Some(common) = trash.parent() else {
         return;
     };
+    // The trash is a real folder of this repository, never a link that leads
+    // a sweep somewhere else.
+    if !std::fs::symlink_metadata(trash).is_ok_and(|metadata| metadata.is_dir()) {
+        return;
+    }
     let Ok(entries) = std::fs::read_dir(trash) else {
         return;
     };
     for entry in entries.filter_map(Result::ok) {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
-        let Some(admin) = name.splitn(3, '-').nth(2) else {
+        // Only what a removal named: `<nanos>-<pid>-<id>`.
+        let Some(admin) = trash_entry_id(&name) else {
             continue;
         };
         if still_registered(&common.join("worktrees").join(admin)) {
@@ -1282,6 +1322,15 @@ pub fn sweep_trash(trash: &Path) {
                 .remove(&path);
         }
     }
+}
+
+/// The id after `<digits>-<digits>-` in a trash entry's name, or `None` for a
+/// name no removal of ours would have made.
+fn trash_entry_id(name: &str) -> Option<&str> {
+    let mut parts = name.splitn(3, '-');
+    let (nanos, pid, id) = (parts.next()?, parts.next()?, parts.next()?);
+    let digits = |part: &str| !part.is_empty() && part.bytes().all(|byte| byte.is_ascii_digit());
+    (digits(nanos) && digits(pid) && !id.is_empty()).then_some(id)
 }
 
 /// Whether Git's administrative folder `admin` still registers the folder

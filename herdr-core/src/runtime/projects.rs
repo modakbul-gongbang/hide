@@ -47,29 +47,33 @@ fn project_disk(
             .chain(std::iter::once(&project.shared_git_disk))
             .find_map(|disk| disk.volume_free_bytes)
     });
-    // The layers are the sum of every checkout, so one checkout without them
-    // leaves the project without a layer breakdown rather than a low one.
-    let layers = project
-        .filter(|_| total_bytes.is_some())
-        .and_then(|project| {
-            let mut sum = crate::model::ProjectDiskLayersSnapshot {
-                shared_git: project.shared_git_disk.total_bytes?,
-                ..Default::default()
-            };
-            for worktree in &project.worktrees {
-                let layers = worktree.disk.layers.as_ref()?;
-                sum.build_cache += layers.build_cache.bytes;
-                sum.dependencies += layers.dependencies.bytes;
-                sum.other += layers.other.bytes;
-                sum.source += layers.source_bytes;
-            }
-            Some(sum)
-        });
+    // The layers of every checkout that was measured: one that could not be
+    // read leaves the subtotal, not the whole breakdown.
+    let layers = project.and_then(|project| {
+        let mut sum = crate::model::ProjectDiskLayersSnapshot {
+            shared_git: project.shared_git_disk.total_bytes.unwrap_or(0),
+            ..Default::default()
+        };
+        let mut any = false;
+        for layers in project
+            .worktrees
+            .iter()
+            .filter_map(|worktree| worktree.disk.layers.as_ref())
+        {
+            any = true;
+            sum.build_cache += layers.build_cache.bytes;
+            sum.dependencies += layers.dependencies.bytes;
+            sum.other += layers.other.bytes;
+            sum.source += layers.source_bytes;
+        }
+        any.then_some(sum)
+    });
     crate::model::ProjectDiskSnapshot {
         measuring: named && total_bytes.is_none() && unavailable_reason.is_none(),
         total_bytes,
         unavailable_reason,
         free_bytes,
+        confirmed_bytes: project.and_then(|project| project.disk_confirmed_bytes),
         layers,
     }
 }
@@ -304,7 +308,7 @@ impl Runtime {
     /// What the cleanup worker needs to know about a local Git project's
     /// checkouts, copied under the lock so the worker reads nothing of the
     /// runtime while it inspects the disk and Herdr.
-    fn cleanup_input(&self, workspace_id: &str) -> Option<live::cleanup::ReviewInput> {
+    pub(crate) fn cleanup_input(&self, workspace_id: &str) -> Option<live::cleanup::ReviewInput> {
         let workspace = self
             .snapshot
             .navigator
@@ -352,7 +356,23 @@ impl Runtime {
                 .filter(|worktree| !worktree.disk.folders.is_empty())
                 .map(|worktree| (PathBuf::from(&worktree.path), worktree.disk.folders.clone()))
                 .collect(),
+            bytes: self
+                .worktree_catalog
+                .project(&workspace.path)
+                .into_iter()
+                .flat_map(|project| &project.worktrees)
+                .filter_map(|worktree| {
+                    Some((PathBuf::from(&worktree.path), worktree.disk.total_bytes?))
+                })
+                .collect(),
         })
+    }
+
+    /// The worker of cleanup `id` has ended, however it ended.
+    pub(crate) fn cleanup_worker_finished(&mut self, id: u64) {
+        if self.cleanup_worker == Some(id) {
+            self.cleanup_worker = None;
+        }
     }
 
     pub(crate) fn ingest_cleanup(&mut self, answer: live::cleanup::CleanupSnapshot) -> bool {
@@ -384,10 +404,11 @@ impl Runtime {
     }
 
     pub(super) fn review_cleanup(&mut self, workspace_id: &str) -> bool {
-        if self
-            .cleanup
-            .as_ref()
-            .is_some_and(|r| matches!(r.phase.as_str(), "loading" | "removing"))
+        if self.cleanup_worker.is_some()
+            || self
+                .cleanup
+                .as_ref()
+                .is_some_and(|r| matches!(r.phase.as_str(), "loading" | "removing"))
         {
             return false;
         }
@@ -413,6 +434,9 @@ impl Runtime {
         self.measure_project_disk(workspace_id);
         let started = self.live.clone().ok_or_else(|| "A live Herdr connection is required to verify what is in use. Connect and review again.".into())
             .and_then(|context| live::cleanup::spawn_review(context, review.id, input));
+        if started.is_ok() {
+            self.cleanup_worker = Some(review.id);
+        }
         if let Err(message) = started {
             review.phase = "failed".into();
             review.usage_error = Some(message.clone());
@@ -429,9 +453,13 @@ impl Runtime {
         }) else {
             return false;
         };
+        // A confirmation names at most every row and each row's two layers;
+        // anything past that is not from this review, and is not filtered.
+        let limit = review.rows.len().saturating_mul(2);
         let mut paths: Vec<_> = payload
             .paths
             .into_iter()
+            .take(limit)
             .filter(|path| {
                 review
                     .rows
@@ -445,7 +473,7 @@ impl Runtime {
         // A worktree goes with everything in it, so its own cells are not
         // emptied one by one.
         let mut cells: Vec<live::cleanup::CellChoice> = Vec::new();
-        for cell in payload.cells {
+        for cell in payload.cells.into_iter().take(limit) {
             let Some(layer) = crate::disk_layers::Layer::from_code(&cell.layer) else {
                 continue;
             };
@@ -479,6 +507,9 @@ impl Runtime {
             .and_then(|context| {
                 live::cleanup::spawn_confirm(context, review.clone(), input, paths, cells)
             });
+        if started.is_ok() {
+            self.cleanup_worker = Some(review.id);
+        }
         if let Err(message) = started {
             let active = self.cleanup.as_mut().unwrap();
             active.phase = "failed".into();

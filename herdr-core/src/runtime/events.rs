@@ -3071,7 +3071,9 @@ impl Runtime {
             Event::CleanupReview(payload) => self.review_cleanup(&payload.workspace_id),
             Event::CleanupConfirm(payload) => self.confirm_cleanup(payload),
             Event::CleanupDismiss => {
-                if self.cleanup.as_ref().is_none_or(|r| r.phase == "removing") {
+                // A worker still running owns the snapshot; it cannot be
+                // dismissed until the worker has ended.
+                if self.cleanup.is_none() || self.cleanup_worker.is_some() {
                     return false;
                 }
                 self.cleanup = None;

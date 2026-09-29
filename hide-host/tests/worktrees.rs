@@ -225,3 +225,59 @@ fn an_entry_left_before_git_dropped_the_registration_is_kept_until_a_retry_remov
     hide_host::worktrees::sweep_trash(&trash);
     assert!(trash_entries(&root).is_empty());
 }
+
+/// A sweep deletes only what a removal named, and only from a real trash
+/// folder: a stray entry keeps its files, and a trash that is a link leads
+/// nowhere.
+#[test]
+fn a_sweep_keeps_names_no_removal_made_and_never_follows_a_linked_trash() {
+    let (directory, root, _linked) = linked_worktree(10);
+    let common = root.join(".git");
+    let trash = common.join(hide_host::worktrees::TRASH);
+    std::fs::create_dir_all(&trash).unwrap();
+    for stray in ["notes", "12-abc-x", "-1-x", "1-2-"] {
+        std::fs::create_dir_all(trash.join(stray)).unwrap();
+        std::fs::write(trash.join(stray).join("keep"), "x").unwrap();
+    }
+    let ours = trash.join("1-2-gone");
+    std::fs::create_dir_all(&ours).unwrap();
+    hide_host::worktrees::sweep_trash(&trash);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while ours.exists() {
+        assert!(std::time::Instant::now() < deadline, "the entry stayed");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    for stray in ["notes", "12-abc-x", "-1-x", "1-2-"] {
+        assert!(trash.join(stray).join("keep").exists(), "{stray} was swept");
+    }
+
+    std::fs::remove_dir_all(&trash).unwrap();
+    let elsewhere = directory.path().join("elsewhere");
+    let victim = elsewhere.join("1-2-victim");
+    std::fs::create_dir_all(&victim).unwrap();
+    std::fs::write(victim.join("keep"), "x").unwrap();
+    std::os::unix::fs::symlink(&elsewhere, &trash).unwrap();
+    hide_host::worktrees::sweep_trash(&trash);
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    assert!(victim.join("keep").exists(), "a linked trash was followed");
+}
+
+/// The wait for the trash is for the entries a run put there: a folder that
+/// another process left behind is swept but never held against the run.
+#[test]
+fn draining_waits_only_for_the_entries_it_was_given() {
+    let (_directory, root, _linked) = linked_worktree(10);
+    let common = root.join(".git");
+    let trash = common.join(hide_host::worktrees::TRASH);
+    std::fs::create_dir_all(&trash).unwrap();
+    let ours = trash.join("3-4-mine");
+    std::fs::create_dir_all(ours.join("target")).unwrap();
+    let theirs = trash.join("notes");
+    std::fs::create_dir_all(&theirs).unwrap();
+    let mine = std::collections::BTreeSet::from([ours.clone()]);
+    let left =
+        hide_host::worktrees::drain_trash(&common, &mine, std::time::Duration::from_secs(30));
+    assert_eq!(left, 0);
+    assert!(!ours.exists());
+    assert!(theirs.exists(), "an entry nobody named stays");
+}

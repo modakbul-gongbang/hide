@@ -704,6 +704,26 @@ fn a_named_project_overview_measures_its_whole_disk() {
         "the layers are the checkouts' sums and add up to the total"
     );
 
+    // One checkout that cannot be measured leaves the total absent and the
+    // free space, the subtotal and the measured layers in place.
+    let mut failed = usage("/repo.worktrees/feature", 0);
+    failed.total_bytes = None;
+    failed.unavailable_reason = Some("Measurement exceeded its limit".into());
+    failed.volume_free_bytes = Some(7);
+    assert!(runtime.ingest_disk_usage(vec![
+        layered("/repo", 60, 10, 5, 25),
+        failed,
+        usage("/repo/.git", 3),
+    ]));
+    let disk = disk_of(&runtime, "workspace-1");
+    assert_eq!(disk.total_bytes, None);
+    assert_eq!(disk.confirmed_bytes, Some(103));
+    assert_eq!(disk.free_bytes, Some(7));
+    assert_eq!(
+        disk.layers.as_ref().map(|layers| layers.build_cache),
+        Some(60)
+    );
+
     let generation = runtime.disk_request().generation;
     assert!(!runtime.dispatch_json(&measure(serde_json::json!({"workspace_id": "workspace-2"}))));
     assert!(!runtime.dispatch_json(&measure(serde_json::json!({"workspace_id": "gone"}))));
@@ -1629,6 +1649,45 @@ fn a_cleanup_confirmation_only_selects_what_the_review_allows_and_runs_once() {
         !runtime.dispatch_json(&confirm(&["/w/free"])),
         "the same intent does not run twice"
     );
+}
+
+/// While a cleanup worker runs, the daemon takes no other review and no
+/// dismissal: a second review would be a second worker, and a dismissal would
+/// drop the id its answer is published under. When the worker ends, however
+/// it ended, both work again.
+#[test]
+fn a_cleanup_in_flight_takes_no_dismissal_and_no_second_review() {
+    use crate::live::cleanup::CleanupSnapshot;
+    let mut runtime = runtime();
+    runtime.ingest_session(Ok(context_payload()));
+    runtime.snapshot.navigator.workspaces[0].is_git = true;
+    let workspace_id = runtime.snapshot.navigator.workspaces[0].id.clone();
+    let event = |kind: &str, payload: serde_json::Value| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2, "kind": kind, "payload": payload
+        }))
+        .unwrap()
+    };
+    runtime.cleanup = Some(CleanupSnapshot {
+        id: 3,
+        workspace_id: workspace_id.clone(),
+        phase: "review".into(),
+        ..Default::default()
+    });
+    runtime.cleanup_worker = Some(3);
+    assert!(!runtime.dispatch_json(&event("cleanup_dismiss", serde_json::json!({}))));
+    assert!(runtime.cleanup.is_some());
+    assert!(!runtime.dispatch_json(&event(
+        "cleanup_review",
+        serde_json::json!({"workspace_id": workspace_id}),
+    )));
+    assert_eq!(runtime.cleanup.as_ref().unwrap().id, 3);
+    // Another worker's end frees nothing.
+    runtime.cleanup_worker_finished(2);
+    assert_eq!(runtime.cleanup_worker, Some(3));
+    runtime.cleanup_worker_finished(3);
+    assert!(runtime.dispatch_json(&event("cleanup_dismiss", serde_json::json!({}))));
+    assert!(runtime.cleanup.is_none());
 }
 
 /// B11, D-12. `Open in History` on another checkout's header is one event:

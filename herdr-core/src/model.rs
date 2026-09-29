@@ -898,10 +898,17 @@ pub struct ProjectDiskSnapshot {
     pub total_bytes: Option<u64>,
     pub unavailable_reason: Option<String>,
     pub measuring: bool,
-    /// Free space of the project's volume when it was measured.
+    /// Free space of the project's volume when it was measured; known
+    /// whether or not every checkout could be measured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub free_bytes: Option<u64>,
-    /// The total by layer, once every part is measured.
+    /// What the checkouts that could be measured add up to. `total_bytes`
+    /// stays absent while any checkout is unavailable; this is the subtotal
+    /// the entrance may show beside it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confirmed_bytes: Option<u64>,
+    /// The layers of the checkouts that could be measured, summed; absent
+    /// only while none was measured.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub layers: Option<ProjectDiskLayersSnapshot>,
 }

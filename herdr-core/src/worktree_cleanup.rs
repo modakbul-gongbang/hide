@@ -43,7 +43,8 @@ pub struct CleanupProgress {
 /// Why a checkout cannot be emptied while it is being worked in.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct InUse {
-    /// `agent_working`, `process` or `port`.
+    /// `agent_working`, `process`, `port`, or `unverified` for a checkout the
+    /// runtime has no facts about, which is never read as idle.
     pub code: &'static str,
     pub name: Option<String>,
     pub port: Option<u16>,
@@ -55,13 +56,23 @@ pub struct CleanupRow {
     pub branch: Option<String>,
     pub head: Option<String>,
     pub is_main: bool,
-    /// The reason the worktree may not be removed, in words for the log; the
-    /// shell reads `exclusion_code`.
+    /// The reason the worktree may not be removed, in words for the log
+    /// only; the shell reads `exclusion_code`.
+    #[serde(skip)]
     pub exclusion: Option<String>,
     pub exclusion_code: Option<&'static str>,
     pub exclusion_count: Option<u32>,
     pub in_use: Option<InUse>,
+    /// `removed`, `skipped` (a recheck found it changed or busy) or `failed`
+    /// (Git refused the removal), once a confirmation has settled the row.
     pub result: Option<String>,
+    /// Why a `skipped` or `failed` row was not removed: an exclusion code,
+    /// `changed`, `not_found`, `unverified`, or `remove_refused`.
+    pub result_code: Option<&'static str>,
+    /// The allocated bytes of the worktree this run removed.
+    pub bytes: Option<u64>,
+    /// The words behind `result_code`, for the log only.
+    #[serde(skip)]
     pub message: Option<String>,
 }
 
@@ -75,6 +86,8 @@ pub struct CellResult {
     pub bytes: u64,
     pub folders: usize,
     pub reason_code: Option<&'static str>,
+    /// The words behind `reason_code`, for the log only.
+    #[serde(skip)]
     pub reason: Option<String>,
 }
 
@@ -98,6 +111,8 @@ pub(crate) struct ReviewInput {
     pub checkouts: Vec<CheckoutFacts>,
     /// The folders each checkout's layer cells were measured from.
     pub folders: HashMap<PathBuf, Vec<LayerFolder>>,
+    /// Each worktree's measured allocated bytes, for the result's totals.
+    pub bytes: HashMap<PathBuf, u64>,
 }
 
 /// A build cache or dependency cell the operator chose.
@@ -202,6 +217,73 @@ fn live_in_use(context: &LiveContext, checkouts: &[CheckoutFacts]) -> Result<InU
                 .to_owned(),
         ))
     })
+}
+
+fn canonical(path: &Path) -> PathBuf {
+    std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn unverified_use() -> InUse {
+    InUse {
+        code: "unverified",
+        name: None,
+        port: None,
+    }
+}
+
+/// A registered worktree the runtime has no facts about cannot be shown to
+/// be idle, so it reads as unverified and nothing in it is emptied.
+fn mark_unverified(
+    in_use: &mut InUseMap,
+    facts: &[CheckoutFacts],
+    registered: impl IntoIterator<Item = PathBuf>,
+) {
+    let known: std::collections::HashSet<PathBuf> =
+        facts.iter().map(|facts| canonical(&facts.path)).collect();
+    for path in registered {
+        if !known.contains(&canonical(&path)) {
+            in_use.entry(path).or_insert_with(unverified_use);
+        }
+    }
+}
+
+/// Whether one checkout is in use right now: the facts are copied again
+/// under the lock and the checkout's panes and ports are read again, so a
+/// decision is never older than the move it guards. A checkout without facts
+/// is unverified.
+fn read_in_use_now(
+    path: &Path,
+    facts: impl FnOnce() -> Option<Vec<CheckoutFacts>>,
+    read: impl FnOnce(&[CheckoutFacts]) -> Result<InUseMap, String>,
+) -> Result<Option<InUse>, String> {
+    let facts = facts().ok_or("The project is no longer available")?;
+    let key = canonical(path);
+    let Some(checkout) = facts
+        .into_iter()
+        .find(|facts| canonical(&facts.path) == key)
+    else {
+        return Ok(Some(unverified_use()));
+    };
+    let map = read(std::slice::from_ref(&checkout))?;
+    Ok(map.get(&checkout.path).cloned())
+}
+
+fn fresh_in_use(
+    context: &LiveContext,
+    workspace_id: &str,
+    path: &Path,
+) -> Result<Option<InUse>, String> {
+    read_in_use_now(
+        path,
+        || {
+            let runtime = context.runtime.upgrade()?;
+            let guard = runtime.lock().ok()?;
+            guard
+                .cleanup_input(workspace_id)
+                .map(|input| input.checkouts)
+        },
+        |facts| live_in_use(context, facts),
+    )
 }
 
 /// A worktree that may not be removed, and why.
@@ -458,64 +540,96 @@ fn inspect_with_merge_proofs(
     })
 }
 
+/// Why a chosen worktree was not removed, as a code the shell reads and the
+/// words for the log.
+struct Refusal {
+    outcome: &'static str,
+    code: &'static str,
+    message: String,
+}
+
+impl Refusal {
+    fn skipped(code: &'static str, message: impl Into<String>) -> Self {
+        Self {
+            outcome: "skipped",
+            code,
+            message: message.into(),
+        }
+    }
+}
+
+/// Removes each chosen worktree that a fresh look (`refresh`, made for that
+/// one worktree just before its removal) still finds eligible and idle.
+/// Each row ends `removed`, `skipped` (a recheck found it changed, busy or
+/// gone) or `failed` (Git refused the removal).
 fn confirm(
     review: &CleanupSnapshot,
     selected: &[String],
-    mut refresh: impl FnMut() -> Result<CleanupSnapshot, String>,
+    mut refresh: impl FnMut(&str) -> Result<CleanupSnapshot, String>,
     mut remove: impl FnMut(&str) -> Result<String, String>,
     mut settled: impl FnMut(&CleanupRow),
 ) -> CleanupSnapshot {
     let mut result = review.clone();
     result.phase = "complete".into();
-    // What confirmation rereads is read once, before anything is removed.
-    let mut fresh: Option<Result<CleanupSnapshot, String>> = None;
     for row in &mut result.rows {
         if !selected.contains(&row.path) || row.result.as_deref() == Some("removed") {
             continue;
         }
-        let validation = (|| -> Result<bool, String> {
+        let validation = (|| -> Result<bool, Refusal> {
             if let Some(reason) = &row.exclusion {
-                return Err(format!("Excluded: {reason}"));
+                return Err(Refusal::skipped(
+                    row.exclusion_code.unwrap_or("changed"),
+                    format!("Excluded: {reason}"),
+                ));
             }
-            let fresh = fresh.get_or_insert_with(&mut refresh).clone()?;
+            let fresh =
+                refresh(&row.path).map_err(|message| Refusal::skipped("unverified", message))?;
             let Some(now) = fresh.rows.iter().find(|r| r.path == row.path) else {
                 if !Path::new(&row.path)
                     .try_exists()
-                    .map_err(|e| e.to_string())?
+                    .map_err(|e| Refusal::skipped("unverified", e.to_string()))?
                 {
-                    return Ok(false);
+                    return Err(Refusal::skipped(
+                        "not_found",
+                        "Worktree was already removed. Branch and Git history stay.",
+                    ));
                 }
-                return Err("Registration changed but the folder remains. Review again; no files were removed.".into());
+                return Err(Refusal::skipped(
+                    "changed",
+                    "Registration changed but the folder remains. Review again; no files were removed.",
+                ));
             };
             if fresh.main_head != review.main_head
                 || now.head != row.head
                 || now.branch != row.branch
                 || now.exclusion.is_some()
             {
-                return Err(format!(
-                    "State changed. {} Review again before removing.",
-                    now.exclusion
-                        .as_deref()
-                        .unwrap_or("The reviewed branch or main HEAD moved.")
+                return Err(Refusal::skipped(
+                    now.exclusion_code.unwrap_or("changed"),
+                    format!(
+                        "State changed. {} Review again before removing.",
+                        now.exclusion
+                            .as_deref()
+                            .unwrap_or("The reviewed branch or main HEAD moved.")
+                    ),
                 ));
             }
             Ok(true)
         })();
-        let removed = validation.and_then(|needed| {
-            if needed {
-                remove(&row.path)
-            } else {
-                Ok("Worktree was already removed. Branch and Git history stay.".into())
-            }
-        });
-        match removed {
-            Ok(message) => {
+        match validation.map(|_| remove(&row.path)) {
+            Ok(Ok(message)) => {
                 row.result = Some("removed".into());
                 row.message = Some(message);
             }
-            Err(message) => {
-                row.result = Some("refused".into());
+            Ok(Err(message)) => {
+                row.result = Some("failed".into());
+                row.result_code = Some("remove_refused");
                 row.message = Some(message);
+            }
+            Err(refusal) => {
+                row.result = Some(refusal.outcome.into());
+                row.result_code = Some(refusal.code);
+                row.message = Some(refusal.message);
             }
         }
         settled(row);
@@ -526,13 +640,109 @@ fn confirm(
 use hide_host::worktrees::remove_worktree;
 
 /// Hands a snapshot to the runtime, which keeps it only while its id is the
-/// live one.
+/// live one. A runtime that cannot be locked is logged, never skipped quietly.
 fn publish(context: &LiveContext, snapshot: CleanupSnapshot) {
+    let id = snapshot.id;
     if let Some(runtime) = context.runtime.upgrade() {
-        if let Ok(mut guard) = runtime.lock() {
-            guard.ingest_cleanup(snapshot);
+        match runtime.lock() {
+            Ok(mut guard) => {
+                guard.ingest_cleanup(snapshot);
+            }
+            Err(_) => crate::diagnostic!(serde_json::json!({
+                "component": "cleanup",
+                "kind": "publish.lock_poisoned",
+                "cleanup_id": id,
+            })),
         }
         context.notifier.notify();
+    }
+}
+
+/// Marks the worker done, so the lane is free again.
+fn worker_finished(context: &LiveContext, id: u64) {
+    if let Some(runtime) = context.runtime.upgrade() {
+        match runtime.lock() {
+            Ok(mut guard) => guard.cleanup_worker_finished(id),
+            Err(_) => crate::diagnostic!(serde_json::json!({
+                "component": "cleanup",
+                "kind": "worker_finished.lock_poisoned",
+                "cleanup_id": id,
+            })),
+        }
+    }
+}
+
+/// Owns a worker's place in the lane: while it lives the daemon accepts no
+/// other review or dismissal, and however the worker ends - it returns or it
+/// panics - the lane is freed, and a worker that did not reach its own final
+/// snapshot leaves a terminal one behind instead of a review stuck loading.
+struct WorkerGuard {
+    publish: Box<dyn Fn(CleanupSnapshot) + Send>,
+    finished: Box<dyn Fn() + Send>,
+    last: CleanupSnapshot,
+    terminal_phase: &'static str,
+    armed: bool,
+}
+
+impl WorkerGuard {
+    fn new(
+        publish: Box<dyn Fn(CleanupSnapshot) + Send>,
+        finished: Box<dyn Fn() + Send>,
+        start: CleanupSnapshot,
+        terminal_phase: &'static str,
+    ) -> Self {
+        Self {
+            publish,
+            finished,
+            last: start,
+            terminal_phase,
+            armed: true,
+        }
+    }
+
+    fn for_context(
+        context: &LiveContext,
+        start: CleanupSnapshot,
+        terminal_phase: &'static str,
+    ) -> Self {
+        let (a, b, id) = (context.clone(), context.clone(), start.id);
+        Self::new(
+            Box::new(move |snapshot| publish(&a, snapshot)),
+            Box::new(move || worker_finished(&b, id)),
+            start,
+            terminal_phase,
+        )
+    }
+
+    /// A step of the run, remembered so an unwind can say how far it got.
+    fn publish(&mut self, snapshot: CleanupSnapshot) {
+        self.last = snapshot.clone();
+        (self.publish)(snapshot);
+    }
+
+    /// The run's own final snapshot.
+    fn finish(mut self, snapshot: CleanupSnapshot) {
+        self.armed = false;
+        self.last = snapshot.clone();
+        (self.publish)(snapshot);
+    }
+}
+
+impl Drop for WorkerGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let mut last = self.last.clone();
+            last.phase = self.terminal_phase.into();
+            last.message = Some("The cleanup worker stopped before it finished".into());
+            crate::diagnostic!(serde_json::json!({
+                "component": "cleanup",
+                "kind": "worker.stopped_early",
+                "cleanup_id": last.id,
+                "phase": self.terminal_phase,
+            }));
+            (self.publish)(last);
+        }
+        (self.finished)();
     }
 }
 
@@ -547,39 +757,43 @@ pub fn spawn_review(context: LiveContext, id: u64, input: ReviewInput) -> Result
                 id,
                 workspace_id: input.workspace_id.clone(),
                 repository_root: input.root.to_string_lossy().into_owned(),
+                phase: "loading".into(),
                 free_bytes: disk::volume_free_bytes(&input.root),
                 ..Default::default()
             };
+            let mut guard = WorkerGuard::for_context(&context, base.clone(), "failed");
             let usage = live_in_use(&context, &input.checkouts);
-            let (in_use, usage_error) = match usage {
-                Ok(map) => (map, None),
-                Err(message) => (InUseMap::new(), Some(message)),
+            let rows = listed(&input.root);
+            let (in_use, usage_error) = match (usage, &rows) {
+                (Ok(mut map), Ok(rows)) => {
+                    mark_unverified(
+                        &mut map,
+                        &input.checkouts,
+                        rows.iter().map(|row| PathBuf::from(&row.path)),
+                    );
+                    (map, None)
+                }
+                (Ok(map), Err(_)) => (map, None),
+                (Err(message), _) => (InUseMap::new(), Some(message)),
             };
-            match listed(&input.root) {
+            match rows {
                 Ok(mut rows) => {
                     for row in &mut rows {
                         row.in_use = in_use.get(Path::new(&row.path)).cloned();
                     }
-                    publish(
-                        &context,
-                        CleanupSnapshot {
-                            phase: "loading".into(),
-                            rows,
-                            usage_ready: usage_error.is_none(),
-                            usage_error: usage_error.clone(),
-                            ..base.clone()
-                        },
-                    );
+                    guard.publish(CleanupSnapshot {
+                        rows,
+                        usage_ready: usage_error.is_none(),
+                        usage_error: usage_error.clone(),
+                        ..base.clone()
+                    });
                 }
                 Err(message) => {
-                    publish(
-                        &context,
-                        CleanupSnapshot {
-                            phase: "failed".into(),
-                            message: Some(message),
-                            ..base
-                        },
-                    );
+                    guard.finish(CleanupSnapshot {
+                        phase: "failed".into(),
+                        message: Some(message),
+                        ..base
+                    });
                     return;
                 }
             }
@@ -605,7 +819,7 @@ pub fn spawn_review(context: LiveContext, id: u64, input: ReviewInput) -> Result
                     ..base
                 },
             };
-            publish(&context, answer);
+            guard.finish(answer);
         })
         .map(|_| ())
         .map_err(|e| format!("Cleanup worker could not start: {e}"))
@@ -618,9 +832,6 @@ struct CellRun<'a> {
     /// The repository's shared Git directory, where removed folders wait.
     common: &'a Path,
     folders: &'a HashMap<PathBuf, Vec<LayerFolder>>,
-    /// Read again just now, not when the review was made. A read that failed
-    /// empties nothing.
-    in_use: Result<&'a InUseMap, &'a str>,
 }
 
 /// A folder that cannot be moved, and the code the shell reads for it.
@@ -651,12 +862,16 @@ fn cell_result(
 /// Empties the chosen cells: right before each move the folder is judged
 /// again from the files, and nothing moves unless it is still ignored, still
 /// vouched for as its layer, reached through no link, holding no repository
-/// and no file Git tracks (one `git ls-files` for all of a checkout's folders).
-/// A moved folder leaves its checkout at once and is deleted afterwards;
-/// nothing here deletes. Every outcome is one result and one diagnostic.
+/// and no file Git tracks (one `git ls-files` per checkout), and the
+/// checkout is read as idle again (`in_use_now`) after all of that. A moved
+/// folder leaves its checkout at once and is deleted afterwards; nothing here
+/// deletes. Every outcome is one result and one diagnostic, and the entries
+/// this run put in the trash are added to `moved`.
 fn empty_cells(
     run: &CellRun,
     cells: &[CellChoice],
+    mut in_use_now: impl FnMut(&Path) -> Result<Option<InUse>, String>,
+    moved: &mut std::collections::BTreeSet<PathBuf>,
     mut settled: impl FnMut(&CellResult),
 ) -> Vec<CellResult> {
     let mut results = Vec::new();
@@ -666,6 +881,8 @@ fn empty_cells(
             checkouts.push(&cell.path);
         }
     }
+    // One look through folders for repositories for the whole run.
+    let mut walk = hide_host::worktrees::WalkBudget::for_run();
     let mut record = |result: CellResult| {
         crate::diagnostic!(serde_json::json!({
             "component": "cleanup",
@@ -677,6 +894,7 @@ fn empty_cells(
             "bytes": result.bytes,
             "folders": result.folders,
             "reason_code": result.reason_code,
+            "reason": result.reason,
         }));
         settled(&result);
         results.push(result);
@@ -688,33 +906,6 @@ fn empty_cells(
             .filter(|cell| cell.path == checkout)
             .map(|cell| cell.layer)
             .collect();
-        let blocked = match run.in_use {
-            Err(message) => Some(Kept {
-                code: "unverified",
-                reason: message.to_owned(),
-            }),
-            Ok(in_use) if in_use.contains_key(&root) => Some(Kept {
-                code: "in_use",
-                reason: "The checkout became busy after the review".into(),
-            }),
-            Ok(_) => None,
-        };
-        if let Some(blocked) = blocked {
-            for layer in chosen {
-                record(cell_result(
-                    checkout,
-                    layer,
-                    "skipped",
-                    0,
-                    0,
-                    Some(Kept {
-                        code: blocked.code,
-                        reason: blocked.reason.clone(),
-                    }),
-                ));
-            }
-            continue;
-        }
         let exclude_dir = crate::git_dir::discover(&root).map(|repo| repo.common_dir.join("info"));
         // Judge every folder of every chosen layer, then ask Git once.
         let mut judged: Vec<(Layer, &LayerFolder, Option<Kept>)> = Vec::new();
@@ -730,19 +921,24 @@ fn empty_cells(
                 {
                     Err(refusal) => Some(Kept {
                         code: refusal.code(),
-                        reason: format!("The folder is no longer what was measured: {refusal:?}"),
+                        reason: format!(
+                            "The folder is no longer what was measured ({})",
+                            refusal.code()
+                        ),
                     }),
-                    Ok(()) => match hide_host::worktrees::contains_repository(&folder.path) {
-                        Ok(true) => Some(Kept {
-                            code: "nested_repository",
-                            reason: "The folder holds another Git repository".into(),
-                        }),
-                        Ok(false) => None,
-                        Err(message) => Some(Kept {
-                            code: "unverified",
-                            reason: message,
-                        }),
-                    },
+                    Ok(()) => {
+                        match hide_host::worktrees::contains_repository(&folder.path, &mut walk) {
+                            Ok(true) => Some(Kept {
+                                code: "nested_repository",
+                                reason: "The folder holds another Git repository".into(),
+                            }),
+                            Ok(false) => None,
+                            Err(message) => Some(Kept {
+                                code: "unverified",
+                                reason: message,
+                            }),
+                        }
+                    }
                 };
                 judged.push((*layer, folder, kept));
             }
@@ -774,8 +970,40 @@ fn empty_cells(
                 Ok(_) => {}
             }
         }
+        // The last look, right before the moves.
+        let busy = match in_use_now(&root) {
+            Err(message) => Some(Kept {
+                code: "unverified",
+                reason: message,
+            }),
+            Ok(Some(use_)) if use_.code == "unverified" => Some(Kept {
+                code: "unverified",
+                reason: "Nothing is known about the checkout's panes".into(),
+            }),
+            Ok(Some(_)) => Some(Kept {
+                code: "in_use",
+                reason: "The checkout became busy after the review".into(),
+            }),
+            Ok(None) => None,
+        };
+        if let Some(busy) = busy {
+            for layer in chosen {
+                record(cell_result(
+                    checkout,
+                    layer,
+                    "skipped",
+                    0,
+                    0,
+                    Some(Kept {
+                        code: busy.code,
+                        reason: busy.reason.clone(),
+                    }),
+                ));
+            }
+            continue;
+        }
         for layer in chosen {
-            let (mut moved, mut bytes, mut failed) = (0usize, 0u64, None);
+            let (mut moved_count, mut bytes, mut failed) = (0usize, 0u64, None);
             let mut first_kept: Option<Kept> = None;
             let mut total = 0usize;
             for (_, folder, kept) in judged.iter_mut().filter(|(l, _, _)| *l == layer) {
@@ -785,8 +1013,9 @@ fn empty_cells(
                     continue;
                 }
                 match hide_host::worktrees::set_aside_folder(run.common, &folder.path) {
-                    Ok(_) => {
-                        moved += 1;
+                    Ok(entry) => {
+                        moved.insert(entry);
+                        moved_count += 1;
                         bytes = bytes.saturating_add(folder.bytes);
                     }
                     Err(error) => {
@@ -797,7 +1026,7 @@ fn empty_cells(
                     }
                 }
             }
-            record(match (moved, failed, first_kept, total) {
+            record(match (moved_count, failed, first_kept, total) {
                 (_, _, _, 0) => cell_result(
                     checkout,
                     layer,
@@ -822,8 +1051,23 @@ fn empty_cells(
     results
 }
 
+/// Spelled the way a comparison may not tell apart: canonically composed
+/// (macOS hands out decomposed Hangul, Git prints what the index holds) and
+/// case-folded. Folding more than the file system does only skips more.
+fn folded(text: &str) -> String {
+    use unicode_normalization::UnicodeNormalization;
+    text.nfc()
+        .collect::<String>()
+        .to_lowercase()
+        .nfc()
+        .collect()
+}
+
 /// The folders among `folders` that hold a file Git tracks, from one
-/// `git ls-files` for all of them.
+/// `git ls-files -z` for the checkout. The whole index is listed and compared
+/// by folded spelling, so a folder that the file system spells differently
+/// from the index is still found, and no pathspec list can grow past what an
+/// argument list may hold.
 fn tracked_folders<'a>(
     root: &Path,
     folders: impl Iterator<Item = &'a Path>,
@@ -832,29 +1076,31 @@ fn tracked_folders<'a>(
     if folders.is_empty() {
         return Ok(Vec::new());
     }
-    let specs: Vec<String> = folders
-        .iter()
-        .filter_map(|folder| folder.strip_prefix(root).ok())
-        .map(|relative| format!(":(literal){}", relative.to_string_lossy()))
-        .collect();
-    let mut arguments = vec!["ls-files", "-z", "--"];
-    arguments.extend(specs.iter().map(String::as_str));
-    let listed = git(root, &arguments)?;
-    let tracked: Vec<PathBuf> = listed
+    let listed = git(root, &["ls-files", "-z"])?;
+    let mut index: Vec<String> = listed
         .split('\0')
         .filter(|entry| !entry.is_empty())
-        .map(|entry| root.join(entry))
+        .map(folded)
         .collect();
+    index.sort_unstable();
     Ok(folders
         .into_iter()
-        .filter(|folder| tracked.iter().any(|file| file.starts_with(folder)))
+        .filter(|folder| {
+            let Ok(relative) = folder.strip_prefix(root) else {
+                // Not under the checkout: cannot be shown untracked.
+                return true;
+            };
+            let below = format!("{}/", folded(&relative.to_string_lossy()));
+            let at = index.partition_point(|entry| entry.as_str() < below.as_str());
+            index.get(at).is_some_and(|entry| entry.starts_with(&below))
+        })
         .map(Path::to_path_buf)
         .collect())
 }
 
-/// How long the removal waits for the background deletion before it reports
-/// what it has: a folder that will not go stays in the trash for the next
-/// removal's sweep.
+/// How long the removal waits for the background deletion of what it moved
+/// before it reports what it has: a folder that will not go stays in the
+/// trash for the next removal's sweep.
 const DELETE_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
 
 pub fn spawn_confirm(
@@ -877,60 +1123,88 @@ pub fn spawn_confirm(
                 progress: Some(CleanupProgress { done, total }),
                 ..review.clone()
             };
-            publish(&context, answer.clone());
-            let fresh_usage = live_in_use(&context, &input.checkouts);
+            let mut guard = WorkerGuard::for_context(&context, answer.clone(), "complete");
+            guard.publish(answer.clone());
+            let common = crate::git_dir::discover(&root)
+                .map(|repo| repo.common_dir)
+                .unwrap_or_else(|| root.join(".git"));
+            let mut ours = std::collections::BTreeSet::new();
             // Worktrees first: each is rechecked against what is on disk and
-            // in Herdr right now, and removed without force.
-            let refresh = || {
-                let in_use = fresh_usage.clone()?;
+            // in Herdr right now, just before its own removal, and removed
+            // without force.
+            let refresh = |path: &str| {
+                let in_use = fresh_in_use(&context, &review.workspace_id, Path::new(path))?
+                    .map(|use_| InUseMap::from([(PathBuf::from(path), use_)]))
+                    .unwrap_or_default();
                 inspect(
                     &root,
                     input.current.as_deref(),
                     pane_paths(&context),
                     &in_use,
-                    Some(&selected),
+                    Some(&[path.to_owned()]),
                 )
             };
             let confirmed = confirm(
                 &review,
                 &selected,
                 refresh,
-                |path| remove_worktree(&root, Path::new(path), false),
+                |path| {
+                    let before = hide_host::worktrees::trash_entries(&common);
+                    let removed = remove_worktree(&root, Path::new(path), false);
+                    ours.extend(
+                        hide_host::worktrees::trash_entries(&common)
+                            .difference(&before)
+                            .cloned(),
+                    );
+                    removed
+                },
                 |row| {
+                    let bytes = (row.result.as_deref() == Some("removed"))
+                        .then(|| input.bytes.get(Path::new(&row.path)).copied())
+                        .flatten();
                     crate::diagnostic!(serde_json::json!({
                         "component": "cleanup",
                         "kind": format!("worktree.{}", row.result.as_deref().unwrap_or("unknown")),
                         "cleanup_id": id,
                         "workspace_id": review.workspace_id,
                         "checkout": row.path,
-                        "reason_code": row.exclusion_code,
+                        "layer": "worktree",
+                        "bytes": bytes,
+                        "reason_code": row.result_code,
+                        "reason": row.message,
                     }));
                     done += 1;
                 },
             );
             answer.rows = confirmed.rows;
+            for row in &mut answer.rows {
+                if row.result.as_deref() == Some("removed") && row.bytes.is_none() {
+                    row.bytes = input.bytes.get(Path::new(&row.path)).copied();
+                }
+            }
             answer.progress = Some(CleanupProgress { done, total });
-            publish(&context, answer.clone());
-            // Cells next. A usage that could not be read now empties nothing.
-            let common = crate::git_dir::discover(&root)
-                .map(|repo| repo.common_dir)
-                .unwrap_or_else(|| root.join(".git"));
+            guard.publish(answer.clone());
             let run = CellRun {
                 id,
                 workspace_id: &review.workspace_id,
                 common: &common,
                 folders: &input.folders,
-                in_use: fresh_usage.as_ref().map_err(String::as_str),
             };
-            empty_cells(&run, &cells, |result| {
-                answer.cell_results.push(result.clone());
-                done += 1;
-                answer.progress = Some(CleanupProgress { done, total });
-                publish(&context, answer.clone());
-            });
+            empty_cells(
+                &run,
+                &cells,
+                |path| fresh_in_use(&context, &review.workspace_id, path),
+                &mut ours,
+                |result| {
+                    answer.cell_results.push(result.clone());
+                    done += 1;
+                    answer.progress = Some(CleanupProgress { done, total });
+                    guard.publish(answer.clone());
+                },
+            );
             // The folders left their checkouts at once; the volume only has
             // its space back once they are deleted.
-            let remaining = hide_host::worktrees::drain_trash(&common, DELETE_WAIT);
+            let remaining = hide_host::worktrees::drain_trash(&common, &ours, DELETE_WAIT);
             if remaining > 0 {
                 answer.message = Some(format!(
                     "{remaining} removed folders are still being deleted in the background"
@@ -940,7 +1214,7 @@ pub fn spawn_confirm(
             answer.progress = Some(CleanupProgress { done: total, total });
             answer.free_after = disk::volume_free_bytes(&root);
             answer.id = id;
-            publish(&context, answer);
+            guard.finish(answer);
         })
         .map(|_| ())
         .map_err(|e| format!("Cleanup worker could not start: {e}"))
@@ -1434,7 +1708,7 @@ mod tests {
         let result = confirm(
             &review,
             &selected,
-            || Ok(f.review(&f.main, Ok(Vec::new()))),
+            |_| Ok(f.review(&f.main, Ok(Vec::new()))),
             |path| remove_worktree(&f.main, Path::new(path), false),
             |_| {},
         );
@@ -1505,7 +1779,7 @@ mod tests {
         let cancelled = confirm(
             &review,
             &[],
-            || panic!("cancel must not inspect"),
+            |_| panic!("cancel must not inspect"),
             |_| panic!("cancel must not delete"),
             |_| {},
         );
@@ -1537,7 +1811,7 @@ mod tests {
         let result = confirm(
             &review,
             &paths,
-            || Ok(f.review(&f.main, Ok(vec![]))),
+            |_| Ok(f.review(&f.main, Ok(vec![]))),
             |path| {
                 effects.push(path.to_owned());
                 if Path::new(path) == failed {
@@ -1564,14 +1838,25 @@ mod tests {
             result
                 .rows
                 .iter()
-                .filter(|r| r.result.as_deref() == Some("refused"))
+                .filter(|r| r.result.as_deref() == Some("skipped"))
                 .count(),
-            2
+            1,
+            "the worktree that changed after the review is skipped, by its code"
+        );
+        assert_eq!(
+            result
+                .rows
+                .iter()
+                .filter(|r| r.result.as_deref() == Some("failed"))
+                .map(|r| r.result_code)
+                .collect::<Vec<_>>(),
+            [Some("remove_refused")],
+            "a removal Git refuses is a failure, not a recheck"
         );
         let retry = confirm(
             &result,
             &paths,
-            || Ok(f.review(&f.main, Ok(vec![]))),
+            |_| Ok(f.review(&f.main, Ok(vec![]))),
             |path| {
                 assert_ne!(Path::new(path), clean);
                 git(&f.main, &["worktree", "remove", "--", path])
@@ -1764,12 +2049,25 @@ mod tests {
         }
 
         fn run(&self, in_use: Result<&InUseMap, &str>, cells: &[(Layer,)]) -> Vec<CellResult> {
+            self.run_with(
+                |path| match in_use {
+                    Err(message) => Err(message.to_owned()),
+                    Ok(map) => Ok(map.get(path).cloned()),
+                },
+                cells,
+            )
+        }
+
+        fn run_with(
+            &self,
+            in_use_now: impl FnMut(&Path) -> Result<Option<InUse>, String>,
+            cells: &[(Layer,)],
+        ) -> Vec<CellResult> {
             let run = CellRun {
                 id: 1,
                 workspace_id: "w1",
                 common: &self.common(),
                 folders: &self.folders,
-                in_use,
             };
             let cells: Vec<_> = cells
                 .iter()
@@ -1778,7 +2076,10 @@ mod tests {
                     layer: *layer,
                 })
                 .collect();
-            empty_cells(&run, &cells, |_| {})
+            let mut moved = std::collections::BTreeSet::new();
+            let results = empty_cells(&run, &cells, in_use_now, &mut moved, |_| {});
+            assert!(moved.iter().all(|entry| entry.starts_with(self.common())));
+            results
         }
     }
 
@@ -1816,7 +2117,11 @@ mod tests {
             assert!(main.join(kept).exists(), "{kept} is source");
         }
         assert_eq!(
-            hide_host::worktrees::drain_trash(&built.common(), std::time::Duration::from_secs(30)),
+            hide_host::worktrees::drain_trash(
+                &built.common(),
+                &hide_host::worktrees::trash_entries(&built.common()),
+                std::time::Duration::from_secs(30),
+            ),
             0
         );
         assert_eq!(
@@ -1932,5 +2237,226 @@ mod tests {
             .filter(|(cwd, command)| *cwd == built.f.main && command == "ls-files")
             .count();
         assert_eq!(asked, 1, "three folders, one ls-files");
+    }
+
+    fn ls_files_asked(root: &Path) -> usize {
+        hide_host::worktrees::GIT_CALLS
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(cwd, command)| cwd == root && command == "ls-files")
+            .count()
+    }
+
+    #[test]
+    fn a_registered_worktree_the_runtime_has_no_facts_about_reads_unverified_never_idle() {
+        let known = [facts("/fixture/known", 0, &[])];
+        let mut in_use = InUseMap::new();
+        mark_unverified(
+            &mut in_use,
+            &known,
+            [
+                PathBuf::from("/fixture/known"),
+                PathBuf::from("/fixture/unknown"),
+            ],
+        );
+        assert!(!in_use.contains_key(Path::new("/fixture/known")));
+        assert_eq!(in_use[Path::new("/fixture/unknown")].code, "unverified");
+
+        // The fresh read behaves the same way, and a project that is gone is
+        // an error, not an idle answer.
+        let read = |_: &[CheckoutFacts]| Ok(InUseMap::new());
+        let now = read_in_use_now(
+            Path::new("/fixture/unknown"),
+            || Some(vec![facts("/fixture/known", 0, &[])]),
+            read,
+        )
+        .unwrap();
+        assert_eq!(now.map(|use_| use_.code), Some("unverified"));
+        let now = read_in_use_now(
+            Path::new("/fixture/known"),
+            || Some(vec![facts("/fixture/known", 0, &[])]),
+            read,
+        )
+        .unwrap();
+        assert_eq!(now, None);
+        assert!(read_in_use_now(Path::new("/fixture/known"), || None, read).is_err());
+    }
+
+    #[test]
+    fn a_checkout_that_turns_busy_after_the_folders_were_judged_loses_nothing() {
+        let built = Built::new();
+        let root = built.f.main.clone();
+        let asked_before = ls_files_asked(&root);
+        let mut looked = 0;
+        let results = built.run_with(
+            |_| {
+                looked += 1;
+                // Every judgement is done, Git has been asked, and nothing
+                // has moved yet.
+                assert_eq!(ls_files_asked(&root), asked_before + 1);
+                for folder in ["target", "node_modules", "dist"] {
+                    assert!(root.join(folder).exists());
+                }
+                Ok(Some(InUse {
+                    code: "process",
+                    name: Some("cargo".into()),
+                    port: None,
+                }))
+            },
+            &[(Layer::BuildCache,), (Layer::Dependencies,)],
+        );
+        assert_eq!(looked, 1, "one look per checkout, right before the moves");
+        for layer in [Layer::BuildCache, Layer::Dependencies] {
+            assert_eq!(outcome(&results, layer), ("skipped", Some("in_use")));
+        }
+        for folder in ["target", "node_modules", "dist"] {
+            assert!(root.join(folder).exists(), "{folder} stayed");
+        }
+    }
+
+    #[test]
+    fn a_folder_the_index_spells_differently_is_still_found_tracked() {
+        let f = Fixture::new();
+        let main = &f.main;
+        // The index holds `Dist/keep.txt` and `한글/keep.txt`; the file
+        // system, and so the measurement, may hand back another spelling.
+        std::fs::create_dir_all(main.join("Dist")).unwrap();
+        std::fs::write(main.join("Dist/keep.txt"), "x").unwrap();
+        let composed = "\u{d55c}\u{ae00}";
+        std::fs::create_dir_all(main.join(composed)).unwrap();
+        std::fs::write(main.join(composed).join("keep.txt"), "x").unwrap();
+        git(main, &["add", "Dist/keep.txt"]).unwrap();
+        git(main, &["add", "--", &format!("{composed}/keep.txt")]).unwrap();
+        let decomposed = "\u{1112}\u{1161}\u{11ab}\u{1100}\u{1173}\u{11af}";
+        let candidates = [
+            main.join("dist"),
+            main.join(decomposed),
+            main.join("elsewhere"),
+            main.join("Dist"),
+        ];
+        let tracked = tracked_folders(main, candidates.iter().map(PathBuf::as_path)).unwrap();
+        assert_eq!(
+            tracked,
+            [main.join("dist"), main.join(decomposed), main.join("Dist")]
+        );
+    }
+
+    #[test]
+    fn thousands_of_folders_cost_one_ls_files_and_no_argument_list() {
+        let f = Fixture::new();
+        let main = &f.main;
+        let folders: Vec<PathBuf> = (0..20_000)
+            .map(|n| main.join(format!("package-{n}/node_modules")))
+            .collect();
+        let asked_before = ls_files_asked(main);
+        let tracked = tracked_folders(main, folders.iter().map(PathBuf::as_path)).unwrap();
+        assert!(tracked.is_empty());
+        assert_eq!(ls_files_asked(main), asked_before + 1);
+        // `tracked` is a file at the top of the fixture, not a folder below
+        // a candidate that merely starts the same way.
+        let near = [main.join("track"), main.join("tracked")];
+        let tracked = tracked_folders(main, near.iter().map(PathBuf::as_path)).unwrap();
+        assert!(tracked.is_empty());
+    }
+
+    type Published = std::sync::Arc<std::sync::Mutex<Vec<CleanupSnapshot>>>;
+
+    fn guard(
+        terminal: &'static str,
+    ) -> (
+        WorkerGuard,
+        Published,
+        std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) {
+        let published = Published::default();
+        let finished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (sink, flag) = (published.clone(), finished.clone());
+        let guard = WorkerGuard::new(
+            Box::new(move |snapshot| sink.lock().unwrap().push(snapshot)),
+            Box::new(move || flag.store(true, Ordering::SeqCst)),
+            CleanupSnapshot {
+                id: 4,
+                phase: "removing".into(),
+                ..Default::default()
+            },
+            terminal,
+        );
+        (guard, published, finished)
+    }
+
+    #[test]
+    fn a_worker_that_panics_leaves_a_terminal_answer_and_frees_the_lane() {
+        let (guard, published, finished) = guard("complete");
+        let stopped = std::thread::spawn(move || {
+            let mut guard = guard;
+            guard.publish(CleanupSnapshot {
+                id: 4,
+                phase: "removing".into(),
+                progress: Some(CleanupProgress { done: 1, total: 3 }),
+                ..Default::default()
+            });
+            panic!("the worker died mid-run");
+        })
+        .join();
+        assert!(stopped.is_err());
+        let published = published.lock().unwrap();
+        let last = published.last().unwrap();
+        assert_eq!((last.id, last.phase.as_str()), (4, "complete"));
+        assert_eq!(last.progress, Some(CleanupProgress { done: 1, total: 3 }));
+        assert!(last.message.is_some());
+        assert!(finished.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn a_worker_that_finishes_publishes_only_its_own_answer_and_frees_the_lane() {
+        let (guard, published, finished) = guard("failed");
+        guard.finish(CleanupSnapshot {
+            id: 4,
+            phase: "review".into(),
+            ..Default::default()
+        });
+        let published = published.lock().unwrap();
+        assert_eq!(published.len(), 1);
+        assert_eq!(published[0].phase, "review");
+        assert!(finished.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn the_shell_reads_codes_and_sizes_and_never_the_words_meant_for_the_log() {
+        let snapshot = CleanupSnapshot {
+            rows: vec![CleanupRow {
+                path: "/w/a".into(),
+                exclusion: Some("Git says the branch is not merged".into()),
+                exclusion_code: Some("not_merged"),
+                result: Some("skipped".into()),
+                result_code: Some("changed"),
+                bytes: Some(4096),
+                message: Some("The worktree changed after the review".into()),
+                ..Default::default()
+            }],
+            cell_results: vec![CellResult {
+                path: "/w/a".into(),
+                layer: "build_cache",
+                outcome: "skipped",
+                bytes: 0,
+                folders: 0,
+                reason_code: Some("tracked_files"),
+                reason: Some("Git tracks a file inside the folder".into()),
+            }],
+            ..Default::default()
+        };
+        let wire = serde_json::to_value(&snapshot).unwrap();
+        let row = wire["rows"][0].as_object().unwrap();
+        assert!(!row.contains_key("exclusion") && !row.contains_key("message"));
+        assert_eq!(row["exclusion_code"], "not_merged");
+        assert_eq!(
+            (&row["result"], &row["result_code"]),
+            (&"skipped".into(), &"changed".into())
+        );
+        assert_eq!(row["bytes"], 4096);
+        let cell = wire["cell_results"][0].as_object().unwrap();
+        assert!(!cell.contains_key("reason"));
+        assert_eq!(cell["reason_code"], "tracked_files");
     }
 }
