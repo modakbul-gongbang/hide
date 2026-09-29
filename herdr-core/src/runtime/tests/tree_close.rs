@@ -673,3 +673,51 @@ fn a_listed_pane_that_is_not_a_live_descendant_is_never_closed() {
     assert!(!started(&runtime).contains(&"w1:p1".to_owned()));
     assert!(!started(&runtime).contains(&"w1:p4".to_owned()));
 }
+
+#[test]
+fn a_same_tab_sibling_waits_while_a_finished_close_queues_behind_a_running_one() {
+    let mut runtime = tree_runtime(&[]);
+    let shared = |runtime: &mut Runtime, present: &[&str]| {
+        runtime.ingest_session_with_catalog(
+            Ok(tree_payload_in(present, &[], true)),
+            Some(tree_catalog()),
+        );
+    };
+    shared(&mut runtime, &EVERY);
+    // An ordinary close the operator started earlier holds the front of the
+    // reservation queue while it runs.
+    let event = serde_json::to_vec(&serde_json::json!({
+        "schema_version": SCHEMA_VERSION,
+        "kind": "close_pane",
+        "payload": {"pane_id": "w5:p5", "confirmed": true}
+    }))
+    .unwrap();
+    runtime.dispatch_json(&event);
+    assert_eq!(started(&runtime), ["w5:p5"]);
+    // p4 lists nothing below it here, so it starts beside p3; p2 shares p4's tab.
+    close_tree(
+        &mut runtime,
+        pane_target("w1:p1"),
+        &["w1:p2", "w1:p3", "w1:p4"],
+        true,
+    );
+    assert!(started(&runtime).contains(&"w1:p4".to_owned()));
+    shared(&mut runtime, &["w1:p1", "w1:p2", "w5:p5"]);
+    // p4's close is done but queued behind p5's: p2 waits, it does not fail.
+    runtime.tick_async_operations(unix_milliseconds());
+    assert_eq!(tree_phase(&runtime, "w1:p2").as_deref(), Some("waiting"));
+    shared(&mut runtime, &["w1:p1", "w1:p2"]);
+    assert!(started(&runtime).contains(&"w1:p2".to_owned()));
+    shared(&mut runtime, &["w1:p1"]);
+    shared(&mut runtime, &[]);
+    assert!(runtime.tree_closes.is_empty());
+    assert_ne!(
+        runtime
+            .snapshot()
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("tree_close.incomplete")
+    );
+}
