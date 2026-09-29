@@ -60,7 +60,16 @@ async function showTheme(page: Page, theme: "light" | "dark"): Promise<void> {
     root.classList.toggle("dark", next === "dark");
     root.classList.toggle("light", next === "light");
   }, theme);
-  await page.waitForTimeout(400);
+  await expect(page.locator("html")).toHaveClass(theme === "dark" ? /(^|\s)dark(\s|$)/ : /(^|\s)light(\s|$)/);
+  // Colour transitions the class change started finish before the capture; a skeleton's endless pulse is not waited on.
+  await page.evaluate(() =>
+    Promise.all(
+      document
+        .getAnimations()
+        .filter((animation) => animation.effect?.getComputedTiming().iterations !== Infinity)
+        .map((animation) => animation.finished.catch(() => undefined)),
+    ),
+  );
 }
 
 test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktree after one confirmation", async ({ page }) => {
@@ -110,7 +119,9 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
     const tooltip = page.locator('[data-disk-tooltip="true"]');
     await expect(tooltip).toContainText("빌드 캐시");
     await expect(tooltip).toContainText("의존성");
+    await expect(tooltip.locator('[data-disk-tooltip-line="source"]')).toContainText("워크트리 소스");
     await expect(tooltip.locator('[data-disk-tooltip-line="other"]')).toContainText("기타");
+    await expect(tooltip.locator('[data-disk-tooltip-line="shared_git"]')).toContainText("공유 Git");
     await page.mouse.move(2, 998);
     const reviewsBefore = sent.get("cleanup_review") ?? 0;
     await entrance.click();
