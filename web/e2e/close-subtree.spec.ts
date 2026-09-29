@@ -241,16 +241,11 @@ test("an open close sheet follows the snapshot: Stop-work tracks its pane, and a
     const subtree = page.locator("[data-confirm-subtree]");
     const row = confirm.locator(`[data-stop-work-row="${target}"]`);
     const opacity = () => row.evaluate((node) => Number(getComputedStyle(node).opacity));
-    // The working state has to be in before the sheet opens on it.
-    await expect(async () => {
-      if (await confirm.isVisible()) {
-        await page.keyboard.press("Escape");
-        await expect(confirm).toHaveCount(0);
-      }
-      await page.locator(`[data-terminal-host="${target}"]`).click();
-      await page.keyboard.press("Alt+KeyW");
-      await expect(row).toHaveAttribute("data-stop-work-state", "active", { timeout: 3_000 });
-    }).toPass({ timeout: 30_000, intervals: [500] });
+    // The working state has to be in before the close asks: a quiet pane would close at once.
+    await expect(page.locator(`[data-pane="${target}"] [data-agent-status-mark="Working"]`)).toBeVisible({ timeout: 30_000 });
+    await page.locator(`[data-terminal-host="${target}"]`).click();
+    await page.keyboard.press("Alt+KeyW");
+    await expect(row).toHaveAttribute("data-stop-work-state", "active");
     await expect(confirm.getByRole("heading")).toHaveText("Stop the active pane?");
     await expect(subtree).toHaveCount(0);
     expect(await opacity()).toBe(1);
@@ -270,6 +265,8 @@ test("an open close sheet follows the snapshot: Stop-work tracks its pane, and a
     const child = await spawnAgent(herdr, "child", target);
     await expect(subtree.locator(`[data-subtree-row="${child}"]`)).toBeVisible({ timeout: 30_000 });
     await expect(subtree.getByRole("heading")).toHaveText("이 에이전트와 자식 1개를 닫을까요?");
+    // The keyboard stays on the sheet itself, not on the Enter default of the new one.
+    await expect(subtree).toBeFocused();
 
     // The target settles, then its last child closes elsewhere: the sheet
     // turns back into the target's Stop-work sheet with the quiet target dimmed.
@@ -279,6 +276,7 @@ test("an open close sheet follows the snapshot: Stop-work tracks its pane, and a
     await expect(confirm.getByRole("heading")).toHaveText("Stop the active pane?");
     await expect(row).toHaveAttribute("data-stop-work-state", "quiet", { timeout: 30_000 });
     expect(await opacity()).toBeLessThan(1);
+    await expect(confirm).toBeFocused();
     await screenshot(page, "close-subtree-back-to-stop-work");
     expect(sent.get("close_pane") ?? 0).toBe(0);
     expect(sent.get("close_tree") ?? 0).toBe(0);
@@ -330,11 +328,9 @@ test("Delete worktree closes the agents its checkout spawned outside it before t
     await page.locator('[data-sidebar-mode="projects"]').click();
 
     const feature = page.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${branch}"]`) });
-    // A branch with nothing ahead of main reads as merged, so once the core
-    // has read that its row sits under the folded Inactive group.
-    const inactive = page.locator('[data-inactive-checkouts][aria-expanded="false"]');
-    await expect(feature.or(inactive)).toBeVisible({ timeout: 30_000 });
-    if (await inactive.isVisible()) await inactive.click();
+    // The fixture branch has nothing ahead of main, so the core reads it as
+    // merged and folds its row under Inactive; wait for that, then open it.
+    await page.locator('[data-inactive-checkouts][aria-expanded="false"]').click({ timeout: 30_000 });
     await expect(feature).toBeVisible({ timeout: 30_000 });
     await feature.locator("[data-checkout-menu]").click({ button: "right" });
     await page.getByRole("menu", { name: `${branch} actions` }).locator('[data-menu-item="delete_worktree"]').click();
