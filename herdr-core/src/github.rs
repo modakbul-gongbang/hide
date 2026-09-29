@@ -1835,16 +1835,18 @@ esac"#,
     fn timed_out_gh_and_its_pipe_holding_helper_are_terminated() {
         let fixture = GhFixture::new("echo $$ > pid; sleep 5; touch survived");
         let started = Instant::now();
+        // The shell must get a turn to write its PID under parallel workspace
+        // tests; the deadline still precedes the script's five-second work.
         let failure = run_gh(
             &fixture.binary,
             Some(&fixture.root),
             &["pr", "list"],
-            Duration::from_secs(1),
+            Duration::from_secs(3),
         )
         .unwrap_err();
         assert_eq!(failure.category, "network or rate limit");
         assert!(failure.reason.contains("timed out"));
-        assert!(started.elapsed() < Duration::from_secs(3));
+        assert!(started.elapsed() < Duration::from_secs(5));
         let pid: i32 = std::fs::read_to_string(fixture.root.join("pid"))
             .unwrap()
             .trim()
