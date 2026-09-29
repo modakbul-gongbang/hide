@@ -405,29 +405,56 @@ fn event_array_mut<'a>(
         })
 }
 
-/// Writes through a temporary file in the same directory, so a failure part
-/// way through leaves the operator's original file intact.
+/// Writes through a temporary file beside the file it replaces, so a failure
+/// part way through leaves the operator's original file intact. The file
+/// keeps its permission bits, because a settings file kept at 0600 can hold
+/// tokens, and a new one is 0600. A settings file that is a link, as a
+/// dotfile manager makes it, is written where the link leads, so the link
+/// stays the operator's.
 fn write_document(path: &Path, document: &Value) -> Result<(), InstallFailure> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
     let failure = |detail: String| InstallFailure::NotWritable {
         path: path.display().to_string(),
         detail,
     };
-    let parent = path
+    let target = match fs::canonicalize(path) {
+        Ok(real) => real,
+        Err(error) if error.kind() == ErrorKind::NotFound => path.to_path_buf(),
+        Err(error) => return Err(failure(error.to_string())),
+    };
+    let mode = match fs::metadata(&target) {
+        Ok(metadata) => metadata.permissions().mode() & 0o7777,
+        Err(error) if error.kind() == ErrorKind::NotFound => 0o600,
+        Err(error) => return Err(failure(error.to_string())),
+    };
+    let parent = target
         .parent()
         .ok_or_else(|| failure("the path has no parent directory".to_owned()))?;
     fs::create_dir_all(parent).map_err(|error| failure(error.to_string()))?;
     let mut serialized =
         serde_json::to_string_pretty(document).map_err(|error| failure(error.to_string()))?;
     serialized.push('\n');
-    let temporary: PathBuf = path.with_extension("hide-tmp");
-    {
-        let mut file = fs::File::create(&temporary).map_err(|error| failure(error.to_string()))?;
-        file.write_all(serialized.as_bytes())
-            .map_err(|error| failure(error.to_string()))?;
-        file.sync_all()
-            .map_err(|error| failure(error.to_string()))?;
-    }
-    fs::rename(&temporary, path).map_err(|error| {
+    let temporary = parent.join(format!(
+        ".{}.hide-{}",
+        target
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("settings"),
+        std::process::id()
+    ));
+    let _ = fs::remove_file(&temporary);
+    let written = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&temporary)?;
+        file.write_all(serialized.as_bytes())?;
+        file.set_permissions(fs::Permissions::from_mode(mode))?;
+        file.sync_all()?;
+        fs::rename(&temporary, &target)
+    })();
+    written.map_err(|error| {
         let _ = fs::remove_file(&temporary);
         failure(error.to_string())
     })
@@ -749,6 +776,62 @@ mod tests {
         assert!(
             arguments.starts_with("hook --runtime codex --event Stop"),
             "{arguments}"
+        );
+    }
+
+    /// A settings file can hold tokens, and a dotfile manager can own it as
+    /// a link: installing and removing keep its mode and its link.
+    #[test]
+    fn installing_and_removing_keep_the_files_mode_and_its_link() {
+        use std::os::unix::fs::PermissionsExt;
+        let fixture = Fixture::new("mode-link");
+        let claude = AgentRuntime::ClaudeCode.config_path(fixture.home());
+        fixture.write(AgentRuntime::ClaudeCode, OCCUPIED);
+        fs::set_permissions(&claude, fs::Permissions::from_mode(0o600)).unwrap();
+        let dotfiles = fixture.home().join("dotfiles");
+        fs::create_dir_all(&dotfiles).unwrap();
+        let real = dotfiles.join("hooks.json");
+        fs::write(&real, OCCUPIED).unwrap();
+        fs::set_permissions(&real, fs::Permissions::from_mode(0o640)).unwrap();
+        let codex = AgentRuntime::Codex.config_path(fixture.home());
+        std::os::unix::fs::symlink(&real, &codex).unwrap();
+
+        for runtime in [AgentRuntime::ClaudeCode, AgentRuntime::Codex] {
+            assert!(
+                install(runtime, fixture.home(), &helper(&fixture))
+                    .unwrap()
+                    .changed
+            );
+        }
+        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(&claude), 0o600);
+        assert!(
+            fs::symlink_metadata(&codex)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(fs::read_link(&codex).unwrap(), real);
+        assert_eq!(mode(&real), 0o640);
+        assert!(
+            fs::read_to_string(&real)
+                .unwrap()
+                .contains(crate::HELPER_BINARY_NAME)
+        );
+
+        for runtime in [AgentRuntime::ClaudeCode, AgentRuntime::Codex] {
+            remove(runtime, fixture.home()).unwrap();
+        }
+        assert_eq!(mode(&claude), 0o600);
+        assert!(
+            fs::symlink_metadata(&codex)
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(
+            fixture.read(AgentRuntime::Codex),
+            serde_json::from_str::<Value>(OCCUPIED).unwrap()
         );
     }
 
